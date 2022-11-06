@@ -52,20 +52,20 @@ at least 2 items, returns C<undef>.
 =cut
 
 sub new {
-	my($class, $cmp_s) = @_;
-	my $subclass = $names{$cmp_s} ||= do {
-		my $c = 'H::Heap::Heap_' . $index++;
-		eval sprintf '
-			package %s;
-			our @ISA = ($class);
-			sub cmp_cv {
-				my($self, $a, $b) = @_;
-				%s;
-			}
-		', $c, $cmp_s;
-		$c;
-	};
-	bless [], $subclass;
+    my($class, $cmp_s) = @_;
+    my $subclass = $names{$cmp_s} ||= do {
+        my $c = 'H::Heap::Heap_' . $index++;
+        eval sprintf '
+            package %s;
+            our @ISA = ($class);
+            sub cmp_cv {
+                my($self, $a, $b) = @_;
+                %s;
+            }
+        ', $c, $cmp_s;
+        $c;
+    };
+    bless [], $subclass;
 }
 
 sub size {
@@ -74,16 +74,16 @@ sub size {
 }
 
 sub insert {
-	my($self, $new) = @_;
-	my $node = @$self;
-	push @$self, $new;
-	while ($node) {
-		my $parent = ($node - 1) >> 1;
-		last if $self->cmp_cv(@$self[$parent, $node]) <= 0;
-		@$self[$parent, $node] = @$self[$node, $parent];
-		$node = $parent;
-	}
-	return;
+    my($self, $new) = @_;
+    my $node = @$self;
+    push @$self, $new;
+    while ($node) {
+        my $parent = ($node - 1) >> 1;
+        last if $self->cmp_cv(@$self[$parent, $node]) <= 0;
+        @$self[$parent, $node] = @$self[$node, $parent];
+        $node = $parent;
+    }
+    return;
 }
 
 sub peek {
@@ -98,26 +98,26 @@ sub peek2 {
 }
 
 sub fetch {
-	my($self) = @_;
-	return undef unless @$self;
-	my $value = $self->[0];
-	my $switch = pop @$self;
-	$self->[0] = $switch if @$self;
-	my $node = 0;
-	my $size = @$self;
-	while (1) {
-		my $child = ($node << 1) + 1;
-		last if $child >= $size;
-		if ($child + 1 < $size
-			&& $self->cmp_cv(@$self[$child, $child + 1]) > 0
-		) {
-			++$child;
-		}
-		last if $self->cmp_cv(@$self[$child, $node]) >= 0;
-		@$self[$node, $child] = @$self[$child, $node];
-		$node = $child;
-	}
-	return $value;
+    my($self) = @_;
+    return undef unless @$self;
+    my $value = $self->[0];
+    my $switch = pop @$self;
+    $self->[0] = $switch if @$self;
+    my $node = 0;
+    my $size = @$self;
+    while (1) {
+        my $child = ($node << 1) + 1;
+        last if $child >= $size;
+        if ($child + 1 < $size
+            && $self->cmp_cv(@$self[$child, $child + 1]) > 0
+        ) {
+            ++$child;
+        }
+        last if $self->cmp_cv(@$self[$child, $node]) >= 0;
+        @$self[$node, $child] = @$self[$child, $node];
+        $node = $child;
+    }
+    return $value;
 }
 
 1;

@@ -17,12 +17,12 @@ void free_fact(t_fact *f) {
 }
 void add_fact(t_fact *f, t_ppow pp) {
     uint count = f->count++;
-	if (f->count > f->size) {
-		uint size = f->size * 2;
-		f->ppow = (t_ppow *)realloc(f->ppow, size * sizeof(t_ppow));
-		f->size = size;
-	}
-	f->ppow[count] = pp;
+    if (f->count > f->size) {
+        uint size = f->size * 2;
+        f->ppow = (t_ppow *)realloc(f->ppow, size * sizeof(t_ppow));
+        f->size = size;
+    }
+    f->ppow[count] = pp;
 }
 void reverse_fact(t_fact *f) {
     t_ppow pp;
@@ -39,58 +39,58 @@ void init_zfact(t_zfact *f) {
     f->count = 0;
     f->size = 16;
     f->ppow = (t_zpow *)malloc(f->size * sizeof(t_zpow));
-	for (int i = 0; i < f->size; ++i)
-		mpz_init(f->ppow[i].p);
+    for (int i = 0; i < f->size; ++i)
+        mpz_init(f->ppow[i].p);
 }
 void free_zfact(t_zfact *f) {
-	for (int i = 0; i < f->size; ++i)
-		mpz_clear(f->ppow[i].p);
-	free(f->ppow);
+    for (int i = 0; i < f->size; ++i)
+        mpz_clear(f->ppow[i].p);
+    free(f->ppow);
 }
 void add_zfact(t_zfact *f, t_zpow pp) {
     uint count = f->count++;
-	if (f->count > f->size) {
+    if (f->count > f->size) {
         uint size = f->size * 2;
         f->ppow = (t_zpow *)realloc(f->ppow, size * sizeof(t_zpow));
-		for (int i = f->count; i < size; ++i)
-			mpz_init(f->ppow[i].p);
+        for (int i = f->count; i < size; ++i)
+            mpz_init(f->ppow[i].p);
         f->size = size;
     }
-	mpz_set(f->ppow[count].p, pp.p);
-	f->ppow[count].e = pp.e;
+    mpz_set(f->ppow[count].p, pp.p);
+    f->ppow[count].e = pp.e;
 }
 
 uint try_simple_fact(uint n, uint d, t_fact *f) {
-	uint e = 0;
-	while ((n % d) == 0) {
-		n /= d;
-		++e;
-	}
-	if (e) {
-		t_ppow pp;
-		pp.p = d;
-		pp.e = e;
-		add_fact(f, pp);
-	}
-	return n;
+    uint e = 0;
+    while ((n % d) == 0) {
+        n /= d;
+        ++e;
+    }
+    if (e) {
+        t_ppow pp;
+        pp.p = d;
+        pp.e = e;
+        add_fact(f, pp);
+    }
+    return n;
 }
 
 void simple_fact(uint n, t_fact *f) {
-	uint d = 3;
-	if (n > 1)
-		n = try_simple_fact(n, 2, f);
-	while (n > 1) {
-		n = try_simple_fact(n, d, f);
-		d += 2;
-	}
-	return;
+    uint d = 3;
+    if (n > 1)
+        n = try_simple_fact(n, 2, f);
+    while (n > 1) {
+        n = try_simple_fact(n, d, f);
+        d += 2;
+    }
+    return;
 }
 
 uint simple_tau(t_fact *f) {
-	uint t = 1;
-	for (uint i = 0; i < f->count; ++i)
-		t *= f->ppow[i].e + 1;
-	return t;
+    uint t = 1;
+    for (uint i = 0; i < f->count; ++i)
+        t *= f->ppow[i].e + 1;
+    return t;
 }
 
 uint simple_valuation(ulong n, ulong p) {
