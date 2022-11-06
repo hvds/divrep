@@ -9,7 +9,13 @@ for A292580, the least integer v such that tau(v + i) = n for all
 BUILD
 =====
 
-This code uses the GNU multi-precision library "libgmp". It also uses
+See also the section "WINDOWS BUILD" below if you are running on
+Windows.
+
+The source code is available on GitHub at:
+  https://github.com/hvds/divrep
+
+The code requires the GNU multi-precision library "libgmp". It also uses
 the code from Dana Jacobsen's CPAN distribution "Math-Prime-Util-GMP",
 available from:
   https://github.com/danaj/Math-Prime-Util-GMP
@@ -47,7 +53,7 @@ The current build options are:
 -DPARALLEL: in walk_v(), test factors of non-prime, non-square values
 in parallel (ie breadth first) rather than in series (depth first).
 This is expected to give substantial gains when the values to be
-factorized are large (more than 10^80 or so).
+factorized are large (more than 10^80 or so), and is now the default.
 
 -DSQONLY: skip any walk_v() call unless at least one value is forced
 to be a square. Temporary facility to allow faster rechecking if bugs
@@ -71,14 +77,43 @@ about 15 minutes and each subsequent one doubling the time.
 Generally this isn't worthwhile: if we didn't find a factor before
 these tests, ECM probably won't find it.
 
+WINDOWS BUILD
+=============
+
+The code is reported to build successfully on 64-bit Windows with
+Cygwin, using the following steps:
+
+1. Install Cygwin following https://www.cygwin.com/install.html with
+the default Cygwin applications.
+2. Search for and install Cygwin packages gcc-core, libgmp-devel,
+libgmpxx4, make and nano (to edit makefile).
+3. Get this codebase and the Math-Prime-Util-GMP code (see "BUILD" above).
+You can download and unzip it to C:\cygwin64\home or install Cygwin git
+and clone code in the Cygwin shell.
+4. Use the Cygwin shell as a regular linux system. Edit the Makefile in
+/home/divrep to set the path to Math-Prime-Util-GMP  (MPUGMP =
+/home/Math-Prime-Util-GMP-master).
+5. Run "make" in the Cygwin shell to compile. As a result there will be
+a compiled pcoul.exe file.
+6. In windows explorer find and copy this file
+(C:\cygwin64\home\home\divrep\pcoul.exe) and two additional
+files (cygwin1.dll and cyggmp-10.dll), pcoul.exe will not work without them.
+7. Use pcoul.exe (cygwin1.dll and cyggmp-10.dll need to be in work folder).
+
+It seems likely that on a 32-bit Windows system the same approach will
+work (except the "C:\cygwin64" directory will be different).
+
 RUN
 ===
 
 The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
-  ./pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
+  pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
       [-g<damp:gain] [-p<minp:maxp>] [-s<randseed>] [-o] [-d]
       [-j<strategy>] <n> <k>
+
+On a Unix-like system you will usually invoke it as "./pcoul". On Windows
+you will usually invoke it as "pcoul" or as "pcoul.exe".
 
 Options:
 If "-r/path/to/logfile" is specified, progress is regularly written to the
