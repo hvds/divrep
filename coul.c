@@ -1972,10 +1972,43 @@ uint best_v2(void) {
     return ti ? vi : k;
 }
 
+/* Choose that v_i with the lowest t_i still to fulfil, or (on equality)
+ * with the highest q_i, but having at least one factor to allocate.
+ * If there is no best entry, returns k.
+ */
+uint best_v3(void) {
+    uint vi, ti = 0;
+    mpz_t *qi;
+    for (uint vj = 0; vj < k; ++vj) {
+        t_value *vpj = &value[vj];
+        t_allocation *apj = (vpj->vlevel) ? &vpj->alloc[vpj->vlevel - 1] : NULL;
+        uint tj = apj ? apj->t : n;
+        mpz_t *qj = apj ? &apj->q : ZP(zone);
+
+        /* skip if no odd prime factor */
+        if (divisors[tj].high <= 2)
+            continue;
+        /* skip prime powers when capped */
+        if (maxp && (tj & 1) && divisors[tj].alldiv == 2)
+            continue;
+        if (ti) {
+            /* skip if not lower tau, or same tau with higher q */
+            if (tj > ti)
+                continue;
+            if (tj == ti && mpz_cmp(*qj, *qi) <= 0)
+                continue;
+        }
+        vi = vj;
+        ti = tj;
+        qi = qj;
+    }
+    return ti ? vi : k;
+}
+
 typedef uint (*t_strategy)(void);
-#define NUM_STRATEGIES 2
+#define NUM_STRATEGIES 3
 t_strategy strategies[NUM_STRATEGIES] = {
-    &best_v1, &best_v2
+    &best_v1, &best_v2, &best_v3
 };
 /* Find the best entry to progress, using the selected strategy
  * If there is no best entry, returns k.

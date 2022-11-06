@@ -134,7 +134,9 @@ next position to which to allocate another prime power (default
 strategy 0 will pick the second position and start allocating p^2,
 since it has the highest remaining tau to fulfill; strategy 1 will
 pick the first position and start allocating p^4, since it has the
-highest prime dividing the remaining tau to fulfill.
+highest prime dividing the remaining tau to fulfill. "-j2" uses
+"strategy 2", which is the opposite of "strategy 0": it looks for
+the _lowest_ remaining tau to fill.
 
 Specifying "-d" enables debugging. By default, progress is shown on the
 terminal every 1 seconds (see "DIAG" in coul.c), overwriting the previous
