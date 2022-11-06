@@ -11,6 +11,8 @@
 #ifdef HAVE_SETPROCTITLE
 #   include <sys/types.h>
 #endif
+#include <signal.h>
+#include <time.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -187,6 +189,9 @@ static inline double utime(void) {
     return (double)rusage_buf.ru_utime.tv_sec
             + (double)rusage_buf.ru_utime.tv_usec / 1000000;
 }
+timer_t diag_timerid, log_timerid;
+volatile bool need_work, need_diag, need_log;
+bool clock_is_realtime;
 
 mpz_t min, max;     /* limits to check for v_0 */
 uint seen_best = 0; /* number of times we've improved max */
@@ -278,66 +283,86 @@ void diag_plain(void) {
     double t1 = utime();
 
     prep_show_v();  /* into diag_buf */
-    diag("%s", diag_buf);
-    if (debug)
-        keep_diag();
-    diagt = t1 + diag_delay;
+    if (need_diag || diagt == 0) {
+        diag("%s", diag_buf);
+        if (debug)
+            keep_diag();
+        need_diag = 0;
+    }
 
-    if (rfp && t1 >= logt) {
+    if (rfp && need_log) {
         fprintf(rfp, "305 %s (%.2fs)\n", diag_buf, seconds(t1));
         logt = t1 + log_delay;
+        need_log = 0;
     }
+    if (diagt)
+        need_work = 0;
 }
 
 void diag_walk_v(ulong ati, ulong end) {
     double t1 = utime();
 
     prep_show_v();  /* into diag_buf */
-    if (!(debug == 1 && ati))
-        diag("%s: %lu / %lu", diag_buf, ati, end);
-    if (debug)
-        keep_diag();
-    diagt = t1 + diag_delay;
+    if (need_diag || diagt == 0) {
+        if (!(debug == 1 && ati))
+            diag("%s: %lu / %lu", diag_buf, ati, end);
+        if (debug)
+            keep_diag();
+        need_diag = 0;
+    }
 
-    if (rfp && t1 >= logt) {
+    if (rfp && need_log) {
         fprintf(rfp, "305 %s: %lu / %lu (%.2fs)\n",
                 diag_buf, ati, end, seconds(t1));
         logt = t1 + log_delay;
+        need_log = 0;
     }
+    if (diagt)
+        need_work = 0;
 }
 
 void diag_walk_zv(mpz_t ati, mpz_t end) {
     double t1 = utime();
 
     prep_show_v();  /* into diag_buf */
-    if (!(debug == 1 && mpz_sgn(ati)))
-        diag("%s: %Zu / %Zu", diag_buf, ati, end);
-    if (debug)
-        keep_diag();
-    diagt = t1 + diag_delay;
+    if (need_diag || diagt == 0) {
+        if (!(debug == 1 && mpz_sgn(ati)))
+            diag("%s: %Zu / %Zu", diag_buf, ati, end);
+        if (debug)
+            keep_diag();
+        need_diag = 0;
+    }
 
-    if (rfp && t1 >= logt) {
+    if (rfp && need_log) {
         gmp_fprintf(rfp, "305 %s: %Zu / %Zu (%.2fs)\n",
                 diag_buf, ati, end, seconds(t1));
         logt = t1 + log_delay;
+        need_log = 0;
     }
+    if (diagt)
+        need_work = 0;
 }
 
 void diag_walk_pell(uint pc) {
     double t1 = utime();
 
     prep_show_v();  /* into diag_buf */
-    if (!(debug && pc))
-        diag("%s: P%u", diag_buf, pc);
-    if (debug)
-        keep_diag();
-    diagt = t1 + diag_delay;
+    if (need_diag || diagt == 0) {
+        if (!(debug && pc))
+            diag("%s: P%u", diag_buf, pc);
+        if (debug)
+            keep_diag();
+        need_diag = 0;
+    }
 
-    if (rfp && t1 >= logt) {
+    if (rfp && need_log) {
         fprintf(rfp, "305 %s: P%u (%.2fs)\n",
                 diag_buf, pc, seconds(t1));
         logt = t1 + log_delay;
+        need_log = 0;
     }
+    if (diagt)
+        need_diag = 0;
 }
 
 void disp_batch(t_level *lp) {
@@ -463,6 +488,61 @@ void fail(char *format, ...) {
     if (rfp)
         fclose(rfp);
     exit(1);
+}
+
+void handle_sig(int sig) {
+    need_work = 1;
+    if (sig == SIGUSR1)
+        need_diag = 1;
+    else
+        need_log = 1;
+}
+
+void init_time(void) {
+    struct sigaction sa;
+    struct sigevent sev;
+    struct itimerspec diag_timer, log_timer;
+
+    sa.sa_handler = &handle_sig;
+    sa.sa_flags = SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGUSR1, &sa, NULL))
+        fail("Could not set USR1 handler: %s\n", strerror(errno));
+    if (sigaction(SIGUSR2, &sa, NULL))
+        fail("Could not set USR2 handler: %s\n", strerror(errno));
+
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGUSR1;
+    sev.sigev_value.sival_ptr = &diag_timerid;
+    clock_is_realtime = 0;
+    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &sev, &diag_timerid)) {
+        if (errno != EINVAL)
+            fail("Could not create diag timer: %s\n", strerror(errno));
+        /* EINVAL may mean the CPUTIME clock is not supported */
+        if (timer_create(CLOCK_REALTIME, &sev, &diag_timerid))
+            fail("Could not create fallback timer: %s\n", strerror(errno));
+        clock_is_realtime = 1;
+    }
+
+    sev.sigev_signo = SIGUSR2;
+    sev.sigev_value.sival_ptr = &log_timerid;
+    clockid_t clock = clock_is_realtime
+            ? CLOCK_REALTIME : CLOCK_PROCESS_CPUTIME_ID;
+    if (timer_create(clock, &sev, &log_timerid))
+        fail("Could not create log timer: %s\n", strerror(errno));
+
+    diag_timer.it_value.tv_sec = diag_delay;
+    diag_timer.it_value.tv_nsec = 0;
+    diag_timer.it_interval.tv_sec = diag_delay;
+    diag_timer.it_interval.tv_nsec = 0;
+    if (timer_settime(diag_timerid, 0, &diag_timer, NULL))
+        fail("Could not set diag timer: %s\n", strerror(errno));
+    log_timer.it_value.tv_sec = log_delay;
+    log_timer.it_value.tv_nsec = 0;
+    log_timer.it_interval.tv_sec = log_delay;
+    log_timer.it_interval.tv_nsec = 0;
+    if (timer_settime(log_timerid, 0, &log_timer, NULL))
+        fail("Could not set log timer: %s\n", strerror(errno));
 }
 
 void init_pre(void) {
@@ -856,6 +936,7 @@ void init_post(void) {
     log_delay = (debug) ? 0 : LOG;
     diagt = diag_delay;
     logt = log_delay;
+    init_time();
 
     init_levels();
     init_value();
@@ -922,6 +1003,8 @@ void report_init(FILE *fp, char *prog) {
                 fprintf(fp, "%u", opt_batch_max);
         }
     }
+    if (clock_is_realtime)
+        fprintf(fp, " *RT*");
     fprintf(fp, "\n");
 }
 
@@ -1223,7 +1306,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
                 ++countwi;
                 ++pc;
-                if (utime() >= diagt)
+                if (need_work)
                     diag_walk_pell(pc);
 
                 /* verify mod, coprime and tau */
@@ -1359,7 +1442,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
             mpz_pow_ui(Z(wv_rx), Z(wv_r), xi);
             mpz_sub(Z(wv_ati), Z(wv_rx), *oi);
             mpz_fdiv_q(Z(wv_ati), Z(wv_ati), *qqi);
-            if (utime() >= diagt)
+            if (need_work)
                 diag_walk_zv(Z(wv_ati), Z(wv_end));
             for (uint ii = 0; ii < inv_count; ++ii) {
                 t_mod *ip = &inv[ii];
@@ -1414,7 +1497,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #endif
     for (ulong ati = mpz_get_ui(Z(wv_ati)); ati <= end; ++ati) {
         ++countwi;
-        if (utime() >= diagt)
+        if (need_work)
             diag_walk_v(ati, end);
         for (uint ii = 0; ii < inv_count; ++ii) {
             t_mod *ip = &inv[ii];
@@ -2446,7 +2529,7 @@ void recurse(void) {
                     goto continue_recurse;
                 }
                 ++level;
-                if (utime() >= diagt)
+                if (need_work)
                     diag_plain();
                 continue;   /* deeper */
             }
@@ -2547,7 +2630,7 @@ void recurse(void) {
                 goto continue_recurse;
             }
             ++level;
-            if (utime() >= diagt)
+            if (need_work)
                 diag_plain();
             continue;
         }
@@ -2572,14 +2655,14 @@ void recurse(void) {
                     goto redo_unforced;
             /* note: this returns 0 if t=1 */
             if (!apply_single(prev_level, cur_level, cur_level->vi, p, cur_level->x)) {
-                if (utime() >= diagt)
+                if (need_work)
                     diag_plain();
                 --value[cur_level->vi].vlevel;
                 /* not redo_unforced, we may have improved max */
                 goto continue_unforced;
             }
             ++level;
-            if (utime() >= diagt)
+            if (need_work)
                 diag_plain();
             continue;   /* deeper */
         }
