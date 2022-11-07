@@ -210,8 +210,9 @@ bool opt_print = 0; /* print candidates instead of fully testing them */
  */
 bool opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
-int batch_alloc = 0;   /* index of forced-prime allocations */
-uint strategy = 0;  /* best_v() strategy */
+int batch_alloc = 0;    /* index of forced-prime allocations */
+uint strategy;          /* best_v() strategy */
+uint strategy_set = 0;  /* strategy was user-selected */
 
 int debug = 0;     /* diag and keep every case seen */
 ulong randseed = 1; /* for ECM, etc */
@@ -923,8 +924,14 @@ void init_post(void) {
     for (int i = 0; i < nf.count; ++i)
         maxfact += nf.ppow[i].e;
     maxodd = maxfact - nf.ppow[0].e;    /* n is always even */
-    init_rootmod(k * maxfact + 1);
 
+    /* Strategy 1 is preferred when n is divisible by two or more
+     * distinct odd primes. Otherwise, strategy 0 always gives the same
+     * results, and is a bit faster. */
+    if (!strategy_set)
+        strategy = (nf.count > 2) ? 1 : 0;
+
+    init_rootmod(k * maxfact + 1);
     prep_fact();
     prep_maxforce();
     prep_forcep();
@@ -2739,6 +2746,7 @@ int main(int argc, char **argv, char **envp) {
             strategy = strtoul(&arg[2], NULL, 10);
             if (strategy >= NUM_STRATEGIES)
                 fail("Invalid strategy %u", strategy);
+            strategy_set = 1;
         } else
             fail("unknown option '%s'", arg);
     }

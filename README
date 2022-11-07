@@ -172,6 +172,8 @@ pick the first position and start allocating p^4, since it has the
 highest prime dividing the remaining tau to fulfill. "-j2" uses
 "strategy 2", which is the opposite of "strategy 0": it looks for
 the _lowest_ remaining tau to fill.
+"-j1" is the default when n is divisible by at least two distinct odd
+primes; "-j0" is the default in all other cases.
 
 Specifying "-d" enables debugging. By default, progress is shown on the
 terminal every 1 seconds (see "DIAG" in coul.c), overwriting the previous
