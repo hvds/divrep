@@ -1906,7 +1906,7 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
  * with the highest q_i, but having at least one factor to allocate.
  * If there is no best entry, returns k.
  */
-uint best_v1(void) {
+uint best_v0(void) {
     uint vi, ti = 0;
     mpz_t *qi;
     for (uint vj = 0; vj < k; ++vj) {
@@ -1940,7 +1940,7 @@ uint best_v1(void) {
  * q_i.
  * If there is no best entry, returns k.
  */
-uint best_v2(void) {
+uint best_v1(void) {
     uint vi, ti = 0;
     mpz_t *qi;
     for (uint vj = 0; vj < k; ++vj) {
@@ -1976,7 +1976,7 @@ uint best_v2(void) {
  * with the highest q_i, but having at least one factor to allocate.
  * If there is no best entry, returns k.
  */
-uint best_v3(void) {
+uint best_v2(void) {
     uint vi, ti = 0;
     mpz_t *qi;
     for (uint vj = 0; vj < k; ++vj) {
@@ -2008,7 +2008,7 @@ uint best_v3(void) {
 typedef uint (*t_strategy)(void);
 #define NUM_STRATEGIES 3
 t_strategy strategies[NUM_STRATEGIES] = {
-    &best_v1, &best_v2, &best_v3
+    &best_v0, &best_v1, &best_v2
 };
 /* Find the best entry to progress, using the selected strategy
  * If there is no best entry, returns k.
