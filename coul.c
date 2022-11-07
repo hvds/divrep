@@ -517,11 +517,9 @@ void init_time(void) {
     sev.sigev_value.sival_ptr = &diag_timerid;
     clock_is_realtime = 0;
     if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &sev, &diag_timerid)) {
-        if (errno != EINVAL)
-            fail("Could not create diag timer: %s\n", strerror(errno));
-        /* EINVAL may mean the CPUTIME clock is not supported */
+        /* guess that the CPUTIME clock is not supported */
         if (timer_create(CLOCK_REALTIME, &sev, &diag_timerid))
-            fail("Could not create fallback timer: %s\n", strerror(errno));
+            fail("Could not create diag timer: %s\n", strerror(errno));
         clock_is_realtime = 1;
     }
 
