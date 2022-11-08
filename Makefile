@@ -41,3 +41,6 @@ test_pell: Makefile test_pell.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 
 ftest: Makefile ftest.c coultau.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o ftest -g ${CC_OPT} ${DEFINES} ftest.c coultau.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+
+speed: Makefile speed.c ${HFACTOR} ${MPUGMP}/gmp_main.c
+	gcc -o speed -g ${CC_OPT} ${DEFINES} speed.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
