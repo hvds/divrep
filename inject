@@ -16,11 +16,12 @@ my $typename = 'o';
 my $dryrun = 0;
 my $full = 0;
 my $hlim = 16000;   # same as default trial_factor limit for factor_exp
+my $Hlim = 16000;   # same as default trial_factor limit for factor_exp
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
     ($typename = $arg || shift(@ARGV)), next if $arg =~ s{^-y}{};
-    ($hlim = $arg || shift(@ARGV)), next if $arg =~ s{^-l}{};
+    ($Hlim = $arg || shift(@ARGV)), next if $arg =~ s{^-l}{};
     $dryrun = 1, next if $arg eq '-n';
     $full = 1, next if $arg eq '-f';
     die "Unknown option '$arg'\n";
@@ -67,6 +68,7 @@ my $diag;
 $| = 1;
 for (my $i = 0; $good; ++$i) {
     diag($diag = "i$i ");
+    $hlim = $Hlim if $i >= $k;
     my($ok, $t, $f) = tf($d + $i);
     $allgood = 1 if $i == $k && $good;
     $good = 0 unless $ok;
@@ -109,6 +111,20 @@ sub tf {
     my $t = 1;
     my @fact;
 
+    # try commandline factors
+    for my $p (@clf) {
+        if (($f % $p) == 0) {
+            my $x = 0;
+            while (($f % $p) == 0) {
+                $f /= $p;
+                ++$x;
+                diag($diag .= "$p ");
+            }
+            push @fact, $x == 1 ? $p : "$p^$x";
+            $t *= $x + 1;
+        }
+    }
+
     # trial_factor
     {
         my @f = trial_factor($f, $hlim);
@@ -137,15 +153,9 @@ sub tf {
         }
     }
 
-    # try commandline factors
-    for my $p (@clf) {
-        if (($f % $p) == 0) {
-            $f /= $p;
-            my $x = 1;
-            $f /= $p, ++$x while ($f % $p) == 0;
-            push @fact, $x == 1 ? $p : "$p^$x";
-            $t *= $x + 1;
-        }
+    {
+        no warnings;
+        @fact = sort { $a <=> $b } @fact;
     }
 
     my $e = 1;
