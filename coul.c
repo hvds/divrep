@@ -28,6 +28,7 @@
 #include "gmp_main.h"
 #include "utility.h"
 #include "primality.h"
+#include "prime_iterator.h"
 
 /* primary parameters - we are searching for D(n, k), the least d such
  * that tau(d + i) = n for all 0 <= i < k.
@@ -127,6 +128,7 @@ typedef struct s_level {
     uint level;     /* index of this entry */
     bool is_forced;
     uint vi;        /* allocation of p^x into v_i */
+    prime_iterator piter;
     ulong p;
     uint x;
     uint have_square;   /* number of v_i residues forced square so far */
@@ -145,6 +147,11 @@ typedef struct s_level {
 } t_level;
 t_level *levels = NULL;
 uint level = 0;
+
+static inline void level_setp(t_level *lp, ulong p) {
+    lp->p = p;
+    prime_iterator_setprime(&lp->piter, p);
+}
 
 /* Each value v_0 to v_{k-1} has had 'level' allocations of prime powers
  * p_i^{x_i-1}; q tracks the product of those prime powers, and t tracks
@@ -389,6 +396,7 @@ void free_levels(void) {
         t_level *l = &levels[i];
         mpz_clear(l->aq);
         mpz_clear(l->rq);
+        prime_iterator_destroy(&l->piter);
     }
     free(levels);
 }
@@ -401,6 +409,10 @@ void init_levels(void) {
         l->level = i;
         mpz_init(l->aq);
         mpz_init(l->rq);
+#if 0
+        /* not needed, prime_iterator_setprime() later will initialize */
+        prime_iterator_init(&l->piter);
+#endif
     }
     mpz_set_ui(levels[0].aq, 1);
     mpz_set_ui(levels[0].rq, 0);
@@ -2387,13 +2399,13 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
         if (prev->have_square)
             walk_v(prev, Z(zero));
         else if (level > 1 && !prev->is_forced)
-            prev->p = prev->limp;
+            level_setp(prev, prev->limp);
 #else
         walk_v(prev, Z(zero));
 #endif
         return PUX_ALL_DONE;
     }
-    cur->p = p;
+    level_setp(cur, p);
     cur->x = x;
     cur->limp = limp;
     cur->max_at = seen_best;
@@ -2521,6 +2533,7 @@ void insert_stack(void) {
             goto insert_check;
         }
 
+        level_setp(cur, p);
         /* CHECKME: this returns 0 if t=1 */
         if (!apply_single(prev, cur, vi, p, x))
             fail("could not apply_single(%u, %lu, %u)", vi, p, x);
@@ -2586,7 +2599,7 @@ void recurse(void) {
                 if (prev_level->have_square)
                     walk_v(prev_level, Z(zero));
                 else if (level > 1 && !prev_level->is_forced)
-                    prev_level->p = prev_level->limp;
+                    level_setp(prev_level, prev_level->limp);
 #else
                 walk_v(prev_level, Z(zero));
 #endif
@@ -2684,7 +2697,7 @@ void recurse(void) {
                 }
             /* note: only valid to use from just below here */
           redo_unforced:
-            p = next_prime(p);
+            p = prime_iterator_next(&cur_level->piter);
             if (p > cur_level->limp)
                 goto continue_unforced_x;
             if (p <= prev_level->maxp)
