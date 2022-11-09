@@ -2687,10 +2687,10 @@ void recurse(void) {
             p = next_prime(p);
             if (p > cur_level->limp)
                 goto continue_unforced_x;
-            /* TODO: save max_used_p, use it to short-circuit */
-            for (uint li = 1; li < level; ++li)
-                if (p == levels[li].p)
-                    goto redo_unforced;
+            if (p <= prev_level->maxp)
+                for (uint li = 1; li < level; ++li)
+                    if (p == levels[li].p)
+                        goto redo_unforced;
             /* note: this returns 0 if t=1 */
             if (!apply_single(prev_level, cur_level, cur_level->vi, p, cur_level->x)) {
                 if (need_work)
