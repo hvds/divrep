@@ -223,6 +223,7 @@ uint strategy_set = 0;  /* strategy was user-selected */
 
 int debug = 0;     /* diag and keep every case seen */
 ulong randseed = 1; /* for ECM, etc */
+bool vt100 = 0;     /* update window title with VT100 escape sequences */
 
 char *rpath = NULL; /* path to log file */
 FILE *rfp = NULL;   /* file handle to log file */
@@ -247,6 +248,19 @@ ulong countr, countw, countwi;
 char *diag_buf = NULL;
 
 void prep_show_v(void) {
+    if (vt100) {
+        /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
+        printf("\x1b]0;b%d:", batch_alloc);
+        uint pc = 0;
+        for (uint i = 1; i < level && pc < 3; ++i) {
+            if (levels[i].is_forced)
+                continue;
+            printf(" %lu", levels[i].p);
+            ++pc;
+        }
+        printf("\a");
+    }
+
     uint offset = 0;
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
@@ -444,6 +458,11 @@ void init_value(void) {
 }
 
 void done(void) {
+    /* update window title on completion */
+    if (vt100)
+        printf("\x1b]2;b%d: done\a",
+                opt_batch_min < 0 ? batch_alloc : opt_batch_max);
+
     free(diag_buf);
     if (wv_qq)
         for (uint i = 0; i < k; ++i)
@@ -2753,6 +2772,8 @@ int main(int argc, char **argv, char **envp) {
             opt_print = 1;
         else if (strncmp("-d", arg, 2) == 0)
             ++debug;
+        else if (strncmp("-v", arg, 2) == 0)
+            vt100 = 1;
         else if (arg[1] == 'j') {
             strategy = strtoul(&arg[2], NULL, 10);
             if (strategy >= NUM_STRATEGIES)
