@@ -250,7 +250,8 @@ char *diag_buf = NULL;
 void update_window(void) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
-        printf("\x1b]0;b%d:", batch_alloc);
+        uint this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
+        printf("\x1b]0;b%d:", this_batch);
         uint pc = 0;
         for (uint i = 1; i < level && pc < 3; ++i) {
             if (levels[i].is_forced)
