@@ -43,7 +43,7 @@ my $zero = MBI(0);
 my $zone = MBI(1);
 my $ztwo = MBI(2);
 
-my($min, $max, $inject, $debug, $nodb) = (0) x 5;
+my($min, $max, $inject, $debug, $nodb, $inject_only) = (0) x 6;
 my($rrun, $cap, $gain, $print);
 my $typename = 'o';
 my $seen_best = 0;
@@ -58,6 +58,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     ($cap = $arg || shift(@ARGV)), next if $arg =~ s{^-p}{};
     ($force_all = $arg || shift(@ARGV)), next if $arg =~ s{^-f}{};
     $inject = 1, next if $arg eq '-i';
+    $inject = $inject_only = 1, next if $arg eq '-I';
     $nodb = 1, next if $arg eq '-n';
     $print = 1, next if $arg eq '-o';
     ++$debug, next if $arg eq '-d';
@@ -89,9 +90,9 @@ $type->bind($n);
 my $nf = [ factor_exp($n) ];
 my $tn = tau($n, $nf);
 my(%fact, %fullfact, %nofact);
-prep_fact($n);
-prep_mintau();
-my @maxforce = prep_maxforce();
+prep_fact($n) unless $inject_only;
+prep_mintau() unless $inject_only;
+my @maxforce = prep_maxforce() unless $inject_only;
 
 my($diag_delay, $log_delay) = (1, 600);
 $t0 = 0 unless $rrun;
@@ -137,7 +138,7 @@ my @rq = ($zero);
 # is of the form "x:i1 i2 i3 ..." where x is the highest power of
 # p, and i1, i2 ... are the indices at which we find that power.
 my %pforce;
-do {
+unless ($inject_only) {
     my $p = 2;
     while ($p <= $k) {
         prep_forcep($p);
@@ -150,6 +151,7 @@ my($countr, $countw) = (0, 0);
 my @injected = (0) x $k;
 
 ($r, $fh) = prep_run($n, $k, $complete) if $inject && !$rrun;
+exit 0 if $inject_only;
 report(sprintf "001 %s%s%s%s -x%s\n",
     ($rrun ? 'recover ' : ''),
     $0,
