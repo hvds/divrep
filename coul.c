@@ -247,7 +247,7 @@ ulong countr, countw, countwi;
 #define DIAG_BUFSIZE (3 + k * maxfact * (20 + 1 + 5 + 1) + 1)
 char *diag_buf = NULL;
 
-void prep_show_v(void) {
+void update_window(void) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
         printf("\x1b]0;b%d:", batch_alloc);
@@ -260,7 +260,10 @@ void prep_show_v(void) {
         }
         printf("\a");
     }
+    fflush(stdout);
+}
 
+void prep_show_v(void) {
     uint offset = 0;
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
@@ -304,6 +307,7 @@ double seconds(double t1) {
 void diag_plain(void) {
     double t1 = utime();
 
+    update_window();
     prep_show_v();  /* into diag_buf */
     if (need_diag || diagt == 0) {
         diag("%s", diag_buf);
@@ -324,6 +328,7 @@ void diag_plain(void) {
 void diag_walk_v(ulong ati, ulong end) {
     double t1 = utime();
 
+    update_window();
     prep_show_v();  /* into diag_buf */
     if (need_diag || diagt == 0) {
         if (!(debug == 1 && ati))
@@ -346,6 +351,7 @@ void diag_walk_v(ulong ati, ulong end) {
 void diag_walk_zv(mpz_t ati, mpz_t end) {
     double t1 = utime();
 
+    update_window();
     prep_show_v();  /* into diag_buf */
     if (need_diag || diagt == 0) {
         if (!(debug == 1 && mpz_sgn(ati)))
@@ -368,6 +374,7 @@ void diag_walk_zv(mpz_t ati, mpz_t end) {
 void diag_walk_pell(uint pc) {
     double t1 = utime();
 
+    update_window();
     prep_show_v();  /* into diag_buf */
     if (need_diag || diagt == 0) {
         if (!(debug && pc))
@@ -389,10 +396,11 @@ void diag_walk_pell(uint pc) {
 
 void disp_batch(t_level *lp) {
     prep_show_v();      /* into diag_buf */
-    printf("203 b%u: %s", batch_alloc, diag_buf);
-    if (lp->have_square)
-        printf(" [sq=%u]", lp->have_square);
-    printf("\n");
+    if (lp->have_square) {
+        uint l = strlen(diag_buf);
+        sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
+    }
+    report("203 b%u: %s\n", batch_alloc, diag_buf);
 }
 
 void candidate(mpz_t c) {
