@@ -795,32 +795,7 @@ void prep_fact(void) {
 }
 
 void prep_mintau(void) {
-    /* max tau we care about */
-    uint maxt = n / (nf.count ? nf.ppow[nf.count - 1].p : 1);
-
-    /* max factors in a factorization of maxt */
-    int cp = -1;
-    for (int i = 0; i < nf.count; ++i)
-        cp += nf.ppow[i].e;
-
-    /* max allocation per element is number of odd prime factors */
-    int cop = cp + 1 - (nf.count ? 0 : nf.ppow[0].e);
-
-    /* max total allocations exclduding current one, ignoring forced primes */
-    int max_alloc = cop * k - 1;
-
-    /* we need at most 1 per factor of a factorization, plus 1 for each
-     * allocation, plus 1 per forced prime (which can be used without
-     * filling a normal allocation).
-     * Note: prime_count(k) will be forcedp.
-     * Note: this could be reduced by the min number of forced allocations
-     * that will use allocatable factors (ie divisible by odd prime).
-     */
-    int need = cp + max_alloc + simple_prime_count(k);
-
-    /* TODO: work out first what we want mintau() to do; we probably want
-     * to fill this cache lazily, or not cache at all.
-     */
+    return;
 }
 
 void prep_maxforce(void) {
