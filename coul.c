@@ -2443,8 +2443,13 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
 }
 
 /* On recovery, set up the recursion stack to the point we had reached.
+ * Returns FALSE if we should continue by recursing deeper from this
+ * point; returns TRUE if we should continue by advancing the current
+ * level.
  */
-void insert_stack(void) {
+bool insert_stack(void) {
+    bool jump = 0;
+
     /* first insert forced primes */
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
         t_forcep *fp = &forcep[fpi];
@@ -2462,7 +2467,7 @@ void insert_stack(void) {
         }
         /* find the batch */
         if (maxx == 0) {
-            if (fp->batch[fp->count -1].x != 0)
+            if (fp->batch[fp->count - 1].x != 0)
                 goto insert_check;
             /* this prime unforced, so any remaining ones are too */
             break;
@@ -2488,9 +2493,13 @@ void insert_stack(void) {
         cur->is_forced = 1;
         cur->bi = bi;
 
-        /* CHECKME: this returns 0 if t=1 */
-        if (!apply_single(prev, cur, mini, p, maxx))
-            fail("could not apply_single(%u, %lu, %u)", mini, p, maxx);
+        /* progress is shown just before we apply, so on recovery it is
+         * legitimate for the last one to fail */
+        if (!apply_single(prev, cur, mini, p, maxx)) {
+            jump = 1;
+            goto insert_check;
+        }
+
         /* TODO: prep this, per apply_batch */
         for (uint j = p; j <= mini; j += p) {
             uint vj = mini - j;
@@ -2558,13 +2567,18 @@ void insert_stack(void) {
             fail("prep_nextt %u for %lu^%u at %u\n", pux, p, x, vi);
           case PUX_ALL_DONE:
             /* we have now acted on this */
+            jump = 1;
             goto insert_check;
         }
 
         level_setp(cur, p);
-        /* CHECKME: this returns 0 if t=1 */
-        if (!apply_single(prev, cur, vi, p, x))
-            fail("could not apply_single(%u, %lu, %u)", vi, p, x);
+        /* progress is shown just before we apply, so on recovery it is
+         * legitimate for the last one to fail */
+        if (!apply_single(prev, cur, vi, p, x)) {
+            --value[cur->vi].vlevel;
+            jump = 1;
+            goto insert_check;
+        }
         ++level;
     }
   insert_check:
@@ -2576,13 +2590,20 @@ void insert_stack(void) {
             fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
         }
     }
+    return jump;
 }
 
 /* we emulate recursive calls via the levels[] array */
-void recurse(void) {
+void recurse(bool jump_continue) {
     ulong p;
     uint x;
     t_level *prev_level, *cur_level;
+
+    if (jump_continue) {
+        prev_level = &levels[level - 1];
+        cur_level = &levels[level];
+        goto continue_recurse;
+    }
 
     if (have_rwalk) {
         prev_level = &levels[level - 1];
@@ -2806,15 +2827,17 @@ int main(int argc, char **argv, char **envp) {
     char s[] = "7^2 2.71^2 3^8 2^2.5^2 11^2.29^2 (0.00s)\n";
     parse_305(s);
 #endif
+
+    bool jump = 0;
     if (rstack) {
-        insert_stack();
+        jump = insert_stack();
         /* FIXME: temporary fix for recovering a single batch run.
          * It won't do the right thing for a range of batches.
          */
         if (opt_batch_min >= 0)
             batch_alloc = opt_batch_min + 1;
     }
-    recurse();
+    recurse(jump);
     keep_diag();
 
     double tz = utime();
