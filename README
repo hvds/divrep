@@ -134,6 +134,12 @@ is equivalent to "-x13000000".
 The default minimum is zero; there is no default maximum: this is a
 required option.
 
+If "-X" is specified, it will search for all solutions up to the
+specified maximum. By default, it will search only for solutions that
+improve on the best found so far.
+Even with -X, it will still track the best solution found to report it
+at the end of the run.
+
 If "-g2:3" is specified, it will set gain = 3/2. This is a multiplier
 used to control the transition from recurse() to walk_v() (see below).
 A higher gain means it spends more time in recurse(), a lower gain means

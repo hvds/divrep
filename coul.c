@@ -201,6 +201,8 @@ volatile bool need_work, need_diag, need_log;
 bool clock_is_realtime;
 
 mpz_t min, max;     /* limits to check for v_0 */
+mpz_t best;         /* best solution seen */
+bool improve_max = 1;   /* reduce max when solution found */
 uint seen_best = 0; /* number of times we've improved max */
 ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
@@ -408,10 +410,12 @@ void candidate(mpz_t c) {
     keep_diag();
     double t1 = utime();
     report("202 Candidate %Zu (%.2fs)\n", c, seconds(t1));
-    if (mpz_cmp(c, max) <= 0) {
-        mpz_set(max, c);
+    if (!seen_best || mpz_cmp(c, best) <= 0) {
+        mpz_set(best, c);
         ++seen_best;
     }
+    if (improve_max && mpz_cmp(c, max) <= 0)
+        mpz_set(max, c);
 }
 
 void free_levels(void) {
@@ -602,6 +606,7 @@ void init_pre(void) {
         mpz_init(Z(i));
     mpz_set_ui(Z(zero), 0);
     mpz_set_ui(Z(zone), 1);
+    mpz_init(best);
 }
 
 /* Parse a "305" log line for initialization.
@@ -662,7 +667,6 @@ void parse_305(char *s) {
 
 void recover(void) {
     char *last305 = NULL;
-    char *last202 = NULL;
     char *curbuf = NULL;
     size_t len = 120, len305 = 0, len202 = 0;
 
@@ -695,12 +699,17 @@ void recover(void) {
             len305 = len;
             len = lt;
         } else if (strncmp("202 ", curbuf, 4) == 0) {
-            char *t = last202;
-            last202 = curbuf;
-            curbuf = t;
-            size_t lt = len202;
-            len202 = len;
-            len = lt;
+            int start, end;
+            mpz_t cand;
+            if (EOF == sscanf(curbuf, "202 Candidate %n%*[0-9]%n (%*[0-9.]s)\n",
+                    &start, &end))
+                fail("error parsing 202 line '%s'", curbuf);
+            curbuf[end] = 0;
+            mpz_init_set_str(cand, &curbuf[start], 10);
+            if (!seen_best || mpz_cmp(best, cand) >= 0)
+                mpz_set(best, cand);
+            seen_best = 1;
+            mpz_clear(cand);
         } else if (strncmp("001 ", curbuf, 4) == 0) {
             /* TODO: parse and check for consistent options */
             start_seen = 1;
@@ -710,25 +719,12 @@ void recover(void) {
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
     fseek(rfp, 0L, SEEK_END);
-    if (last202) {
-        int start, end;
-        mpz_t cand;
-        if (EOF == sscanf(last202, "202 Candidate %n%*[0-9]%n (%*[0-9.]s)\n",
-                &start, &end))
-            fail("error parsing 202 line '%s'", last202);
-        last202[end] = 0;
-        mpz_init_set_str(cand, &last202[start], 10);
-        if (mpz_sgn(max) == 0 || mpz_cmp(max, cand) >= 0) {
-            mpz_set(max, cand);
-            ++seen_best;
-        }
-        mpz_clear(cand);
-    }
+    if (improve_max && seen_best && mpz_cmp(best, max) < 0)
+        mpz_set(max, best);
     if (last305)
         parse_305(last305 + 4);
     free(curbuf);
     free(last305);
-    free(last202);
 }
 
 int cmp_high(const void *va, const void *vb) {
@@ -1392,7 +1388,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
                 mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
                 candidate(Z(wv_cand));
-                break;
+                if (improve_max)
+                    break;
 
               next_pell:
                 ;
@@ -1493,7 +1490,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
             mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
             mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
             candidate(Z(wv_cand));
-            return;
+            if (improve_max)
+                return;
           next_sqati:
             ++rindex;
             if (rindex >= xr->count) {
@@ -1546,7 +1544,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
         mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
         candidate(Z(wv_cand));
-        return;
+        if (improve_max)
+            return;
       next_ati:
         ;
     }
@@ -2713,7 +2712,7 @@ void recurse(bool jump_continue) {
         {
             ulong p = cur_level->p;
             /* recalculate limit if we have an improved maximum */
-            if (seen_best > cur_level->max_at)
+            if (improve_max && seen_best > cur_level->max_at)
                 switch (prep_unforced_x(prev_level, cur_level, p)) {
                   case PUX_NOTHING_TO_DO:
                   case PUX_ALL_DONE:
@@ -2756,6 +2755,8 @@ int main(int argc, char **argv, char **envp) {
             break;
         if (arg[1] == 'x')
             set_minmax(&arg[2]);
+        else if (strncmp("-X", arg, 2) == 0)
+            improve_max = 0;
         else if (arg[1] == 'g')
             set_gain(&arg[2]);
         else if (arg[1] == 'p')
@@ -2819,7 +2820,7 @@ int main(int argc, char **argv, char **envp) {
     report("367 coul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)\n",
             n, k, countr, countw, countwi, seconds(tz));
     if (seen_best)
-        report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, max, seconds(tz));
+        report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, best, seconds(tz));
     done();
     return 0;
 }
