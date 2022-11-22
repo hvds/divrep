@@ -150,6 +150,7 @@ Fine-tuning the gain can make a big difference to runtime; default gain is 1.
 If "-p50:100" is specified, it will allocate (see below) only powers of
 primes p < 100, and will allocate at least one power of a prime p > 50.
 This can be used to search more selectively to improve an upper limit.
+"-p:100" or "-p100" are equivalent to "-p0:100".
 By default it considers all possible allocations.
 
 If "-s2" is specified, it will initialize the random number generator
