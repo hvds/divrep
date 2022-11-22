@@ -191,8 +191,9 @@ uint nsprimes;
 /* set to utime at start of run, minus last timestamp of recovery file */
 double t0 = 0;
 struct rusage rusage_buf;
+int gr_error;
 static inline double utime(void) {
-    getrusage(RUSAGE_SELF, &rusage_buf);
+    gr_error = getrusage(RUSAGE_SELF, &rusage_buf);
     return (double)rusage_buf.ru_utime.tv_sec
             + (double)rusage_buf.ru_utime.tv_usec / 1000000;
 }
@@ -320,7 +321,10 @@ void diag_plain(void) {
     }
 
     if (rfp && need_log) {
-        fprintf(rfp, "305 %s (%.2fs)\n", diag_buf, seconds(t1));
+        fprintf(rfp, "305 %s (%.2fs)", diag_buf, seconds(t1));
+        if (gr_error)
+            fprintf(rfp, " [%d]", gr_error);
+        fprintf(rfp, "\n");
         logt = t1 + log_delay;
         need_log = 0;
     }
@@ -342,8 +346,11 @@ void diag_walk_v(ulong ati, ulong end) {
     }
 
     if (rfp && need_log) {
-        fprintf(rfp, "305 %s: %lu / %lu (%.2fs)\n",
+        fprintf(rfp, "305 %s: %lu / %lu (%.2fs)",
                 diag_buf, ati, end, seconds(t1));
+        if (gr_error)
+            fprintf(rfp, " [%d]", gr_error);
+        fprintf(rfp, "\n");
         logt = t1 + log_delay;
         need_log = 0;
     }
@@ -365,8 +372,11 @@ void diag_walk_zv(mpz_t ati, mpz_t end) {
     }
 
     if (rfp && need_log) {
-        gmp_fprintf(rfp, "305 %s: %Zu / %Zu (%.2fs)\n",
+        gmp_fprintf(rfp, "305 %s: %Zu / %Zu (%.2fs)",
                 diag_buf, ati, end, seconds(t1));
+        if (gr_error)
+            fprintf(rfp, " [%d]", gr_error);
+        fprintf(rfp, "\n");
         logt = t1 + log_delay;
         need_log = 0;
     }
@@ -388,8 +398,11 @@ void diag_walk_pell(uint pc) {
     }
 
     if (rfp && need_log) {
-        fprintf(rfp, "305 %s: P%u (%.2fs)\n",
+        fprintf(rfp, "305 %s: P%u (%.2fs)",
                 diag_buf, pc, seconds(t1));
+        if (gr_error)
+            fprintf(rfp, " [%d]", gr_error);
+        fprintf(rfp, "\n");
         logt = t1 + log_delay;
         need_log = 0;
     }
