@@ -106,6 +106,7 @@ void init(void) {
         mpz_init(Z(i));
     init_diag();
     init_time();
+    init_tau(0);
 }
 
 void ston(mpz_t targ, char *s) {
@@ -183,7 +184,7 @@ void tryvalue(mpz_t zv) {
     if (!is_taux(Z(temp), 12, 1))
         return;
     keep_diag();
-    gmp_printf("hit near %Zu\n", v);
+    gmp_printf("hit near %Zu\n", Z(v));
 }
 
 void tryp(ulong p) {
