@@ -7,7 +7,7 @@ ifeq "${GCC_MAJOR}" "7"
   CC_EXTRA_OPT = -ftree-loop-linear -ftree-loop-distribution -ftree-loop-im
 endif
 CC_OPT = -O6 -fgcse-sm -fgcse-las -fgcse-after-reload -fivopts -ftracer -funroll-loops -fvariable-expansion-in-unroller -freorder-blocks-and-partition -funswitch-loops ${CC_EXTRA_OPT}
-dcoul dpcoul: CC_OPT = -O0
+dcoul dpcoul dsq12: CC_OPT = -O0
 
 CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/pbrent63.c ${MPUGMP}/isaac.c ${MPUGMP}/tinyqs.c ${MPUGMP}/squfof126.c ${MPUGMP}/simpqs.c ${MPUGMP}/primality.c ${MPUGMP}/utility.c ${MPUGMP}/gmp_main.c ${MPUGMP}/bls75.c ${MPUGMP}/real.c ${MPUGMP}/ecpp.c
 HFACTOR = ${MPUGMP}/factor.h
@@ -44,3 +44,6 @@ ftest: Makefile ftest.c coultau.c ${HOUL} ${CFACTOR} ${HFACTOR}
 
 speed: Makefile speed.c ${HFACTOR} ${MPUGMP}/gmp_main.c
 	gcc -o speed -g ${CC_OPT} ${DEFINES} speed.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+
+sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h prime_iterator.h ${CFACTOR} ${HFACTOR}
+	gcc -o $@ -g ${CC_OPT} ${DEFINES} sq12.c diag.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
