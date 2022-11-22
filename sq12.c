@@ -129,10 +129,24 @@ ulong ulston(char *s) {
     fail("value '%s' out of range of ulong", s);
 }
 
+/* m = (n % 576) >> 4 will tell us n32, the nearest multiple of 32 to n.
+ * We need n32 = 32p, so can disallow p even; we also require n32 == 2 or -2
+ * (mod 18).
+ */
+const bool fail_36[36] = {
+    1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 1, 1
+};
+
 void tryvalue(mpz_t zv) {
+    uint mod576 = mpz_fdiv_ui(zv, 576);
+    if (fail_36[mod576 >> 4])
+        return;
+    uint mod32 = mod576 & 31;
+
     /* find nearest multiple of 32 */
-    /* TODO: work mod 576, rolling in the mod 18 check and n32 div 64 or 3 */
-    uint mod32 = mpz_get_ui(zv) & 31;
     mpz_sub_ui(Z(n32), zv, mod32);
     if (mod32 & 16)
         mpz_add_ui(Z(n32), Z(n32), 32);
@@ -144,17 +158,16 @@ void tryvalue(mpz_t zv) {
 
     /* we know p > 3, and we know n32 +/- 2 = 6q^2 can be ruled out,
      * so we must have n32 +/- 2 = 18q. */
-    uint mod18 = mpz_fdiv_ui(Z(n32), 18);
-    switch (mod18) {
-      case 2:
+    if (mod576 > 288) {
+        /* n32 == 2 (mod 18) */
         mpz_fdiv_q_ui(Z(temp), Z(n32), 18);
         if (!_GMP_is_prob_prime(Z(temp)))
             return;
         mpz_add_ui(Z(temp), Z(n32), 2);
         if (!is_taux(Z(temp), 12, 1))
             return;
-        break;
-      case 16:
+    } else {
+        /* n32 == -2 (mod 18) */
         mpz_fdiv_q_ui(Z(temp), Z(n32), 18);
         mpz_add_ui(Z(temp), Z(temp), 1);
         if (!_GMP_is_prob_prime(Z(temp)))
@@ -162,9 +175,6 @@ void tryvalue(mpz_t zv) {
         mpz_sub_ui(Z(temp), Z(n32), 2);
         if (!is_taux(Z(temp), 12, 1))
             return;
-        break;
-      default:
-        return;
     }
     mpz_sub_ui(Z(temp), Z(n32), 1);
     if (!is_taux(Z(temp), 12, 1))
