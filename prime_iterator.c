@@ -26,6 +26,10 @@ static const unsigned char nextwheel30[30] = {
     1,  7,  7,  7,  7,  7,  7, 11, 11, 11, 11, 13, 13, 17, 17,
    17, 17, 19, 19, 23, 23, 23, 23, 29, 29, 29, 29, 29, 29,  1
 };
+static const unsigned char prevwheel30[30] = {
+   29, 29,  1,  1,  1,  1,  1,  1,  7,  7,  7,  7, 11, 11, 13,
+   13, 13, 13, 17, 17, 19, 19, 19, 19, 23, 23, 23, 23, 23, 23
+};
 
 static INLINE UV next_prime_in_segment(
     const unsigned char* sieve, UV segment_start, UV segment_bytes, UV p
@@ -45,6 +49,28 @@ static INLINE UV next_prime_in_segment(
                 return 0;
         } else
             m = nextwheel30[m];
+    } while (sieve[d] & masktab30[m]);
+    return segment_start + d * 30 + m;
+}
+
+static INLINE UV prev_prime_in_segment(
+    const unsigned char* sieve, UV segment_start, UV segment_bytes, UV p
+) {
+    UV d, m;
+    if (p < segment_start)
+        return 0;
+    d = (p - segment_start) / 30;
+    if (d >= segment_bytes)
+        return 0;
+    m = (p - segment_start) - d * 30;
+    do {
+        if (m == 1) {
+            if (d == 0)
+                return 0;
+            d--;
+            m = 29;
+        } else
+            m = prevwheel30[m];
     } while (sieve[d] & masktab30[m]);
     return segment_start + d * 30 + m;
 }
@@ -433,6 +459,59 @@ UV prime_iterator_next(prime_iterator *iter) {
     iter->segment_mem = sieve;
 
     n = next_prime_in_segment(sieve, seg_beg, iter->segment_bytes, seg_beg);
+    if (n > 0) {
+        iter->p = n;
+        return n;
+    }
+    croak("MPU: segment size too small, could not find prime\n");
+}
+
+UV prime_iterator_prev(prime_iterator *iter) {
+    UV lod, hid, seg_beg, seg_end;
+    unsigned char* sieve;
+    UV n = iter->p;
+
+    if (n <= 2)
+        return 0;
+
+    /* Primary sieve */
+    if (n < 30 * PRIMARY_SIZE) {
+      prev_primary:
+        n = prev_prime_in_segment(primary_sieve, 0, PRIMARY_SIZE, iter->p);
+        /* set and return 0 if no previous prime */
+        iter->p = n;
+        return n;
+    }
+
+    sieve = iter->segment_mem;
+    /* Current segment */
+    if (sieve) {
+        seg_beg = iter->segment_start;
+        seg_end = iter->segment_start + 30 * iter->segment_bytes - 1;
+        n = prev_prime_in_segment(sieve, seg_beg, iter->segment_bytes, iter->p);
+        if (n > 0) {
+            iter->p = n;
+            return n;
+        }
+        /* Not found in this segment */
+        lod = (seg_beg - SEGMENT_SIZE) / 30;
+        if (lod < PRIMARY_SIZE)
+            goto prev_primary;
+    } else {
+        croak("No sieve and not primary in prime_iterator_prev()\n");
+    }
+
+    hid = lod + SEGMENT_SIZE - 1;
+    iter->segment_start = lod * 30;
+    iter->segment_bytes = SEGMENT_SIZE;
+    seg_beg = iter->segment_start;
+    seg_end = iter->segment_start + 30 * iter->segment_bytes - 1;
+
+    if (!sieve_segment(sieve, lod, hid, primary_sieve, primary_limit))
+        croak("Could not segment sieve from %lu to %lu", seg_beg, seg_end);
+    iter->segment_mem = sieve;
+
+    n = prev_prime_in_segment(sieve, seg_beg, iter->segment_bytes, seg_beg);
     if (n > 0) {
         iter->p = n;
         return n;
