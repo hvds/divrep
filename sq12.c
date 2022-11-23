@@ -183,6 +183,13 @@ void tryvalue(mpz_t zv) {
     mpz_add_ui(Z(temp), Z(n32), 1);
     if (!is_taux(Z(temp), 12, 1))
         return;
+    /* extend chain 10 to 11 */
+    mpz_sub_ui(Z(temp), Z(n32), 3);
+    if (!is_taux(Z(temp), 12, 1))
+        return;
+    mpz_add_ui(Z(temp), Z(n32), 3);
+    if (!is_taux(Z(temp), 12, 1))
+        return;
     keep_diag();
     gmp_printf("hit near %Zu\n", Z(v));
 }
