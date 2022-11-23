@@ -196,20 +196,28 @@ void tryp(ulong p) {
     ulong qmax = (ulong)sqrt(qrmax);
     ulong q = 2;
     prime_iterator_setprime(&iq, q);
+    bool want_cube = 1;
     while (q <= qmax) {
         if (need_work)
             diag_pq(p, q);
         mpz_mul_ui(Z(p2q), Z(p2), q);
         ulong rmax = qrmax / q;
-        ulong r = q;
-        prime_iterator_setprime(&ir, r);
-        r = prime_iterator_next(&ir);
+        prime_iterator_setprime(&ir, q);
+        ulong r = prime_iterator_next(&ir);
         while (r <= rmax) {
             if (need_work)
                 diag_pqr(p, q, r);
             mpz_mul_ui(Z(v), Z(p2q), r);
             tryvalue(Z(v));
             r = prime_iterator_next(&ir);
+        }
+        if (want_cube) {
+            /* if q^3 < qrmax, try that too */
+            if (q <= rmax / q) {
+                mpz_mul_ui(Z(v), Z(p2q), q * q);
+                tryvalue(Z(v));
+            } else
+                want_cube = 0;
         }
         q = prime_iterator_next(&iq);
     }
