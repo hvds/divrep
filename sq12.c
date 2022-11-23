@@ -34,10 +34,19 @@ ulong pmin, pmax;
 prime_iterator ip, iq, ir;
 t_divisors *divisors;
 
-uint diag_delay = 1;
-timer_t diag_timerid;
+uint diag_delay = 1, log_delay = 600;
+timer_t diag_timerid, log_timerid;
 volatile bool need_work = 0;
 bool clock_is_realtime = 0;
+struct rusage rusage_buf;
+static inline double utime(void) {
+    getrusage(RUSAGE_SELF, &rusage_buf);
+    return (double)rusage_buf.ru_utime.tv_sec
+            + (double)rusage_buf.ru_utime.tv_usec / 1000000;
+}
+
+char *rpath = NULL; /* path to log file */
+FILE *rfp = NULL;   /* file handle to log file */
 
 void fail(char *format, ...) {
     va_list ap;
@@ -45,40 +54,70 @@ void fail(char *format, ...) {
     vfprintf(stderr, format, ap);
     fprintf(stderr, "\n");
     va_end(ap);
+    if (rfp)
+        fclose(rfp);
     exit(1);
 }
 
+void report(char *format, ...) {
+    keep_diag();
+    va_list ap;
+    va_start(ap, format);
+    gmp_vfprintf(stdout, format, ap);
+    va_end(ap);
+
+    if (rfp) {
+        va_start(ap, format);
+        gmp_vfprintf(rfp, format, ap);
+        va_end(ap);
+        fflush(rfp);
+    }
+}
+
 char buf[256];
+void do_diag(void) {
+    if (need_work & 1) {
+        diag(buf);
+        need_work &= ~1;
+    }
+    if (rfp && (need_work & 2)) {
+        fprintf(rfp, "305 %s (%.2fs)\n", buf, utime());
+        need_work &= ~2;
+    }
+}
+
 void diag_p(ulong p) {
     sprintf(buf, "%lu", p);
-    diag(buf);
-    need_work = 0;
+    do_diag();
 }
 void diag_pq(ulong p, ulong q) {
     sprintf(buf, "%lu %lu", p, q);
-    diag(buf);
-    need_work = 0;
+    do_diag();
 }
 void diag_pqr(ulong p, ulong q, ulong r) {
     sprintf(buf, "%lu %lu %lu", p, q, r);
-    diag(buf);
-    need_work = 0;
+    do_diag();
 }
 
 void handle_sig(int sig) {
-    need_work = 1;
+    if (sig == SIGUSR1)
+        need_work |= 1;
+    else
+        need_work |= 2;
 }
 
 void init_time(void) {
     struct sigaction sa;
     struct sigevent sev;
-    struct itimerspec diag_timer;
+    struct itimerspec diag_timer, log_timer;
 
     sa.sa_handler = &handle_sig;
     sa.sa_flags = SA_RESTART;
     sigemptyset(&sa.sa_mask);
     if (sigaction(SIGUSR1, &sa, NULL))
         fail("Could not set USR1 handler: %s\n", strerror(errno));
+    if (sigaction(SIGUSR2, &sa, NULL))
+        fail("Could not set USR2 handler: %s\n", strerror(errno));
 
     sev.sigev_notify = SIGEV_SIGNAL;
     sev.sigev_signo = SIGUSR1;
@@ -91,12 +130,25 @@ void init_time(void) {
         clock_is_realtime = 1;
     }
 
+    sev.sigev_signo = SIGUSR2;
+    sev.sigev_value.sival_ptr = &log_timerid;
+    clockid_t clock = clock_is_realtime
+            ? CLOCK_REALTIME : CLOCK_PROCESS_CPUTIME_ID;
+    if (timer_create(clock, &sev, &log_timerid))
+        fail("Could not create log timer: %s\n", strerror(errno));
+
     diag_timer.it_value.tv_sec = diag_delay;
     diag_timer.it_value.tv_nsec = 0;
     diag_timer.it_interval.tv_sec = diag_delay;
     diag_timer.it_interval.tv_nsec = 0;
     if (timer_settime(diag_timerid, 0, &diag_timer, NULL))
         fail("Could not set diag timer: %s\n", strerror(errno));
+    log_timer.it_value.tv_sec = log_delay;
+    log_timer.it_value.tv_nsec = 0;
+    log_timer.it_interval.tv_sec = log_delay;
+    log_timer.it_interval.tv_nsec = 0;
+    if (timer_settime(log_timerid, 0, &log_timer, NULL))
+        fail("Could not set log timer: %s\n", strerror(errno));
 }
 
 void init(void) {
@@ -191,7 +243,7 @@ void tryvalue(mpz_t zv) {
     if (!is_taux(Z(temp), 12, 1))
         return;
     keep_diag();
-    gmp_printf("hit near %Zu\n", Z(v));
+    report("209 hit near %Zu (%.2fs)\n", Z(v), utime());
 }
 
 void tryp(ulong p) {
@@ -232,14 +284,33 @@ void tryp(ulong p) {
 }
 
 int main(int argc, char **argv, char **envp) {
+    int i = 1;
     init();
-    if (argc != 4)
+    while (i < argc && argv[i][0] == '-') {
+        char *arg = argv[i++];
+        if (arg[1] == 'r') {
+            rpath = (char *)malloc(strlen(&arg[2]) + 1);
+            strcpy(rpath, &arg[2]);
+        } else
+            fail("unknown option '%s'", arg);
+    }
+    if (i + 3 != argc)
         fail("wrong number of arguments");
-    ston(Z(lim), argv[1]);
-    ulong pmin = ulston(argv[2]);
-    ulong pmax = ulston(argv[3]);
+    ston(Z(lim), argv[i++]);
+    ulong pmin = ulston(argv[i++]);
+    ulong pmax = ulston(argv[i++]);
 
-    prime_iterator_setprime(&ip, pmax + 1);
+    if (rpath) {
+        printf("path %s\n", rpath);
+        rfp = fopen(rpath, "a");
+        if (rfp == NULL)
+            fail("%s: %s", rpath, strerror(errno));
+        setlinebuf(rfp);
+    }
+    report("001 sq12 %Zu %lu %lu\n", Z(lim), pmin, pmax);
+
+    prime_iterator_setprime(&ip, pmax);
+    prime_iterator_next(&ip);
     while (1) {
         ulong p = prime_iterator_prev(&ip);
         if (p < pmin)
@@ -248,6 +319,8 @@ int main(int argc, char **argv, char **envp) {
             diag_p(p);
         tryp(p);
     }
-    keep_diag();
+    report("200 sq12 %Zu %lu %lu (%.2fs)\n", Z(lim), pmin, pmax, utime());
+    if (rfp)
+        fclose(rfp);
     return 0;
 }
