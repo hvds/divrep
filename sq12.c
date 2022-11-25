@@ -193,11 +193,21 @@ const bool fail_36[36] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1
 };
 
+/* p^2qr is relevant only if it is within +/- 7 of n32. */
+const bool fail_32[32] = {
+    0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 0
+};
+
 void tryvalue(mpz_t zv) {
     uint mod576 = mpz_fdiv_ui(zv, 576);
     if (fail_36[mod576 >> 4])
         return;
     uint mod32 = mod576 & 31;
+    if (fail_32[mod32])
+        return;
 
     /* find nearest multiple of 32 */
     mpz_sub_ui(Z(n32), zv, mod32);
