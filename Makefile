@@ -29,6 +29,9 @@ endif
 ifdef TRY_HARDER
     DEFINES += -DTRY_HARDER
 endif
+ifdef DEBUG_ALL
+    DEFINES += -DDEBUG_ALL
+endif
 
 default: pcoul
 all: coul pcoul dcoul dpcoul

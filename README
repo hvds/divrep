@@ -77,6 +77,9 @@ about 15 minutes and each subsequent one doubling the time.
 Generally this isn't worthwhile: if we didn't find a factor before
 these tests, ECM probably won't find it.
 
+-DDEBUG_ALL: print to the log file every number tested by linear search
+(without a fixed square). Will fail if run without a log file.
+
 WINDOWS BUILD
 =============
 

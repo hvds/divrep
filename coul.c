@@ -1522,6 +1522,13 @@ void walk_v(t_level *cur_level, mpz_t start) {
             if (ati % ip->m == ip->v)
                 goto next_ati;
         }
+#ifdef DEBUG_ALL
+        mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
+        mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
+        mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
+        gmp_fprintf(rfp, "D %Zu\n", Z(wv_cand));
+        fflush(rfp);
+#endif
         /* note: we have no squares */
         for (uint i = 0; i < npc; ++i) {
             uint vi = need_prime[i];
