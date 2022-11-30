@@ -47,6 +47,7 @@ static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
 /* stash of mpz_t, initialized once at start */
 typedef enum {
     zero, zone,                 /* constants */
+    temp,
     sqm_t, sqm_q, sqm_b, sqm_z, sqm_x,  /* sqrtmod_t */
     uc_minusvi, uc_px,          /* update_chinese */
     ur_a, ur_m, ur_ipg,         /* update_residues */
@@ -208,9 +209,14 @@ ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
 /* maxp is the greatest prime we should attempt to allocate; minp is the
  * threshold that at least one allocated prime should exceed (else we can
- * skip the walk)
+ * skip the walk); midp is the threshold beyond which we should pre-walk.
+ * When midp is in use, we save maxp in orig_maxp, and overwrite it.
  */
-uint minp = 0, maxp = 0;
+uint minp = 0, maxp = 0, orig_maxp, midp = 0;
+struct {
+    ulong p;
+    uint vi;
+} midp_recover;
 uint rough = 0;     /* test roughness if tau >= rough */
 bool opt_print = 0; /* print candidates instead of fully testing them */
 /* If opt_alloc is true and opt_batch < 0, just show the forced-prime
@@ -268,14 +274,21 @@ void update_window(void) {
 
 void prep_show_v(void) {
     uint offset = 0;
+    uint mid_vi;
+    bool show_mid = 0;
+    if (midp && midp < maxp) {
+        show_mid = 1;
+        mid_vi = levels[level].vi;
+    }
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
+        uint vlevel = vp->vlevel - ((show_mid && vi == mid_vi) ? 1 : 0);
         if (vi)
             diag_buf[offset++] = ' ';
-        if (vp->vlevel == 0)
+        if (vlevel == 0)
             diag_buf[offset++] = '.';
         else {
-            for (uint ai = 0; ai < vp->vlevel; ++ai) {
+            for (uint ai = 0; ai < vlevel; ++ai) {
                 t_allocation *ap = &vp->alloc[ai];
                 if (ai)
                     diag_buf[offset++] = '.';
@@ -284,6 +297,10 @@ void prep_show_v(void) {
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
             }
         }
+    }
+    if (show_mid) {
+        ulong p = levels[level].p;
+        offset += sprintf(&diag_buf[offset], " W(%lu,%u)", p, mid_vi);
     }
     diag_buf[offset] = 0;
 }
@@ -615,6 +632,7 @@ void init_pre(void) {
 void parse_305(char *s) {
     double dtime;
     t_ppow pp;
+    bool is_W = 0;
 
     rstack = (t_fact *)malloc(k * sizeof(t_fact));
     for (int i = 0; i < k; ++i)
@@ -640,6 +658,16 @@ void parse_305(char *s) {
         /* reverse them, so we can pop as we allocate */
         reverse_fact(&rstack[i]);
     }
+    if (strncmp(s, " W(", 3) == 0) {
+        s += 3;
+        is_W = 1;
+        midp_recover.p = strtoul(s, &s, 10);
+        assert(s[0] == ',');
+        ++s;
+        midp_recover.vi = strtoul(s, &s, 10);
+        assert(s[0] == ')');
+        ++s;
+    }
     if (s[0] == ':') {
         assert(s[1] == ' ');
         s += 2;
@@ -662,6 +690,11 @@ void parse_305(char *s) {
     }
     if (EOF == sscanf(s, " (%lfs)\n", &dtime))
         fail("could not parse 305 time: '%s'", s);
+    if (midp && !is_W) {
+        orig_maxp = maxp;
+        maxp = midp;
+    } else if (is_W && !midp)
+        fail("recovery expected -W option");
     t0 -= dtime;
 }
 
@@ -989,8 +1022,10 @@ void report_init(FILE *fp, char *prog) {
         if (minp)
             fprintf(fp, "%u:", minp);
         if (maxp)
-            fprintf(fp, "%u", maxp);
+            fprintf(fp, "%u", (midp && midp == maxp) ? orig_maxp : maxp);
     }
+    if (midp)
+        fprintf(fp, " -W%u", midp);
     if (force_all)
         fprintf(fp, " -f%u", force_all);
     if (gain > 1 || antigain > 1) {
@@ -1856,6 +1891,57 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
+void walk_midp(t_level *prev, bool recover) {
+    ++level;
+    t_level *cur = &levels[level];
+    uint need_alloc[k];
+    uint nac = 0;
+    ulong p;
+    uint nai;
+
+    for (uint vi = 0; vi < k; ++vi) {
+        t_value *vp = &value[vi];
+        uint t = vp->vlevel ? vp->alloc[vp->vlevel - 1].t : n;
+        if (t % 3)
+            continue;
+        need_alloc[nac++] = vi;
+    }
+
+    /* setp will set to a prime <= maxp */
+    level_setp(cur, maxp);
+    prime_iterator_next(&cur->piter);
+
+    if (recover) {
+        p = midp_recover.p;
+        level_setp(cur, p);
+        nai = k;    /* guard */
+        for (uint j = 0 ; j < nac; ++j)
+            if (need_alloc[j] == midp_recover.vi) {
+                nai = j;
+                break;
+            }
+        if (nai == k)
+            fail("midp recovery vi=%u invalid", midp_recover.vi);
+        goto do_recover;
+    }
+
+    while (1) {
+        p = prime_iterator_prev(&cur->piter);
+        if (p <= midp)
+            break;
+        for (nai = 0; nai < nac; ++nai) {
+          do_recover: ;
+            uint vi = need_alloc[nai];
+            if (apply_single(prev, cur, vi, p, 3))
+                walk_v(cur, Z(zero));
+            /* unallocate */
+            --value[vi].vlevel;
+        }
+    }
+    --level;
+    maxp = midp;
+}
+
 bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
     assert(fp->count > bi);
     t_value *vp;
@@ -1918,6 +2004,9 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
         ) {
             /* we want to process this batch */
             ++batch_alloc;
+            /* if we have -W to process, do that now */
+            if (midp && midp < maxp)
+                walk_midp(cur, 0);
             return 1;
         }
         if (opt_batch_min < 0)
@@ -2423,13 +2512,18 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
     return PUX_DO_THIS_X;
 }
 
+typedef enum {
+    IS_DEEPER = 0,
+    IS_NEXT,
+    IS_MIDP
+} e_is;
 /* On recovery, set up the recursion stack to the point we had reached.
- * Returns FALSE if we should continue by recursing deeper from this
- * point; returns TRUE if we should continue by advancing the current
- * level.
+ * Returns IS_DEEPER if we should continue by recursing deeper from this
+ * point; returns IS_NEXT if we should continue by advancing the current
+ * level; and returns IS_MIDP if we should continue via walk_midp().
  */
-bool insert_stack(void) {
-    bool jump = 0;
+e_is insert_stack(void) {
+    e_is jump = IS_DEEPER;
 
     /* first insert forced primes */
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
@@ -2477,7 +2571,7 @@ bool insert_stack(void) {
         /* progress is shown just before we apply, so on recovery it is
          * legitimate for the last one to fail */
         if (!apply_single(prev, cur, mini, p, maxx)) {
-            jump = 1;
+            jump = IS_NEXT;
             goto insert_check;
         }
 
@@ -2548,7 +2642,7 @@ bool insert_stack(void) {
             fail("prep_nextt %u for %lu^%u at %u\n", pux, p, x, vi);
           case PUX_ALL_DONE:
             /* we have now acted on this */
-            jump = 1;
+            jump = IS_NEXT;
             goto insert_check;
         }
 
@@ -2557,7 +2651,7 @@ bool insert_stack(void) {
          * legitimate for the last one to fail */
         if (!apply_single(prev, cur, vi, p, x)) {
             --value[cur->vi].vlevel;
-            jump = 1;
+            jump = IS_NEXT;
             goto insert_check;
         }
         ++level;
@@ -2571,20 +2665,35 @@ bool insert_stack(void) {
             fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
         }
     }
+    if (midp < maxp) {
+        if (jump != IS_DEEPER)
+            fail("data mismatch");
+        jump = IS_MIDP;
+    }
     return jump;
 }
 
 /* we emulate recursive calls via the levels[] array */
-void recurse(bool jump_continue) {
+void recurse(e_is jump_continue) {
     ulong p;
     uint x;
     t_level *prev_level, *cur_level;
 
-    if (jump_continue) {
+    if (jump_continue == IS_NEXT) {
         prev_level = &levels[level - 1];
         cur_level = &levels[level];
         goto continue_recurse;
+    } else if (jump_continue == IS_MIDP) {
+        /* discard any partial walk */
+        have_rwalk = 0;
+        /* reverse pre-advanced level */
+        --level;
+        /* finish the walk_midp call */
+        cur_level = &levels[level];
+        walk_midp(cur_level, 1);
+        /* then go deeper */
     }
+    /* else jump_continue == IS_DEEPER */
 
     if (have_rwalk) {
         prev_level = &levels[level - 1];
@@ -2768,6 +2877,8 @@ int main(int argc, char **argv, char **envp) {
             set_gain(&arg[2]);
         else if (arg[1] == 'p')
             set_cap(&arg[2]);
+        else if (arg[1] == 'W')
+            midp = ulston(&arg[2]);
         else if (arg[1] == 'r') {
             rpath = (char *)malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
@@ -2811,7 +2922,21 @@ int main(int argc, char **argv, char **envp) {
     parse_305(s);
 #endif
 
-    bool jump = 0;
+    if (midp) {
+        if (n != 12)
+            fail("-W only supported with n=12");
+        if (!opt_alloc || opt_batch_min != opt_batch_max)
+            fail("-W only supported for single batch (-b)");
+        if (!maxp)
+            fail("-W only supported with maximum prime (-p)");
+        mpz_ui_pow_ui(Z(temp), midp, 5);
+        mpz_add_ui(Z(temp), Z(temp), 1);
+        mpz_mul_ui(Z(temp), Z(temp), 2);
+        if (mpz_cmp(Z(temp), max) <= 0)
+            fail("-W only supported for primes p: 2(p+1)^5 > max");
+        orig_maxp = maxp;
+    }
+    bool jump = IS_DEEPER;
     if (rstack) {
         jump = insert_stack();
         /* FIXME: temporary fix for recovering a single batch run.
