@@ -2665,7 +2665,7 @@ e_is insert_stack(void) {
             fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
         }
     }
-    if (midp < maxp) {
+    if (midp && midp < maxp) {
         if (jump != IS_DEEPER)
             fail("data mismatch");
         jump = IS_MIDP;
