@@ -1892,7 +1892,6 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
 }
 
 void walk_midp(t_level *prev, bool recover) {
-    ++level;
     t_level *cur = &levels[level];
     uint need_alloc[k];
     uint nac = 0;
@@ -1940,7 +1939,6 @@ void walk_midp(t_level *prev, bool recover) {
             --value[vi].vlevel;
         }
     }
-    --level;
     maxp = midp;
 }
 
@@ -2007,8 +2005,11 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
             /* we want to process this batch */
             ++batch_alloc;
             /* if we have -W to process, do that now */
-            if (midp && midp < maxp)
+            if (midp && midp < maxp) {
+                ++level;
                 walk_midp(cur, 0);
+                --level;
+            }
             return 1;
         }
         if (opt_batch_min < 0)
@@ -2688,12 +2689,9 @@ void recurse(e_is jump_continue) {
     } else if (jump_continue == IS_MIDP) {
         /* discard any partial walk */
         have_rwalk = 0;
-        /* reverse pre-advanced level */
-        --level;
         /* finish the walk_midp call */
-        cur_level = &levels[level];
+        cur_level = &levels[level - 1];
         walk_midp(cur_level, 1);
-        /* then go deeper */
     }
     /* else jump_continue == IS_DEEPER */
 
