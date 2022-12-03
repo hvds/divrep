@@ -1058,7 +1058,7 @@ void report_init(FILE *fp, char *prog) {
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
     fprintf(fp, "\n");
-	fflush(fp);
+    fflush(fp);
 }
 
 void ston(mpz_t targ, char *s) {
