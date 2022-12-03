@@ -752,6 +752,7 @@ void recover(void) {
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
     fseek(rfp, 0L, SEEK_END);
+	fflush(rfp);
     if (improve_max && seen_best && mpz_cmp(best, max) < 0)
         mpz_set(max, best);
     if (last305)
@@ -1057,6 +1058,7 @@ void report_init(FILE *fp, char *prog) {
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
     fprintf(fp, "\n");
+	fflush(fp);
 }
 
 void ston(mpz_t targ, char *s) {
@@ -2916,7 +2918,13 @@ int main(int argc, char **argv, char **envp) {
 
     init_post();
     report_init(stdout, argv[0]);
+    if (freopen(rpath, "a+", rfp) == NULL)
+       fail("could not reopen %s: %s", rpath, strerror(errno));
+    setlinebuf(rfp);
     if (rfp) report_init(rfp, argv[0]);
+    if (freopen(rpath, "a+", rfp) == NULL)
+       fail("could not reopen %s: %s", rpath, strerror(errno));
+    setlinebuf(rfp);
 #if 0
     char s[] = "7^2 2.71^2 3^8 2^2.5^2 11^2.29^2 (0.00s)\n";
     parse_305(s);
