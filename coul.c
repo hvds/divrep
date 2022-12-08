@@ -2089,6 +2089,7 @@ void walk_midp(t_level *prev, bool recover) {
     }
 
     /* setp will set to a prime <= maxp */
+    maxp = orig_maxp;
     level_setp(cur, maxp);
     prime_iterator_next(&cur->piter);
 
@@ -2205,25 +2206,33 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
     }
 
   batch_applied:
-    if (opt_alloc && level == forcedp) {
-        if (opt_batch_min >= 0
-            && batch_alloc >= opt_batch_min
-            && batch_alloc <= opt_batch_max
-        ) {
-            /* we want to process this batch */
-            ++batch_alloc;
-            /* if we have -W to process, do that now */
-            if (midp && midp < maxp) {
-                ++level;
-                walk_midp(cur, 0);
-                --level;
+    /* If the next allocation would not be forced, we have a batch. */
+    if (level == forcedp) {
+        if (opt_alloc) {
+            if (opt_batch_min >= 0
+                && batch_alloc >= opt_batch_min
+                && batch_alloc <= opt_batch_max
+            ) {
+                /* we want to process this batch */
+                ++batch_alloc;
+                /* if we have -W to process, do that now */
+                if (midp && midp < maxp) {
+                    ++level;
+                    walk_midp(cur, 0);
+                    --level;
+                }
+                return midp_only ? 0 : 1;
             }
+            if (opt_batch_min < 0)
+                disp_batch(cur);
+            ++batch_alloc;
+            return 0;
+        } else if (midp && midp < orig_maxp) {
+            ++level;
+            walk_midp(cur, 0);
+            --level;
             return midp_only ? 0 : 1;
         }
-        if (opt_batch_min < 0)
-            disp_batch(cur);
-        ++batch_alloc;
-        return 0;
     }
     return 1;
 }
@@ -2967,6 +2976,7 @@ void recurse(e_is jump_continue) {
         /* finish the walk_midp call */
         cur_level = &levels[level - 1];
         walk_midp(cur_level, 1);
+        /* FIXME: work out how to continue with -WW not on single batch */
         if (midp_only)
             return;
     }
@@ -3097,7 +3107,11 @@ void recurse(e_is jump_continue) {
                         disp_batch(prev_level);
                     ++batch_alloc;
                     goto derecurse;
+                } else if (midp && midp < orig_maxp) {
+                    walk_midp(prev_level, 0);
                 }
+                if (midp_only)
+                    goto derecurse;
                 goto unforced;
             }
             if (!apply_batch(prev_level, cur_level, fp, bi)) {
@@ -3226,8 +3240,6 @@ int main(int argc, char **argv, char **envp) {
     if (midp) {
         if (n != 12)
             fail("-W only supported with n=12");
-        if (!opt_alloc || opt_batch_min != opt_batch_max)
-            fail("-W only supported for single batch (-b)");
         if (!maxp)
             fail("-W only supported with maximum prime (-p)");
         mpz_ui_pow_ui(Z(temp), midp, 5);
