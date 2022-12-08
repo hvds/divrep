@@ -260,7 +260,7 @@ void update_window(void) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
         uint this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
-        printf("\x1b]0;b%d:", this_batch); // requires 'int' but the argument type is 'unsigned int'
+        printf("\x1b]0;b%d:", this_batch);
         uint pc = 0;
         for (uint i = 1; i < level && pc < 3; ++i) {
             if (levels[i].is_forced)
@@ -1056,11 +1056,11 @@ void report_init(FILE *fp, char *prog) {
     if (rough)
         fprintf(fp, " -h%u", rough);
     if (opt_batch_min >= 0) {
-        fprintf(fp, " -b%u", opt_batch_min); // requires 'unsigned int' but the argument type is 'signed int'
+        fprintf(fp, " -b%u", opt_batch_min);
         if (opt_batch_min != opt_batch_max) {
             fprintf(fp, ":");
             if (opt_batch_max < INT_MAX)
-                fprintf(fp, "%u", opt_batch_max); // requires 'unsigned int' but the argument type is 'signed int'
+                fprintf(fp, "%u", opt_batch_max);
         }
     }
     if (clock_is_realtime)
@@ -2339,13 +2339,13 @@ void mintau(mpz_t mint, uint vi, uint t) {
         } else if (rp2q && lpq(q, r) < 2 && lpq(p, r) < 6) {
             mpz_ui_pow_ui(mint, p, 5);
             mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) { //strange compare with boolean
+        } else if (pq < 2) {
             mpz_ui_pow_ui(mint, p * q, 3);
             mpz_mul_ui(mint, mint, p * p);
-        } else if (pq < 4) { //strange compare with boolean
+        } else if (pq < 4) {
             mpz_ui_pow_ui(mint, p, 7);
             mpz_mul_ui(mint, mint, q * q);
-        } else if (pq < 12) { //strange compare with boolean
+        } else if (pq < 12) {
             mpz_ui_pow_ui(mint, p, 11);
             mpz_mul_ui(mint, mint, q);
         } else {
