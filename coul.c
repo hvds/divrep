@@ -213,6 +213,7 @@ ulong antigain = 0;
  * When midp is in use, we save maxp in orig_maxp, and overwrite it.
  */
 uint minp = 0, maxp = 0, orig_maxp, midp = 0;
+bool midp_only = 0;
 struct {
     ulong p;
     uint vi;
@@ -1030,8 +1031,10 @@ void report_init(FILE *fp, char *prog) {
         if (maxp)
             fprintf(fp, "%u", (midp && midp == maxp) ? orig_maxp : maxp);
     }
-    if (midp)
-        fprintf(fp, " -W%u", midp);
+    if (midp) {
+        char *ww = midp_only ? "W" : "";
+        fprintf(fp, " -W%s%u", ww, midp);
+    }
     if (force_all)
         fprintf(fp, " -f%u", force_all);
     if (gain > 1 || antigain > 1) {
@@ -2016,7 +2019,7 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
                 walk_midp(cur, 0);
                 --level;
             }
-            return 1;
+            return midp_only ? 0 : 1;
         }
         if (opt_batch_min < 0)
             disp_batch(cur);
@@ -2324,7 +2327,7 @@ void mintau(mpz_t mint, uint vi, uint t) {
         uint s = sprimes[find_nextpi(ri)];
         /* A: p^2.q.r.d, B: p^3.q^2.r, C: p^5.q.r, D: p^5.q^3, E: p^7.q^2,
          * F: p^11.q, G: p^23 */
-        bool pq = lpq(p, q);
+        uint pq = lpq(p, q);
         bool rp2q = (r / q < p * p);
         if (s < p * q && lpq(p, s) < 3) {
             mpz_set_ui(mint, p * p);
@@ -2698,6 +2701,8 @@ void recurse(e_is jump_continue) {
         /* finish the walk_midp call */
         cur_level = &levels[level - 1];
         walk_midp(cur_level, 1);
+        if (midp_only)
+            return;
     }
     /* else jump_continue == IS_DEEPER */
 
@@ -2883,9 +2888,14 @@ int main(int argc, char **argv, char **envp) {
             set_gain(&arg[2]);
         else if (arg[1] == 'p')
             set_cap(&arg[2]);
-        else if (arg[1] == 'W')
-            midp = ulston(&arg[2]);
-        else if (arg[1] == 'r') {
+        else if (arg[1] == 'W') {
+            char *w = &arg[2];
+            if (*w == 'W') {
+                midp_only = 1;
+                ++w;
+            }
+            midp = ulston(w);
+        } else if (arg[1] == 'r') {
             rpath = (char *)malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
         } else if (arg[1] == 'f')
