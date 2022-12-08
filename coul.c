@@ -2336,13 +2336,13 @@ void mintau(mpz_t mint, uint vi, uint t) {
         } else if (rp2q && lpq(q, r) < 2 && lpq(p, r) < 6) {
             mpz_ui_pow_ui(mint, p, 5);
             mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) {
+        } else if (pq < 2) { //strange compare with boolean
             mpz_ui_pow_ui(mint, p * q, 3);
             mpz_mul_ui(mint, mint, p * p);
-        } else if (pq < 4) {
+        } else if (pq < 4) { //strange compare with boolean
             mpz_ui_pow_ui(mint, p, 7);
             mpz_mul_ui(mint, mint, q * q);
-        } else if (pq < 12) {
+        } else if (pq < 12) { //strange compare with boolean
             mpz_ui_pow_ui(mint, p, 11);
             mpz_mul_ui(mint, mint, q);
         } else {
