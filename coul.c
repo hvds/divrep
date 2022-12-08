@@ -199,7 +199,7 @@ static inline double utime(void) {
 }
 timer_t diag_timerid, log_timerid;
 volatile bool need_work, need_diag, need_log;
-bool clock_is_realtime;
+bool clock_is_realtime = 0;
 
 mpz_t min, max;     /* limits to check for v_0 */
 mpz_t best;         /* best solution seen */
@@ -251,7 +251,7 @@ mpz_t px;       /* p^x */
 
 #define DIAG 1
 #define LOG 600
-double diag_delay, log_delay, diagt, logt;
+double diag_delay = DIAG, log_delay = LOG, diagt, logt;
 ulong countr, countw, countwi;
 #define DIAG_BUFSIZE (3 + k * maxfact * (20 + 1 + 5 + 1) + 1)
 char *diag_buf = NULL;
@@ -330,11 +330,12 @@ void diag_plain(bool retarded) {
 
     update_window();
     prep_show_v(retarded);  /* into diag_buf */
-    if (need_diag || diagt == 0) {
+    if (need_diag) {
         diag("%s", diag_buf);
         if (debug)
             keep_diag();
-        need_diag = 0;
+        else
+            need_diag = 0;
     }
 
     if (rfp && need_log) {
@@ -342,7 +343,7 @@ void diag_plain(bool retarded) {
         logt = t1 + log_delay;
         need_log = 0;
     }
-    if (diagt)
+    if (!debug)
         need_work = 0;
 }
 
@@ -351,12 +352,13 @@ void diag_walk_v(ulong ati, ulong end) {
 
     update_window();
     prep_show_v(0);  /* into diag_buf */
-    if (need_diag || diagt == 0) {
+    if (need_diag) {
         if (!(debug == 1 && ati))
             diag("%s: %lu / %lu", diag_buf, ati, end);
         if (debug)
             keep_diag();
-        need_diag = 0;
+        else
+            need_diag = 0;
     }
 
     if (rfp && need_log) {
@@ -365,7 +367,7 @@ void diag_walk_v(ulong ati, ulong end) {
         logt = t1 + log_delay;
         need_log = 0;
     }
-    if (diagt)
+    if (!debug)
         need_work = 0;
 }
 
@@ -374,12 +376,13 @@ void diag_walk_zv(mpz_t ati, mpz_t end) {
 
     update_window();
     prep_show_v(0);  /* into diag_buf */
-    if (need_diag || diagt == 0) {
+    if (need_diag) {
         if (!(debug == 1 && mpz_sgn(ati)))
             diag("%s: %Zu / %Zu", diag_buf, ati, end);
         if (debug)
             keep_diag();
-        need_diag = 0;
+        else
+            need_diag = 0;
     }
 
     if (rfp && need_log) {
@@ -388,7 +391,7 @@ void diag_walk_zv(mpz_t ati, mpz_t end) {
         logt = t1 + log_delay;
         need_log = 0;
     }
-    if (diagt)
+    if (!debug)
         need_work = 0;
 }
 
@@ -397,12 +400,13 @@ void diag_walk_pell(uint pc) {
 
     update_window();
     prep_show_v(0);  /* into diag_buf */
-    if (need_diag || diagt == 0) {
+    if (need_diag) {
         if (!(debug && pc))
             diag("%s: P%u", diag_buf, pc);
         if (debug)
             keep_diag();
-        need_diag = 0;
+        else
+            need_diag = 0;
     }
 
     if (rfp && need_log) {
@@ -411,7 +415,7 @@ void diag_walk_pell(uint pc) {
         logt = t1 + log_delay;
         need_log = 0;
     }
-    if (diagt)
+    if (!debug)
         need_diag = 0;
 }
 
@@ -569,41 +573,46 @@ void init_time(void) {
     sa.sa_handler = &handle_sig;
     sa.sa_flags = SA_RESTART;
     sigemptyset(&sa.sa_mask);
-    if (sigaction(SIGUSR1, &sa, NULL))
-        fail("Could not set USR1 handler: %s\n", strerror(errno));
-    if (sigaction(SIGUSR2, &sa, NULL))
-        fail("Could not set USR2 handler: %s\n", strerror(errno));
 
-    sev.sigev_notify = SIGEV_SIGNAL;
-    sev.sigev_signo = SIGUSR1;
-    sev.sigev_value.sival_ptr = &diag_timerid;
-    clock_is_realtime = 0;
-    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &sev, &diag_timerid)) {
-        /* guess that the CPUTIME clock is not supported */
-        if (timer_create(CLOCK_REALTIME, &sev, &diag_timerid))
-            fail("Could not create diag timer: %s\n", strerror(errno));
-        clock_is_realtime = 1;
+    if (diag_delay) {
+        if (sigaction(SIGUSR1, &sa, NULL))
+            fail("Could not set USR1 handler: %s\n", strerror(errno));
+        sev.sigev_notify = SIGEV_SIGNAL;
+        sev.sigev_signo = SIGUSR1;
+        sev.sigev_value.sival_ptr = &diag_timerid;
+        if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &sev, &diag_timerid)) {
+            /* guess that the CPUTIME clock is not supported */
+            if (timer_create(CLOCK_REALTIME, &sev, &diag_timerid))
+                fail("Could not create diag timer: %s\n", strerror(errno));
+            clock_is_realtime = 1;
+        }
+        diag_timer.it_value.tv_sec = diag_delay;
+        diag_timer.it_value.tv_nsec = 0;
+        diag_timer.it_interval.tv_sec = diag_delay;
+        diag_timer.it_interval.tv_nsec = 0;
+        if (timer_settime(diag_timerid, 0, &diag_timer, NULL))
+            fail("Could not set diag timer: %s\n", strerror(errno));
     }
 
-    sev.sigev_signo = SIGUSR2;
-    sev.sigev_value.sival_ptr = &log_timerid;
-    clockid_t clock = clock_is_realtime
-            ? CLOCK_REALTIME : CLOCK_PROCESS_CPUTIME_ID;
-    if (timer_create(clock, &sev, &log_timerid))
-        fail("Could not create log timer: %s\n", strerror(errno));
-
-    diag_timer.it_value.tv_sec = diag_delay;
-    diag_timer.it_value.tv_nsec = 0;
-    diag_timer.it_interval.tv_sec = diag_delay;
-    diag_timer.it_interval.tv_nsec = 0;
-    if (timer_settime(diag_timerid, 0, &diag_timer, NULL))
-        fail("Could not set diag timer: %s\n", strerror(errno));
-    log_timer.it_value.tv_sec = log_delay;
-    log_timer.it_value.tv_nsec = 0;
-    log_timer.it_interval.tv_sec = log_delay;
-    log_timer.it_interval.tv_nsec = 0;
-    if (timer_settime(log_timerid, 0, &log_timer, NULL))
-        fail("Could not set log timer: %s\n", strerror(errno));
+    if (log_delay) {
+        if (sigaction(SIGUSR2, &sa, NULL))
+            fail("Could not set USR2 handler: %s\n", strerror(errno));
+        sev.sigev_notify = SIGEV_SIGNAL;
+        sev.sigev_signo = SIGUSR2;
+        sev.sigev_value.sival_ptr = &log_timerid;
+        if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &sev, &log_timerid)) {
+            /* guess that the CPUTIME clock is not supported */
+            if (timer_create(CLOCK_REALTIME, &sev, &log_timerid))
+                fail("Could not create log timer: %s\n", strerror(errno));
+            clock_is_realtime = 1;
+        }
+        log_timer.it_value.tv_sec = log_delay;
+        log_timer.it_value.tv_nsec = 0;
+        log_timer.it_interval.tv_sec = log_delay;
+        log_timer.it_interval.tv_nsec = 0;
+        if (timer_settime(log_timerid, 0, &log_timer, NULL))
+            fail("Could not set log timer: %s\n", strerror(errno));
+    }
 }
 
 void init_pre(void) {
@@ -982,10 +991,15 @@ void init_post(void) {
     prep_mintau();
     sqg = (uint *)malloc(maxfact * sizeof(uint));
 
-    diag_delay = (debug) ? 0 : DIAG;
-    log_delay = (debug) ? 0 : LOG;
+    if (debug) {
+        diag_delay = 0;
+        need_work = need_diag = 1;
+    }
     diagt = diag_delay;
-    logt = log_delay;
+    if (rfp)
+        logt = log_delay;
+    else
+        logt = log_delay = 0;
     init_time();
 
     init_levels();
@@ -2889,7 +2903,11 @@ int main(int argc, char **argv, char **envp) {
                 ++w;
             }
             midp = ulston(w);
-        } else if (arg[1] == 'r') {
+        } else if (arg[1] == 'L' && arg[2] == 's')
+            diag_delay = strtoul(&arg[3], NULL, 10);
+        else if (arg[1] == 'L' && arg[2] == 'f')
+            log_delay = strtoul(&arg[3], NULL, 10);
+        else if (arg[1] == 'r') {
             rpath = (char *)malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
         } else if (arg[1] == 'f')
