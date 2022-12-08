@@ -259,7 +259,7 @@ void update_window(void) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
         uint this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
-        printf("\x1b]0;b%d:", this_batch);
+        printf("\x1b]0;b%d:", this_batch); // requires 'int' but the argument type is 'unsigned int'
         uint pc = 0;
         for (uint i = 1; i < level && pc < 3; ++i) {
             if (levels[i].is_forced)
@@ -1053,11 +1053,11 @@ void report_init(FILE *fp, char *prog) {
     if (rough)
         fprintf(fp, " -h%u", rough);
     if (opt_batch_min >= 0) {
-        fprintf(fp, " -b%u", opt_batch_min);
+        fprintf(fp, " -b%u", opt_batch_min); // requires 'unsigned int' but the argument type is 'signed int'
         if (opt_batch_min != opt_batch_max) {
             fprintf(fp, ":");
             if (opt_batch_max < INT_MAX)
-                fprintf(fp, "%u", opt_batch_max);
+                fprintf(fp, "%u", opt_batch_max); // requires 'unsigned int' but the argument type is 'signed int'
         }
     }
     if (clock_is_realtime)
