@@ -2321,7 +2321,7 @@ void mintau(mpz_t mint, uint vi, uint t) {
         uint s = sprimes[find_nextpi(ri)];
         /* A: p^2.q.r.d, B: p^3.q^2.r, C: p^5.q.r, D: p^5.q^3, E: p^7.q^2,
          * F: p^11.q, G: p^23 */
-        bool pq = lpq(p, q);
+        uint pq = lpq(p, q);
         bool rp2q = (r / q < p * p);
         if (s < p * q && lpq(p, s) < 3) {
             mpz_set_ui(mint, p * p);
