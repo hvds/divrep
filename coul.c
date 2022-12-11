@@ -1971,13 +1971,13 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
 
     /* TODO: prep this */
     for (uint i = fp->p; i <= bp->vi; i += fp->p) {
-        uint x = simple_valuation(i, fp->p) + 1;
-        if (!apply_secondary(prev, cur, bp->vi - i, fp->p, x))
+        uint e = simple_valuation(i, fp->p);
+        if (!apply_secondary(prev, cur, bp->vi - i, fp->p, e + 1))
             return 0;
     }
     for (uint i = fp->p; bp->vi + i < k; i += fp->p) {
-        uint x = simple_valuation(i, fp->p) + 1;
-        if (!apply_secondary(prev, cur, bp->vi + i, fp->p, x))
+        uint e = simple_valuation(i, fp->p);
+        if (!apply_secondary(prev, cur, bp->vi + i, fp->p, e + 1))
             return 0;
     }
 
@@ -2001,14 +2001,14 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
                 return 0;
         } else {
             /* apply the secondary first, then the primary */
-            uint x = simple_valuation(diff, fp->p) + 1;
-            mpz_ui_pow_ui(px, fp->p, x - 1);
-            if (!update_residues(prev, cur, sq0, fp->p, x, px, 0))
+            uint e = simple_valuation(diff, fp->p);
+            mpz_ui_pow_ui(px, fp->p, e);
+            if (!update_residues(prev, cur, sq0, fp->p, e + 1, px, 0))
                 return 0;
-            uint x2 = bp->x - x + 1;
-            if (x2 > 1) {
-                mpz_ui_pow_ui(px, fp->p, x2 - 1);
-                if (!update_residues(prev, cur, bp->vi, fp->p, x2, px, x - 1))
+            uint e2 = bp->x - 1 - e;
+            if (e2 > 0) {
+                mpz_ui_pow_ui(px, fp->p, e2);
+                if (!update_residues(prev, cur, bp->vi, fp->p, e2 + 1, px, e))
                     return 0;
             }
         }
@@ -2598,27 +2598,27 @@ e_is insert_stack(void) {
         /* TODO: prep this, per apply_batch */
         for (uint j = p; j <= mini; j += p) {
             uint vj = mini - j;
-            uint x = simple_valuation(j, p) + 1;
+            uint e = simple_valuation(j, p);
             t_fact *rs = &rstack[vj];
             t_ppow *rsp = rs->count ? &rs->ppow[rs->count - 1] : NULL;
-            if (!rsp || rsp->p != p || rsp->e + 1 != x)
-                fail("missing secondary %u^%u at %u", p, x, vj);
+            if (!rsp || rsp->p != p || rsp->e != e)
+                fail("missing secondary %u^%u at %u", p, e, vj);
             --rs->count;
 
-            if (!apply_secondary(prev, cur, vj, p, x))
-                fail("could not apply_secondary(%u, %lu, %u)", vj, p, x);
+            if (!apply_secondary(prev, cur, vj, p, e + 1))
+                fail("could not apply_secondary(%u, %lu, %u)", vj, p, e + 1);
         }
         for (uint j = p; mini + j < k; j += p) {
             uint vj = mini + j;
-            uint x = simple_valuation(j, p) + 1;
+            uint e = simple_valuation(j, p);
             t_fact *rs = &rstack[vj];
             t_ppow *rsp = rs->count ? &rs->ppow[rs->count - 1] : NULL;
-            if (!rsp || rsp->p != p || rsp->e + 1 != x)
-                fail("missing secondary %u^%u at %u", p, x, vj);
+            if (!rsp || rsp->p != p || rsp->e != e)
+                fail("missing secondary %u^%u at %u", p, e, vj);
             --rs->count;
 
-            if (!apply_secondary(prev, cur, vj, p, x))
-                fail("could not apply_secondary(%u, %lu, %u)", vj, p, x);
+            if (!apply_secondary(prev, cur, vj, p, e + 1))
+                fail("could not apply_secondary(%u, %lu, %u)", vj, p, e + 1);
         }
         ++level;
     }
