@@ -56,6 +56,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     ($gain = $arg || shift(@ARGV)), next if $arg =~ s{^-g}{};
     ($rrun = $arg || shift(@ARGV)), next if $arg =~ s{^-r}{};
     ($cap = $arg || shift(@ARGV)), next if $arg =~ s{^-p}{};
+    ($typename = $arg || shift(@ARGV)), next if $arg =~ s{^-y}{};
     ($force_all = $arg || shift(@ARGV)), next if $arg =~ s{^-f}{};
     $inject = 1, next if $arg eq '-i';
     $inject = $inject_only = 1, next if $arg eq '-I';
@@ -67,6 +68,9 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
 
 if ($nodb && ($rrun || $inject)) {
     die "Incompatible options: cannot recover or inject without database";
+}
+if ($typename ne 'o' && !$inject_only) {
+    die "Types other than 'o' supported only with '-I'";
 }
 
 $| = 1;
