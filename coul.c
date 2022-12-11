@@ -1965,30 +1965,38 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
     cur->is_forced = 1;
     cur->bi = bi;
     t_forcebatch *bp = &fp->batch[bi];
+    uint terminal = k;
 
     if (!apply_primary(prev, cur, bp->vi, fp->p, bp->x))
         return 0;
+    vp = &value[bp->vi];
+    if (vp->alloc[ vp->vlevel - 1 ].t == 1)
+        terminal = bp->vi;
 
     /* TODO: prep this */
     for (uint i = fp->p; i <= bp->vi; i += fp->p) {
         uint e = simple_valuation(i, fp->p);
-        if (!apply_secondary(prev, cur, bp->vi - i, fp->p, e + 1))
+        uint vi = bp->vi - i;
+        if (!apply_secondary(prev, cur, vi, fp->p, e + 1))
             return 0;
+        vp = &value[vi];
+        if (vp->alloc[ vp->vlevel - 1 ].t == 1)
+            terminal = vi;
     }
     for (uint i = fp->p; bp->vi + i < k; i += fp->p) {
         uint e = simple_valuation(i, fp->p);
-        if (!apply_secondary(prev, cur, bp->vi + i, fp->p, e + 1))
+        uint vi = bp->vi + i;
+        if (!apply_secondary(prev, cur, vi, fp->p, e + 1))
             return 0;
+        vp = &value[vi];
+        if (vp->alloc[ vp->vlevel - 1 ].t == 1)
+            terminal = vi;
     }
 
-    for (uint i = bp->vi % fp->p; i < k; i += fp->p) {
-        t_value *vp = &value[i];
-        uint t = vp->alloc[ vp->vlevel - 1 ].t;
-        if (t == 1) {
-            walk_1(cur, i);
-            /* nothing more to do */
-            return 0;
-        }
+    if (terminal < k) {
+        walk_1(cur, terminal);
+        /* nothing more to do */
+        return 0;
     }
 
     /* did we already have a square? */
