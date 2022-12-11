@@ -954,7 +954,7 @@ void prep_forcep(void) {
             break;
         }
         if (skipped)
-            fp->batch[fp->count++] = (t_forcebatch){ .x = 0 };
+            fp->batch[fp->count++] = (t_forcebatch){ .vi = 1, .x = 0 };
         fp->batch = (t_forcebatch *)realloc(fp->batch,
                 fp->count * sizeof(t_forcebatch));
     }
@@ -1710,6 +1710,10 @@ bool update_residues(t_level *old, t_level *new,
     uint vj = sq0;
     t_value *vjp = &value[vj];
     uint jlevel = vjp->vlevel - 1;
+    if (x == 0) {
+        res_copy(new->level, old->level);
+        return 1;
+    }
     if (vi == vj) {
         /* Another allocation on our square, so q_j changes but aq/q_j does
          * not. We must divide the known residues by p^((x-1)/g) mod aq/q_j,
@@ -1868,6 +1872,32 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     cur->maxp = (p > prev->maxp) ? p : prev->maxp;
 }
 
+/* Apply a notional level of p^0 at v_0.
+ * Also sets level.rq, level.aq and residues.
+ */
+void apply_null(t_level *prev, t_level *cur, ulong p) {
+    cur->vi = 0;
+    cur->p = p;
+    cur->x = 1;
+    cur->have_square = prev->have_square;
+    cur->nextpi = prev->nextpi;
+    if (p == sprimes[cur->nextpi])
+        cur->nextpi = find_nextpi(cur->nextpi);
+    cur->maxp = (p > prev->maxp) ? p : prev->maxp;
+    if (p == 2 && mpz_odd_p(prev->aq)) {
+        if (mpz_odd_p(prev->rq))
+            mpz_set(cur->rq, prev->rq);
+        else
+            mpz_add(cur->rq, prev->aq, prev->rq);
+        mpz_mul_2exp(cur->aq, prev->aq, 1);
+    } else {
+        mpz_set(cur->rq, prev->rq);
+        mpz_set(cur->aq, prev->aq);
+    }
+    if (prev->have_square)
+        update_residues(prev, cur, 0, p, 0, Z(zone), 0);
+}
+
 /* Allocate a non-fixed (non-batch) prime p^{x-1} to v_{vi}. Returns FALSE
  * if it is invalid, or if no work to do.
  * Updates level and value, updates or propagates square residues.
@@ -1997,6 +2027,11 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
     t_forcebatch *bp = &fp->batch[bi];
     uint terminal = k;
 
+    if (bp->x == 0) {
+        apply_null(prev, cur, fp->p);
+        goto batch_applied;
+    }
+
     uint ep = bp->x - 1;
     if (!apply_primary(prev, cur, bp->vi, fp->p, bp->x))
         return 0;
@@ -2057,6 +2092,7 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
         }
     }
 
+  batch_applied:
     if (opt_alloc && next_prime(fp->p) > maxforce[bp->vi]) {
         if (opt_batch_min >= 0
             && batch_alloc >= opt_batch_min
@@ -2604,14 +2640,21 @@ e_is insert_stack(void) {
             }
         }
         /* find the batch */
+        uint bi;
         if (maxx == 0) {
-            if (fp->batch[fp->count - 1].x != 0)
+            bi = fp->count - 1;
+            if (fp->batch[bi].x != 0)
                 goto insert_check;
+#if defined(TYPE_a)
+            if (fp->batch[bi].vi == 0) {
+                mini = 0;
+                goto have_batch;
+            }
+#endif
             /* this prime unforced, so any remaining ones are too */
             break;
         }
 
-        uint bi;
         for (bi = 0; bi < fp->count; ++bi) {
             t_forcebatch *b = &fp->batch[bi];
             if (b->x == maxx && b->vi == mini)
@@ -2624,15 +2667,21 @@ e_is insert_stack(void) {
             break;
         }
 
+      have_batch:
         STOREVL(vl_forced++);
-        --rstack[mini].count;
         t_level *prev = &levels[level - 1];
         t_level *cur = &levels[level];
         cur->is_forced = 1;
         cur->bi = bi;
 
+        if (maxx == 0) {
+            apply_null(prev, cur, p);
+            goto inserted_batch;
+        }
+
         /* progress is shown just before we apply, so on recovery it is
          * legitimate for the last one to fail */
+        --rstack[mini].count;
         if (!apply_single(prev, cur, mini, p, maxx)) {
             jump = IS_NEXT;
             goto insert_check;
@@ -2666,6 +2715,7 @@ e_is insert_stack(void) {
             if (!apply_secondary(prev, cur, vj, p, e + 1))
                 fail("could not apply_secondary(%u, %lu, %u)", vj, p, e + 1);
         }
+      inserted_batch:
         ++level;
     }
     /* now insert the rest */
@@ -2860,7 +2910,11 @@ void recurse(e_is jump_continue) {
                 --vl_forced;
                 goto derecurse;
             }
-            if (fp->batch[bi].x == 0) {
+            if (fp->batch[bi].x == 0
+#if defined(TYPE_a)
+                && fp->batch[bi].vi != 0
+#endif
+            ) {
                 cur_level->is_forced = 0;
                 FETCHVL(--vl_forced);
                 if (opt_alloc) {
