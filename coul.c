@@ -1020,13 +1020,18 @@ void init_post(void) {
 }
 
 void report_init(FILE *fp, char *prog) {
-    fprintf(fp, "001 %s%scoul(%u %u)", (start_seen ? "recover " : ""),
+    fprintf(fp, "001 %s%sc%sul(%u %u)", (start_seen ? "recover " : ""),
 #ifdef PARALLEL
-        "p"
+            "p",
 #else
-        ""
+            "",
 #endif
-            , n, k);
+#if defined(TYPE_o)
+            "o",
+#elif defined(TYPE_a)
+            "a",
+#endif
+            n, k);
 
     if (strategy)
         fprintf(fp, " -j%u", strategy);
@@ -2985,7 +2990,12 @@ int main(int argc, char **argv, char **envp) {
     keep_diag();
 
     double tz = utime();
-    report("367 coul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)\n",
+    report("367 c%sul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)\n",
+#if defined(TYPE_o)
+            "o",
+#elif defined(TYPE_a)
+            "a",
+#endif
             n, k, countr, countw, countwi, seconds(tz));
     if (seen_best)
         report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, best, seconds(tz));
