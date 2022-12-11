@@ -464,7 +464,7 @@ void free_levels(void) {
 
 void init_levels(void) {
     /* CHECKME: can this be maxodd * k + forcedp? */
-    levels = (t_level *)calloc(k * maxfact + 1, sizeof(t_level));
+    levels = (t_level *)calloc(k * maxfact + nf.count + 1, sizeof(t_level));
     for (uint i = 0; i < k * maxfact + 1; ++i) {
         t_level *l = &levels[i];
         l->level = i;
@@ -851,10 +851,12 @@ void prep_mintau(void) {
 
 void prep_maxforce(void) {
     maxforce = (uint *)malloc(k * sizeof(uint));
+#if defined(TYPE_o)
     if ((n & 3) != 0) {
         for (int i = 0; i < k; ++i)
             maxforce[i] = k;
     } else
+#endif
         for (int i = 0; i < k; ++i) {
             int mf = k - i - 1;
             if (i > mf)
@@ -880,6 +882,68 @@ void prep_primes(void) {
     }
 }
 
+typedef enum {
+    TFP_BAD = 0,
+    TFP_SINGLE,
+    TFP_GOOD
+} e_tfp;
+e_tfp test_forcep(uint p, uint vi, uint x) {
+    bool seen_any = 0;
+
+    if (x == 0) {
+        /* p^0 is valid iff the differences are a multiple of p */
+        if (TYPE_OFFSET(1) % p)
+            return TFP_BAD;
+        return TFP_GOOD;
+    }
+
+    uint ei = x - 1;
+    for (uint j = 1; j <= vi; ++j) {
+        uint vj = vi - j;
+        uint off = TYPE_OFFSET(j);
+        uint ej = simple_valuation(off, p);
+        if (ej == 0)
+            continue;
+        if (n % (ej + 1))
+            return TFP_BAD;
+        seen_any = 1;
+        if (ej < ei)
+            continue;
+        /* Earlier element cannot have same or higher power of p */
+        return TFP_BAD;
+    }
+    if (p > 8 * sizeof(ulong))
+        fail("TODO: cope with p > %u", 8 * sizeof(ulong));
+    /* set bits for moduli 1 .. p - 1 */
+    ulong seen_same = (1 << p) - 2;
+    for (uint j = 1; j + vi < k; ++j) {
+        uint vj = vi + j;
+        uint off = TYPE_OFFSET(j);
+        uint ej = simple_valuation(off, p);
+        if (ej == 0)
+            continue;
+        seen_any = 1;
+        if (ej > ei)
+            continue;   /* p^e_i + p^e_j will have valuation e_i */
+        if (n % (ej + 1))
+            return TFP_BAD;
+        if (ej < ei)
+            continue;
+        /* p^e_i + p^e_i can have valuation e_i as long as we don't
+         * exceed the (p-1) possible values mod p */
+        for (uint i = 0; i < ei; ++i)
+            off /= p;
+        seen_same &= ~(1 << (off % p));
+    }
+    if (seen_same == 0)
+        /* all moduli seen, so one must have a higher power of p */
+        return TFP_BAD;
+
+    if (seen_any)
+        return TFP_GOOD;
+    return TFP_SINGLE;
+}
+
 void prep_forcep(void) {
     mpz_t pz;
     uint p;
@@ -887,6 +951,7 @@ void prep_forcep(void) {
 
     forcedp = 0;
     mpz_init_set_ui(pz, 1);
+#if defined(TYPE_o)
     while (1) {
         _GMP_next_prime(pz);
         p = mpz_get_ui(pz);
@@ -894,6 +959,25 @@ void prep_forcep(void) {
             break;
         pi[forcedp++] = p;
     }
+#elif defined(TYPE_a)
+    /* divisors of n must be force_all, so must come before other primes */
+    for (uint i = 0; i < nf.count; ++i) {
+        p = (uint)nf.ppow[i].p;
+        pi[forcedp++] = p;
+        /* Note: we could easily handle the case where it is the very next
+         * prime, but need much more thought if there can be a gap. */
+        if (p > k)
+            fail("TODO: p=%u | n=%u but p > k=%u\n", p, n, k);
+    }
+    while (1) {
+        _GMP_next_prime(pz);
+        p = mpz_get_ui(pz);
+        if (p > k)
+            break;
+        if (n % p)
+            pi[forcedp++] = p;
+    }
+#endif
     mpz_clear(pz);
 
     uint first_bad = n + 1;
@@ -906,54 +990,48 @@ void prep_forcep(void) {
     forcep = (t_forcep *)malloc(forcedp * sizeof(t_forcep));
     t_divisors *d = &divisors[n];
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
+        p = pi[fpi];
         t_forcep *fp = &forcep[fpi];
-        fp->p = p = pi[fpi];
+        fp->p = p;
         fp->count = 0;
         fp->batch = (t_forcebatch *)malloc(tn * k * sizeof(t_forcebatch));
 
-        uint x = 1, px = 1;
-        while (px * p < k) {
-            ++x;
-            px *= p;
-        }
-        uint bad_pow = k + 1;
-        if (first_bad <= x) {
-            bad_pow = 1;
-            for (uint i = 1; i < first_bad; ++i)
-                bad_pow *= p;
-        }
-
-        bool keep_single = ((n & 3) || p <= force_all) ? 1 : 0;
-        bool skipped = 0;
+        bool keep_single = (p <= force_all) ? 1 : 0;
+#if defined(TYPE_o)
+        if (n & 3)
+            keep_single = 1;
+#elif defined(TYPE_a)
+        if ((n % p) == 0)
+            keep_single = 1;
+#endif
+        bool have_unforced_tail = 0;
         for (uint vi = 0; vi < k; ++vi) {
-            /* skip if forcing p^{x-1} at v_i would require p^{y-1} at v_j
-             * such that not y | n.
-             */
-            if (vi + bad_pow < k || vi >= bad_pow)
-                continue;
-            if (p > maxforce[vi] && !keep_single) {
-                skipped = 1;
-                continue;
-            }
             for (uint di = 0; di < d->alldiv; ++di) {
                 uint fx = d->div[di];
-                if (fx < x)
-                    continue;   /* would not be highest power */
-                if (fx == x) {
-                    if (vi >= px)
-                        continue;   /* would not be first highest power */
-                    if (vi + px * (p - 1) < k)
-                        continue;   /* would not be highest power */
+                if (fx == 1)
+                    continue;
+                uint status = test_forcep(p, vi, fx);
+                if (status == TFP_BAD)
+                    continue;
+                if (status == TFP_SINGLE && !keep_single) {
+                    have_unforced_tail = 1;
+                    continue;
                 }
+                /* else status == TFP_GOOD */
                 fp->batch[fp->count++] = (t_forcebatch){ .vi = vi, .x = fx };
             }
         }
+#if defined(TYPE_a)
+        uint status = test_forcep(p, 0, 0);
+        if (status != TFP_BAD)
+            fp->batch[fp->count++] = (t_forcebatch){ .vi = 0, .x = 0 };
+#endif
         if (fp->count == 0) {
             forcedp = fpi;
             free(fp->batch);
             break;
         }
-        if (skipped)
+        if (have_unforced_tail)
             fp->batch[fp->count++] = (t_forcebatch){ .vi = 1, .x = 0 };
         fp->batch = (t_forcebatch *)realloc(fp->batch,
                 fp->count * sizeof(t_forcebatch));
