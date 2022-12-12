@@ -2588,9 +2588,11 @@ ulong limit_p(uint vi, uint x, uint nextt) {
 
     if (maxp && mpz_cmp_ui(Z(lp_x), maxp) > 0)
         return maxp;
-    if (mpz_fits_ulong_p(Z(lp_x)))
-        return mpz_get_ui(Z(lp_x));
-    return 0;
+    if (!mpz_fits_ulong_p(Z(lp_x)))
+        return 0;
+    if (mpz_sgn(Z(lp_x)) <= 0)
+        return 1;
+    return mpz_get_ui(Z(lp_x));
 }
 
 typedef enum {
