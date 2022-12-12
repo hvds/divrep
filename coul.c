@@ -964,10 +964,6 @@ void prep_forcep(void) {
     for (uint i = 0; i < nf.count; ++i) {
         p = (uint)nf.ppow[i].p;
         pi[forcedp++] = p;
-        /* Note: we could easily handle the case where it is the very next
-         * prime, but need much more thought if there can be a gap. */
-        if (p > k)
-            fail("TODO: p=%u | n=%u but p > k=%u\n", p, n, k);
     }
     while (1) {
         _GMP_next_prime(pz);
