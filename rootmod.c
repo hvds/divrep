@@ -671,6 +671,9 @@ void root_extract(uint new_level, uint old_level, uint k, mpz_t n) {
     while (1) {
         for (uint i = 0; i < rin->count; ++i)
             _allrootmod_kprime(rin->r[i], rm_kf[ki].p, n, rm_nf, nfc);
+        _swapz_r(arm_scratch);
+        rin = &ra[arm_scratch];
+
         ++ke;
         if (ke >= rm_kf[ki].e) {
             ++ki;
@@ -678,8 +681,6 @@ void root_extract(uint new_level, uint old_level, uint k, mpz_t n) {
             if (ki >= kfc)
                 break;
         }
-        _swapz_r(arm_scratch);
-        rin = &ra[arm_scratch];
     }
     _swap_r(arm_scratch);
     _swap_r(E_RESULTS_MAX + new_level);
