@@ -19,7 +19,7 @@ typedef enum {
     filter_x, filter_y,
     zt1, zt2,
     cf_a, cf_b, cf_c, cf_d,
-    aN, Pi, Qi, Ai, Bi, Gi, Pn, Qn, bestG, bestB,
+    aN, mN, Pi, Qi, Ai, Bi, Gi, Pn, Qn, bestG, bestB,
 
     E_PELLSTASH_MAX
 } e_pellstash;
@@ -33,12 +33,20 @@ typedef struct s_zarray {
     uint size;
 } t_zarray;
 
-t_zarray pdiv, cf_initial, cf_recur, cft, zmatch;
+typedef struct s_interleave {
+    t_zarray zmatch;
+    uint match_iter;
+    mpz_t x, y, mul;
+} t_interleave;
+
+t_zarray pdiv, cf_initial, cf_recur, cft;
+t_interleave *gp = NULL;
+uint gpc = 0;
+uint gpsize;        /* number of genpell solutions to interleave */
 uint sqdiff_midh;   /* upper midpoint of divisors */
 uint sqdiff_midl;   /* lower midpoint of divisors */
 uint sqdiff_iter;   /* counter when iterating divisors */
 uint conv_iter;     /* counter when iterating convergents */
-uint match_iter;    /* counter when iterating zmatch */
 bool filter_swap;
 e_pelltype type;
 
@@ -61,6 +69,38 @@ void free_zarray(t_zarray *zap) {
     }
 }
 
+void resize_interleave(uint size) {
+    if (size > gpc) {
+        if (size < gpc + 16)
+            size = gpc + 16;
+        gp = (t_interleave *)realloc(gp, size * sizeof(t_interleave));
+        for (uint i = gpc; i < size; ++i) {
+            t_interleave *gpi = &gp[i];
+            memset(gpi, 0, sizeof(t_interleave));
+            resize_zarray(&gpi->zmatch, 16);
+            mpz_init(gpi->x);
+            mpz_init(gpi->y);
+            mpz_init(gpi->mul);
+        }
+        gpc = size;
+    }
+}
+
+void free_interleave(void) {
+    if (gpc) {
+        for (uint i = 0; i < gpc; ++i) {
+            t_interleave *gpi = &gp[i];
+            free_zarray(&gpi->zmatch);
+            mpz_clear(gpi->x);
+            mpz_clear(gpi->y);
+            mpz_clear(gpi->mul);
+        }
+        free(gp);
+        gp = NULL;
+        gpc = 0;
+    }
+}
+
 void done_pell(void) {
     for (e_pellstash e = 0; e < E_PELLSTASH_MAX; ++e)
         mpz_clear(Z(e));
@@ -69,13 +109,14 @@ void done_pell(void) {
     free_zarray(&cf_initial);
     free_zarray(&cf_recur);
     free_zarray(&cft);
-    free_zarray(&zmatch);
+    free_interleave();
 }
 
 void init_pell(void) {
     pell_stash = (mpz_t *)malloc(E_PELLSTASH_MAX * sizeof(mpz_t));
     for (e_pellstash e = 0; e < E_PELLSTASH_MAX; ++e)
         mpz_init(Z(e));
+    resize_interleave(16);
 }
 
 int pell_comparator(const void *va, const void *vb) {
@@ -267,7 +308,7 @@ void pell_fund_sol(void) {
         if (mpz_cmp_ui(Z(zt1), 1) == 0)
             return;
     }
-    gmp_fprintf(stderr, "No principle solution found for pell(%Zu)\n");
+    gmp_fprintf(stderr, "No principle solution found for pell(%Zu)\n", Z(D));
     exit(1);
 }
 
@@ -342,17 +383,18 @@ void init_negpell(void) {
     mpz_set(Z(y), Z(q));
 }
 
-void init_genpell(void) {
-    mpz_abs(Z(aN), Z(N));
-    /* if D is not a quadratic residue (mod N), there can be no solution */
+/* x^2 - Dy^2 = N: x, y coprime */
+void init_genpell_coprime(t_interleave *gpp) {
+    mpz_divexact(Z(mN), Z(N), gpp->mul);
+    mpz_divexact(Z(mN), Z(mN), gpp->mul);
+    mpz_abs(Z(aN), Z(mN));
+    /* if D is not a quadratic residue (mod mN), there is no solution */
     allrootmod(0, Z(D), 2, Z(aN));
     t_results *qrp = res_array(0);
-    if (qrp->count == 0) {
-        type = fail;
+    gpp->zmatch.size = 0;
+    if (qrp->count == 0)
         return;
-    }
 
-    zmatch.size = 0;
     for (uint qri = 0; qri < qrp->count; ++qri) {
         mpz_set(Z(cf_a), qrp->r[qri]);
         mpz_set_ui(Z(cf_b), 1);
@@ -403,7 +445,7 @@ void init_genpell(void) {
                 mpz_mul(Z(zt2), Z(Bi), Z(Bi));
                 mpz_mul(Z(zt2), Z(zt2), Z(D));
                 mpz_sub(Z(zt1), Z(zt1), Z(zt2));
-                if (mpz_cmp(Z(zt1), Z(N)) == 0
+                if (mpz_cmp(Z(zt1), Z(mN)) == 0
                     && (!have_best || mpz_cmp(Z(Gi), Z(bestG)) < 0)
                 ) {
                     mpz_set(Z(bestG), Z(Gi));
@@ -417,20 +459,49 @@ void init_genpell(void) {
             mpz_set(Z(Bi), Z(q));
         }
         if (have_best) {
-            resize_zarray(&zmatch, zmatch.size + 2);
-            mpz_set(zmatch.za[zmatch.size], Z(bestG));
-            mpz_set(zmatch.za[zmatch.size + 1], Z(bestB));
-            zmatch.size += 2;
+            resize_zarray(&gpp->zmatch, gpp->zmatch.size + 2);
+            mpz_set(gpp->zmatch.za[gpp->zmatch.size], Z(bestG));
+            mpz_set(gpp->zmatch.za[gpp->zmatch.size + 1], Z(bestB));
+            gpp->zmatch.size += 2;
         }
     }
-    if (zmatch.size == 0) {
+    if (gpp->zmatch.size == 0)
+        return;
+    qsort(gpp->zmatch.za, gpp->zmatch.size / 2, 2 * sizeof(mpz_t),
+            &pell_comparator);
+    pell_fund_sol();
+    gpp->match_iter = 0;
+}
+
+/* x^2 - Dy^2 = N
+ * For each k: k^2 | N, we need to find solutions to (kx)^2 - D(ky)^2 = N
+ * with (x, y) coprime, and interleave them.
+ */
+void init_genpell(void) {
+    /* Find k: squared divisors of N */
+    sqfree(Z(zt1), Z(zt2), Z(N));
+    pdivisors(Z(zt2));
+    resize_interleave(pdiv.size);
+    gpsize = 0;
+    /* Set up a solution for each k */
+    for (uint i = 0; i < pdiv.size; ++i) {
+        t_interleave *gpp = &gp[gpsize];
+        mpz_set(gpp->mul, pdiv.za[i]);
+        init_genpell_coprime(gpp);
+        /* Skip if no solutions for this k */
+        if (gpp->zmatch.size == 0)
+            continue;
+        /* Initialize first result, for interleaving */
+        mpz_mul(gpp->x, gpp->zmatch.za[0], gpp->mul);
+        mpz_mul(gpp->y, gpp->zmatch.za[1], gpp->mul);
+        ++gpsize;
+    }
+    if (gpsize == 0) {
         type = fail;
         return;
     }
-    qsort(zmatch.za, zmatch.size / 2, 2 * sizeof(mpz_t), &pell_comparator);
-    pell_fund_sol();
-    match_iter = 0;
     type = gen_pell;
+    pell_fund_sol();
 }
 
 /* Ax^2 - Dy^2 = N, 0 < x <= limit
@@ -511,8 +582,19 @@ bool next_pell(mpz_t ox, mpz_t oy) {
         mpz_add(Z(y), Z(y), Z(zt1));
         break;
       case gen_pell: {
-        mpz_t *match = &zmatch.za[match_iter];
-        match_iter = (match_iter + 2) % zmatch.size;
+        /* Find smallest next solution */
+        uint i = 0;
+        for (uint j = 1; j < gpsize; ++j) {
+            uint cmp = mpz_cmp(gp[i].x, gp[j].x);
+            if (cmp == 0)
+                cmp = mpz_cmp(gp[i].y, gp[j].y);
+            if (cmp > 0)
+                i = j;
+        }
+        /* Return this solution, and initialize next one */
+        t_interleave *gpp = &gp[i];
+        mpz_t *match = &gpp->zmatch.za[gpp->match_iter];
+        gpp->match_iter = (gpp->match_iter + 2) % gpp->zmatch.size;
         mpz_set(ox, match[0]);
         mpz_set(oy, match[1]);
         /* x' + y' sqrt(D) = (x + y sqrt(D))(p + q sqrt(D)) */
@@ -523,6 +605,11 @@ bool next_pell(mpz_t ox, mpz_t oy) {
         mpz_mul(match[1], ox, Z(q));
         mpz_mul(Z(zt1), oy, Z(p));
         mpz_add(match[1], match[1], Z(zt1));
+
+        mpz_set(ox, gpp->x);
+        mpz_set(oy, gpp->y);
+        mpz_mul(gpp->x, gpp->zmatch.za[gpp->match_iter], gpp->mul);
+        mpz_mul(gpp->y, gpp->zmatch.za[gpp->match_iter + 1], gpp->mul);
         break;
       }
       case sqdiff_odd:

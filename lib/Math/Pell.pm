@@ -545,6 +545,17 @@ sub gen_pell {
     return _linear_filter(gen_pell($Df, $N), $zone, $zero, $sq, $zero)
             if $sq > 1;
 
+    # If (x, y) = k, then we have coprime x' = x/k, y' = y/k such that
+    # x'^2 - Dy'^2 = N/k^2. Taking each possible k covers the options.
+    my($Nf, $Nsq) = _sqfree($N);
+    return _interleave(map {
+        my $Nsqd = $_;
+        _mul_filter(gen_pell_coprime($D, $N / $Nsqd / $Nsqd), $Nsqd);
+    } divisors($Nsq));
+}
+
+sub gen_pell_coprime {
+    my($D, $N) = @_;
     my $neg = ($N < 0) ? 1 : 0;
     my $aN = abs($N);
 
