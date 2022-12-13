@@ -1,0 +1,73 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+use Math::Prime::Util qw{ factor_exp prev_prime };
+my($n, $k) = @ARGV;
+
+=head
+
+For the Pell bugfix, with n divisible by a single odd prime, we need
+to rerun only those patterns that fix 2 or more squares. Since unforced
+allocations never fix a square with such n, no other cases can reach
+the Pell solver.
+
+The following n are affected:
+  6, 10, 14, 22, 26, 34, 38, 46, 58, 62, 74, 82, 86, 94
+  12, 20, 28, 44, 52, 68, 76, 92, 24, 40, 56, 88, 48, 80, 96
+
+=cut
+
+my @f = factor_exp($n);
+if (@f != 2
+    || $f[0][0] != 2
+    || $f[1][1] != 1
+) {
+    die "n=$n must be of form 2^k.p\n";
+}
+
+my @todo;
+$k //= '';
+for (split /\n/, `./report -yo $n $k`) {
+    next unless m{
+        ^ f\( (\d+), \s* (\d+) \)
+        \s* = \s* (\d+) (?: \s* \( .* s \) )? $
+    }x;
+    my($n2, $k, $v) = ($1, $2, $3);
+    die "oops ($_)" unless $n == $n2;
+    next if $k < 2;
+    push @todo, [ $k, $v ];
+}
+
+for (@todo) {
+    my($k, $v) = @$_;
+    my $force = prev_prime($k + 1);
+    my @batch;
+    for (split /\n/, `./pcoul -x$v -f$force -a $n $k`) {
+        next unless m{
+            ^ 203 \s+ b (\d+) : .* \[ sq = (\d+) \] $
+        }x;
+        my($bid, $sq) = ($1, $2);
+        next if $sq < 2;
+        if (@batch) {
+            my($last) = $batch[-1] =~ /(\d+)$/;
+            if ($last == $bid - 1) {
+                $batch[-1] =~ s{(?::\d+)?\z}{:$bid};
+                next;
+            }
+        }
+        push @batch, $bid;
+    }
+    print "todo ($n $k): @batch\n";
+
+    for my $bid (@batch) {
+        my $done = 0;
+        for (split /\n/, `./pcoul -x$v -f$force -b$bid -g1e6: -Ls0 $n $k`) {
+            my($log) = /^(\d+) / or die "[$bid] $_\n";
+            next if $log eq '001' || $log eq '202';
+            $done = 1, next if $log eq '367';
+            print("$_\n"), next if $log eq '200';
+            die "[$bid] $_\n";
+        }
+        die "[$bid] no 367 seen\n" unless $done;
+    }
+}
