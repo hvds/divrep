@@ -14,6 +14,7 @@ HFACTOR = ${MPUGMP}/factor.h
 
 DEFINES := -DSTANDALONE
 pcoul dpcoul ftest: DEFINES += -DPARALLEL
+pellonly: DEFINES += -DPARALLEL -DPELLONLY
 ifdef SQONLY
     DEFINES += -DSQONLY
 endif
@@ -36,7 +37,7 @@ endif
 default: pcoul
 all: coul pcoul dcoul dpcoul
 
-coul pcoul dcoul dpcoul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
+coul pcoul dcoul dpcoul pellonly: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 test_pell: Makefile test_pell.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}

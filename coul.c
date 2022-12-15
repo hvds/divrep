@@ -1278,8 +1278,8 @@ int inv_comparator(const void *va, const void *vb) {
 }
 
 void walk_v(t_level *cur_level, mpz_t start) {
-#ifdef SQONLY
-    if (!cur_level->have_square)
+#ifdef PELLONLY
+    if (!(cur_level->have_square > 1))
         return;
 #endif
     if (minp && cur_level->maxp <= minp)
@@ -1613,8 +1613,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
 }
 
 void walk_1(t_level *cur_level, uint vi) {
-#ifdef SQONLY
-    if (!cur_level->have_square)
+#ifdef PELLONLY
+    if (!(cur_level->have_square > 1))
         return;
 #endif
     if (minp && cur_level->maxp <= minp)
@@ -2479,8 +2479,8 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
     ulong limp = limit_p(vi, x, nextt);
     if (limp == 0) {
         /* force walk */
-#ifdef SQONLY
-        if (prev->have_square)
+#ifdef PELLONLY
+        if (prev->have_square > 1)
             walk_v(prev, Z(zero));
 #else
         walk_v(prev, Z(zero));
@@ -2513,8 +2513,8 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
     if (mpz_fits_ulong_p(Z(r_walk))
         && mpz_get_ui(Z(r_walk)) < limp - p
     ) {
-#ifdef SQONLY
-        if (prev->have_square)
+#ifdef PELLONLY
+        if (prev->have_square > 1)
             walk_v(prev, Z(zero));
         else if (level > 1 && !prev->is_forced)
             level_setp(prev, prev->limp);
@@ -2753,8 +2753,8 @@ void recurse(e_is jump_continue) {
              * give same result each time.
              */
             if (vi == k) {
-#ifdef SQONLY
-                if (prev_level->have_square)
+#ifdef PELLONLY
+                if (prev_level->have_square > 1)
                     walk_v(prev_level, Z(zero));
                 else if (level > 1 && !prev_level->is_forced)
                     level_setp(prev_level, prev_level->limp);

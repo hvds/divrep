@@ -1,0 +1,134 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+use Math::Prime::Util qw{ factor_exp prev_prime };
+my($n, $k) = @ARGV;
+
+=head
+
+Pell, more than one odd prime dividing n
+-- 18, 30, 36, 42, 50, 54, 60, 66, 70, 72, 78, 84, 90, 98, 100
+
+For each case reported, we must check the logs for the original
+run to discover the parameters used, and copy those for a run
+using ./pellonly. We also add some cases with saved results that
+are not yet complete.
+
+001 pcoul(18 2) -x6075
+367 coul(18, 2): recurse 34, walk 0, walkc 0 (0.00s)
+001 pcoul(18 3) -x959075
+367 coul(18, 3): recurse 157, walk 8, walkc 9 (0.00s)
+001 pcoul(18 4) -x66251139635486389922
+367 coul(18, 4): recurse 621580, walk 16, walkc 29 (12.20s)
+
+001 pcoul(30 2) -j1 -x180224
+367 coul(30, 2): recurse 47, walk 1, walkc 0 (0.00s)
+001 pcoul(30 3) -j1 -x145705879375
+367 coul(30, 3): recurse 441, walk 24, walkc 24 (0.00s)
+001 pcoul(30 4) -j1 -x10868740069638250502059754282498
+367 coul(30, 4): recurse 52301, walk 26655, walkc 98 (7.64s)
+
+001 pcoul(36 2) -x223244
+367 coul(36, 2): recurse 524, walk 0, walkc 0 (0.00s)
+001 pcoul(36 3) -x46681074
+367 coul(36, 3): recurse 4238, walk 0, walkc 0 (0.00s)
+001 pcoul(36 4) -x290718655073
+367 coul(36, 4): recurse 42227, walk 8, walkc 26 (0.04s)
+001 pcoul(36 5) -g4 -x95457996726524
+367 coul(36, 5): recurse 472713, walk 17, walkc 64 (0.83s)
+001 pcoul(36 6) -f3 -g40 -x2595541876334839548
+367 coul(36, 6): recurse 35195773, walk 99, walkc 335 (604.43s)
+
+001 pcoul(42 2) -j1 -x41680575
+367 coul(42, 2): recurse 41, walk 1, walkc 0 (0.00s)
+001 pcoul(42 3) -j1 -x384153084109375
+367 coul(42, 3): recurse 396, walk 19, walkc 29 (0.00s)
+001 pcoul(42 4) -j1 -g20 -x34945482971239683693621646378604512953812498
+367 coul(42, 4): recurse 66833283, walk 260334, walkc 111 (1212.76s)
+
+001 pcoul(50 2) -x2707370000
+367 coul(50, 2): recurse 78, walk 0, walkc 0 (0.00s)
+001 pcoul(50 3) -x21072926936087089999
+367 coul(50, 3): recurse 5287, walk 6, walkc 11 (0.01s)
+
+001 pcoul(60 2) -j1 -x4388175
+367 coul(60, 2): recurse 80, walk 0, walkc 0 (0.00s)
+001 pcoul(60 3) -j1 -x29025249615
+367 coul(60, 3): recurse 1204, walk 3, walkc 0 (0.00s)
+001 pcoul(60 4) -j1 -x9435701092388750
+367 coul(60, 4): recurse 40309, walk 92, walkc 50 (0.24s)
+001 pcoul(60 5) -j1 -f5 -g5 -x23459236100384066979372
+367 coul(60, 5): recurse 6729738, walk 26504, walkc 1266 (128.71s)
+
+001 pcoul(66 2) -j1 -x3966616575
+367 coul(66, 2): recurse 25, walk 0, walkc 0 (0.00s)
+001 pcoul(66 3) -j1 -x867646231608212890623
+367 coul(66, 3): recurse 369, walk 20, walkc 34 (0.00s)
+[66,4 sharded by batch, see logs/o/66.4-18159]
+- each batch was rerun with the original parameters
+
+001 pcoul(70 2) -j1 -x352576749375
+367 coul(70, 2): recurse 136, walk 1, walkc 0 (0.00s)
+001 pcoul(70 3) -j1 -x27596981361427143730623
+367 coul(70, 3): recurse 3351, walk 25, walkc 32 (0.03s)
+
+001 pcoul(72 2) -x6481475
+367 coul(72, 2): recurse 1987, walk 0, walkc 0 (0.00s)
+001 pcoul(72 3) -x265165900
+367 coul(72, 3): recurse 18087, walk 0, walkc 0 (0.02s)
+001 pcoul(72 4) -x248034441472
+367 coul(72, 4): recurse 250068, walk 3, walkc 0 (0.26s)
+001 pcoul(72 5) -g3 -x49301742601472
+367 coul(72, 5): recurse 4687844, walk 6, walkc 0 (4.94s)
+
+001 pcoul(78 2) -j1 -x4857888894975
+367 coul(78, 2): recurse 35, walk 0, walkc 0 (0.00s)
+001 pcoul(78 3) -j1 -x9425059376747081787109375
+367 coul(78, 3): recurse 399, walk 17, walkc 37 (0.00s)
+[78,4 sharded by batch, see logs/o/78.4-18291]
+- each batch was rerun with the original parameters
+
+
+001 pcoul(84 2) -j1 -x13466816
+367 coul(84, 2): recurse 30, walk 0, walkc 0 (0.00s)
+001 pcoul(84 3) -j1 -x147632329422655
+367 coul(84, 3): recurse 1148, walk 5, walkc 0 (0.00s)
+001 pcoul(84 4) -j1 -x12965471279446575671872
+367 coul(84, 4): recurse 51137, walk 193, walkc 71 (0.35s)
+# various options used, try twice
+001 pcoul(84 5) -j1 -f5 -x260345705241605884190608109372
+367 coul(84, 5): recurse 4324737, walk 18293, walkc 1518 (82.93s)
+001 pcoul(84 5) -j1 -f5 -g28 -x260345705241605884190608109372
+367 coul(84, 5): recurse 7933340, walk 50440, walkc 1518 (165.49s)
+
+001 pcoul(90 2) -j1 -x127520000
+367 coul(90, 2): recurse 165, walk 1, walkc 0 (0.00s)
+001 pcoul(90 3) -j1 -g4 -x604640645958451023
+367 coul(90, 3): recurse 32068, walk 1040, walkc 46 (0.28s)
+
+001 pcoul(98 2) -x378401464109375
+367 coul(98, 2): recurse 108, walk 0, walkc 0 (0.00s)
+001 pcoul(98 3) -x3834318979317023849806999999
+367 coul(98, 3): recurse 5180, walk 4, walkc 23 (0.03s)
+
+001 pcoul(100 2) -x5616839375
+367 coul(100, 2): recurse 550, walk 0, walkc 0 (0.00s)
+001 pcoul(100 3) -x1310430193807280623
+367 coul(100, 3): recurse 72553, walk 0, walkc 0 (0.09s)
+001 pcoul(100 4) -g8 -x1494110740557788270486879373
+367 coul(100, 4): recurse 15712313, walk 6, walkc 60 (51.00s)
+
+=cut
+
+my @todo;
+$k //= '';
+for (split /\n/, `./report -yo $n $k`) {
+    next unless m{
+        ^ f\( (\d+), \s* (\d+) \)
+        \s* = \s* (\d+) (?: \s* \( .* s \) )? $
+    }x;
+    my($n2, $k, $v) = ($1, $2, $3);
+    die "oops ($_)" unless $n == $n2;
+    next if $k < 2;
+    print "$_\n";
+}
