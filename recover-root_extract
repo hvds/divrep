@@ -1,0 +1,103 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+use Math::Prime::Util qw{ factor_exp prev_prime divisors };
+my($n, $k) = @ARGV;
+
+=head
+
+root_extract() could return the wrong list of roots.
+
+This is called when we upgrade from one fixed power to a higher fixed
+power. For this to be reached, we need at least two distinct odd primes
+p < q to divide n, and either:
+- the pattern first fixes to a square, then fixes p to leave a q'th root;
+- p > 3, and the pattern fixes a square.
+
+For n <= 100, the second case only applies for n=70, we need to rerun
+SQONLY in full.
+
+The first case applies for n in (30, 42, 60, 66, 78, 84, 90). For these
+we need to scan -a for relevant patterns, and rerun those patterns SQONLY.
+
+=cut
+
+my @todo;
+$k //= '';
+for (split /\n/, `./report -yo $n $k`) {
+    next unless m{
+        ^ f\( (\d+), \s* (\d+) \)
+        \s* = \s* (\d+) (?: \s* \( .* s \) )? $
+    }x;
+    my($n2, $k, $v) = ($1, $2, $3);
+    die "oops ($_)" unless $n == $n2;
+    next if $k < 2;
+    push @todo, [ $k, $v ];
+}
+
+prep_div($n);
+for (@todo) {
+    my($k, $v) = @$_;
+    my $force = prev_prime($k + 1);
+    my @batch;
+    for (split /\n/, `./pcoul -x$v -f$force -a $n $k`) {
+        next unless m{
+            ^ 203 \s+ b (\d+) : \s+ (.*?) \s+ \[ sq = (\d+) \] $
+        }x;
+        my($bid, $pat, $sq) = ($1, $2, $3);
+        next unless relevant_pattern($n, $k, $pat);
+        if (@batch) {
+            my($last) = $batch[-1] =~ /(\d+)$/;
+            if ($last == $bid - 1) {
+                $batch[-1] =~ s{(?::\d+)?\z}{:$bid};
+                next;
+            }
+        }
+        push @batch, $bid;
+    }
+    print "todo ($n $k): @batch\n";
+    for my $bid (@batch) {
+        my $done = 0;
+        for (split /\n/, `./sqonly -x$v -f$force -b$bid -g1e6: -Ls0 $n $k`) {
+            my($log) = /^(\d+) / or die "[$bid] $_\n";
+            next if $log eq '001' || $log eq '202';
+            print("$_\n"), $done = 1, next if $log eq '367';
+            print("$_\n"), next if $log eq '200';
+            die "[$bid] $_\n";
+        }
+        die "[$bid] no 367 seen\n" unless $done;
+    }
+}
+exit 0;
+
+my %div;
+sub prep_div {
+    my($n) = @_;
+    my @f = map $_->[0] ** $_->[1], factor_exp($n);
+    @f == 3 or die "Expecting 2 distinct odd primes dividing n\n";
+    $div{$_} = 0 for divisors($n);
+    $div{$_} = 1 for divisors($f[1] * $f[2]);
+    $div{$_} = 2 for divisors($f[2]);
+    $div{$_} = 3 for (1);
+}
+
+sub relevant_pattern {
+    my($n, $k, $pat) = @_;
+    my @pat = split /\s+/, $pat;
+    die "k=$k pat=<$pat>" unless @pat == $k;
+    for (@pat) {
+        next if $_ eq '.';
+        my $need = 1;
+        my @x = map {
+            my($p, $e) = split /\^/, $_;
+            ($e || 1) + 1;
+        } split /\./, $_;
+        my $t = $n;
+        for (@x) {
+            $t /= $_;
+            ++$need if $div{$t} == $need;
+        }
+        return 1 if $need == 3;
+    }
+    return 0;
+}
