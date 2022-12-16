@@ -256,6 +256,18 @@ ulong countr, countw, countwi;
 #define DIAG_BUFSIZE (3 + k * maxfact * (20 + 1 + 5 + 1) + 1)
 char *diag_buf = NULL;
 
+#if defined(TYPE_o)
+    static inline uint TYPE_OFFSET(uint i) {
+        return i;
+    }
+#elif defined(TYPE_a)
+    static inline uint TYPE_OFFSET(uint i) {
+        return i * n;
+    }
+#else
+#   error "No type defined"
+#endif
+
 void update_window(void) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
@@ -1320,7 +1332,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         q[vi] = vp->vlevel ? &vp->alloc[vp->vlevel - 1].q : ZP(zone);
         t[vi] = vp->vlevel ? vp->alloc[vp->vlevel - 1].t : n;
         mpz_divexact(wv_qq[vi], *aq, *q[vi]);
-        mpz_add_ui(wv_o[vi], *m, vi);
+        mpz_add_ui(wv_o[vi], *m, TYPE_OFFSET(vi));
         mpz_divexact(wv_o[vi], wv_o[vi], *q[vi]);
         for (uint ai = 0; ai < vp->vlevel; ++ai) {
             t_allocation *ap = &vp->alloc[ai];
@@ -1365,7 +1377,10 @@ void walk_v(t_level *cur_level, mpz_t start) {
             mpz_fdiv_q(Z(wv_endr), max, *qi);
             mpz_root(Z(wv_endr), Z(wv_endr), 2);
             /* solve Ax^2 - By^2 = C with x <= D */
-            new_pell(*qi, *qj, (int)sqi - (int)sqj, Z(wv_endr));
+            int sqoff = (sqi < sqj)
+                ? -(int)TYPE_OFFSET(sqj - sqi)
+                : (int)TYPE_OFFSET(sqi - sqj);
+            new_pell(*qi, *qj, sqoff, Z(wv_endr));
             uint pc = 0;
             while (next_pell(Z(wv_x), Z(wv_y))) {
                 /* v_{sqi} = x^2 . q_i; v_{sqj} = y^2 . q_j */
@@ -1373,7 +1388,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
                 /* verify limit */
                 mpz_mul(Z(wv_temp), Z(wv_x2), *qi);
-                mpz_sub_ui(Z(wv_temp), Z(wv_temp), sqi);
+                mpz_sub_ui(Z(wv_temp), Z(wv_temp), TYPE_OFFSET(sqi));
                 if (mpz_cmp(Z(wv_temp), max) > 0)
                     break;  /* CHECKME: should this be an error? */
 
@@ -1504,7 +1519,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         }
         mpz_sub(Z(wv_end), max, *m);
         mpz_fdiv_q(Z(wv_end), Z(wv_end), *aq);
-        mpz_add_ui(Z(wv_endr), max, sqi);
+        mpz_add_ui(Z(wv_endr), max, TYPE_OFFSET(sqi));
         mpz_fdiv_q(Z(wv_endr), Z(wv_endr), *qi);
         mpz_root(Z(wv_endr), Z(wv_endr), xi);
 
@@ -1627,7 +1642,7 @@ void walk_1(t_level *cur_level, uint vi) {
 
     t_value *vip = &value[vi];
     t_allocation *aip = &vip->alloc[vip->vlevel - 1];
-    mpz_sub_ui(Z(w1_v), aip->q, vi);
+    mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
 
     if (mpz_cmp(Z(w1_v), min) < 0)
         return;
@@ -1643,7 +1658,7 @@ void walk_1(t_level *cur_level, uint vi) {
             continue;
         t_value *vjp = &value[vj];
         t_allocation *ajp = (vjp->vlevel) ? &vjp->alloc[vjp->vlevel - 1] : NULL;
-        mpz_add_ui(Z(w1_j), Z(w1_v), vj);
+        mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
         if (ajp) {
             /* FIXME: replace this with a single initial check of
              * v_0 == rq mod aq, then use divexact */
@@ -1733,7 +1748,10 @@ bool update_residues(t_level *old, t_level *new,
 
     /* propagate the existing roots */
     uint g = sqg[jlevel];
-    mpz_set_si(Z(ur_a), (int)vj - (int)vi);
+    int off = (vj < vi)
+        ? -(int)TYPE_OFFSET(vi - vj)
+        : (int)TYPE_OFFSET(vj - vi);
+    mpz_set_si(Z(ur_a), off);
     /* in the non-retry case, m = old->aq / q_j; in the retry case,
      * we need to take the previous value of q_j */
     uint mlevel = retry ? jlevel - 1 : jlevel;
@@ -1755,7 +1773,7 @@ bool update_residues(t_level *old, t_level *new,
 void update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
     mpz_t zarray[4];
     mpz_t *pxp = PARAM_TO_PTR(px);
-    mpz_set_si(Z(uc_minusvi), -(long)vi);
+    mpz_set_si(Z(uc_minusvi), -(long)TYPE_OFFSET(vi));
 
     /* v_0 == -i (mod 2^e) can be upgraded to v_0 = 2^e - i (mod 2^{e + 1}) */
     if (mpz_even_p(px)) {
@@ -1793,7 +1811,7 @@ bool alloc_square(t_level *cur, uint vi) {
      * else use level 0 as temporary */
     uint stash_level = (sqi == 0) ? cur->level : 0;
     /* o = (rq + i) / q */
-    mpz_add_ui(Z(asq_o), cur->rq, vi);
+    mpz_add_ui(Z(asq_o), cur->rq, TYPE_OFFSET(vi));
     mpz_divexact(Z(asq_o), Z(asq_o), ap->q);
     /* qq = aq / q */
     mpz_divexact(Z(asq_qq), cur->aq, ap->q);
@@ -1964,6 +1982,13 @@ void walk_midp(t_level *prev, bool recover) {
     maxp = midp;
 }
 
+uint relative_valuation(uint i, ulong p, uint e) {
+    uint re = simple_valuation(TYPE_OFFSET(i), p);
+    if (re < e)
+        return re;
+    return e;
+}
+
 bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
     assert(fp->count > bi);
     t_value *vp;
@@ -1972,15 +1997,17 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
     t_forcebatch *bp = &fp->batch[bi];
     uint terminal = k;
 
+    uint ep = bp->x - 1;
     if (!apply_primary(prev, cur, bp->vi, fp->p, bp->x))
         return 0;
     vp = &value[bp->vi];
     if (vp->alloc[ vp->vlevel - 1 ].t == 1)
         terminal = bp->vi;
 
-    /* TODO: prep this */
-    for (uint i = fp->p; i <= bp->vi; i += fp->p) {
-        uint e = simple_valuation(i, fp->p);
+    for (uint i = 1; i <= bp->vi; ++i) {
+        uint e = relative_valuation(i, fp->p, ep);
+        if (e == 0)
+            continue;
         uint vi = bp->vi - i;
         if (!apply_secondary(prev, cur, vi, fp->p, e + 1))
             return 0;
@@ -1988,8 +2015,10 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
         if (vp->alloc[ vp->vlevel - 1 ].t == 1)
             terminal = vi;
     }
-    for (uint i = fp->p; bp->vi + i < k; i += fp->p) {
-        uint e = simple_valuation(i, fp->p);
+    for (uint i = 1; bp->vi + i < k; ++i) {
+        uint e = relative_valuation(i, fp->p, ep);
+        if (e == 0)
+            continue;
         uint vi = bp->vi + i;
         if (!apply_secondary(prev, cur, vi, fp->p, e + 1))
             return 0;
@@ -2006,22 +2035,23 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
 
     /* did we already have a square? */
     if (prev->have_square) {
-        uint diff = abs((int)bp->vi - (int)sq0);
+        uint i_diff = abs((int)bp->vi - (int)sq0);
+        uint eq = i_diff ? relative_valuation(i_diff, fp->p, ep) : 0;
         /* need extra care only when a secondary hits the square */
-        if (diff == 0 || diff % fp->p) {
+        /* so not if a) the primary hits it, or b) nothing hits it */
+        if (i_diff == 0 || eq == 0) {
             mpz_ui_pow_ui(px, fp->p, bp->x - 1);
             if (!update_residues(prev, cur, bp->vi, fp->p, bp->x, px, 0))
                 return 0;
         } else {
             /* apply the secondary first, then the primary */
-            uint e = simple_valuation(diff, fp->p);
-            mpz_ui_pow_ui(px, fp->p, e);
-            if (!update_residues(prev, cur, sq0, fp->p, e + 1, px, 0))
+            mpz_ui_pow_ui(px, fp->p, eq);
+            if (!update_residues(prev, cur, sq0, fp->p, eq + 1, px, 0))
                 return 0;
-            uint e2 = bp->x - 1 - e;
+            uint e2 = ep - eq;
             if (e2 > 0) {
                 mpz_ui_pow_ui(px, fp->p, e2);
-                if (!update_residues(prev, cur, bp->vi, fp->p, e2 + 1, px, e))
+                if (!update_residues(prev, cur, bp->vi, fp->p, e2 + 1, px, eq))
                     return 0;
             }
         }
@@ -2424,7 +2454,7 @@ void mintau(mpz_t mint, uint vi, uint t) {
 ulong limit_p(uint vi, uint x, uint nextt) {
     t_value *vp = &value[vi];
     t_allocation *ap = (vp->vlevel) ? &vp->alloc[vp->vlevel - 1] : NULL;
-    mpz_add_ui(Z(lp_x), max, vi);
+    mpz_add_ui(Z(lp_x), max, TYPE_OFFSET(vi));
     if (ap)
         mpz_div(Z(lp_x), Z(lp_x), ap->q);
     /* else notional ap->q is 1 */
@@ -2608,10 +2638,11 @@ e_is insert_stack(void) {
             goto insert_check;
         }
 
-        /* TODO: prep this, per apply_batch */
-        for (uint j = p; j <= mini; j += p) {
+        for (uint j = 1; j <= mini; ++j) {
             uint vj = mini - j;
-            uint e = simple_valuation(j, p);
+            uint e = relative_valuation(j, p, maxx - 1);
+            if (e == 0)
+                continue;
             t_fact *rs = &rstack[vj];
             t_ppow *rsp = rs->count ? &rs->ppow[rs->count - 1] : NULL;
             if (!rsp || rsp->p != p || rsp->e != e)
@@ -2621,9 +2652,11 @@ e_is insert_stack(void) {
             if (!apply_secondary(prev, cur, vj, p, e + 1))
                 fail("could not apply_secondary(%u, %lu, %u)", vj, p, e + 1);
         }
-        for (uint j = p; mini + j < k; j += p) {
+        for (uint j = 1; mini + j < k; ++j) {
             uint vj = mini + j;
-            uint e = simple_valuation(j, p);
+            uint e = relative_valuation(j, p, maxx - 1);
+            if (e == 0)
+                continue;
             t_fact *rs = &rstack[vj];
             t_ppow *rsp = rs->count ? &rs->ppow[rs->count - 1] : NULL;
             if (!rsp || rsp->p != p || rsp->e != e)
