@@ -237,6 +237,7 @@ bool vt100 = 0;     /* update window title with VT100 escape sequences */
 char *rpath = NULL; /* path to log file */
 FILE *rfp = NULL;   /* file handle to log file */
 bool start_seen = 0;    /* true if log file has been written to before */
+bool skip_recover = 0;  /* true if we should not attempt recovery */
 t_fact *rstack = NULL;  /* point reached in recovery log file */
 bool have_rwalk = 0;    /* true if recovery is mid-walk */
 mpz_t rwalk_from;
@@ -720,15 +721,14 @@ void parse_305(char *s) {
     t0 -= dtime;
 }
 
-void recover(void) {
+void recover(FILE *fp) {
     char *last305 = NULL;
     char *curbuf = NULL;
     size_t len = 120, len305 = 0, len202 = 0;
 
-    fseek(rfp, 0L, SEEK_SET);
     while (1) {
-        ssize_t nread = getline(&curbuf, &len, rfp);
-        if (nread < 0) {
+        ssize_t nread = getline(&curbuf, &len, fp);
+        if (nread <= 0) {
             if (errno == 0)
                 break;
             fail("error reading %s: %s", rpath, strerror(errno));
@@ -736,14 +736,13 @@ void recover(void) {
         if (curbuf[nread - 1] != '\n'
                 || memchr(curbuf, 0, nread) != NULL) {
             /* corrupt line, file should be truncated */
-            off_t offset = ftello(rfp);
+            off_t offset = ftello(fp);
             if (offset == -1)
                 fail("could not ask offset: %s", strerror(errno));
-            if (ftruncate(fileno(rfp), offset - nread) != 0)
+            /* not ftruncate(), we are open only for reading */
+            if (truncate(rpath, offset - nread) != 0)
                 fail("could not truncate %s to %lu: %s", rpath, offset - nread,
                         strerror(errno));
-            if (freopen(NULL, "a+", rfp) == NULL)
-                fail("could not reopen %s: %s", rpath, strerror(errno));
             break;
         }
         if (strncmp("305 ", curbuf, 4) == 0) {
@@ -773,7 +772,6 @@ void recover(void) {
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
-    fseek(rfp, 0L, SEEK_END);
     if (improve_max && seen_best && mpz_cmp(best, max) < 0)
         mpz_set(max, best);
     if (last305)
@@ -1047,11 +1045,18 @@ void init_post(void) {
     }
     if (rpath) {
         printf("path %s\n", rpath);
-        rfp = fopen(rpath, "a+");
+        if (!skip_recover) {
+            FILE *fp = fopen(rpath, "r");
+            if (fp) {
+                recover(fp);
+                fclose(fp);
+            }
+        }
+
+        rfp = fopen(rpath, "a");
         if (rfp == NULL)
             fail("%s: %s", rpath, strerror(errno));
         setlinebuf(rfp);
-        recover();
     }
 #ifdef HAVE_SETPROCTITLE
     setproctitle("oul(%lu %lu)", n, k);
@@ -3086,7 +3091,9 @@ int main(int argc, char **argv, char **envp) {
         else if (arg[1] == 'r') {
             rpath = (char *)malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
-        } else if (arg[1] == 'f')
+        } else if (strncmp("-R", arg, 2) == 0)
+            skip_recover = 1;
+        else if (arg[1] == 'f')
             force_all = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 's')
             randseed = strtoul(&arg[2], NULL, 10);
