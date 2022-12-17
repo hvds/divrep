@@ -1300,6 +1300,18 @@ bool test_zprime(mpz_t qq, mpz_t o, mpz_t ati) {
     return _GMP_is_prob_prime(Z(wv_cand));
 }
 
+bool test_1multi(uint *need, uint nc, uint *t) {
+    for (uint i = 0; i < nc; ++i) {
+        uint vi = need[i];
+        t_tm *tm = &taum[i];
+        mpz_set(tm->n, wv_o[vi]);
+        tm->t = t[vi];
+        if (!tau_multi_prep(i))
+            return 0;
+    }
+    return tau_multi_run(nc);
+}
+
 bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
@@ -1769,9 +1781,14 @@ void walk_1(t_level *cur_level, uint vi) {
             return;
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
+#ifdef PARALLEL
+    if (!test_1multi(need_other, noc, t))
+        return;
+#else
     for (uint i = 0; i < noc; ++i)
         if (!is_taux(wv_o[need_other[i]], t[need_other[i]], 1))
             return;
+#endif
     candidate(Z(w1_v));
     return;
 }
