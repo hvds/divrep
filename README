@@ -38,6 +38,7 @@ coul: optimized non-parallel search
 pcoul: optimized parallel search
 dcoul: debugging non-parallel search
 dpcoul: debugging parallel search
+pcaul/dpcaul: equivalent to pcoul for A165498/A165499
 test_pell: a tool to solve Pell equations
 ftest: test a specific factorization
 
@@ -126,6 +127,10 @@ reached according to that log, and continue processing from that point.
 By default there is no logfile, and progress will only be shown on the
 terminal.
 
+If "-R" is specified, the file is _not_ read to determine the point to
+recover from: calculation always goes from the beginning. This can be
+useful to combine several separate runs into a single log file.
+
 If "-f7" is specified, it will set force_all = 7 to treat all primes p <= 7
 as fully forced primes (see below). By default, force_all is set to k
 (the maximum) when n == 2 (mod 4), and to 0 otherwise.
@@ -210,106 +215,4 @@ and long start-up times.
 HOW IT WORKS
 ============
 
-We know that if p^e | v, and tau(v) = n, then e + 1 | n. The core of the
-strategy is to allocate prime powers to each of the values to satisfy
-all odd primes dividing n, in every possible way recursively, then to
-walk through each of the sets of values consistent with those allocations
-up to the specified maximum, checking whether any of them is a solution.
-
-The first part of this is controlled by the function recurse(), the second
-is primarily implemented by walk_v().
-
-By convention, v_i is the i'th value (0 <= i < k); we allocate a power
-p^e or p^{x - 1}, which contributes a factor of e + 1 or x to the number
-of divisors.
-
-recurse()
----------
-
-In the recursive allocation we distinguish between "forced" and "unforced"
-primes. Any prime that divides two or more of the values is forced, so
-that the powers of that prime are allocated simultaneously to each of the
-affected values; for unforced primes we know that no other value is
-divisible by it. For primes p: k/2 < p <= k we have the choice: we can
-force it at every position (if force_all >= p), meaning that we will try
-setting every power at every position; or we can force it only at the
-positions we have to, leaving it to be allocated as an unforced prime
-in the remaining positions.
-
-  The choice here can significantly affect speed. Eg for D(12, 9), p=7
-  we must force p at v_0, v_1, v_7, v_8, but can leave it unforced for
-  v_2 .. v_6. Forcing it in those positions means we will specifically
-  try allocating, in turn, 7^2, 7^5, 7^11, 7^1, 7^3 at each position;
-  unforced, we would only allocate 7^2, 7^5, 7^11 - the possibility
-  of 7^1 or 7^3 would be found only by factorization in walk_v().
-  Whether forcing all positions is faster seems to depend both on how
-  many positions are affected and on how constraining an effect the
-  additional allocation has: if it would leave only a square or a prime
-  unallocated, it is much more likely to speed things up.
-
-All forced primes are allocated, in order, as the first steps of the
-recursion. When all forced primes have been allocated, recursion
-continues by calling best_v() to ask which value the next allocation
-should be applied to, then looping over the possible powers at that
-value, and for each power looping over the possible primes.
-
-If best_v() finds no value to allocate to, we call walk_v() and
-derecurse. Otherwise we calculate the maximum prime "lim_p" that we will
-need to allocate, and the number of iterations w we would need to walk
-if we stopped the recursion at this point. Using lim_p as a proxy for
-the cost of recursing further, if w * gain < lim_p, we now call walk_v()
-and derecurse, else we allocate a prime and recurse further.
-
-For each allocation, we manage the recursion by tracking what we have
-allocated and where we have allocated it in levels[level]. We also keep
-a running calculation of "r_q" and "a_q" via the Chinese Remainder Theorem
-(CRT) such that we know v_0 == r_q (mod a_q). If any allocations leave
-at least one value v_j with a square for its unallocated remnant, we
-maintain the list of possible g'th roots of r_q + j (mod a_q), where
-g is the maximum power that the v_j remnant is known to require.
-
-We also track allocations to individual values in value[i]; for each
-allocation we record p, x, t and q: we have allocated p^{x-1}, the
-product of the allocations is q, and the remaining tau() is t.
-
-walk_v()
---------
-
-For each value v_i we find t_i, the remaining unallocated tau(); o_i, q_i
-and Q_i (written qq_i), where q_i is the product of the allocations to v_i;
-Q_i = a_q/q_i; o_i = (r_q + i) / q_i. Then we know that at iteration j,
-we have v_i = q_i(o_i + jQ_i), and we require that o_i + jQ_i is coprime
-with q_i, and tau(o_i + jQ_i) = t_i.
-
-We also calculate the inverse -o_i/Q_i modulo each prime p dividing q_i,
-so that for each j we can immediately reject it if j % p matches the inverse.
-
-We also classify each t_i according to whether it is odd (need_square[]),
-2 (need_prime[]) or anything else (need_other[]).
-
-If need_square[] is empty, we then iterate over the possible values of j
-(written "ati"). For each value we first check the inverses, then check
-the primes, then check the others, bailing out at the first rejection.
-If all tests pass we have a candidate.
-
-  By default we fully check the need_other[] values one at a time;
-  there is experimental code used if compiled with "-DPARALLEL", which
-  does only one test of each value at a time - when the values get large,
-  this can save a lot of time by finding a value that can be rejected
-  with fast tests before having to try much slower tests on a value that
-  is harder to factorize. However this code needs further improvement
-  to maximize the potential savings: the granularity of the tests is
-  currently far too small, but we need extensive timings to understand
-  how to improve it.
-
-Note (TODO), for the case when need_square[] is empty we restrict j to
-fit in 64 bits. The code will abort with an error if the maximum is so
-high that this would not be sufficient.
-
-If need_square[] is not empty (see 'nqc' in the code), we use a different
-path: if there are multiple squares, we invoke code to solve the Pell
-equation involving the first two, and iterate over the results. If there
-is exactly one square at v_i, we decide the highest power g we can require
-as g = gcd({ d - 1: d | t_i }), and iterate only over the g'th roots of
-o_i (mod Q_i) as prepared for us in recurse().
-
+See the wiki page <https://github.com/hvds/divrep/wiki/D(n,k)-calculation>.
