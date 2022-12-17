@@ -8,7 +8,7 @@ use lib ('./lib');
 use Seq::Db;
 use Type;
 
-my($debug, $opt_composite, $opt_table, $opt_run) = (0, 0, 0, 0);
+my($debug, $opt_composite, $opt_table, $opt_run, $commas) = (0, 0, 0, 0, 0);
 my $typename = 't';
 my $nfilter;
 my $filter = sub { 1 };
@@ -19,6 +19,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $opt_composite = 1, next if $arg eq '-c';
     $opt_table = 1, next if $arg eq '-t';
     $opt_run = 1, next if $arg eq '-r';
+    $commas = 1, next if $arg eq '-C';
     $typename = $1, next if $arg =~ /^-y(.*)/;
     $filter = chain_sig($filter, $1 || shift(@ARGV)), next
             if $arg =~ /^-s(.*)/;
@@ -144,22 +145,22 @@ sub _report_fk {
             if ($rt) {
                 $st = sprintf ' (%s%.2fs)', $rt->old ? '*' : '', $rt->runtime;
             }
-            printf "f(%s, %s) = %s%s\n", $f->n, $f->k, $f->f, $st;
+            printf "f(%s, %s) = %s%s\n", $f->n, $f->k, _f($f->f), $st;
         } elsif ($f->k <= $g->maxg) {
-            printf "f(%s, %s) > %s\n", $f->n, $f->k, $g->checked;
+            printf "f(%s, %s) > %s\n", $f->n, $f->k, _f($g->checked);
         } # else ignore, it was proven impossible
     } elsif ($f->complete && $f->depend) {
         if ($f->f) {
             printf "f(%s, %s) = %s = %s f(%s, %s)\n",
-                    $f->n, $f->k, $f->f, $f->depend_m, $f->depend_n, $f->k;
+                    $f->n, $f->k, _f($f->f), $f->depend_m, $f->depend_n, $f->k;
         } else {
             printf "f(%s, %s) = %s f(%s, %s)\n",
                     $f->n, $f->k, $f->depend_m, $f->depend_n, $f->k;
         }
     } elsif ($f->f && !$f->complete) {
-        printf "f(%s, %s) <= %s\n", $f->n, $f->k, $f->f;
+        printf "f(%s, %s) <= %s\n", $f->n, $f->k, _f($f->f);
     } else {
-        printf "f(%s, %s) > %s\n", $f->n, $f->k, $g->checked
+        printf "f(%s, %s) > %s\n", $f->n, $f->k, _f($g->checked)
                 unless $g->depend;
     }
     return;
@@ -322,6 +323,10 @@ sub _comments {
     return join "; ", @c;
 }
 
+sub _f {
+    my($n) = @_;
+    $commas ? _fc($n) : "$n";
+}
 sub _fe {
     my($ft, $n) = @_;
     (sprintf $ft, "$n") =~ s{e\+?0*(?=\d)}{e}r;
