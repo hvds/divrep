@@ -4,18 +4,24 @@ use warnings;
 use lib 'lib';
 use List::Util qw{ sum };
 use Type;
+use Seq::Db;
 
 my $typename = 't';
+my($opt_g) = (0);
 my @opt_m;
 
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
     $typename = $1, next if $arg =~ /^-y(.*)/;
+    $opt_g = 1, next if $arg eq '-g';
     push(@opt_m, $arg), next if $arg =~ /^-m/;
     die "Unknown option '$arg'";
 }
+my $type = Type->new($typename);
+option_g(@ARGV) if $opt_g;  # does not return
 @ARGV == 5 or die "500 Usage: $0 n ming maxg d optc";
+my($n, $ming, $maxg, $d, $optc) = @ARGV;
 
 =head1 bisect-g: find upper bound for g(n)
 
@@ -31,9 +37,6 @@ The program will invoke C<gtauseq> to perform a binary chop, using options
 C<< -c I<optc> -cp 20 -D >>, and report the new best upper bound.
 
 =cut
-
-my($n, $ming, $maxg, $d, $optc) = @ARGV;
-my $type = Type->new($typename);
 
 my($good, $bad) = ($ming, $maxg + 1);
 while ($good + 1 < $bad) {
@@ -82,4 +85,28 @@ sub bad {
     }
     # Not an expected result.
     die "501 Error parsing logs from '$log'\n";
+}
+
+# -g is a request to use database detail to decide parameters, and
+# update database with results. We create a Run object to mediate
+# the process, then reinvoke ourselves through it.
+sub option_g {
+    @_ == 2 or die "Usage: $0 -g [options, ...] <n> <optc>\n";
+    my($n, $optc) = @_;
+    $type->bind_owner('harness');
+    $type->bind($n);
+    my $db = Seq::Db->new($type, 0);
+    Seq::TauG->genTo($db, $n);
+    my $g = $db->resultset('TauG')->find({ n => $n })
+            // die "cannot find TauG entry for n=$n";
+    my $r = Seq::Run::BisectG->new($type, $g, undef, $optc);
+    my @t0 = times;
+    my $pid = $r->run;
+    waitpid($pid, 0);
+    my @t1 = times;
+    my $time = $t1[2] + $t1[3] - $t0[2] - $t0[3];
+    my $log = $r->logpath;
+    system("cat $log");
+    $r->finalize($db, $time);
+    exit(0);
 }
