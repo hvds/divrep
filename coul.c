@@ -3022,6 +3022,11 @@ void recurse(e_is jump_continue) {
                     ) {
                         /* this is a batch we want to process */
                         ++batch_alloc;
+                        /* if we have -W to process, do that now */
+                        if (midp && midp < maxp)
+                            walk_midp(prev_level, 0);
+                        if (midp_only)
+                            goto derecurse;
                         goto unforced;
                     }
                     if (opt_batch_min < 0)
