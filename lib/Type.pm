@@ -93,6 +93,7 @@ sub invoked {
     open my $f, '<', $log
             or die "504 Can't open $log for reading: $!";
     my %line;
+    local $_;
     while (<$f>) {
         chomp;
         my($rc) = /^(\d{3}) /
