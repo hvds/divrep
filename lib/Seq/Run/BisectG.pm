@@ -11,12 +11,13 @@ Seq::Run::BisectG
 =cut
 
 sub new {
-    my($class, $type, $g, $f, $c) = @_;
+    my($class, $type, $g, $f, $c, $opts) = @_;
     return bless {
         type => $type,
         g => $g,
         f => $f,
         c => $c,
+        opts => $opts // [],
     }, $class;
 }
 
@@ -25,6 +26,7 @@ sub g { shift->{g} }
 sub n { shift->g->n }
 sub f { shift->{f} }
 sub c { shift->{c} }
+sub opts { shift->{opts} }
 
 sub logpath {
     my($self) = @_;
@@ -50,7 +52,9 @@ sub runnable {
 sub command {
     my($self) = @_;
     my $g = $self->g;
-    return [ $g->n, $g->ming, $g->maxg, $g->checked, $self->c ];
+    return [
+        @{ $self->opts }, $g->n, $g->ming, $g->maxg, $g->checked, $self->c,
+    ];
 }
 
 sub run {
