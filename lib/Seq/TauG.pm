@@ -131,7 +131,7 @@ sub ugly {
 
 sub bisect {
     my($self, $db, $maxg, $bisected, $btime) = @_;
-    return () if ($self->bisected // 0) >= $bisected;
+    return () if ($self->bisected // 0) > $bisected;
     my $old_maxg = $self->maxg;
     if ($maxg < $old_maxg) {
         $self->maxg($maxg);
