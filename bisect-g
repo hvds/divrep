@@ -9,6 +9,7 @@ use Seq::Db;
 my $typename = 't';
 my($opt_g) = (0);
 my @opt_m;
+my $opt_M;
 
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
@@ -16,6 +17,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $typename = $1, next if $arg =~ /^-y(.*)/;
     $opt_g = 1, next if $arg eq '-g';
     push(@opt_m, $arg), next if $arg =~ /^-m/;
+    $opt_M = $1, next if $arg =~ /^-M(\d+)$/;
     die "Unknown option '$arg'";
 }
 my $type = Type->new($typename);
@@ -39,12 +41,18 @@ C<< -c I<optc> -cp 20 -D >>, and report the new best upper bound.
 =cut
 
 my($good, $bad) = ($ming, $maxg + 1);
+my @M = $opt_M ? (map "-m${opt_M}=$_", 0 .. $opt_M - 1) : (undef);
 while ($good + 1 < $bad) {
     my $mid = ($good + $bad) >> 1;
-    if (bad($type, $mid)) {
-        $bad = $mid;
-    } else {
+    my @nextM = grep {
+        local $opt_m[@opt_m] = $_ if defined $_;
+        !bad($type, $mid);
+    } @M;
+    if (@nextM) {
         $good = $mid;
+        @M = @nextM;
+    } else {
+        $bad = $mid;
     }
 }
 my $time = sum(times());
@@ -91,6 +99,8 @@ sub bad {
 # update database with results. We create a Run object to mediate
 # the process, then reinvoke ourselves through it.
 sub option_g {
+    die "-m not supported with -g, only complete runs permitted"
+            if @opt_m;
     @_ == 2 or die "Usage: $0 -g [options, ...] <n> <optc>\n";
     my($n, $optc) = @_;
     $type->bind_owner('harness');
@@ -99,7 +109,10 @@ sub option_g {
     Seq::TauG->genTo($db, $n);
     my $g = $db->resultset('TauG')->find({ n => $n })
             // die "cannot find TauG entry for n=$n";
-    my $r = Seq::Run::BisectG->new($type, $g, undef, $optc);
+    my @opts = (
+        ($opt_M ? "-M$opt_M" : ()),
+    );
+    my $r = Seq::Run::BisectG->new($type, $g, undef, $optc, \@opts);
     my @t0 = times;
     my $pid = $r->run;
     waitpid($pid, 0);
