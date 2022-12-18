@@ -2189,7 +2189,7 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
     }
 
   batch_applied:
-    if (opt_alloc && next_prime(fp->p) > maxforce[bp->vi]) {
+    if (opt_alloc && level == forcedp) {
         if (opt_batch_min >= 0
             && batch_alloc >= opt_batch_min
             && batch_alloc <= opt_batch_max
