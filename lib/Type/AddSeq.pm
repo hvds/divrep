@@ -109,7 +109,7 @@ sub more_m_rad_m {
     my $lim = ((($n + 4) >> 2) ** 2) * $m;
     for my $u (1 .. $r - 1) {
         next if gcd($u, $r) > 1 || gcd($u + $n, $r) > 1;
-        for my $k (0 .. $f - $m) {
+        for my $k (0 .. $f - 1 - $m) {
             $self->suppress_k($k, $u * $m, $mr, $lim);
             # or equivalently:
             #$self->suppress_k($k + $m, (($u + $n) % $r) * $m, $mr, $lim);
