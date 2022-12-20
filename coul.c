@@ -212,7 +212,7 @@ ulong antigain = 0;
  * skip the walk); midp is the threshold beyond which we should pre-walk.
  * When midp is in use, we save maxp in orig_maxp, and overwrite it.
  */
-uint minp = 0, maxp = 0, orig_maxp, midp = 0;
+ulong minp = 0, maxp = 0, orig_maxp, midp = 0;
 bool midp_only = 0;
 struct {
     ulong p;
@@ -1131,13 +1131,13 @@ void report_init(FILE *fp, char *prog) {
     if (minp || maxp) {
         fprintf(fp, " -p");
         if (minp)
-            fprintf(fp, "%u:", minp);
+            fprintf(fp, "%lu:", minp);
         if (maxp)
-            fprintf(fp, "%u", (midp && midp == maxp) ? orig_maxp : maxp);
+            fprintf(fp, "%lu", (midp && midp == maxp) ? orig_maxp : maxp);
     }
     if (midp) {
         char *ww = midp_only ? "W" : "";
-        fprintf(fp, " -W%s%u", ww, midp);
+        fprintf(fp, " -W%s%lu", ww, midp);
     }
     if (force_all)
         fprintf(fp, " -f%u", force_all);
