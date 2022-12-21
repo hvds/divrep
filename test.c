@@ -6,6 +6,9 @@ int main(int argc, char **argv, char **envp){
      int a;
      int b;
      int c;
+     int d;
+     int e;
+     int f;
      rfp = fopen("out.txt", "a+");
      printf ("Enter first digit \n");
      scanf("%d", &a);
@@ -15,9 +18,6 @@ int main(int argc, char **argv, char **envp){
      fprintf(rfp,"%d %d %d\n",a,b,c);
      fflush(rfp);
      {
-       int d;
-       int e;
-       int f;
        freopen(NULL, "a+", rfp);
        printf ("Enter (2:%d) first digit \n",i);
        scanf("%d", &d);
