@@ -2,20 +2,6 @@
 
 FILE *rfp = NULL;
 
-void f1(void){
-     int d;
-     int e;
-     int f;
-     freopen(NULL, "a+", rfp);
-     printf ("Enter (2) first digit \n");
-     scanf("%d", &d);
-     printf ("Enter (2) second digit \n");
-     scanf("%d", &e);
-     f=d+e;
-     fprintf(rfp,"%d %d %d\n",d,e,f);
-     fflush(rfp);
-}
-
 int main(int argc, char **argv, char **envp){
      int a;
      int b;
