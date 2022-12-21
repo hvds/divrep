@@ -28,7 +28,19 @@ int main(int argc, char **argv, char **envp){
      c=a+b;
      fprintf(rfp,"%d %d %d\n",a,b,c);
      fflush(rfp);
-     f1();
+     {
+       int d;
+       int e;
+       int f;
+       freopen(NULL, "a+", rfp);
+       printf ("Enter (2:%d) first digit \n",i);
+       scanf("%d", &d);
+       printf ("Enter (2:%d) second digit \n",i);
+       scanf("%d", &e);
+       f=d+e;
+       fprintf(rfp,"%d %d %d\n",d,e,f);
+       fflush(rfp);
+     }
 /*
  * We test each version of the code twice, once with no arguments
  * (and so without the extra fflush() call) expecting to reproduce
