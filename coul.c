@@ -3232,16 +3232,20 @@ int main(int argc, char **argv, char **envp) {
     init_post();
     report_init(stdout, argv[0]);
     if (rfp) report_init(rfp, argv[0]);
-#if 0
-    char s[] = "7^2 2.71^2 3^8 2^2.5^2 11^2.29^2 (0.00s)\n";
-    parse_305(s);
-#endif
 
     if (midp) {
         if (n != 12)
             fail("-W only supported with n=12");
-        if (!maxp)
-            fail("-W only supported with maximum prime (-p)");
+        if (!maxp) {
+            mpz_add_ui(Z(temp), max, k - 1);
+            mpz_fdiv_q_ui(Z(temp), Z(temp), 6);
+            mpz_sqrt(Z(temp), Z(temp));
+            if (mpz_fits_ulong_p(Z(temp)))
+                maxp = mpz_get_ui(Z(temp));
+            else
+                fail("calculated maximum prime (%Zu) does not fit 64-bit",
+                        Z(temp));
+        }
         mpz_ui_pow_ui(Z(temp), midp, 5);
         mpz_add_ui(Z(temp), Z(temp), 1);
         mpz_mul_ui(Z(temp), Z(temp), 2);
