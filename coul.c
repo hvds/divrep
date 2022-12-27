@@ -2073,6 +2073,261 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
+/* floor(log_p{q}) */
+static inline uint lpq(uint p, uint q) {
+    uint l = 0;
+    while (q >= p) {
+        q /= p;
+        ++l;
+    }
+    return l;
+}
+
+/* Calculate the minimum contribution from unused primes satisfying
+ * the given tau.
+ *
+ * If h(n) is the highest prime dividing n, this may be called for
+ * any t: t | n/h(n).
+ *
+ * We have specific cases for each composite tau we can encounter at least
+ * up to n=100, and fall back to a default for other cases which is precise
+ * for prime tau but conservative for composite tau.
+ */
+void mintau(mpz_t mint, uint t) {
+    uint pi = levels[level - 1].nextpi;
+    uint p = sprimes[pi];
+    switch(t) {
+      case 1:
+        mpz_set_ui(mint, 1);
+        break;
+      case 2:
+        mpz_set_ui(mint, p);
+        break;
+      case 4: {
+        uint q = sprimes[find_nextpi(pi)];
+        if (lpq(p, q) < 2) {
+            mpz_set_ui(mint, p);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 3);
+        }
+        break;
+      }
+      case 6: {
+        uint q = sprimes[find_nextpi(pi)];
+        if (lpq(p, q) < 3) {
+            mpz_ui_pow_ui(mint, p, 2);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 5);
+        }
+        break;
+      }
+      case 8: {
+        uint qi = find_nextpi(pi);
+        uint q = sprimes[qi];
+        uint r = sprimes[find_nextpi(qi)];
+        if (lpq(p, r) < 2) {
+            mpz_set_ui(mint, p);
+            mpz_mul_ui(mint, mint, q);
+            mpz_mul_ui(mint, mint, r);
+        } else if (lpq(p, q) < 4) {
+            mpz_ui_pow_ui(mint, p, 3);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 7);
+        }
+        break;
+      }
+      case 9: {
+        uint q = sprimes[find_nextpi(pi)];
+        if (lpq(p, q) < 3) {
+            mpz_ui_pow_ui(mint, p * q, 2);
+        } else {
+            mpz_ui_pow_ui(mint, p, 8);
+        }
+        break;
+      }
+      case 10: {
+        uint q = sprimes[find_nextpi(pi)];
+        if (lpq(p, q) < 5) {
+            mpz_ui_pow_ui(mint, p, 4);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 9);
+        }
+        break;
+      }
+      case 12: {
+        uint qi = find_nextpi(pi);
+        uint q = sprimes[qi];
+        uint r = sprimes[find_nextpi(qi)];
+        uint pq = lpq(p, q);
+        if (p > r / q && lpq(p, r) < 3) {
+            mpz_set_ui(mint, p * p);
+            mpz_mul_ui(mint, mint, q * r);
+        } else if (pq < 2) {
+            mpz_ui_pow_ui(mint, p * q, 2);
+            mpz_mul_ui(mint, mint, p);
+        } else if (pq < 6) {
+            mpz_ui_pow_ui(mint, p, 5);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 11);
+        }
+        break;
+      }
+      case 14: {
+        uint q = sprimes[find_nextpi(pi)];
+        if (lpq(p, q) < 7) {
+            mpz_ui_pow_ui(mint, p, 6);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 13);
+        }
+        break;
+      }
+      case 16: {
+        uint qi = find_nextpi(pi);
+        uint q = sprimes[qi];
+        uint ri = find_nextpi(qi);
+        uint r = sprimes[ri];
+        uint s = sprimes[find_nextpi(ri)];
+        uint pq = lpq(p, q);
+        if (lpq(p, s) < 2) {
+            mpz_set_ui(mint, p * s);
+            mpz_mul_ui(mint, mint, q * r);
+        } else if (lpq(q, r) < 2 && lpq(p, r) < 4) {
+            mpz_ui_pow_ui(mint, p, 3);
+            mpz_mul_ui(mint, mint, q * r);
+        } else if (pq < 2) {
+            mpz_ui_pow_ui(mint, p * q, 3);
+        } else if (pq < 8) {
+            mpz_ui_pow_ui(mint, p, 7);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 15);
+        }
+        break;
+      }
+      case 18: {
+        uint qi = find_nextpi(pi);
+        uint q = sprimes[qi];
+        uint r = sprimes[find_nextpi(qi)];
+        uint pq = lpq(p, q);
+        if (lpq(p, q * r) < 6) {
+            mpz_ui_pow_ui(mint, p * q, 2);
+            mpz_mul_ui(mint, mint, r);
+        } else if (pq < 3) {
+            mpz_ui_pow_ui(mint, p, 5);
+            mpz_mul_ui(mint, mint, q * q);
+        } else if (pq < 9) {
+            mpz_ui_pow_ui(mint, p, 8);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 17);
+        }
+        break;
+      }
+      case 20: {
+        uint qi = find_nextpi(pi);
+        uint q = sprimes[qi];
+        uint r = sprimes[find_nextpi(qi)];
+        /* A: p^4.q.r, B: p^4.q^3, C: p^9.q, D: p^19 */
+        if (lpq(q, r) < 2 && lpq(p, r) < 5) {
+            mpz_ui_pow_ui(mint, p, 4);
+            mpz_mul_ui(mint, mint, q * r);
+        } else if (lpq(p, q * q) < 5) {
+            mpz_ui_pow_ui(mint, p * q, 3);
+            mpz_mul_ui(mint, mint, p);
+        } else if (lpq(p, q) < 10) {
+            mpz_ui_pow_ui(mint, p, 9);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 19);
+        }
+        break;
+      }
+      case 24: {
+        uint qi = find_nextpi(pi);
+        uint q = sprimes[qi];
+        uint ri = find_nextpi(qi);
+        uint r = sprimes[ri];
+        uint s = sprimes[find_nextpi(ri)];
+        /* A: p^2.q.r.d, B: p^3.q^2.r, C: p^5.q.r, D: p^5.q^3, E: p^7.q^2,
+         * F: p^11.q, G: p^23 */
+        uint pq = lpq(p, q);
+        bool rp2q = (r / q < p * p);
+        if (s < p * q && lpq(p, s) < 3) {
+            mpz_set_ui(mint, p * p);
+            mpz_mul_ui(mint, mint, q * r);
+            mpz_mul_ui(mint, mint, s);
+        } else if (lpq(p, q) < 2 && rp2q) {
+            mpz_ui_pow_ui(mint, p * q, 2);
+            mpz_mul_ui(mint, mint, p * r);
+        } else if (rp2q && lpq(q, r) < 2 && lpq(p, r) < 6) {
+            mpz_ui_pow_ui(mint, p, 5);
+            mpz_mul_ui(mint, mint, q * r);
+        } else if (pq < 2) {
+            mpz_ui_pow_ui(mint, p * q, 3);
+            mpz_mul_ui(mint, mint, p * p);
+        } else if (pq < 4) {
+            mpz_ui_pow_ui(mint, p, 7);
+            mpz_mul_ui(mint, mint, q * q);
+        } else if (pq < 12) {
+            mpz_ui_pow_ui(mint, p, 11);
+            mpz_mul_ui(mint, mint, q);
+        } else {
+            mpz_ui_pow_ui(mint, p, 23);
+        }
+        break;
+      }
+      case 32: {
+        uint qi = find_nextpi(pi);
+        uint q = sprimes[qi];
+        uint ri = find_nextpi(qi);
+        uint r = sprimes[ri];
+        uint si = find_nextpi(ri);
+        uint s = sprimes[si];
+        uint u = sprimes[find_nextpi(si)];
+        uint pq = lpq(p, q);
+        uint pr = lpq(p, r);
+        if (p * p > u) {
+            mpz_set_ui(mint, p * s);
+            mpz_mul_ui(mint, mint, q * r);
+            mpz_mul_ui(mint, mint, u);
+        } else if (q * q > s && lpq(p, s) < 4) {
+            mpz_ui_pow_ui(mint, p, 3);
+            mpz_mul_ui(mint, mint, q * r);
+            mpz_mul_ui(mint, mint, s);
+        } else if (pq < 2 && pr < 4) {
+            mpz_ui_pow_ui(mint, p * q, 3);
+            mpz_mul_ui(mint, mint, r);
+        } else if (q * q > r && pr < 8) {
+            mpz_ui_pow_ui(mint, p, 7);
+            mpz_mul_ui(mint, mint, q * r);
+        } else if (pq < 4) {
+            mpz_ui_pow_ui(mint, p, 7);
+            mpz_mul_ui(mint, mint, q * q);
+            mpz_mul_ui(mint, mint, q);
+        } else if (pq < 16) {
+            mpz_ui_pow_ui(mint, p, 15);
+            mpz_mul_ui(mint, mint, q); 
+        } else {
+            mpz_ui_pow_ui(mint, p, 31);
+        }
+        break;
+      }
+      default:
+        /* quick version: given the minimum prime p that can be used, we
+         * calculate p^k where k = sum{p_i - 1} over the primes dividing
+         * t _with multiplicity_.
+         */
+        mpz_ui_pow_ui(mint, p, divisors[t].sumpm);
+        break;
+    }
+}
+
 void walk_midp(t_level *prev, bool recover) {
     t_level *cur = &levels[level];
     uint need_alloc[k];
@@ -2398,261 +2653,6 @@ t_strategy strategies[NUM_STRATEGIES] = {
  */
 uint best_v(void) {
     return strategies[strategy]();
-}
-
-/* floor(log_p{q}) */
-static inline uint lpq(uint p, uint q) {
-    uint l = 0;
-    while (q >= p) {
-        q /= p;
-        ++l;
-    }
-    return l;
-}
-
-/* Calculate the minimum contribution from unused primes satisfying
- * the given tau.
- *
- * If h(n) is the highest prime dividing n, this may be called for
- * any t: t | n/h(n).
- *
- * We have specific cases for each composite tau we can encounter at least
- * up to n=100, and fall back to a default for other cases which is precise
- * for prime tau but conservative for composite tau.
- */
-void mintau(mpz_t mint, uint t) {
-    uint pi = levels[level - 1].nextpi;
-    uint p = sprimes[pi];
-    switch(t) {
-      case 1:
-        mpz_set_ui(mint, 1);
-        break;
-      case 2:
-        mpz_set_ui(mint, p);
-        break;
-      case 4: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 2) {
-            mpz_set_ui(mint, p);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 3);
-        }
-        break;
-      }
-      case 6: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 3) {
-            mpz_ui_pow_ui(mint, p, 2);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 5);
-        }
-        break;
-      }
-      case 8: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        if (lpq(p, r) < 2) {
-            mpz_set_ui(mint, p);
-            mpz_mul_ui(mint, mint, q);
-            mpz_mul_ui(mint, mint, r);
-        } else if (lpq(p, q) < 4) {
-            mpz_ui_pow_ui(mint, p, 3);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 7);
-        }
-        break;
-      }
-      case 9: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 3) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-        } else {
-            mpz_ui_pow_ui(mint, p, 8);
-        }
-        break;
-      }
-      case 10: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 5) {
-            mpz_ui_pow_ui(mint, p, 4);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 9);
-        }
-        break;
-      }
-      case 12: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        uint pq = lpq(p, q);
-        if (p > r / q && lpq(p, r) < 3) {
-            mpz_set_ui(mint, p * p);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-            mpz_mul_ui(mint, mint, p);
-        } else if (pq < 6) {
-            mpz_ui_pow_ui(mint, p, 5);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 11);
-        }
-        break;
-      }
-      case 14: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 7) {
-            mpz_ui_pow_ui(mint, p, 6);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 13);
-        }
-        break;
-      }
-      case 16: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint ri = find_nextpi(qi);
-        uint r = sprimes[ri];
-        uint s = sprimes[find_nextpi(ri)];
-        uint pq = lpq(p, q);
-        if (lpq(p, s) < 2) {
-            mpz_set_ui(mint, p * s);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (lpq(q, r) < 2 && lpq(p, r) < 4) {
-            mpz_ui_pow_ui(mint, p, 3);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-        } else if (pq < 8) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 15);
-        }
-        break;
-      }
-      case 18: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        uint pq = lpq(p, q);
-        if (lpq(p, q * r) < 6) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-            mpz_mul_ui(mint, mint, r);
-        } else if (pq < 3) {
-            mpz_ui_pow_ui(mint, p, 5);
-            mpz_mul_ui(mint, mint, q * q);
-        } else if (pq < 9) {
-            mpz_ui_pow_ui(mint, p, 8);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 17);
-        }
-        break;
-      }
-      case 20: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        /* A: p^4.q.r, B: p^4.q^3, C: p^9.q, D: p^19 */
-        if (lpq(q, r) < 2 && lpq(p, r) < 5) {
-            mpz_ui_pow_ui(mint, p, 4);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (lpq(p, q * q) < 5) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-            mpz_mul_ui(mint, mint, p);
-        } else if (lpq(p, q) < 10) {
-            mpz_ui_pow_ui(mint, p, 9);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 19);
-        }
-        break;
-      }
-      case 24: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint ri = find_nextpi(qi);
-        uint r = sprimes[ri];
-        uint s = sprimes[find_nextpi(ri)];
-        /* A: p^2.q.r.d, B: p^3.q^2.r, C: p^5.q.r, D: p^5.q^3, E: p^7.q^2,
-         * F: p^11.q, G: p^23 */
-        uint pq = lpq(p, q);
-        bool rp2q = (r / q < p * p);
-        if (s < p * q && lpq(p, s) < 3) {
-            mpz_set_ui(mint, p * p);
-            mpz_mul_ui(mint, mint, q * r);
-            mpz_mul_ui(mint, mint, s);
-        } else if (lpq(p, q) < 2 && rp2q) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-            mpz_mul_ui(mint, mint, p * r);
-        } else if (rp2q && lpq(q, r) < 2 && lpq(p, r) < 6) {
-            mpz_ui_pow_ui(mint, p, 5);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-            mpz_mul_ui(mint, mint, p * p);
-        } else if (pq < 4) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q * q);
-        } else if (pq < 12) {
-            mpz_ui_pow_ui(mint, p, 11);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 23);
-        }
-        break;
-      }
-      case 32: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint ri = find_nextpi(qi);
-        uint r = sprimes[ri];
-        uint si = find_nextpi(ri);
-        uint s = sprimes[si];
-        uint u = sprimes[find_nextpi(si)];
-        uint pq = lpq(p, q);
-        uint pr = lpq(p, r);
-        if (p * p > u) {
-            mpz_set_ui(mint, p * s);
-            mpz_mul_ui(mint, mint, q * r);
-            mpz_mul_ui(mint, mint, u);
-        } else if (q * q > s && lpq(p, s) < 4) {
-            mpz_ui_pow_ui(mint, p, 3);
-            mpz_mul_ui(mint, mint, q * r);
-            mpz_mul_ui(mint, mint, s);
-        } else if (pq < 2 && pr < 4) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-            mpz_mul_ui(mint, mint, r);
-        } else if (q * q > r && pr < 8) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 4) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q * q);
-            mpz_mul_ui(mint, mint, q);
-        } else if (pq < 16) {
-            mpz_ui_pow_ui(mint, p, 15);
-            mpz_mul_ui(mint, mint, q); 
-        } else {
-            mpz_ui_pow_ui(mint, p, 31);
-        }
-        break;
-      }
-      default:
-        /* quick version: given the minimum prime p that can be used, we
-         * calculate p^k where k = sum{p_i - 1} over the primes dividing
-         * t _with multiplicity_.
-         */
-        mpz_ui_pow_ui(mint, p, divisors[t].sumpm);
-        break;
-    }
 }
 
 /* return the maximum prime to iterate to */
