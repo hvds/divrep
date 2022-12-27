@@ -2347,7 +2347,7 @@ static inline uint lpq(uint p, uint q) {
  * up to n=100, and fall back to a default for other cases which is precise
  * for prime tau but conservative for composite tau.
  */
-void mintau(mpz_t mint, uint vi, uint t) {
+void mintau(mpz_t mint, uint t) {
     uint pi = levels[level - 1].nextpi;
     uint p = sprimes[pi];
     switch(t) {
@@ -2602,7 +2602,7 @@ ulong limit_p(uint vi, uint x, uint nextt) {
         /* divide through by the minimum contribution that could supply the
          * remaining tau */
         if (nextt > 1) {
-            mintau(Z(lp_mint), vi, nextt);
+            mintau(Z(lp_mint), nextt);
             mpz_div(Z(lp_x), Z(lp_x), Z(lp_mint));
         }
         mpz_root(Z(lp_x), Z(lp_x), x - 1);
