@@ -2315,10 +2315,58 @@ uint best_v2(void) {
     return ti ? vi : k;
 }
 
+/* Same as best_v0, except that if the last power allocated on some v_i
+ * was the square root of the remaining tau (and unforced), always take it.
+ */
+uint best_v3(void) {
+    uint vi, ti = 0;
+    mpz_t *qi;
+    for (uint vj = 0; vj < k; ++vj) {
+        t_value *vpj = &value[vj];
+        t_allocation *apj = (vpj->vlevel) ? &vpj->alloc[vpj->vlevel - 1] : NULL;
+        uint tj = apj ? apj->t : n;
+        mpz_t *qj = apj ? &apj->q : ZP(zone);
+
+        /* skip if no odd prime factor */
+        if (divisors[tj].high <= 2)
+            continue;
+        /* skip prime powers when capped */
+        if (maxp && (tj & 1) && divisors[tj].alldiv == 2)
+            continue;
+        /* shortcircuit if single allocation of (even) sqrt(n) */
+        if ((tj & 1) == 0 && apj && apj->x == apj->t) {
+            /* shortcircuit if last allocation was of sqrt(t) */
+            /* but only if it was unforced */
+            ulong p = apj->p;
+            for (uint li = 1; li < level; ++li) {
+                t_level *lp = &levels[li];
+                if (lp->is_forced == 0)
+                    break;
+                if (lp->p == p)
+                    goto best_v3_unforced;
+            }
+            return vj;
+          best_v3_unforced:
+            ;
+        }
+        if (ti) {
+            /* skip if not higher tau, or same tau with higher q */
+            if (tj < ti)
+                continue;
+            if (tj == ti && mpz_cmp(*qj, *qi) <= 0)
+                continue;
+        }
+        vi = vj;
+        ti = tj;
+        qi = qj;
+    }
+    return ti ? vi : k;
+}
+
 typedef uint (*t_strategy)(void);
-#define NUM_STRATEGIES 3
+#define NUM_STRATEGIES 4
 t_strategy strategies[NUM_STRATEGIES] = {
-    &best_v0, &best_v1, &best_v2
+    &best_v0, &best_v1, &best_v2, &best_v3
 };
 /* Find the best entry to progress, using the selected strategy
  * If there is no best entry, returns k.
