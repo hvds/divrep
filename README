@@ -132,8 +132,15 @@ recover from: calculation always goes from the beginning. This can be
 useful to combine several separate runs into a single log file.
 
 If "-f7" is specified, it will set force_all = 7 to treat all primes p <= 7
-as fully forced primes (see below). By default, force_all is set to k
-(the maximum) when n == 2 (mod 4), and to 0 otherwise.
+as fully forced primes (see 'HOW IT WORKS' below). By default, force_all is
+set to k (the maximum) when n == 2 (mod 4), and to 0 otherwise.
+
+If "-F7" is specified, it will set unforce_all = 7 to treat all primes
+p >= 7 as unforceable. Unforceable primes are treated like partially
+forced primes by suppressing batches where each power of the relevant
+prime is one less than a power of 2. "-F" is equivalent to "-F1", to
+treat all primes as unforceable. Default is 0, in which case no primes
+are unforceable.
 
 If "-x100:1000" is specified, it will look for solutions v_0 with
 100 < v_0 <= 1000. "-x:1000" or "-x1000" are equivalent to "-x0:1000".
@@ -149,16 +156,17 @@ Even with -X, it will still track the best solution found to report it
 at the end of the run.
 
 If "-g2:3" is specified, it will set gain = 3/2. This is a multiplier
-used to control the transition from recurse() to walk_v() (see below).
-A higher gain means it spends more time in recurse(), a lower gain means
-it spends more time in walk_v().  Also supports exponential notation
-(without decimal), so "-g13e6" is equivalent to "-g13000000".
-Fine-tuning the gain can make a big difference to runtime; default gain is 1.
+used to control the transition from recurse() to walk_v() (see 'HOW IT
+WORKS' below). A higher gain means it spends more time in recurse(),
+a lower gain means it spends more time in walk_v().  Also supports
+exponential notation (without decimal), so "-g13e6" is equivalent to
+"-g13000000". Fine-tuning the gain can make a big difference to runtime;
+default gain is 1.
 
-If "-p50:100" is specified, it will allocate (see below) only powers of
-primes p < 100, and will allocate at least one power of a prime p > 50.
-This can be used to search more selectively to improve an upper limit.
-"-p:100" or "-p100" are equivalent to "-p0:100".
+If "-p50:100" is specified, it will allocate (see 'HOW IT WORKS' below)
+only powers of primes p < 100, and will allocate at least one power of
+a prime p > 50. This can be used to search more selectively to improve
+an upper limit.  "-p:100" or "-p100" are equivalent to "-p0:100".
 By default it considers all possible allocations.
 
 If "-W100" is specified with "-p200", it will use a different process
@@ -194,7 +202,10 @@ since it has the highest remaining tau to fulfill; strategy 1 will
 pick the first position and start allocating p^4, since it has the
 highest prime dividing the remaining tau to fulfill. "-j2" uses
 "strategy 2", which is the opposite of "strategy 0": it looks for
-the _lowest_ remaining tau to fill.
+the _lowest_ remaining tau to fill. "-j3" uses "strategy 3", which
+is identical to "strategy 0" except that if the last allocation at
+some position was a) unforced, and b) the square root of the remaining
+(even) tau, that position will automatically be picked.
 "-j1" is the default when n is divisible by at least two distinct odd
 primes; "-j0" is the default in all other cases.
 
