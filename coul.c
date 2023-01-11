@@ -108,6 +108,7 @@ typedef struct s_forcep {
 t_forcep *forcep = NULL;
 uint forcedp;
 uint force_all = 0;
+uint unforce_all = 0;
 
 /* When allocation forces the residue of some v_i to be square, we want
  * to calculate the roots mod every allocation (before and after this one),
@@ -887,6 +888,7 @@ typedef enum {
 } e_tfp;
 e_tfp test_forcep(uint p, uint vi, uint x) {
     bool seen_any = 0;
+    bool seen_odd = 0;
 
     if (x == 0) {
         /* p^0 is valid iff the differences are a multiple of p */
@@ -894,6 +896,9 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
             return TFP_BAD;
         return TFP_GOOD;
     }
+
+    if (x & (x - 1))
+        seen_odd = 1;
 
     uint ei = x - 1;
     for (uint j = 1; j <= vi; ++j) {
@@ -905,6 +910,8 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
         if (n % (ej + 1))
             return TFP_BAD;
         seen_any = 1;
+        if (ej & (ej + 1))
+            seen_odd = 1;
         if (ej < ei)
             continue;
         /* Earlier element cannot have same or higher power of p */
@@ -921,6 +928,8 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
         if (ej == 0)
             continue;
         seen_any = 1;
+        if (ej & (ej + 1))
+            seen_odd = 1;
         if (ej > ei)
             continue;   /* p^e_i + p^e_j will have valuation e_i */
         if (n % (ej + 1))
@@ -937,6 +946,8 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
         /* all moduli seen, so one must have a higher power of p */
         return TFP_BAD;
 
+    if (unforce_all && p >= unforce_all && !seen_odd)
+        return TFP_SINGLE;
     if (seen_any)
         return TFP_GOOD;
     return TFP_SINGLE;
@@ -1141,6 +1152,11 @@ void report_init(FILE *fp, char *prog) {
     }
     if (force_all)
         fprintf(fp, " -f%u", force_all);
+    if (unforce_all) {
+        fprintf(fp, " -F");
+        if (unforce_all > 1)
+            fprintf(fp, "%u", unforce_all);
+    }
     if (gain > 1 || antigain > 1) {
         fprintf(fp, " -g");
         if (antigain > 1)
@@ -3165,7 +3181,11 @@ int main(int argc, char **argv, char **envp) {
             skip_recover = 1;
         else if (arg[1] == 'f')
             force_all = strtoul(&arg[2], NULL, 10);
-        else if (arg[1] == 's')
+        else if (arg[1] == 'F') {
+            unforce_all = strtoul(&arg[2], NULL, 10);
+            if (unforce_all == 0)
+                unforce_all = 1;
+        } else if (arg[1] == 's')
             randseed = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'h')
             rough = strtoul(&arg[2], NULL, 10);
