@@ -225,6 +225,7 @@ uint midppc;
 t_midpp *midpp = NULL;
 
 struct {
+    uint valid;
     ulong p;
     uint x;
     uint vi;
@@ -660,6 +661,7 @@ void init_pre(void) {
     mpz_set_ui(Z(zero), 0);
     mpz_set_ui(Z(zone), 1);
     mpz_init(best);
+    midp_recover.valid = 0;
 }
 
 /* Parse a "305" log line for initialization.
@@ -717,6 +719,7 @@ void parse_305(char *s) {
         }
         assert(s[0] == ')');
         ++s;
+        midp_recover.valid = 1;
     }
     if (s[0] == ':') {
         assert(s[1] == ' ');
@@ -740,10 +743,7 @@ void parse_305(char *s) {
     }
     if (EOF == sscanf(s, " (%lfs)\n", &dtime))
         fail("could not parse 305 time: '%s'", s);
-    if (midp && !is_W) {
-        orig_maxp = maxp;
-        maxp = midp;
-    } else if (is_W && !midp)
+    if (is_W && !midp)
         fail("recovery expected -W option");
     t0 -= dtime;
 }
@@ -3035,7 +3035,7 @@ e_is insert_stack(void) {
             fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
         }
     }
-    if (midp && midp < maxp) {
+    if (midp && midp_recover.valid) {
         if (jump != IS_DEEPER)
             fail("data mismatch");
         jump = IS_MIDP;
@@ -3332,6 +3332,7 @@ int main(int argc, char **argv, char **envp) {
                         Z(temp));
         }
         orig_maxp = maxp;
+        maxp = midp;
     }
     bool jump = IS_DEEPER;
     if (rstack) {
