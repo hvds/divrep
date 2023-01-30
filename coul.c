@@ -215,6 +215,15 @@ ulong antigain = 0;
  */
 ulong minp = 0, maxp = 0, orig_maxp, midp = 0;
 bool midp_only = 0;
+/* where to walk for -W (midp) */
+typedef struct s_midpp {
+    uint vi;
+    uint x;
+    ulong maxp;
+} t_midpp;
+uint midppc;
+t_midpp *midpp = NULL;
+
 struct {
     ulong p;
     uint vi;
@@ -522,6 +531,7 @@ void done(void) {
         for (uint i = 0; i < k; ++i)
             mpz_clear(wv_o[i]);
     free(wv_o);
+    free(midpp);
     free(sqg);
     free(vlevels);
     free_value();
@@ -1093,6 +1103,7 @@ void init_post(void) {
     prep_primes();  /* needs forcedp */
     prep_mintau();
     sqg = (uint *)malloc(maxfact * sizeof(uint));
+    midpp = malloc(sizeof(t_midpp) * k * divisors[n].alldiv);
 
     if (debug) {
         diag_delay = 0;
@@ -2329,29 +2340,14 @@ void mintau(mpz_t mint, uint t) {
     }
 }
 
-void walk_midp(t_level *prev, bool recover) {
-    t_level *cur = &levels[level];
-    uint need_alloc[k];
-    uint nac = 0;
-    ulong p;
-    uint nai;
+/* order by maxp descending */
+int midpp_comparator(const void *va, const void *vb) {
+    t_midpp *ma = (t_midpp *)va;
+    t_midpp *mb = (t_midpp *)vb;
+    return mb->maxp - ma->maxp;
+}
 
-#if 0
-    if (recover) {
-        p = midp_recover.p;
-        level_setp(cur, p);
-        nai = k;    /* guard */
-        for (uint j = 0 ; j < nac; ++j)
-            if (need_alloc[j] == midp_recover.vi) {
-                nai = j;
-                break;
-            }
-        if (nai == k)
-            fail("midp recovery vi=%u invalid", midp_recover.vi);
-        goto do_recover;
-    }
-#endif
-
+void prep_midp(void) {
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
         t_allocation *ap = vp->vlevel ? &vp->alloc[vp->vlevel - 1] : NULL;
@@ -2359,7 +2355,6 @@ void walk_midp(t_level *prev, bool recover) {
         if ((t & (t - 1)) == 0)
             continue;
         t_divisors *dp = &divisors[t];
-        cur->vi = vi;
         /* try all divisors until we reach the powers of 2 */
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
@@ -2378,32 +2373,77 @@ void walk_midp(t_level *prev, bool recover) {
                 ulong target_limit = mpz_get_ui(Z(temp));
                 if (target_limit < orig_maxp)
                     target_maxp = target_limit;
-                if (target_maxp < midp)
+                if (target_maxp <= midp)
                     continue;
             }
 
-            cur->x = x;
-            maxp = orig_maxp;
-            level_setp(cur, target_maxp);
-            /* setp has set to a prime <= target */
-            prime_iterator_next(&cur->piter);
-
-            while (1) {
-                p = prime_iterator_prev(&cur->piter);
-                if (p <= midp)
-                    break;
-                if (need_work) {
-                    cur->p = p;     /* let it see what will be applied */
-                    diag_plain(1);
-                }
-                if (apply_single(prev, cur, vi, p, x))
-                    walk_v(cur, Z(zero));
-                /* unallocate */
-                --value[vi].vlevel;
-            }
-            maxp = midp;
+            t_midpp *this = &midpp[midppc++];
+            this->vi = vi;
+            this->x = x;
+            this->maxp = target_maxp;
         }
     }
+    /* sort by descending maxp */
+    qsort(midpp, midppc, sizeof(t_midpp), &midpp_comparator);
+    return;
+}
+
+void walk_midp(t_level *prev, bool recover) {
+    t_level *cur = &levels[level];
+    uint vi, x;
+    ulong p;
+
+    midppc = 0;
+    prep_midp();
+    if (midppc == 0)
+        goto walk_midp_done;
+    maxp = orig_maxp;
+
+#if 0
+    if (recover) {
+        p = midp_recover.p;
+        level_setp(cur, p);
+        nai = k;    /* guard */
+        for (uint j = 0 ; j < nac; ++j)
+            if (need_alloc[j] == midp_recover.vi) {
+                nai = j;
+                break;
+            }
+        if (nai == k)
+            fail("midp recovery vi=%u invalid", midp_recover.vi);
+        goto do_recover;
+    }
+#endif
+
+    level_setp(cur, midpp[0].maxp);
+    /* setp has set to a prime <= target */
+    prime_iterator_next(&cur->piter);
+
+    while (1) {
+        p = prime_iterator_prev(&cur->piter);
+        if (p <= midp)
+            break;
+        for (uint mi = 0; mi < midppc; ++mi) {
+            t_midpp *mp = &midpp[mi];
+            /* ordered by maxp descending */
+            if (p > mp->maxp)
+                break;
+            vi = mp->vi;
+            x = mp->x;
+            if (need_work) {
+                cur->vi = vi;
+                cur->x = x;
+                cur->p = p;     /* let it see what will be applied */
+                diag_plain(1);
+            }
+            if (apply_single(prev, cur, vi, p, x))
+                walk_v(cur, Z(zero));
+            /* unallocate */
+            --value[vi].vlevel;
+        }
+    }
+  walk_midp_done:
+    maxp = midp;
 }
 
 uint relative_valuation(uint i, ulong p, uint e) {
