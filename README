@@ -169,13 +169,11 @@ a prime p > 50. This can be used to search more selectively to improve
 an upper limit.  "-p:100" or "-p100" are equivalent to "-p0:100".
 By default it considers all possible allocations.
 
-If "-W100" is specified with "-p200", it will use a different process
-to test all possible cases involving p^2 with 100 < p <= 200, and then
-continue with the normal process as if "-p100" had been specified.
-This option is only available when n=12, we are running over a single
-batch (see "-b" below), and the limit is high enough that we won't
-miss any possible allocations of p^5. Within those constraints, this
-can give a very substantial speed improvement.
+If "-W100" is specified, it will use a different process to test all
+possible cases involving p^e with p > 100, and then continue with the
+normal process as if "-p100" had been specified. This can give a very
+substantial speed improvement if the -W value is chosen with care.
+Default is not to do this (equivalent to -Winfinity).
 
 If "-s2" is specified, it will initialize the random number generator
 with seed 2, used at least for ECM factorization. The default seed is 1,
