@@ -37,7 +37,7 @@ ifdef DEBUG_ALL
 endif
 
 default: pcoul
-all: coul pcoul dcoul dpcoul
+all: pcoul dpcoul pcaul dpcaul
 
 coul pcoul dcoul dpcoul pcaul dpcaul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
