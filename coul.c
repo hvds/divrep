@@ -315,7 +315,8 @@ void prep_show_v(bool retarded) {
     }
     if (show_mid) {
         ulong p = levels[level].p;
-        offset += sprintf(&diag_buf[offset], " W(%lu,%u)", p, mid_vi);
+        uint x = levels[level].x;
+        offset += sprintf(&diag_buf[offset], " W(%lu,%u,%u)", p, x, mid_vi);
     }
     diag_buf[offset] = 0;
 }
@@ -2335,19 +2336,7 @@ void walk_midp(t_level *prev, bool recover) {
     ulong p;
     uint nai;
 
-    for (uint vi = 0; vi < k; ++vi) {
-        t_value *vp = &value[vi];
-        uint t = vp->vlevel ? vp->alloc[vp->vlevel - 1].t : n;
-        if (t % 3)
-            continue;
-        need_alloc[nac++] = vi;
-    }
-
-    /* setp will set to a prime <= maxp */
-    maxp = orig_maxp;
-    level_setp(cur, maxp);
-    prime_iterator_next(&cur->piter);
-
+#if 0
     if (recover) {
         p = midp_recover.p;
         level_setp(cur, p);
@@ -2361,23 +2350,60 @@ void walk_midp(t_level *prev, bool recover) {
             fail("midp recovery vi=%u invalid", midp_recover.vi);
         goto do_recover;
     }
+#endif
 
-    while (1) {
-        p = prime_iterator_prev(&cur->piter);
-        if (p <= midp)
-            break;
-        for (nai = 0; nai < nac; ++nai) {
-          do_recover: ;
-            uint vi = need_alloc[nai];
-            if (need_work)
-                diag_plain(1);
-            if (apply_single(prev, cur, vi, p, 3))
-                walk_v(cur, Z(zero));
-            /* unallocate */
-            --value[vi].vlevel;
+    for (uint vi = 0; vi < k; ++vi) {
+        t_value *vp = &value[vi];
+        t_allocation *ap = vp->vlevel ? &vp->alloc[vp->vlevel - 1] : NULL;
+        uint t = ap ? ap->t : n;
+        if ((t & (t - 1)) == 0)
+            continue;
+        t_divisors *dp = &divisors[t];
+        cur->vi = vi;
+        /* try all divisors until we reach the powers of 2 */
+        for (uint di = 0; di < dp->alldiv; ++di) {
+            uint x = dp->div[di];
+            if ((x & (x - 1)) == 0)
+                break;
+            /* find range of p for allocating p^x at v_i */
+            mpz_add_ui(Z(temp), max, TYPE_OFFSET(vi));
+            mintau(Z(wv_cand), t / x);
+            mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
+            if (ap)
+                mpz_fdiv_q(Z(temp), Z(temp), ap->q);
+            mpz_root(Z(temp), Z(temp), x - 1);
+
+            ulong target_maxp = orig_maxp;
+            if (mpz_fits_ulong_p(Z(temp))) {
+                ulong target_limit = mpz_get_ui(Z(temp));
+                if (target_limit < orig_maxp)
+                    target_maxp = target_limit;
+                if (target_maxp < midp)
+                    continue;
+            }
+
+            cur->x = x;
+            maxp = orig_maxp;
+            level_setp(cur, target_maxp);
+            /* setp has set to a prime <= target */
+            prime_iterator_next(&cur->piter);
+
+            while (1) {
+                p = prime_iterator_prev(&cur->piter);
+                if (p <= midp)
+                    break;
+                if (need_work) {
+                    cur->p = p;     /* let it see what will be applied */
+                    diag_plain(1);
+                }
+                if (apply_single(prev, cur, vi, p, x))
+                    walk_v(cur, Z(zero));
+                /* unallocate */
+                --value[vi].vlevel;
+            }
+            maxp = midp;
         }
     }
-    maxp = midp;
 }
 
 uint relative_valuation(uint i, ulong p, uint e) {
@@ -3234,23 +3260,20 @@ int main(int argc, char **argv, char **envp) {
     if (rfp) report_init(rfp, argv[0]);
 
     if (midp) {
-        if (n != 12)
-            fail("-W only supported with n=12");
         if (!maxp) {
-            mpz_add_ui(Z(temp), max, k - 1);
-            mpz_fdiv_q_ui(Z(temp), Z(temp), 6);
-            mpz_sqrt(Z(temp), Z(temp));
+            if (nf.count < 2)
+                fail("cannot use -W when n is a power of 2");
+            uint minodd = nf.ppow[1].p;
+            mpz_add_ui(Z(temp), max, TYPE_OFFSET(k - 1));
+            mintau(Z(wv_cand), n / minodd);
+            mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
+            mpz_root(Z(temp), Z(temp), minodd - 1);
             if (mpz_fits_ulong_p(Z(temp)))
                 maxp = mpz_get_ui(Z(temp));
             else
                 fail("calculated maximum prime (%Zu) does not fit 64-bit",
                         Z(temp));
         }
-        mpz_ui_pow_ui(Z(temp), midp, 5);
-        mpz_add_ui(Z(temp), Z(temp), 1);
-        mpz_mul_ui(Z(temp), Z(temp), 2);
-        if (mpz_cmp(Z(temp), max) <= 0)
-            fail("-W only supported for primes p: 2(p+1)^5 > max");
         orig_maxp = maxp;
     }
     bool jump = IS_DEEPER;
