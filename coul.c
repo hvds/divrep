@@ -226,6 +226,7 @@ t_midpp *midpp = NULL;
 
 struct {
     ulong p;
+    uint x;
     uint vi;
 } midp_recover;
 uint rough = 0;     /* test roughness if tau >= rough */
@@ -699,7 +700,21 @@ void parse_305(char *s) {
         midp_recover.p = strtoul(s, &s, 10);
         assert(s[0] == ',');
         ++s;
-        midp_recover.vi = strtoul(s, &s, 10);
+        midp_recover.x = strtoul(s, &s, 10);
+        if (s[0] == ')') {
+#if 1
+            /* new version uses different order, cannot reliably recover */
+            fail("cannot recover from old-style 'W(...)' entry");
+#else
+            /* old version had x fixed to 3 */
+            midp_recover.vi = midp_recover.x;
+            midp_recover.x = 3;
+#endif
+        } else {
+            assert(s[0] == ',');
+            ++s;
+            midp_recover.vi = strtoul(s, &s, 10);
+        }
         assert(s[0] == ')');
         ++s;
     }
@@ -2390,46 +2405,48 @@ void prep_midp(void) {
 
 void walk_midp(t_level *prev, bool recover) {
     t_level *cur = &levels[level];
-    uint vi, x;
+    uint vi, x, mi;
     ulong p;
+    t_midpp *mp;
 
+    cur->is_forced = 0;
     midppc = 0;
     prep_midp();
     if (midppc == 0)
         goto walk_midp_done;
+
     maxp = orig_maxp;
-
-#if 0
-    if (recover) {
-        p = midp_recover.p;
-        level_setp(cur, p);
-        nai = k;    /* guard */
-        for (uint j = 0 ; j < nac; ++j)
-            if (need_alloc[j] == midp_recover.vi) {
-                nai = j;
-                break;
-            }
-        if (nai == k)
-            fail("midp recovery vi=%u invalid", midp_recover.vi);
-        goto do_recover;
-    }
-#endif
-
     level_setp(cur, midpp[0].maxp);
     /* setp has set to a prime <= target */
     prime_iterator_next(&cur->piter);
+
+    if (recover) {
+        p = midp_recover.p;
+        x = midp_recover.x;
+        vi = midp_recover.vi;
+
+        level_setp(cur, p);
+        mi = midppc;    /* guard */
+        for (mi = 0 ; mi < midppc; ++mi) {
+            mp = &midpp[mi];
+            if (mp->vi == vi && mp->x == x)
+                goto do_recover;
+        }
+        fail("midp recovery x=%u vi=%u invalid", x, vi);
+    }
 
     while (1) {
         p = prime_iterator_prev(&cur->piter);
         if (p <= midp)
             break;
-        for (uint mi = 0; mi < midppc; ++mi) {
-            t_midpp *mp = &midpp[mi];
+        for (mi = 0; mi < midppc; ++mi) {
+            mp = &midpp[mi];
             /* ordered by maxp descending */
             if (p > mp->maxp)
                 break;
             vi = mp->vi;
             x = mp->x;
+          do_recover:
             if (need_work) {
                 cur->vi = vi;
                 cur->x = x;
