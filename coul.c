@@ -3062,6 +3062,13 @@ void recurse(e_is jump_continue) {
         /* FIXME: work out how to continue with -WW not on single batch */
         if (midp_only)
             return;
+        /* if it was a tail batch, continue now */
+        if (level - 1 < forcedp) {
+            prev_level = &levels[level - 1];
+            cur_level = &levels[level];
+            goto unforced;
+        }
+        /* else go deeper */
     }
     /* else jump_continue == IS_DEEPER */
 
