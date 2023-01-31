@@ -3046,8 +3046,9 @@ e_is insert_stack(void) {
 /* we emulate recursive calls via the levels[] array */
 void recurse(e_is jump_continue) {
     ulong p;
-    uint x;
+    uint x, fi, bi;
     t_level *prev_level, *cur_level;
+    t_forcep *fp;
 
     if (jump_continue == IS_NEXT) {
         prev_level = &levels[level - 1];
@@ -3084,22 +3085,14 @@ void recurse(e_is jump_continue) {
         cur_level = &levels[level];
 
         /* recurse deeper */
-        {
-            uint fi = level - 1;
-            if (fi < forcedp && (fi == 0 || prev_level->is_forced)) {
-                t_forcep *fp = &forcep[fi];
-                if (fp->count == 0)
-                    goto unforced;
-                STOREVL(vl_forced++);
-                if (!apply_batch(prev_level, cur_level, fp, 0)) {
-                    FETCHVL(vl_forced - 1);
-                    goto continue_recurse;
-                }
-                ++level;
-                if (need_work)
-                    diag_plain(0);
-                continue;   /* deeper */
-            }
+        fi = level - 1;
+        if (fi < forcedp && (fi == 0 || prev_level->is_forced)) {
+            fp = &forcep[fi];
+            if (fp->count == 0)
+                goto unforced;
+            STOREVL(vl_forced++);
+            bi = 0;
+            goto continue_forced;
         }
       unforced:
         {
@@ -3164,10 +3157,10 @@ void recurse(e_is jump_continue) {
         /* goto continue_recurse; */
       continue_recurse:
         if (cur_level->is_forced) {
-            uint fi = level - 1;
-            t_forcep *fp = &forcep[fi];
-
-            uint bi = cur_level->bi + 1;
+            fi = level - 1;
+            fp = &forcep[fi];
+            bi = cur_level->bi + 1;
+          continue_forced:
             if (bi >= fp->count) {
                 --vl_forced;
                 goto derecurse;
@@ -3177,6 +3170,7 @@ void recurse(e_is jump_continue) {
                 && fp->batch[bi].vi != 0
 #endif
             ) {
+                /* tail batch: continue with this prime unforced */
                 cur_level->is_forced = 0;
                 FETCHVL(--vl_forced);
                 if (opt_alloc) {
