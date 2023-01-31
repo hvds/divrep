@@ -451,7 +451,7 @@ void disp_batch(t_level *lp) {
         uint l = strlen(diag_buf);
         sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
     }
-    report("203 b%u: %s\n", batch_alloc, diag_buf);
+    report("203 b%u: %s\n", batch_alloc - 1, diag_buf);
 }
 
 void candidate(mpz_t c) {
@@ -2480,7 +2480,7 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
 
     if (bp->x == 0) {
         apply_null(prev, cur, fp->p);
-        goto batch_applied;
+        return 1;
     }
 
     uint ep = bp->x - 1;
@@ -2542,37 +2542,41 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
             }
         }
     }
+    return 1;
+}
 
-  batch_applied:
-    /* If the next allocation would not be forced, we have a batch. */
-    if (level == forcedp) {
-        if (opt_alloc) {
-            if (opt_batch_min >= 0
-                && batch_alloc >= opt_batch_min
-                && batch_alloc <= opt_batch_max
-            ) {
-                /* we want to process this batch */
-                ++batch_alloc;
-                /* if we have -W to process, do that now */
-                if (midp && midp < maxp) {
-                    ++level;
-                    walk_midp(cur, 0);
-                    --level;
-                }
-                return midp_only ? 0 : 1;
-            }
-            if (opt_batch_min < 0)
-                disp_batch(cur);
-            ++batch_alloc;
-            return 0;
-        } else if (midp && midp < orig_maxp) {
-            ++level;
-            walk_midp(cur, 0);
-            --level;
+/* A complete set of forced primes has been allocated. We may process
+ * this batch or skip it, according to batch options; we also handle
+ * midp ("-W") here, and skip the rest (i.e. allocation of unforced
+ * primes) if midp_only.
+ */
+bool process_batch(t_level *cur) {
+    uint batch_id = batch_alloc++;
+    if (opt_alloc) {
+        if (opt_batch_min >= 0
+            && batch_id >= opt_batch_min
+            && batch_id <= opt_batch_max
+        ) {
+            /* this is a batch we want to process */
+            /* if we have -W to process, do that now */
+            if (midp && midp < maxp)
+                walk_midp(cur, 0);
             return midp_only ? 0 : 1;
         }
+        if (opt_batch_min < 0)
+            disp_batch(cur);
+        return 0;
+    } else if (midp && midp < orig_maxp) {
+        walk_midp(cur, 0);
     }
-    return 1;
+    return midp_only ? 0 : 1;
+}
+
+bool process_next_batch(t_level *cur) {
+    ++level;
+    bool result = process_batch(cur);
+    --level;
+    return result;
 }
 
 /* Choose that v_i with the highest t_i still to fulfil, or (on equality)
@@ -3173,40 +3177,21 @@ void recurse(e_is jump_continue) {
                 /* tail batch: continue with this prime unforced */
                 cur_level->is_forced = 0;
                 FETCHVL(--vl_forced);
-                if (opt_alloc) {
-                    if (opt_batch_min >= 0
-                        && batch_alloc >= opt_batch_min
-                        && batch_alloc <= opt_batch_max
-                    ) {
-                        /* this is a batch we want to process */
-                        ++batch_alloc;
-                        /* if we have -W to process, do that now */
-                        if (midp && midp < maxp)
-                            walk_midp(prev_level, 0);
-                        if (midp_only)
-                            goto derecurse;
-                        goto unforced;
-                    }
-                    if (opt_batch_min < 0)
-                        disp_batch(prev_level);
-                    ++batch_alloc;
-                    goto derecurse;
-                } else if (midp && midp < orig_maxp) {
-                    walk_midp(prev_level, 0);
-                }
-                if (midp_only)
-                    goto derecurse;
-                goto unforced;
+                if (process_batch(prev_level))
+                    goto unforced;
+                goto derecurse;
             }
-            if (!apply_batch(prev_level, cur_level, fp, bi)) {
-                /* unapply a possible partial batch */
-                FETCHVL(vl_forced - 1);
-                goto continue_recurse;
+            if (apply_batch(prev_level, cur_level, fp, bi)
+                && (level != forcedp || process_next_batch(cur_level))
+            ) {
+                ++level;
+                if (need_work)
+                    diag_plain(0);
+                continue;
             }
-            ++level;
-            if (need_work)
-                diag_plain(0);
-            continue;
+            /* unapply a possible partial batch */
+            FETCHVL(vl_forced - 1);
+            goto continue_recurse;
         }
       continue_unforced:
         {
