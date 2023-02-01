@@ -3051,34 +3051,33 @@ e_is insert_stack(void) {
 void recurse(e_is jump_continue) {
     ulong p;
     uint x, fi, bi;
-    t_level *prev_level, *cur_level;
+    t_level *prev_level = &levels[level - 1];
+    t_level *cur_level = &levels[level];
     t_forcep *fp;
 
-    if (jump_continue == IS_NEXT) {
-        prev_level = &levels[level - 1];
-        cur_level = &levels[level];
+    if (jump_continue == IS_NEXT)
         goto continue_recurse;
-    } else if (jump_continue == IS_MIDP) {
-        /* discard any partial walk */
+    else if (jump_continue == IS_MIDP) {
+        /* (FIXME) discard any partial walk */
         have_rwalk = 0;
-        /* finish the walk_midp call */
-        cur_level = &levels[level - 1];
-        walk_midp(cur_level, 1);
-        /* FIXME: work out how to continue with -WW not on single batch */
-        if (midp_only)
-            return;
-        /* if it was a tail batch, continue now */
-        if (level - 1 < forcedp) {
-            prev_level = &levels[level - 1];
-            cur_level = &levels[level];
-            goto unforced;
+        /* finish the walk_midp call with midp_recover */
+        walk_midp(prev_level, 1);
+        /* then continue as main code would have, after process_batch()
+         * or process_next_batch() */
+        if (midp_only) {
+            /* process_[next]_batch() returns false in this case */
+            if (level - 1 < forcedp)
+                goto derecurse;
+            FETCHVL(vl_forced - 1);
+            goto continue_recurse;
         }
+        if (level - 1 < forcedp)
+            goto unforced;
         /* else go deeper */
     }
     /* else jump_continue == IS_DEEPER */
 
     if (have_rwalk) {
-        prev_level = &levels[level - 1];
         walk_v(prev_level, rwalk_from);
         goto derecurse;
     }
