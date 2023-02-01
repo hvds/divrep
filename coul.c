@@ -3235,11 +3235,11 @@ int main(int argc, char **argv, char **envp) {
     init_pre();
     while (i < argc && argv[i][0] == '-') {
         char *arg = argv[i++];
-        if (strncmp("--", arg, 2) == 0)
+        if (arg[1] == '-')
             break;
         if (arg[1] == 'x')
             set_minmax(&arg[2]);
-        else if (strncmp("-X", arg, 2) == 0)
+        else if (arg[1] == 'X')
             improve_max = 0;
         else if (arg[1] == 'g')
             set_gain(&arg[2]);
@@ -3252,14 +3252,14 @@ int main(int argc, char **argv, char **envp) {
                 ++w;
             }
             midp = ulston(w);
-        } else if (arg[1] == 'L' && arg[2] == 's')
+        } else if (strncmp("-Ls", arg, 3) == 0)
             diag_delay = strtoul(&arg[3], NULL, 10);
-        else if (arg[1] == 'L' && arg[2] == 'f')
+        else if (strncmp("-Lf", arg, 3) == 0)
             log_delay = strtoul(&arg[3], NULL, 10);
         else if (arg[1] == 'r') {
             rpath = (char *)malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
-        } else if (strncmp("-R", arg, 2) == 0)
+        } else if (arg[1] == 'R')
             skip_recover = 1;
         else if (arg[1] == 'f')
             force_all = strtoul(&arg[2], NULL, 10);
@@ -3271,15 +3271,15 @@ int main(int argc, char **argv, char **envp) {
             randseed = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'h')
             rough = strtoul(&arg[2], NULL, 10);
-        else if (strncmp("-a", arg, 2) == 0)
+        else if (arg[1] == 'a')
             opt_alloc = 1;
         else if (arg[1] == 'b')
             set_batch(&arg[2]);
-        else if (strncmp("-o", arg, 2) == 0)
+        else if (arg[1] == 'o')
             opt_print = 1;
-        else if (strncmp("-d", arg, 2) == 0)
+        else if (arg[1] == 'd')
             ++debug;
-        else if (strncmp("-v", arg, 2) == 0)
+        else if (arg[1] == 'v')
             vt100 = 1;
         else if (arg[1] == 'j') {
             strategy = strtoul(&arg[2], NULL, 10);
