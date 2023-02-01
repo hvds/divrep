@@ -2892,6 +2892,9 @@ typedef enum {
 e_is insert_stack(void) {
     e_is jump = IS_DEEPER;
 
+    if (midp)
+        maxp = midp;
+
     /* first insert forced primes */
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
         t_forcep *fp = &forcep[fpi];
@@ -3062,6 +3065,7 @@ e_is insert_stack(void) {
         final_level = level;
     }
     if (midp && midp_recover.valid) {
+        maxp = orig_maxp;
         if (jump != IS_DEEPER)
             fail("data mismatch");
         jump = IS_MIDP;
@@ -3343,7 +3347,6 @@ int main(int argc, char **argv, char **envp) {
                         Z(temp));
         }
         orig_maxp = maxp;
-        maxp = midp;
     }
     bool jump = IS_DEEPER;
     if (rstack) {
