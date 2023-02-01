@@ -741,7 +741,9 @@ void parse_305(char *s) {
             s = &s[to_end];
         }
     }
-    if (EOF == sscanf(s, " (%lfs)\n", &dtime))
+    if (s[0] == 0 || s[0] == '\n')
+        dtime = 0;
+    else if (EOF == sscanf(s, " (%lfs)\n", &dtime))
         fail("could not parse 305 time: '%s'", s);
     if (is_W && !midp)
         fail("recovery expected -W option");
