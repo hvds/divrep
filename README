@@ -207,6 +207,10 @@ some position was a) unforced, and b) the square root of the remaining
 "-j1" is the default when n is divisible by at least two distinct odd
 primes; "-j0" is the default in all other cases.
 
+If "-I..." is specified, the argument should be a pattern of the same
+form as that generated for progress lines. All prime powers specified
+are then forced into place.
+
 Specifying "-d" enables debugging. By default, progress is shown on the
 terminal every 1 seconds (see "DIAG" in coul.c), overwriting the previous
 progress line each time. With "-d", it instead shows progress at every

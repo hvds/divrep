@@ -149,6 +149,7 @@ typedef struct s_level {
 } t_level;
 t_level *levels = NULL;
 uint level = 0;
+uint final_level = 0;
 
 static inline void level_setp(t_level *lp, ulong p) {
     lp->p = p;
@@ -268,6 +269,9 @@ double diag_delay = DIAG, log_delay = LOG, diagt, logt;
 ulong countr, countw, countwi;
 #define DIAG_BUFSIZE (3 + k * maxfact * (20 + 1 + 5 + 1) + 1)
 char *diag_buf = NULL;
+
+/* Initial pattern set with -I */
+char *init_pattern = NULL;
 
 #if defined(TYPE_o)
     static inline uint TYPE_OFFSET(uint i) {
@@ -1097,6 +1101,8 @@ void init_post(void) {
             fail("%s: %s", rpath, strerror(errno));
         setlinebuf(rfp);
     }
+    if (init_pattern)
+        parse_305(init_pattern);
 #ifdef HAVE_SETPROCTITLE
     setproctitle("oul(%lu %lu)", n, k);
 #endif
@@ -2791,12 +2797,17 @@ typedef enum {
  *   PUX_SKIP_THIS_X if nothing more to do for this x;
  *   PUX_DO_THIS_X if prepped for this x with work to do.
  */
-e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
+e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p, bool forced) {
     uint ti = cur->ti;
     uint x = divisors[ti].div[cur->di];
     uint vi = cur->vi;
     t_value *vp = &value[vi];
     t_allocation *ap = (vp->vlevel) ? &vp->alloc[vp->vlevel - 1] : NULL;
+    ulong limp = 0;
+    /* if part of an init_pattern, we don't care about the checks,
+     * we will never continue from this allocation */
+    if (forced)
+        goto force_unforced;
 
     /* pick up any previous unforced x */
     uint nextt = ti / x;
@@ -2815,7 +2826,7 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
     } /* else we're continuing from known p */
 
     /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > max + i */
-    ulong limp = limit_p(vi, x, nextt);
+    limp = limit_p(vi, x, nextt);
     if (limp == 0) {
         /* force walk */
 #ifdef SQONLY
@@ -2862,6 +2873,7 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p) {
 #endif
         return PUX_ALL_DONE;
     }
+  force_unforced:
     level_setp(cur, p);
     cur->x = x;
     cur->limp = limp;
@@ -3011,7 +3023,7 @@ e_is insert_stack(void) {
         cur->di = di;
 
         /* note: must pass in p=0 for it to calculate limp */
-        e_pux pux = prep_unforced_x(prev, cur, 0);
+        e_pux pux = prep_unforced_x(prev, cur, 0, init_pattern ? 1 : 0);
         switch (pux) {
           case PUX_NOTHING_TO_DO:
           case PUX_SKIP_THIS_X:
@@ -3036,10 +3048,22 @@ e_is insert_stack(void) {
     /* check we found them all */
     for (uint vi = 0; vi < k; ++vi) {
         t_fact *rs = &rstack[vi];
-        if (rs->count) {
-            t_ppow pp = rs->ppow[rs->count - 1];
-            fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
+        uint c = rs->count;
+        while (c) {
+            t_ppow pp = rs->ppow[--c];
+            if (!init_pattern)
+                fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
+            t_level *prev = &levels[level - 1];
+            t_level *cur = &levels[level];
+            if (!apply_single(prev, cur, vi, pp.p, pp.e + 1))
+                fail("error injecting %lu^%u at v_%u", pp.p, pp.e, vi);
+            ++level;
         }
+    }
+    if (init_pattern) {
+        for (uint l = 1; l < level; ++l)
+            levels[l].is_forced = 1;
+        final_level = level;
     }
     if (midp && midp_recover.valid) {
         if (jump != IS_DEEPER)
@@ -3135,7 +3159,7 @@ void recurse(e_is jump_continue) {
         {
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
-            switch (prep_unforced_x(prev_level, cur_level, 0)) {
+            switch (prep_unforced_x(prev_level, cur_level, 0, 0)) {
                 case PUX_NOTHING_TO_DO:
                 case PUX_ALL_DONE:
                     goto derecurse;
@@ -3150,7 +3174,7 @@ void recurse(e_is jump_continue) {
       /* entry point, must set prev_level/cur_level before using */
       derecurse:
         --level;
-        if (level == 0)
+        if (level <= final_level)
             break;
         prev_level = &levels[level - 1];
         cur_level = &levels[level];
@@ -3199,7 +3223,7 @@ void recurse(e_is jump_continue) {
             ulong p = cur_level->p;
             /* recalculate limit if we have an improved maximum */
             if (improve_max && seen_best > cur_level->max_at)
-                switch (prep_unforced_x(prev_level, cur_level, p)) {
+                switch (prep_unforced_x(prev_level, cur_level, p, 0)) {
                   case PUX_NOTHING_TO_DO:
                   case PUX_ALL_DONE:
                     goto continue_unforced_x;
@@ -3263,6 +3287,8 @@ int main(int argc, char **argv, char **envp) {
             strcpy(rpath, &arg[2]);
         } else if (arg[1] == 'R')
             skip_recover = 1;
+        else if (arg[1] == 'I')
+            init_pattern = &arg[2];
         else if (arg[1] == 'f')
             force_all = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'F') {
@@ -3291,6 +3317,8 @@ int main(int argc, char **argv, char **envp) {
         } else
             fail("unknown option '%s'", arg);
     }
+    if (init_pattern)
+        skip_recover = 1;
     if (i + 2 == argc) {
         n = strtoul(argv[i++], NULL, 10);
         k = strtoul(argv[i++], NULL, 10);
