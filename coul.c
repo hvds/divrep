@@ -215,7 +215,7 @@ ulong antigain = 0;
  * When midp is in use, we save maxp in orig_maxp, and overwrite it.
  */
 ulong minp = 0, maxp = 0, orig_maxp, midp = 0;
-bool midp_only = 0;
+bool midp_only = 0, in_midp = 0;
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
@@ -305,14 +305,11 @@ void update_window(void) {
 void prep_show_v(bool retarded) {
     uint offset = 0;
     uint mid_vi;
-    uint show_mid = 0;
-    if (midp && midp < maxp) {
-        show_mid = retarded ? 2 : 1;
+    if (midp && midp < maxp)
         mid_vi = levels[level].vi;
-    }
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
-        uint vlevel = vp->vlevel - ((show_mid == 1 && vi == mid_vi) ? 1 : 0);
+        uint vlevel = vp->vlevel - ((in_midp == 1 && vi == mid_vi) ? 1 : 0);
         if (vi)
             diag_buf[offset++] = ' ';
         if (vlevel == 0)
@@ -328,7 +325,7 @@ void prep_show_v(bool retarded) {
             }
         }
     }
-    if (show_mid) {
+    if (in_midp) {
         ulong p = levels[level].p;
         uint x = levels[level].x;
         offset += sprintf(&diag_buf[offset], " W(%lu,%u,%u)", p, x, mid_vi);
@@ -2417,6 +2414,7 @@ void walk_midp(t_level *prev, bool recover) {
     ulong p;
     t_midpp *mp;
 
+    in_midp = 1;
     cur->is_forced = 0;
     midppc = 0;
     prep_midp();
@@ -2455,19 +2453,17 @@ void walk_midp(t_level *prev, bool recover) {
             vi = mp->vi;
             x = mp->x;
           do_recover:
-            if (need_work) {
-                cur->vi = vi;
-                cur->x = x;
-                cur->p = p;     /* let it see what will be applied */
-                diag_plain(1);
-            }
-            if (apply_single(prev, cur, vi, p, x))
+            if (apply_single(prev, cur, vi, p, x)) {
+                if (need_work)
+                    diag_plain(1);
                 walk_v(cur, Z(zero));
+            }
             /* unallocate */
             --value[vi].vlevel;
         }
     }
   walk_midp_done:
+    in_midp = 0;
     maxp = midp;
 }
 
