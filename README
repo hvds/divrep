@@ -211,6 +211,13 @@ If "-I..." is specified, the argument should be a pattern of the same
 form as that generated for progress lines. All prime powers specified
 are then forced into place.
 
+If "-m9=5" is specified, the first element of the sequence v_0 is
+forced to satisfy v_0 == 5 (mod 9). This option may be specified
+multiple times. Note that this means only that allocations will be
+rejected if they are not consistent with the modular constraints:
+we do not preemptively work out what allocations would be required
+for consistency.
+
 Specifying "-d" enables debugging. By default, progress is shown on the
 terminal every 1 seconds (see "DIAG" in coul.c), overwriting the previous
 progress line each time. With "-d", it instead shows progress at every

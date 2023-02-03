@@ -273,6 +273,14 @@ char *diag_buf = NULL;
 /* Initial pattern set with -I */
 char *init_pattern = NULL;
 
+/* Mod constraints set with -m */
+typedef struct s_modfix {
+    mpz_t mod;
+    mpz_t val;
+} t_modfix;
+t_modfix *modfix = NULL;
+uint modfix_count = 0;
+
 #if defined(TYPE_o)
     static inline uint TYPE_OFFSET(uint i) {
         return i;
@@ -534,6 +542,7 @@ void done(void) {
         for (uint i = 0; i < k; ++i)
             mpz_clear(wv_o[i]);
     free(wv_o);
+    free(modfix);
     free(midpp);
     free(sqg);
     free(vlevels);
@@ -591,6 +600,22 @@ void handle_sig(int sig) {
         need_diag = 1;
     else
         need_log = 1;
+}
+
+void init_modfix(void) {
+    for (uint mfi = 0; mfi < modfix_count; ++mfi) {
+        t_modfix *mfp = &modfix[mfi];
+        mpz_t zarray[4];
+        /* TODO: write a custom chinese() */
+        memcpy(&zarray[0], levels[0].rq, sizeof(mpz_t));
+        memcpy(&zarray[1], mfp->val, sizeof(mpz_t));
+        memcpy(&zarray[2], levels[0].aq, sizeof(mpz_t));
+        memcpy(&zarray[3], mfp->mod, sizeof(mpz_t));
+        if (!chinese(levels[0].rq, levels[0].aq, &zarray[0], &zarray[2], 2))
+            fail("failed to apply v_0 == %Zu (mod %Zu)", mfp->val, mfp->mod);
+        mpz_clear(mfp->mod);
+        mpz_clear(mfp->val);
+    }
 }
 
 void init_time(void) {
@@ -1137,6 +1162,7 @@ void init_post(void) {
     init_time();
 
     init_levels();
+    init_modfix();
     init_value();
     vlevels = (uint *)malloc(forcedp * k * sizeof(uint));
     countr = 0;
@@ -1294,6 +1320,20 @@ void set_batch(char *s) {
         opt_batch_max = opt_batch_min;
     }
     opt_alloc = 1;
+}
+
+void set_modfix(char *s) {
+    char *t = strchr(s, '=');
+    if (!t)
+        fail("-m option must be of form '-m<modulus>=<value>'");
+    *t++ = 0;
+    uint mfi = modfix_count++;
+    modfix = realloc(modfix, modfix_count * sizeof(t_modfix));
+    t_modfix *mfp = &modfix[mfi];
+    mpz_init(mfp->mod);
+    mpz_init(mfp->val);
+    ston(mfp->mod, s);
+    ston(mfp->val, t);
 }
 
 /* Return p if no inverse exists.
@@ -1912,13 +1952,50 @@ bool update_residues(t_level *old, t_level *new,
     mpz_divexact(Z(ur_m), old->aq, vjp->alloc[mlevel].q);
     /* on retry, residues to update are already at new */
     uint from = retry ? new->level : old->level;
+
+    /* we may have a modfix */
+    if (modfix && mpz_divisible_ui_p(levels[0].aq, p)) {
+        /* root_extend() needs coprime moduli to deal with, so we must
+         * downgrade the input roots before calling it */
+        uint fix = 0;
+        mpz_set(Z(temp), levels[0].aq);
+        while (mpz_fdiv_q_ui(Z(temp), Z(temp), p) == 0) {
+            ++fix;
+            mpz_divexact_ui(Z(ur_m), Z(ur_m), p);
+        }
+        if (!retry) {
+            res_copy(new->level, old->level);
+            from = new->level;
+        }
+        /* nothing more to do if we had already fixed what is asked for */
+        if (fix >= x - 1)
+            return 1;
+
+        /* downgrade the roots */
+        t_results *r = res_array(from);
+        for (uint rc = 0; rc < r->count; ++rc)
+            mpz_fdiv_r(r->r[rc], r->r[rc], Z(ur_m));
+        /* deduplicate */
+        qsort(r->r, r->count, sizeof(mpz_t), &_mpz_comparator);
+        mpz_t *prev = NULL;
+        uint rd = 0;
+        for (uint rs = 0; rs < r->count; ++rs)
+            if (prev == NULL || mpz_cmp(*prev, r->r[rs]) != 0) {
+                prev = &r->r[rs];
+                if (rs > rd)
+                    mpz_set(r->r[rd], r->r[rs]);
+                ++rd;
+            }
+        r->count = rd;
+    }
+
     root_extend(new->level, from, Z(ur_m), Z(ur_a), g, p, x - 1, px);
     if (res_array(new->level)->count == 0)
         return 0;
     return 1;
 }
 
-void update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
+bool update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
     mpz_t zarray[4];
     mpz_t *pxp = PARAM_TO_PTR(px);
     mpz_set_si(Z(uc_minusvi), -(long)TYPE_OFFSET(vi));
@@ -1936,8 +2013,8 @@ void update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
     memcpy(&zarray[2], old->aq, sizeof(mpz_t));
     memcpy(&zarray[3], *pxp, sizeof(mpz_t));
     if (chinese(new->rq, new->aq, &zarray[0], &zarray[2], 2))
-        return;
-    fail("chinese failed");
+        return 1;
+    return 0;
 }
 
 /* Record a new square at v_i; return FALSE if invalid.
@@ -2049,7 +2126,10 @@ void apply_null(t_level *prev, t_level *cur, ulong p) {
 bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
     mpz_ui_pow_ui(px, p, x - 1);
-    update_chinese(prev, cur, vi, px);
+    if (!update_chinese(prev, cur, vi, px)) {
+        ++value[vi].vlevel;
+        return 0;
+    }
 
 /* CHECKME: this appears to cost more than it saves in almost all cases */
 #ifdef CHECK_OVERFLOW
@@ -2093,7 +2173,10 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     mpz_ui_pow_ui(px, p, x - 1);
     /* this is wasted effort if x does not divide v_i.t, but we need it
      * for the apply_square() calculation */
-    update_chinese(prev, cur, vi, px);
+    if (!update_chinese(prev, cur, vi, px)) {
+        ++value[vi].vlevel;
+        return 0;
+    }
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
 
@@ -3295,7 +3378,9 @@ int main(int argc, char **argv, char **envp) {
             unforce_all = strtoul(&arg[2], NULL, 10);
             if (unforce_all == 0)
                 unforce_all = 1;
-        } else if (arg[1] == 's')
+        } else if (arg[1] == 'm')
+            set_modfix(&arg[2]);
+        else if (arg[1] == 's')
             randseed = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'h')
             rough = strtoul(&arg[2], NULL, 10);
