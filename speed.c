@@ -1,13 +1,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <gmp.h>
 
 #include "coul.h"
 
 /* from MPUG */
 #include "gmp_main.h"
-#include "prime_iterator.h"
 #include "utility.h"
 
 mpz_t np_p;
@@ -18,11 +16,6 @@ mpz_t sum;
 #define Z(x) (x)
 #define ZP(x) &(x)
 
-/* simplified structure */
-typedef struct s_level {
-    mpz_t aq;       /* running LCM of allocated p^x */
-    mpz_t rq;       /* running CRT of (-i) % p^x */
-} t_level;
 t_level l_old, l_new;
 
 void init(void) {

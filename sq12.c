@@ -9,12 +9,10 @@
 #include <time.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <gmp.h>
 
 #include "coul.h"
 #include "diag.h"
 #include "coultau.h"
-#include "prime_iterator.h"
 
 /* from MPUG */
 #include "gmp_main.h"

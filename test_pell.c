@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <string.h>
-#include <gmp.h>
 #include "pell.h"
 #include "rootmod.h"
 #include "coultau.h"

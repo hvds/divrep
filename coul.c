@@ -28,7 +28,6 @@
 #include "gmp_main.h"
 #include "utility.h"
 #include "primality.h"
-#include "prime_iterator.h"
 
 /* primary parameters - we are searching for D(n, k), the least d such
  * that tau(d + i) = n for all 0 <= i < k.
@@ -71,8 +70,6 @@ static inline mpz_t *ZP(t_zstash e) { return &zstash[e]; }
 #define Z(e) *ZP(e)
 /* additional arrays of mpz_t initialized once at start */
 mpz_t *wv_o = NULL, *wv_qq = NULL;  /* wv_o[k], wv_qq[k] */
-
-typedef unsigned char bool;
 
 /* used to store disallowed inverses in walk_v() */
 typedef struct s_mod {
@@ -120,57 +117,15 @@ uint unforce_all = 0;
 uint sq0 = 0;
 uint *sqg = NULL;   /* size maxfact */
 
-/* Each level of "recursion" allocates one prime power p^{x-1} with x | n
- * to one value v_i. It may be "forced", in which case it is part of a
- * batch of simultaneous allocations of the same p to different i (and
- * in which case derecursion should unwind the whole batch), or "unforced",
- * in which case no other v_j will be divisible by p.
- */
-typedef struct s_level {
-    uint level;     /* index of this entry */
-    bool is_forced;
-    uint vi;        /* allocation of p^x into v_i */
-    prime_iterator piter;
-    ulong p;
-    uint x;
-    uint have_square;   /* number of v_i residues forced square so far */
-    uint nextpi;    /* index of least prime not yet allocated */
-    ulong maxp;     /* highest prime allocated so far */
-    /* (optional) union */
-        uint bi;    /* batch index, if forced */
-    /* .. with */
-        uint di;    /* divisor index, if unforced */
-        uint ti;    /* target tau for v_i */
-        ulong limp; /* limit for p */
-        uint max_at;/* which max value used for limp calculation */
-    /* end union */
-    mpz_t aq;       /* running LCM of allocated p^x */
-    mpz_t rq;       /* running CRT of (-i) % p^x */
-} t_level;
-t_level *levels = NULL;
-uint level = 0;
-uint final_level = 0;
+t_level *levels = NULL;     /* one level per allocated prime */
+uint level = 0;             /* current recursion level */
+uint final_level = 0;       /* level at which to terminate */
+t_value *value = NULL;      /* v_0 .. v_{k-1} */
 
 static inline void level_setp(t_level *lp, ulong p) {
     lp->p = p;
     prime_iterator_setprime(&lp->piter, p);
 }
-
-/* Each value v_0 to v_{k-1} has had 'level' allocations of prime powers
- * p_i^{x_i-1}; q tracks the product of those prime powers, and t tracks
- * our target tau - starting at n, and divided by x_i on each allocation.
- */
-typedef struct s_allocation {
-    ulong p;
-    uint x;
-    mpz_t q;
-    uint t;
-} t_allocation;
-typedef struct s_value {
-    uint vlevel;
-    t_allocation *alloc;    /* size maxfact */
-} t_value;
-t_value *value = NULL;
 
 /* saved counts of allocations in each value before applying nth forced prime */
 uint *vlevels = NULL;

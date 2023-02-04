@@ -1,11 +1,9 @@
-#include <gmp.h>
 #include "ptypes.h"
 
 #include "coul.h"
 #include "coultau.h"
 #include "factor.h"
 #include "primality.h"
-#include "prime_iterator.h"
 #include "utility.h"
 #include "pbrent63.h"
 #include "squfof126.h"

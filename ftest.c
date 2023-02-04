@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <unistd.h>
-#include <gmp.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
