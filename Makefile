@@ -45,11 +45,11 @@ coul pcoul dcoul dpcoul pcaul dpcaul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR}
 test_pell: Makefile test_pell.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o test_pell -g ${CC_OPT} ${DEFINES} test_pell.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
-ftest: Makefile ftest.c coultau.c ${HOUL} ${CFACTOR} ${HFACTOR}
-	gcc -o ftest -g ${CC_OPT} ${DEFINES} ftest.c coultau.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+ftest: Makefile ftest.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
+	gcc -o ftest -g ${CC_OPT} ${DEFINES} ftest.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
-speed: Makefile speed.c ${HFACTOR} ${MPUGMP}/gmp_main.c
-	gcc -o speed -g ${CC_OPT} ${DEFINES} speed.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+speed: Makefile speed.c prime_iterator.c ${HFACTOR} ${MPUGMP}/gmp_main.c
+	gcc -o speed -g ${CC_OPT} ${DEFINES} speed.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
 sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h prime_iterator.h ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} sq12.c diag.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
