@@ -2640,23 +2640,23 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
 bool process_batch(t_level *cur) {
     uint batch_id = batch_alloc++;
     if (opt_alloc) {
+        /* check if this is a batch we want to process */
         if (opt_batch_min >= 0
             && batch_id >= opt_batch_min
             && batch_id <= opt_batch_max
-        ) {
-            /* this is a batch we want to process */
-            /* if we have -W to process, do that now */
-            if (midp && midp < maxp)
-                walk_midp(cur, 0);
-            return midp_only ? 0 : 1;
-        }
+        )
+            goto do_process;
         if (opt_batch_min < 0)
             disp_batch(cur);
         return 0;
-    } else if (midp && midp < orig_maxp) {
-        walk_midp(cur, 0);
     }
-    return midp_only ? 0 : 1;
+  do_process:
+    if (midp && midp < orig_maxp) {
+        walk_midp(cur, 0);
+        if (midp_only)
+            return 0;
+    }
+    return 1;
 }
 
 bool process_next_batch(t_level *cur) {
