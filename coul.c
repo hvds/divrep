@@ -268,11 +268,11 @@ void update_window(void) {
 void prep_show_v(bool retarded) {
     uint offset = 0;
     uint mid_vi;
-    if (midp && midp < maxp)
+    if (in_midp)
         mid_vi = levels[level].vi;
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
-        uint vlevel = vp->vlevel - ((in_midp == 1 && vi == mid_vi) ? 1 : 0);
+        uint vlevel = vp->vlevel - ((in_midp && vi == mid_vi) ? 1 : 0);
         if (vi)
             diag_buf[offset++] = ' ';
         if (vlevel == 0)
@@ -1152,12 +1152,12 @@ void report_init(FILE *fp, char *prog) {
         fprintf(fp, " -j%u", strategy);
     if (opt_print)
         fprintf(fp, " -o");
-    if (minp || maxp) {
+    if (minp || (midp ? orig_maxp : maxp)) {
         fprintf(fp, " -p");
         if (minp)
             fprintf(fp, "%lu:", minp);
-        if (maxp)
-            fprintf(fp, "%lu", (midp && midp == maxp) ? orig_maxp : maxp);
+        if (midp ? orig_maxp : maxp)
+            fprintf(fp, "%lu", midp ? orig_maxp : maxp);
     }
     if (midp) {
         char *ww = midp_only ? "W" : "";
@@ -2429,11 +2429,13 @@ void prep_midp(void) {
             ulong target_maxp = orig_maxp;
             if (mpz_fits_ulong_p(Z(temp))) {
                 ulong target_limit = mpz_get_ui(Z(temp));
-                if (target_limit < orig_maxp)
+                if (!target_maxp || target_limit < orig_maxp)
                     target_maxp = target_limit;
                 if (target_maxp <= midp)
                     continue;
-            }
+            } else if (!target_maxp)
+                fail("prep_midp target %Zu out of range for %u:%u",
+                        Z(temp), vi, x);
 
             t_midpp *this = &midpp[midppc++];
             this->vi = vi;
@@ -2606,7 +2608,7 @@ bool process_batch(t_level *cur) {
         return 0;
     }
   do_process:
-    if (midp && midp < orig_maxp) {
+    if (midp) {
         walk_midp(cur, 0);
         if (midp_only)
             return 0;
@@ -3375,23 +3377,8 @@ int main(int argc, char **argv, char **envp) {
     report_init(stdout, argv[0]);
     if (rfp) report_init(rfp, argv[0]);
 
-    if (midp) {
-        if (!maxp) {
-            if (nf.count < 2)
-                fail("cannot use -W when n is a power of 2");
-            uint minodd = nf.ppow[1].p;
-            mpz_add_ui(Z(temp), max, TYPE_OFFSET(k - 1));
-            mintau(Z(wv_cand), n / minodd);
-            mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
-            mpz_root(Z(temp), Z(temp), minodd - 1);
-            if (mpz_fits_ulong_p(Z(temp)))
-                maxp = mpz_get_ui(Z(temp));
-            else
-                fail("calculated maximum prime (%Zu) does not fit 64-bit",
-                        Z(temp));
-        }
+    if (midp)
         orig_maxp = maxp;
-    }
     bool jump = IS_DEEPER;
     if (rstack) {
         jump = insert_stack();
