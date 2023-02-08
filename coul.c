@@ -1766,6 +1766,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         fail("TODO: walk_v.end > 2^64");
 }
 
+/* test the case where v_i has all divisors accounted for */
 void walk_1(t_level *cur_level, uint vi) {
 #ifdef SQONLY
     if (!cur_level->have_square)
@@ -1833,6 +1834,101 @@ void walk_1(t_level *cur_level, uint vi) {
             return;
 #endif
     candidate(Z(w1_v));
+    return;
+}
+
+/* test a set of cases where v_i will have all divisors accounted for */
+void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
+#ifdef SQONLY
+    if (!cur_level->have_square)
+        return;
+#endif
+    if (minp && cur_level->maxp <= minp)
+        plow = minp;
+
+    uint t[k];
+    uint need_prime[k];
+    uint need_square[k];
+    uint need_other[k];
+    uint npc = 0, nqc = 0, noc = 0;
+    for (uint vj = 0; vj < k; ++vj) {
+        if (vi == vj)
+            continue;
+        t_value *vjp = &value[vj];
+        t_allocation *ajp = (vjp->vlevel) ? &vjp->alloc[vjp->vlevel - 1] : NULL;
+        t[vj] = ajp ? ajp->t : n;
+        if (t[vj] == 1)
+            fail("should never see multiple values with t==1");
+        if (t[vj] == 2)
+            need_prime[npc++] = vj;
+        else if (t[vj] & 1)
+            need_prime[npc++] = vj;
+        else
+            need_other[noc++] = vj;
+    }
+
+    level_setp(cur_level, plow);
+    t_value *vip = &value[vi];
+    t_allocation *aip = vip->vlevel ? &vip->alloc[vip->vlevel - 1] : NULL;
+    while (1) {
+        ulong p = prime_iterator_next(&cur_level->piter);
+        if (p > phigh)
+            break;
+        if (need_work) {
+            /* temporarily make this prime power visible to diag code */
+            t_allocation *a2ip = &vip->alloc[vip->vlevel++];
+            a2ip->p = p;
+            a2ip->x = x;
+            diag_plain();
+            --vip->vlevel;
+        }
+        mpz_ui_pow_ui(Z(w1_v), p, x - 1);
+        if (aip)
+            mpz_mul(Z(w1_v), Z(w1_v), aip->q);
+        mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
+
+        if (mpz_cmp(Z(w1_v), min) < 0)
+            break;
+        ++countw;
+
+        for (uint vj = 0; vj < k; ++vj) {
+            t_value *vjp = &value[vj];
+            t_allocation *ajp = (vjp->vlevel) ? &vjp->alloc[vjp->vlevel - 1]
+                    : NULL;
+            mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
+            if (ajp) {
+                mpz_fdiv_qr(Z(w1_j), Z(w1_r), Z(w1_j), ajp->q);
+                if (mpz_sgn(Z(w1_r)) != 0)
+                    goto reject_this_one;
+                mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
+                if (mpz_cmp(Z(w1_r), Z(zone)) != 0)
+                    goto reject_this_one;
+            }
+            mpz_set(wv_o[vj], Z(w1_j));
+        }
+        ++countwi;
+        for (uint i = 0; i < npc; ++i)
+            if (!_GMP_is_prob_prime(wv_o[need_prime[i]]))
+                goto reject_this_one;
+        for (uint i = 0; i < nqc; ++i)
+            if (!is_taux(wv_o[need_square[i]], t[need_square[i]], 1))
+                goto reject_this_one;
+        oc_t = t;
+        qsort(need_other, noc, sizeof(uint), &other_comparator);
+#ifdef PARALLEL
+        if (!test_1multi(need_other, noc, t))
+            goto reject_this_one;
+#else
+        for (uint i = 0; i < noc; ++i)
+            if (!is_taux(wv_o[need_other[i]], t[need_other[i]], 1))
+                goto reject_this_one;
+#endif
+        candidate(Z(w1_v));
+        if (improve_max)
+            return;
+      reject_this_one:
+        ;
+    }
     return;
 }
 
@@ -2878,6 +2974,11 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p, bool forced) {
         return PUX_ALL_DONE;
     } else if (limp < p + 1)
         return PUX_SKIP_THIS_X; /* nothing to do here */
+    if (nextt == 1) {
+        walk_1_set(cur, vi, p, limp, x);
+        return PUX_SKIP_THIS_X;
+    }
+
     mpz_add_ui(Z(r_walk), max, vi);
 #ifdef LARGE_MIN
     mpz_sub(Z(r_walk), Z(r_walk), min);
