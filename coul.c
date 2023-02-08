@@ -265,7 +265,7 @@ void update_window(void) {
     fflush(stdout);
 }
 
-void prep_show_v(bool retarded) {
+void prep_show_v(void) {
     uint offset = 0;
     uint mid_vi;
     if (in_midp)
@@ -315,11 +315,11 @@ double seconds(double t1) {
     return (t1 - t0);
 }
 
-void diag_plain(bool retarded) {
+void diag_plain(void) {
     double t1 = utime();
 
     update_window();
-    prep_show_v(retarded);  /* into diag_buf */
+    prep_show_v();      /* into diag_buf */
     if (need_diag) {
         diag("%s", diag_buf);
         if (debug)
@@ -341,7 +341,7 @@ void diag_walk_v(ulong ati, ulong end) {
     double t1 = utime();
 
     update_window();
-    prep_show_v(0);  /* into diag_buf */
+    prep_show_v();      /* into diag_buf */
     if (need_diag) {
         if (!(debug == 1 && ati))
             diag("%s: %lu / %lu", diag_buf, ati, end);
@@ -365,7 +365,7 @@ void diag_walk_zv(mpz_t ati, mpz_t end) {
     double t1 = utime();
 
     update_window();
-    prep_show_v(0);  /* into diag_buf */
+    prep_show_v();      /* into diag_buf */
     if (need_diag) {
         if (!(debug == 1 && mpz_sgn(ati)))
             diag("%s: %Zu / %Zu", diag_buf, ati, end);
@@ -389,7 +389,7 @@ void diag_walk_pell(uint pc) {
     double t1 = utime();
 
     update_window();
-    prep_show_v(0);  /* into diag_buf */
+    prep_show_v();      /* into diag_buf */
     if (need_diag) {
         if (!(debug && pc))
             diag("%s: P%u", diag_buf, pc);
@@ -410,7 +410,7 @@ void diag_walk_pell(uint pc) {
 }
 
 void disp_batch(t_level *lp) {
-    prep_show_v(0);      /* into diag_buf */
+    prep_show_v();      /* into diag_buf */
     if (lp->have_square) {
         uint l = strlen(diag_buf);
         sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
@@ -801,7 +801,7 @@ ulong next_prime(ulong cur) {
     _GMP_next_prime(Z(np_p));
     if (mpz_fits_ulong_p(Z(np_p)))
         return mpz_get_ui(Z(np_p));
-    diag_plain(0);
+    diag_plain();
     keep_diag();
     report("002 next_prime overflow\n");
     exit(1);
@@ -2495,7 +2495,7 @@ void walk_midp(t_level *prev, bool recover) {
           do_recover:
             if (apply_single(prev, cur, vi, p, x)) {
                 if (need_work)
-                    diag_plain(1);
+                    diag_plain();
                 walk_v(cur, Z(zero));
             }
             /* unallocate */
@@ -3255,7 +3255,7 @@ void recurse(e_is jump_continue) {
             ) {
                 ++level;
                 if (need_work)
-                    diag_plain(0);
+                    diag_plain();
                 continue;
             }
             /* unapply a possible partial batch */
@@ -3284,14 +3284,14 @@ void recurse(e_is jump_continue) {
             /* note: this returns 0 if t=1 */
             if (!apply_single(prev_level, cur_level, cur_level->vi, p, cur_level->x)) {
                 if (need_work)
-                    diag_plain(0);
+                    diag_plain();
                 --value[cur_level->vi].vlevel;
                 /* not redo_unforced, we may have improved max */
                 goto continue_unforced;
             }
             ++level;
             if (need_work)
-                diag_plain(0);
+                diag_plain();
             continue;   /* deeper */
         }
     }
