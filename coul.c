@@ -1845,6 +1845,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
 #endif
     if (minp && cur_level->maxp <= minp)
         plow = minp;
+    if (plow < 2)
+        plow = 2;
 
     uint t[k];
     uint need_prime[k];
@@ -1867,7 +1869,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             need_other[noc++] = vj;
     }
 
-    level_setp(cur_level, plow);
+    level_setp(cur_level, plow - 1);    /* next prime should be plow */
     t_value *vip = &value[vi];
     t_allocation *aip = vip->vlevel ? &vip->alloc[vip->vlevel - 1] : NULL;
     while (1) {
@@ -3026,13 +3028,16 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p, bool forced) {
 
 typedef enum {
     IS_DEEPER = 0,
+    IS_NEXTX,
     IS_NEXT,
     IS_MIDP
 } e_is;
 /* On recovery, set up the recursion stack to the point we had reached.
  * Returns IS_DEEPER if we should continue by recursing deeper from this
- * point; returns IS_NEXT if we should continue by advancing the current
- * level; and returns IS_MIDP if we should continue via walk_midp().
+ * point; returns IS_NEXTX if we should continue by advancing the power
+ * applied at the current position; returns IS_NEXT if we should continue
+ * by advancing the current level; and returns IS_MIDP if we should continue
+ * via walk_midp().
  */
 e_is insert_stack(void) {
     e_is jump = IS_DEEPER;
@@ -3166,11 +3171,15 @@ e_is insert_stack(void) {
         cur->ti = ti;
         cur->di = di;
 
-        /* note: must pass in p=0 for it to calculate limp */
-        e_pux pux = prep_unforced_x(prev, cur, 0, init_pattern ? 1 : 0);
+        e_pux pux = prep_unforced_x(prev, cur, p, init_pattern ? 1 : 0);
         switch (pux) {
           case PUX_NOTHING_TO_DO:
           case PUX_SKIP_THIS_X:
+            if (ti == x) {
+                /* legitimate skip after walk_1_set */
+                jump = IS_NEXTX;
+                goto insert_check;
+            }
             fail("prep_nextt %u for %lu^%u at %u\n", pux, p, x, vi);
           case PUX_ALL_DONE:
             /* we have now acted on this */
@@ -3228,6 +3237,8 @@ void recurse(e_is jump_continue) {
 
     if (jump_continue == IS_NEXT)
         goto continue_recurse;
+    else if (jump_continue == IS_NEXTX)
+        goto continue_unforced_x;
     else if (jump_continue == IS_MIDP) {
         /* (FIXME) discard any partial walk */
         have_rwalk = 0;
