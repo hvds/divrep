@@ -1056,13 +1056,15 @@ void ston(mpz_t targ, char *s) {
     char *t = strchr(s, 'e');
     if (t) {
         *t = 0;
-        mpz_set_str(targ, s, 10);
+        if (mpz_set_str(targ, s, 10) != 0)
+            fail("Expected '%s' to be a valid number", s);
         ulong exp = strtoul(&t[1], NULL, 10);
         mpz_ui_pow_ui(Z(s_exp), 10, exp);
         mpz_mul(targ, targ, Z(s_exp));
         *t = 'e';
     } else {
-        mpz_set_str(targ, s, 10);
+        if (mpz_set_str(targ, s, 10) != 0)
+            fail("Expected '%s' to be a valid number", s);
     }
 }
 
