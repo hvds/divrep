@@ -180,6 +180,12 @@ as a simple integer, in which case it expresses a limit on the
 allocated power p^e rather than a limit on the prime regardless of
 power.
 
+The extended forms "-px" and "-Wx" can be used for fine-grained control:
+the minimum, maximum and threshold values in this case should be a
+comma-separated list of "p^e" override values. Thus "-p100 -px1^5,0^11"
+allows p <= 100 for all powers except that no powers of the form p^5
+are allowed, and all powers of the form p^11.
+
 If "-s2" is specified, it will initialize the random number generator
 with seed 2, used at least for ECM factorization. The default seed is 1,
 intended to help make results more reproducible.

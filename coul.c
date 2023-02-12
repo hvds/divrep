@@ -172,7 +172,8 @@ ulong antigain = 0;
  */
 ulong *minp = NULL, *maxp = NULL, *midp = NULL;
 char *sminp = NULL, *smaxp = NULL, *smidp = NULL;
-bool midp_only = 0, in_midp = 0, need_maxp;
+char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
+bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
@@ -459,7 +460,7 @@ void init_levels(void) {
     mpz_set_ui(levels[0].aq, 1);
     mpz_set_ui(levels[0].rq, 0);
     levels[0].have_square = 0;
-    levels[0].have_min = sminp ? 0 : 1;
+    levels[0].have_min = (sminp || sminpx) ? 0 : 1;
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
     level = 1;
@@ -733,7 +734,7 @@ void parse_305(char *s) {
         dtime = 0;
     else if (EOF == sscanf(s, " (%lfs)\n", &dtime))
         fail("could not parse 305 time: '%s'", s);
-    if (is_W && !smidp)
+    if (is_W && !need_midp)
         fail("recovery expected -W option");
     t0 -= dtime;
 }
@@ -1082,50 +1083,75 @@ ulong ulston(char *s) {
     fail("value '%s' out of range of ulong", s);
 }
 
-void do_prep_mp(ulong **mp, char *sp) {
+void do_prep_mp(ulong **mp, char *sp, char *spx) {
     *mp = calloc(n, sizeof(ulong));
-    if (!sp)
-        return;
-    char *t = strchr(sp, '^');
-    t_divisors *dp = &divisors[n];
-    if (t) {
+    if (sp) {
+        char *t = strchr(sp, '^');
+        t_divisors *dp = &divisors[n];
+        if (t) {
+            *t = 0;
+            ulong p = ulston(sp);
+            uint e = ulston(t + 1);
+            *t = '^';
+            mpz_ui_pow_ui(Z(temp), p, e);
+            for (uint di = 0; di < dp->alldiv; ++di) {
+                uint dm = dp->div[di] - 1;
+                if ((dm & (dm + 1)) == 0)
+                    break;
+                mpz_root(Z(wv_cand), Z(temp), dm);
+                if (mpz_fits_ulong_p(Z(wv_cand)))
+                    (*mp)[dm] = mpz_get_ui(Z(wv_cand));
+                else
+                    fail("%lu^%u does not fit 64-bit for p^%u", p, e, dm);
+            }
+        } else {
+            ulong p = ulston(sp);
+            for (uint di = 0; di < dp->alldiv; ++di) {
+                uint dm = dp->div[di] - 1;
+                if ((dm & (dm + 1)) == 0)
+                    break;
+                (*mp)[dm] = p;
+            }
+        }
+    }
+    char *sp2 = spx;
+    while (sp2 && *sp2) {
+        char *tc = strchr(sp2, ',');
+        if (tc)
+            *tc = 0;
+        char *t = strchr(sp2, '^');
+        if (!t) {
+            if (tc)
+                *tc = ',';
+            fail("missing '^' in '%s'", spx);
+        }
         *t = 0;
-        ulong p = ulston(sp);
+        ulong p = ulston(sp2);
         uint e = ulston(t + 1);
         *t = '^';
-        mpz_ui_pow_ui(Z(temp), p, e);
-        for (uint di = 0; di < dp->alldiv; ++di) {
-            uint dm = dp->div[di] - 1;
-            if ((dm & (dm + 1)) == 0)
-                break;
-            mpz_root(Z(wv_cand), Z(temp), dm);
-            if (mpz_fits_ulong_p(Z(wv_cand)))
-                (*mp)[dm] = mpz_get_ui(Z(wv_cand));
-            else
-                fail("%lu^%u does not fit 64-bit for p^%u", p, e, dm);
-        }
-    } else {
-        ulong p = ulston(sp);
-        for (uint di = 0; di < dp->alldiv; ++di) {
-            uint dm = dp->div[di] - 1;
-            if ((dm & (dm + 1)) == 0)
-                break;
-            (*mp)[dm] = p;
-        }
+        if (tc)
+            *tc = ',';
+        if (n % (e + 1))
+            fail("invalid power %u in '%s'", e, spx);
+        (*mp)[e] = p;
+        if (tc)
+            sp2 = tc + 1;
+        else
+            break;
     }
 }
 
 void prep_mp(void) {
-    do_prep_mp(&minp, sminp);
-    if (smidp) {
+    do_prep_mp(&minp, sminp, sminpx);
+    if (need_midp) {
         /* when -W is used, we set maxp from smidp to mark the upper
          * limit for normal allocation, and midp from smaxp to mark the
          * upper limit for walk_midp() */
-        do_prep_mp(&maxp, smidp);
-        do_prep_mp(&midp, smaxp);
+        do_prep_mp(&maxp, smidp, smidpx);
+        do_prep_mp(&midp, smaxp, smaxpx);
     } else
-        do_prep_mp(&maxp, smaxp);
-    need_maxp = (smaxp || smidp) ? 1 : 0;
+        do_prep_mp(&maxp, smaxp, smaxpx);
+    need_maxp = (smaxp || smaxpx || need_midp) ? 1 : 0;
 }
 
 void init_post(void) {
@@ -1236,9 +1262,20 @@ void report_init(FILE *fp, char *prog) {
         if (smaxp)
             fprintf(fp, "%s", smaxp);
     }
+    if (sminpx || smaxpx) {
+        fprintf(fp, " -px");
+        if (sminpx)
+            fprintf(fp, "%s:", sminpx);
+        if (smaxpx)
+            fprintf(fp, "%s", smaxpx);
+    }
     if (smidp) {
         char *ww = midp_only ? "W" : "";
         fprintf(fp, " -W%s%s", ww, smidp);
+    }
+    if (smidpx) {
+        char *ww = midp_only ? "W" : "";
+        fprintf(fp, " -W%sx%s", ww, smidpx);
     }
     if (force_all)
         fprintf(fp, " -f%u", force_all);
@@ -1309,13 +1346,16 @@ void set_gain(char *s) {
 }
 
 void set_cap(char *s) {
+    bool is_x = (*s == 'x');
+    if (is_x)
+        ++s;
     char *t = strchr(s, ':');
     if (t) {
         *t = 0;
-        sminp = s;
-        smaxp = t + 1;
+        *(is_x ? &sminpx : &sminp) = s;
+        *(is_x ? &smaxpx : &smaxp) = t + 1;
     } else {
-        smaxp = s;
+        *(is_x ? &smaxpx : &smaxp) = s;
     }
 }
 
@@ -2775,7 +2815,7 @@ bool process_batch(t_level *cur) {
         return 0;
     }
   do_process:
-    if (midp) {
+    if (need_midp) {
         walk_midp(cur, 0);
         if (midp_only)
             return 0;
@@ -3283,7 +3323,7 @@ e_is insert_stack(void) {
             levels[l].is_forced = 1;
         final_level = level;
     }
-    if (midp && midp_recover.valid) {
+    if (need_midp && midp_recover.valid) {
         if (jump != IS_DEEPER)
             fail("data mismatch");
         jump = IS_MIDP;
@@ -3492,12 +3532,16 @@ int main(int argc, char **argv, char **envp) {
         else if (arg[1] == 'p')
             set_cap(&arg[2]);
         else if (arg[1] == 'W') {
+            need_midp = 1;
             char *w = &arg[2];
             if (*w == 'W') {
                 midp_only = 1;
                 ++w;
             }
-            smidp = w;
+            if (*w == 'x')
+                smidpx = w + 1;
+            else
+                smidp = w;
         } else if (strncmp("-Ls", arg, 3) == 0)
             diag_delay = strtoul(&arg[3], NULL, 10);
         else if (strncmp("-Lf", arg, 3) == 0)
