@@ -164,18 +164,21 @@ bool improve_max = 1;   /* reduce max when solution found */
 uint seen_best = 0; /* number of times we've improved max */
 ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
-/* maxp is the greatest prime we should attempt to allocate; minp is the
- * threshold that at least one allocated prime should exceed (else we can
- * skip the walk); midp is the threshold beyond which we should pre-walk.
- * When midp is in use, we save maxp in orig_maxp, and overwrite it.
+/* maxp[e] is the greatest prime we should attempt to allocate as power p^e;
+ * minp[e] is the threshold that at least one allocated p^e should exceed
+ * (else we can skip the walk); midp[e] is the additional threshold up to
+ * which we should pre-walk.
+ * sminp, smaxp, smidp are the strings that express the requests.
  */
-ulong minp = 0, maxp = 0, orig_maxp, midp = 0;
-bool midp_only = 0, in_midp = 0;
+ulong *minp = NULL, *maxp = NULL, *midp = NULL;
+char *sminp = NULL, *smaxp = NULL, *smidp = NULL;
+bool midp_only = 0, in_midp = 0, need_maxp;
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
     uint x;
     ulong maxp;
+    ulong minp;
 } t_midpp;
 uint midppc;
 t_midpp *midpp = NULL;
@@ -456,6 +459,7 @@ void init_levels(void) {
     mpz_set_ui(levels[0].aq, 1);
     mpz_set_ui(levels[0].rq, 0);
     levels[0].have_square = 0;
+    levels[0].have_min = sminp ? 0 : 1;
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
     level = 1;
@@ -498,6 +502,9 @@ void done(void) {
             mpz_clear(wv_o[i]);
     free(wv_o);
     free(modfix);
+    free(minp);
+    free(maxp);
+    free(midp);
     free(midpp);
     free(sqg);
     free(vlevels);
@@ -726,7 +733,7 @@ void parse_305(char *s) {
         dtime = 0;
     else if (EOF == sscanf(s, " (%lfs)\n", &dtime))
         fail("could not parse 305 time: '%s'", s);
-    if (is_W && !midp)
+    if (is_W && !smidp)
         fail("recovery expected -W option");
     t0 -= dtime;
 }
@@ -1075,6 +1082,52 @@ ulong ulston(char *s) {
     fail("value '%s' out of range of ulong", s);
 }
 
+void do_prep_mp(ulong **mp, char *sp) {
+    *mp = calloc(n, sizeof(ulong));
+    if (!sp)
+        return;
+    char *t = strchr(sp, '^');
+    t_divisors *dp = &divisors[n];
+    if (t) {
+        *t = 0;
+        ulong p = ulston(sp);
+        uint e = ulston(t + 1);
+        *t = '^';
+        mpz_ui_pow_ui(Z(temp), p, e);
+        for (uint di = 0; di < dp->alldiv; ++di) {
+            uint dm = dp->div[di] - 1;
+            if ((dm & (dm + 1)) == 0)
+                break;
+            mpz_root(Z(wv_cand), Z(temp), dm);
+            if (mpz_fits_ulong_p(Z(wv_cand)))
+                (*mp)[dm] = mpz_get_ui(Z(wv_cand));
+            else
+                fail("%lu^%u does not fit 64-bit for p^%u", p, e, dm);
+        }
+    } else {
+        ulong p = ulston(sp);
+        for (uint di = 0; di < dp->alldiv; ++di) {
+            uint dm = dp->div[di] - 1;
+            if ((dm & (dm + 1)) == 0)
+                break;
+            (*mp)[dm] = p;
+        }
+    }
+}
+
+void prep_mp(void) {
+    do_prep_mp(&minp, sminp);
+    if (smidp) {
+        /* when -W is used, we set maxp from smidp to mark the upper
+         * limit for normal allocation, and midp from smaxp to mark the
+         * upper limit for walk_midp() */
+        do_prep_mp(&maxp, smidp);
+        do_prep_mp(&midp, smaxp);
+    } else
+        do_prep_mp(&maxp, smaxp);
+    need_maxp = (smaxp || smidp) ? 1 : 0;
+}
+
 void init_post(void) {
     init_tau(rough);
     alloc_taum(k);
@@ -1125,6 +1178,7 @@ void init_post(void) {
     prep_forcep();
     prep_primes();  /* needs forcedp */
     prep_mintau();
+    prep_mp();  /* maxp[], minp[], midp[] */
     sqg = (uint *)malloc(maxfact * sizeof(uint));
     midpp = malloc(sizeof(t_midpp) * k * divisors[n].alldiv);
 
@@ -1175,16 +1229,16 @@ void report_init(FILE *fp, char *prog) {
         fprintf(fp, " -j%u", strategy);
     if (opt_print)
         fprintf(fp, " -o");
-    if (minp || (midp ? orig_maxp : maxp)) {
+    if (sminp || smaxp) {
         fprintf(fp, " -p");
-        if (minp)
-            fprintf(fp, "%lu:", minp);
-        if (midp ? orig_maxp : maxp)
-            fprintf(fp, "%lu", midp ? orig_maxp : maxp);
+        if (sminp)
+            fprintf(fp, "%s:", sminp);
+        if (smaxp)
+            fprintf(fp, "%s", smaxp);
     }
-    if (midp) {
+    if (smidp) {
         char *ww = midp_only ? "W" : "";
-        fprintf(fp, " -W%s%lu", ww, midp);
+        fprintf(fp, " -W%s%s", ww, smidp);
     }
     if (force_all)
         fprintf(fp, " -f%u", force_all);
@@ -1258,11 +1312,10 @@ void set_cap(char *s) {
     char *t = strchr(s, ':');
     if (t) {
         *t = 0;
-        minp = *s ? ulston(s) : 0;
-        maxp = t[1] ? ulston(&t[1]) : 0;
+        sminp = s;
+        smaxp = t + 1;
     } else {
-        minp = 0;
-        maxp = ulston(s);
+        smaxp = s;
     }
 }
 
@@ -1435,7 +1488,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
     if (!cur_level->have_square)
         return;
 #endif
-    if (minp && cur_level->maxp <= minp)
+    if (!cur_level->have_min)
         return;
 
     mpz_t *q[k];
@@ -1774,7 +1827,7 @@ void walk_1(t_level *cur_level, uint vi) {
     if (!cur_level->have_square)
         return;
 #endif
-    if (minp && cur_level->maxp <= minp)
+    if (!cur_level->have_min)
         return;
 
     t_value *vip = &value[vi];
@@ -1845,8 +1898,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
     if (!cur_level->have_square)
         return;
 #endif
-    if (minp && cur_level->maxp <= minp)
-        plow = minp;
+    if (!cur_level->have_min)
+        plow = minp[x - 1];
     if (plow < 2)
         plow = 2;
 
@@ -2156,6 +2209,7 @@ void apply_null(t_level *prev, t_level *cur, ulong p) {
     cur->p = p;
     cur->x = 1;
     cur->have_square = prev->have_square;
+    cur->have_min = prev->have_min;
     cur->nextpi = prev->nextpi;
     if (p == sprimes[cur->nextpi])
         cur->nextpi = find_nextpi(cur->nextpi);
@@ -2180,6 +2234,7 @@ void apply_null(t_level *prev, t_level *cur, ulong p) {
  */
 bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
+    cur->have_min = prev->have_min || (minp[x - 1] && p > minp[x - 1]);
     mpz_ui_pow_ui(px, p, x - 1);
     if (!update_chinese(prev, cur, vi, px)) {
         ++value[vi].vlevel;
@@ -2518,7 +2573,7 @@ void prep_midp(void) {
             uint x = dp->div[di];
             if ((x & (x - 1)) == 0)
                 break;
-            /* find range of p for allocating p^x at v_i */
+            /* find range of p for allocating p^e at v_i */
             mpz_add_ui(Z(temp), max, TYPE_OFFSET(vi));
             mintau(Z(wv_cand), t / x);
             mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
@@ -2526,21 +2581,24 @@ void prep_midp(void) {
                 mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
 
-            ulong target_maxp = orig_maxp;
+            /* our range of interest is p: midp[e] <= p < maxp[e] */
+            ulong target_maxp = midp[x - 1];
+            ulong target_minp = maxp[x - 1];
             if (mpz_fits_ulong_p(Z(temp))) {
                 ulong target_limit = mpz_get_ui(Z(temp));
-                if (!target_maxp || target_limit < orig_maxp)
+                if (!target_maxp || target_limit < target_maxp)
                     target_maxp = target_limit;
-                if (target_maxp <= midp)
+                if (target_maxp <= target_minp)
                     continue;
             } else if (!target_maxp)
                 fail("prep_midp target %Zu out of range for %u:%u",
-                        Z(temp), vi, x);
+                        Z(temp), vi, x - 1);
 
             t_midpp *this = &midpp[midppc++];
             this->vi = vi;
             this->x = x;
             this->maxp = target_maxp;
+            this->minp = target_minp;
         }
     }
     /* sort by descending maxp */
@@ -2561,7 +2619,6 @@ void walk_midp(t_level *prev, bool recover) {
     if (midppc == 0)
         goto walk_midp_done;
 
-    maxp = orig_maxp;
     level_setp(cur, midpp[0].maxp);
     /* setp has set to a prime <= target */
     prime_iterator_next(&cur->piter);
@@ -2583,13 +2640,21 @@ void walk_midp(t_level *prev, bool recover) {
 
     while (1) {
         p = prime_iterator_prev(&cur->piter);
-        if (p <= midp)
-            break;
         for (mi = 0; mi < midppc; ++mi) {
+          redo_mi:
             mp = &midpp[mi];
             /* ordered by maxp descending */
             if (p > mp->maxp)
                 break;
+            if (p <= mp->minp) {
+                uint mj = mi + 1;
+                --midppc;
+                if (mi < midppc) {
+                    memmove(mp, &midpp[mj], (midppc - mi) * sizeof(t_midpp));
+                    goto redo_mi;
+                }
+                continue;
+            }
             vi = mp->vi;
             x = mp->x;
           do_recover:
@@ -2601,10 +2666,11 @@ void walk_midp(t_level *prev, bool recover) {
             /* unallocate */
             --value[vi].vlevel;
         }
+        if (midppc == 0)
+            break;
     }
   walk_midp_done:
     in_midp = 0;
-    maxp = midp;
 }
 
 uint relative_valuation(uint i, ulong p, uint e) {
@@ -2626,6 +2692,7 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
         apply_null(prev, cur, fp->p);
         return 1;
     }
+    cur->have_min = prev->have_min;
 
     uint ep = bp->x - 1;
     if (!apply_primary(prev, cur, bp->vi, fp->p, bp->x))
@@ -2740,7 +2807,7 @@ uint best_v0(void) {
         if (divisors[tj].high <= 2)
             continue;
         /* skip prime powers when capped */
-        if (maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         if (ti) {
             /* skip if not higher tau, or same tau with higher q */
@@ -2774,7 +2841,7 @@ uint best_v1(void) {
         if (divisors[tj].high <= 2)
             continue;
         /* skip prime powers when capped */
-        if (maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         if (ti) {
             uint hi = divisors[ti].high;
@@ -2810,7 +2877,7 @@ uint best_v2(void) {
         if (divisors[tj].high <= 2)
             continue;
         /* skip prime powers when capped */
-        if (maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         if (ti) {
             /* skip if not lower tau, or same tau with higher q */
@@ -2842,7 +2909,7 @@ uint best_v3(void) {
         if (divisors[tj].high <= 2)
             continue;
         /* skip prime powers when capped */
-        if (maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         /* shortcircuit if single allocation of (even) sqrt(n) */
         if ((tj & 1) == 0 && apj && apj->x == apj->t) {
@@ -2912,8 +2979,8 @@ ulong limit_p(uint vi, uint x, uint nextt) {
         mpz_root(Z(lp_x), Z(lp_x), x - 1);
     }
 
-    if (maxp && mpz_cmp_ui(Z(lp_x), maxp) > 0)
-        return maxp;
+    if (maxp[x - 1] && mpz_cmp_ui(Z(lp_x), maxp[x - 1]) > 0)
+        return maxp[x - 1];
     if (!mpz_fits_ulong_p(Z(lp_x)))
         return 0;
     if (mpz_sgn(Z(lp_x)) <= 0)
@@ -3024,7 +3091,6 @@ e_pux prep_unforced_x(t_level *prev, t_level *cur, ulong p, bool forced) {
     cur->limp = limp;
     cur->max_at = seen_best;
     /* TODO: do some constant alloc stuff in advance */
-    /* TODO: special case for nextt == 1 */
     return PUX_DO_THIS_X;
 }
 
@@ -3043,9 +3109,6 @@ typedef enum {
  */
 e_is insert_stack(void) {
     e_is jump = IS_DEEPER;
-
-    if (midp)
-        maxp = midp;
 
     /* first insert forced primes */
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
@@ -3221,7 +3284,6 @@ e_is insert_stack(void) {
         final_level = level;
     }
     if (midp && midp_recover.valid) {
-        maxp = orig_maxp;
         if (jump != IS_DEEPER)
             fail("data mismatch");
         jump = IS_MIDP;
@@ -3435,7 +3497,7 @@ int main(int argc, char **argv, char **envp) {
                 midp_only = 1;
                 ++w;
             }
-            midp = ulston(w);
+            smidp = w;
         } else if (strncmp("-Ls", arg, 3) == 0)
             diag_delay = strtoul(&arg[3], NULL, 10);
         else if (strncmp("-Lf", arg, 3) == 0)
@@ -3491,8 +3553,6 @@ int main(int argc, char **argv, char **envp) {
     report_init(stdout, argv[0]);
     if (rfp) report_init(rfp, argv[0]);
 
-    if (midp)
-        orig_maxp = maxp;
     bool jump = IS_DEEPER;
     if (rstack) {
         jump = insert_stack();

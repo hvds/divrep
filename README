@@ -175,6 +175,11 @@ normal process as if "-p100" had been specified. This can give a very
 substantial speed improvement if the -W value is chosen with care.
 Default is not to do this (equivalent to -Winfinity).
 
+"-p" and "-W" may also be specified in the form "100^2" rather than
+as a simple integer, in which case it expresses a limit on the
+allocated power p^e rather than a limit on the prime regardless of
+power.
+
 If "-s2" is specified, it will initialize the random number generator
 with seed 2, used at least for ECM factorization. The default seed is 1,
 intended to help make results more reproducible.
