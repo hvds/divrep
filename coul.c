@@ -339,6 +339,15 @@ void aux_sprintf(char *fmt, ...) {
     }
 }
 
+void disp_batch(t_level *lp) {
+    prep_show_v();      /* into diag_buf */
+    if (lp->have_square) {
+        uint l = strlen(diag_buf);
+        sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
+    }
+    report("203 b%u: %s\n", batch_alloc - 1, diag_buf);
+}
+
 void diag_any(bool need_disp) {
     double t1 = utime();
     update_window();
@@ -380,15 +389,6 @@ void diag_walk_zv(mpz_t ati, mpz_t end) {
 void diag_walk_pell(uint pc) {
     aux_sprintf(": P%u", pc);
     diag_any(!(debug && pc));
-}
-
-void disp_batch(t_level *lp) {
-    prep_show_v();      /* into diag_buf */
-    if (lp->have_square) {
-        uint l = strlen(diag_buf);
-        sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
-    }
-    report("203 b%u: %s\n", batch_alloc - 1, diag_buf);
 }
 
 void candidate(mpz_t c) {
