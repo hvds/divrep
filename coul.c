@@ -341,8 +341,9 @@ void aux_sprintf(char *fmt, ...) {
     }
 }
 
-void disp_batch(t_level *lp) {
+void disp_batch(void) {
     prep_show_v();      /* into diag_buf */
+    t_level *lp = &levels[level];
     if (lp->have_square) {
         uint l = strlen(diag_buf);
         sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
@@ -2783,7 +2784,7 @@ bool process_batch(t_level *cur) {
         )
             goto do_process;
         if (opt_batch_min < 0)
-            disp_batch(cur);
+            disp_batch();
         return 0;
     }
   do_process:
