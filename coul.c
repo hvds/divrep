@@ -226,8 +226,12 @@ mpz_t px;       /* p^x */
 #define LOG 600
 double diag_delay = DIAG, log_delay = LOG, diagt, logt;
 ulong countr, countw, countwi;
-#define DIAG_BUFSIZE (3 + k * maxfact * (20 + 1 + 5 + 1) + 1)
+#define MAX_DEC_ULONG 20
+#define MAX_DEC_POWER 5
+#define DIAG_BUFSIZE (3 + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1) + 1)
 char *diag_buf = NULL;
+uint aux_buf_size = 0;
+char *aux_buf = NULL;
 
 /* Initial pattern set with -I */
 char *init_pattern = NULL;
@@ -319,13 +323,30 @@ double seconds(double t1) {
     return (t1 - t0);
 }
 
-void diag_plain(void) {
-    double t1 = utime();
+/* gmp_sprintf into aux_buf, resizing as needed */
+void aux_sprintf(char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    uint size = gmp_vsnprintf(aux_buf, aux_buf_size, fmt, ap);
+    va_end(ap);
+    if (size >= aux_buf_size) {
+        size += 32;
+        aux_buf = realloc(aux_buf, size);
+        aux_buf_size = size;
+        va_start(ap, fmt);
+        gmp_vsprintf(aux_buf, fmt, ap);
+        va_end(ap);
+    }
+}
 
+void diag_any(bool need_disp) {
+    double t1 = utime();
     update_window();
     prep_show_v();      /* into diag_buf */
+
     if (need_diag) {
-        diag("%s", diag_buf);
+        if (need_disp)
+            diag("%s%s", diag_buf, aux_buf);
         if (debug)
             keep_diag();
         else
@@ -333,84 +354,32 @@ void diag_plain(void) {
     }
 
     if (rfp && need_log) {
-        fprintf(rfp, "305 %s (%.2fs)\n", diag_buf, seconds(t1));
+        fprintf(rfp, "305 %s%s (%.2fs)\n", diag_buf, aux_buf, seconds(t1));
         logt = t1 + log_delay;
         need_log = 0;
     }
     if (!debug)
         need_work = 0;
+}
+
+void diag_plain(void) {
+    aux_sprintf("");
+    diag_any(debug);
 }
 
 void diag_walk_v(ulong ati, ulong end) {
-    double t1 = utime();
-
-    update_window();
-    prep_show_v();      /* into diag_buf */
-    if (need_diag) {
-        if (!(debug == 1 && ati))
-            diag("%s: %lu / %lu", diag_buf, ati, end);
-        if (debug)
-            keep_diag();
-        else
-            need_diag = 0;
-    }
-
-    if (rfp && need_log) {
-        fprintf(rfp, "305 %s: %lu / %lu (%.2fs)\n",
-                diag_buf, ati, end, seconds(t1));
-        logt = t1 + log_delay;
-        need_log = 0;
-    }
-    if (!debug)
-        need_work = 0;
+    aux_sprintf(": %lu / %lu", ati, end);
+    diag_any(!(debug == 1 && ati));
 }
 
 void diag_walk_zv(mpz_t ati, mpz_t end) {
-    double t1 = utime();
-
-    update_window();
-    prep_show_v();      /* into diag_buf */
-    if (need_diag) {
-        if (!(debug == 1 && mpz_sgn(ati)))
-            diag("%s: %Zu / %Zu", diag_buf, ati, end);
-        if (debug)
-            keep_diag();
-        else
-            need_diag = 0;
-    }
-
-    if (rfp && need_log) {
-        gmp_fprintf(rfp, "305 %s: %Zu / %Zu (%.2fs)\n",
-                diag_buf, ati, end, seconds(t1));
-        logt = t1 + log_delay;
-        need_log = 0;
-    }
-    if (!debug)
-        need_work = 0;
+    aux_sprintf(": %Zu / %Zu", ati, end);
+    diag_any(!(debug == 1 && mpz_sgn(ati)));
 }
 
 void diag_walk_pell(uint pc) {
-    double t1 = utime();
-
-    update_window();
-    prep_show_v();      /* into diag_buf */
-    if (need_diag) {
-        if (!(debug && pc))
-            diag("%s: P%u", diag_buf, pc);
-        if (debug)
-            keep_diag();
-        else
-            need_diag = 0;
-    }
-
-    if (rfp && need_log) {
-        fprintf(rfp, "305 %s: P%u (%.2fs)\n",
-                diag_buf, pc, seconds(t1));
-        logt = t1 + log_delay;
-        need_log = 0;
-    }
-    if (!debug)
-        need_diag = 0;
+    aux_sprintf(": P%u", pc);
+    diag_any(!(debug && pc));
 }
 
 void disp_batch(t_level *lp) {
@@ -494,6 +463,7 @@ void done(void) {
                 opt_batch_min < 0 ? batch_alloc : opt_batch_max);
 
     free(diag_buf);
+    free(aux_buf);
     if (wv_qq)
         for (uint i = 0; i < k; ++i)
             mpz_clear(wv_qq[i]);
