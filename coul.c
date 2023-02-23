@@ -205,6 +205,7 @@ uint strategy_set = 0;  /* strategy was user-selected */
 
 bool debugw = 0;    /* diag and keep every case seen (excluding walk) */
 bool debugW = 0;    /* diag and keep every case seen (including walk) */
+bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
 bool debugB = 0;    /* show every batch id */
 
@@ -1129,6 +1130,20 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
     }
 }
 
+void disp_px(char *name, ulong *mp) {
+    report("311 %s: [ ", name);
+    t_divisors *dp = &divisors[n];
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint dm = dp->div[di] - 1;
+        if ((dm & (dm + 1)) == 0)
+            break;
+        if (di)
+            report("; ");
+        report("%lu^%u", mp[dm], dm);
+    }
+    report(" ]\n");
+}
+
 void prep_mp(void) {
     do_prep_mp(&minp, sminp, sminpx);
     if (need_midp) {
@@ -1140,6 +1155,15 @@ void prep_mp(void) {
     } else
         do_prep_mp(&maxp, smaxp, smaxpx);
     need_maxp = (smaxp || smaxpx || need_midp) ? 1 : 0;
+
+    if (debugx) {
+        disp_px("minp", minp);
+        if (need_midp) {
+            disp_px("midp", maxp);
+            disp_px("maxp", midp);
+        } else
+            disp_px("maxp", maxp);
+    }
 }
 
 void init_post(void) {
@@ -3583,6 +3607,9 @@ int main(int argc, char **argv, char **envp) {
               case 'B':
                 debugb = 1;
                 debugB = 1;
+                break;
+              case 'x':
+                debugx = 1;
                 break;
               default:
                 fail("Unknown debug option '%s'", arg);
