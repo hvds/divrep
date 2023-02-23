@@ -199,11 +199,14 @@ bool opt_print = 0; /* print candidates instead of fully testing them */
 bool opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
+int last_batch_seen = -1;
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 
 bool debugw = 0;    /* diag and keep every case seen (excluding walk) */
 bool debugW = 0;    /* diag and keep every case seen (including walk) */
+bool debugb = 0;    /* show batch id, if changed */
+bool debugB = 0;    /* show every batch id */
 
 ulong randseed = 1; /* for ECM, etc */
 bool vt100 = 0;     /* update window title with VT100 escape sequences */
@@ -354,7 +357,15 @@ void disp_batch(void) {
 void diag_any(bool need_disp) {
     double t1 = utime();
     update_window();
-    prep_show_v();      /* into diag_buf */
+
+    if ((debugb && !debugB)
+        && batch_alloc != last_batch_seen
+        && ((need_diag && need_disp) || (rfp && need_log))
+    ) {
+        last_batch_seen = batch_alloc;
+        disp_batch();
+    } else
+        prep_show_v();  /* into diag_buf */
 
     if (need_diag) {
         if (need_disp)
@@ -760,6 +771,8 @@ void recover(FILE *fp) {
             start_seen = 1;
         } else if (strncmp("000 ", curbuf, 4) == 0)
             ;   /* comment */
+        else if (strncmp("203 ", curbuf, 4) == 0)
+            ;   /* batch */
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
@@ -2776,6 +2789,8 @@ bool apply_batch(t_level *prev, t_level *cur, t_forcep *fp, uint bi) {
  */
 bool process_batch(t_level *cur) {
     uint batch_id = batch_alloc++;
+    if (debugB)
+        disp_batch();
     if (opt_alloc) {
         /* check if this is a batch we want to process */
         if (opt_batch_min >= 0
@@ -3559,6 +3574,13 @@ int main(int argc, char **argv, char **envp) {
               case 'W':
                 debugw = 1;
                 debugW = 1;
+                break;
+              case 'b':
+                debugb = 1;
+                break;
+              case 'B':
+                debugb = 1;
+                debugB = 1;
                 break;
               default:
                 fail("Unknown debug option '%s'", arg);
