@@ -202,7 +202,9 @@ int batch_alloc = 0;    /* index of forced-prime allocations */
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 
-int debug = 0;     /* diag and keep every case seen */
+bool debugw = 0;    /* diag and keep every case seen (excluding walk) */
+bool debugW = 0;    /* diag and keep every case seen (including walk) */
+
 ulong randseed = 1; /* for ECM, etc */
 bool vt100 = 0;     /* update window title with VT100 escape sequences */
 
@@ -356,7 +358,7 @@ void diag_any(bool need_disp) {
     if (need_diag) {
         if (need_disp)
             diag("%s%s", diag_buf, aux_buf);
-        if (debug)
+        if (debugw)
             keep_diag();
         else
             need_diag = 0;
@@ -367,28 +369,28 @@ void diag_any(bool need_disp) {
         logt = t1 + log_delay;
         need_log = 0;
     }
-    if (!debug)
+    if (!debugw)
         need_work = 0;
 }
 
 void diag_plain(void) {
     aux_sprintf("");
-    diag_any(debug);
+    diag_any(debugw);
 }
 
 void diag_walk_v(ulong ati, ulong end) {
     aux_sprintf(": %lu / %lu", ati, end);
-    diag_any(!(debug == 1 && ati));
+    diag_any(!(debugw && !debugW && ati));
 }
 
 void diag_walk_zv(mpz_t ati, mpz_t end) {
     aux_sprintf(": %Zu / %Zu", ati, end);
-    diag_any(!(debug == 1 && mpz_sgn(ati)));
+    diag_any(!(debugw && !debugW && mpz_sgn(ati)));
 }
 
 void diag_walk_pell(uint pc) {
     aux_sprintf(": P%u", pc);
-    diag_any(!(debug && pc));
+    diag_any(!(debugw && pc));
 }
 
 void candidate(mpz_t c) {
@@ -1178,7 +1180,7 @@ void init_post(void) {
     sqg = (uint *)malloc(maxfact * sizeof(uint));
     midpp = malloc(sizeof(t_midpp) * k * divisors[n].alldiv);
 
-    if (debug) {
+    if (debugw) {
         diag_delay = 0;
         need_work = need_diag = 1;
     }
@@ -3541,9 +3543,26 @@ int main(int argc, char **argv, char **envp) {
             set_batch(&arg[2]);
         else if (arg[1] == 'o')
             opt_print = 1;
-        else if (arg[1] == 'd')
-            ++debug;
-        else if (arg[1] == 'v')
+        else if (arg[1] == 'd') {
+            switch (arg[2]) {
+              case 0: {
+                /* legacy: once for dw, twice for dW */
+                if (debugw)
+                    debugW = 1;
+                else
+                    debugw = 1;
+              }
+              case 'w':
+                debugw = 1;
+                break;
+              case 'W':
+                debugw = 1;
+                debugW = 1;
+                break;
+              default:
+                fail("Unknown debug option '%s'", arg);
+            }
+        } else if (arg[1] == 'v')
             vt100 = 1;
         else if (arg[1] == 'j') {
             strategy = strtoul(&arg[2], NULL, 10);
