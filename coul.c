@@ -771,9 +771,11 @@ void recover(FILE *fp) {
             start_seen = 1;
         } else if (strncmp("000 ", curbuf, 4) == 0)
             ;   /* comment */
-        else if (strncmp("203 ", curbuf, 4) == 0)
-            ;   /* batch */
-        else
+        else if (strncmp("203 ", curbuf, 4) == 0) {
+            if (EOF == sscanf(curbuf, "203 b%u:", &batch_alloc))
+                fail("error parsing 203 line '%s'", curbuf);
+            ++batch_alloc;  /* we always point to the next batch */
+        } else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
     if (improve_max && seen_best && mpz_cmp(best, max) < 0)
@@ -3615,7 +3617,7 @@ int main(int argc, char **argv, char **envp) {
         /* FIXME: temporary fix for recovering a single batch run.
          * It won't do the right thing for a range of batches.
          */
-        if (opt_batch_min >= 0)
+        if (batch_alloc == 0 && opt_batch_min >= 0)
             batch_alloc = opt_batch_min + 1;
     }
     recurse(jump);
