@@ -388,7 +388,7 @@ void diag_any(bool need_disp) {
 
 void diag_plain(void) {
     aux_sprintf("");
-    diag_any(debugw);
+    diag_any(1);
 }
 
 void diag_walk_v(ulong ati, ulong end) {
