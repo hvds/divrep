@@ -2830,17 +2830,26 @@ bool process_batch(t_level *cur) {
     }
   do_process:
     if (need_midp) {
+        ++level;
         walk_midp(cur, 0);
+        --level;
         if (midp_only)
             return 0;
     }
     return 1;
 }
 
-bool process_next_batch(t_level *cur) {
-    ++level;
-    bool result = process_batch(cur);
+bool process_prev_batch(t_level *cur) {
     --level;
+    bool result = process_batch(cur);
+    ++level;
+    return result;
+}
+
+bool process_next_batch(t_level *cur) {
+    /* ++level; */
+    bool result = process_batch(cur);
+    /* --level; */
     return result;
 }
 
@@ -3362,10 +3371,10 @@ void recurse(e_is jump_continue) {
         have_rwalk = 0;
         /* finish the walk_midp call with midp_recover */
         walk_midp(prev_level, 1);
-        /* then continue as main code would have, after process_batch()
+        /* then continue as main code would have, after process_prev_batch()
          * or process_next_batch() */
         if (midp_only) {
-            /* process_[next]_batch() returns false in this case */
+            /* process_[prev|next]_batch() returns false in this case */
             if (level - 1 < forcedp)
                 goto derecurse;
             FETCHVL(vl_forced - 1);
@@ -3476,7 +3485,7 @@ void recurse(e_is jump_continue) {
                 /* tail batch: continue with this prime unforced */
                 cur_level->is_forced = 0;
                 FETCHVL(--vl_forced);
-                if (process_batch(prev_level))
+                if (process_prev_batch(prev_level))
                     goto unforced;
                 goto derecurse;
             }
