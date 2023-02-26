@@ -60,7 +60,7 @@ typedef enum {
 
     sdm_p, sdm_r,               /* small_divmod (TODO) */
     dm_r,                       /* divmod */
-    np_p,                       /* next_prime (TODO) */
+    np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
 
     MAX_ZSTASH
@@ -792,16 +792,13 @@ int cmp_high(const void *va, const void *vb) {
     return (int)divisors[b].high - (int)divisors[a].high;
 }
 
-/* TODO: use MPU code for ulong next_prime */
+/* Note this is used only for prep_primes(), not at runtime */
 ulong next_prime(ulong cur) {
     mpz_set_ui(Z(np_p), cur);
     _GMP_next_prime(Z(np_p));
     if (mpz_fits_ulong_p(Z(np_p)))
         return mpz_get_ui(Z(np_p));
-    diag_plain();
-    keep_diag();
-    report("002 next_prime overflow\n");
-    exit(1);
+    fail("next_prime overflow\n");
 }
 
 /* recurse() wants the list of powers to try: each divisor of t_i (which
