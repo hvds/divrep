@@ -192,6 +192,7 @@ bool opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
+uint cur_batch_level = 0;   /* for disp_batch */
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 
@@ -339,11 +340,14 @@ void aux_sprintf(char *fmt, ...) {
     }
 }
 
-void disp_batch(t_level *cur_level) {
-    prep_show_v(cur_level);     /* into diag_buf */
-    if (cur_level->have_square) {
+void disp_batch(void) {
+    assert(level >= cur_batch_level);
+
+    t_level *lp = &levels[cur_batch_level];
+    prep_show_v(lp);        /* into diag_buf */
+    if (lp->have_square) {
         uint l = strlen(diag_buf);
-        sprintf(&diag_buf[l], " [sq=%u]", cur_level->have_square);
+        sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
     }
     report("203 %s\n", diag_buf);
 }
@@ -357,10 +361,10 @@ void diag_any(t_level *cur_level, bool need_disp) {
         && ((need_diag && need_disp) || (rfp && need_log))
     ) {
         last_batch_seen = batch_alloc;
-        disp_batch(cur_level);
-    } else
-        prep_show_v(cur_level);     /* into diag_buf */
+        disp_batch();
+    }
 
+    prep_show_v(cur_level);     /* into diag_buf */
     if (need_diag) {
         if (need_disp)
             diag("%s%s", diag_buf, aux_buf);
@@ -2828,8 +2832,9 @@ bool apply_batch(
  */
 bool process_batch(t_level *cur_level) {
     uint batch_id = batch_alloc++;
+    cur_batch_level = cur_level->level;
     if (debugB)
-        disp_batch(cur_level);
+        disp_batch();
     if (opt_alloc) {
         /* check if this is a batch we want to process */
         if (opt_batch_min >= 0
@@ -2838,7 +2843,7 @@ bool process_batch(t_level *cur_level) {
         )
             goto do_process;
         if (opt_batch_min < 0)
-            disp_batch(cur_level);
+            disp_batch();
         return 0;
     }
   do_process:
@@ -3230,6 +3235,7 @@ e_is insert_stack(void) {
         reset_vlevel(cur_level);
         cur_level->is_forced = 1;
         cur_level->bi = bi;
+        cur_batch_level = level;
 
         if (maxx == 0) {
             apply_null(prev_level, cur_level, p);
