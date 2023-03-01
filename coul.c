@@ -226,7 +226,7 @@ double diag_delay = DIAG, log_delay = LOG, diagt, logt;
 ulong countr, countw, countwi;
 #define MAX_DEC_ULONG 20
 #define MAX_DEC_POWER 5
-#define DIAG_BUFSIZE (3 + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1) + 1)
+#define DIAG_BUFSIZE (6 + MAX_DEC_ULONG + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1) + 1)
 char *diag_buf = NULL;
 uint aux_buf_size = 0;
 char *aux_buf = NULL;
@@ -276,6 +276,7 @@ void prep_show_v(t_level *cur_level) {
     uint mid_vi;
     if (in_midp)
         mid_vi = cur_level->vi;
+    offset += sprintf(&diag_buf[offset], "b%u: ", batch_alloc - 1);
     for (uint vi = 0; vi < k; ++vi) {
         uint vlevel = cur_level->vlevel[vi]
                 - ((in_midp && vi == mid_vi) ? 1 : 0);
@@ -344,7 +345,7 @@ void disp_batch(t_level *cur_level) {
         uint l = strlen(diag_buf);
         sprintf(&diag_buf[l], " [sq=%u]", cur_level->have_square);
     }
-    report("203 b%u: %s\n", batch_alloc - 1, diag_buf);
+    report("203 %s\n", diag_buf);
 }
 
 void diag_any(t_level *cur_level, bool need_disp) {
@@ -642,6 +643,14 @@ void parse_305(char *s) {
     for (int i = 0; i < k; ++i)
         init_fact(&rstack[i]);
 
+    if (s[0] == 'b') {
+        int off = 0;
+        if (EOF == sscanf(s, "b%u: %n", &batch_alloc, &off))
+            fail("error parsing 305 line '%s'", s);
+        s += off;
+        ++batch_alloc;  /* we always point to the next batch */
+    }
+        
     for (int i = 0; i < k; ++i) {
         if (i) {
             assert(s[0] == ' ');
@@ -764,11 +773,9 @@ void recover(FILE *fp) {
             start_seen = 1;
         } else if (strncmp("000 ", curbuf, 4) == 0)
             ;   /* comment */
-        else if (strncmp("203 ", curbuf, 4) == 0) {
-            if (EOF == sscanf(curbuf, "203 b%u:", &batch_alloc))
-                fail("error parsing 203 line '%s'", curbuf);
-            ++batch_alloc;  /* we always point to the next batch */
-        } else
+        else if (strncmp("203 ", curbuf, 4) == 0)
+            ;   /* batch number */
+        else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
     if (improve_max && seen_best && mpz_cmp(best, max) < 0)
@@ -3658,8 +3665,12 @@ int main(int argc, char **argv, char **envp) {
         /* FIXME: temporary fix for recovering a single batch run.
          * It won't do the right thing for a range of batches.
          */
-        if (batch_alloc == 0 && opt_batch_min >= 0)
-            batch_alloc = opt_batch_min + 1;
+        if (batch_alloc == 0) {
+            if (opt_batch_min >= 0)
+                batch_alloc = opt_batch_min + 1;
+            else
+                ++batch_alloc;
+        }
     }
     recurse(jump);
     keep_diag();
