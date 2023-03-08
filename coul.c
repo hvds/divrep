@@ -1038,9 +1038,12 @@ void prep_forcep(void) {
             fp->batch[fp->count++] = (t_forcebatch){ .vi = 0, .x = 0 };
 #endif
         if (fp->count == 0) {
-            forcedp = fpi;
-            free(fp->batch);
-            break;
+            if (have_unforced_tail) {
+                forcedp = fpi;
+                free(fp->batch);
+                break;
+            }
+            fail("No valid arrangement of powers for p=%u", p);
         }
         if (have_unforced_tail)
             fp->batch[fp->count++] = (t_forcebatch){ .vi = 1, .x = 0 };
