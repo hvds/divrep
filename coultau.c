@@ -645,6 +645,8 @@ bool tau_multi_prep(uint i) {
     t_tm *tm = &taum[i];
     uint t = tm->t;
     uint nbits = mpz_sizeinbase(tm->n, 2);
+    if (nbits <= 1)
+        return 0;
     tm->state = 1;  /* init */
 
 #ifdef VERBOSE
