@@ -39,8 +39,9 @@ typedef struct factor_state_s {
 typedef struct s_tm {
     mpz_t n;    /* remaining value to test */
     uint t;     /* look for tau(n^e) = t */
-    uint state; /* next factor test to try */
+    uint vi;    /* index of value being tested */
     uint e;     /* power found */
+    uint state; /* next factor test to try */
     ulong bits; /* bitset showing which factor tests to try */
     ulong B1;   /* for ECM tests */
     ulong tlim; /* checked to */

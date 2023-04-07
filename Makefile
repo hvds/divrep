@@ -40,6 +40,9 @@ endif
 ifdef TRY_HARDER
     DEFINES += -DTRY_HARDER
 endif
+ifdef TRACK_STATS
+    DEFINES += -DTRACK_STATS
+endif
 ifdef DEBUG_ALL
     DEFINES += -DDEBUG_ALL
 endif

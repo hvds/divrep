@@ -956,6 +956,7 @@ bool tau_multi_run(uint count) {
             continue;
         if (i < j) {
             mpz_swap(taum[i].n, taum[j].n);
+            taum[i].vi = taum[j].vi;
             taum[i].t = taum[j].t;
             taum[i].e = taum[j].e;
         }
@@ -1037,9 +1038,10 @@ bool tau_multi_run(uint count) {
                 return 1;
             if (j < count) {
                 mpz_swap(taum[j].n, taum[count].n);
+                taum[j].vi = taum[count].vi;
                 taum[j].t = taum[count].t;
-                taum[j].state = taum[count].state;
                 taum[j].e = taum[count].e;
+                taum[j].state = taum[count].state;
                 taum[j].bits = taum[count].bits;
                 taum[j].B1 = taum[count].B1;
                 taum[j].tlim = taum[count].tlim;

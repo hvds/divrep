@@ -278,10 +278,11 @@ static inline void test_multi_reset(void) {
     tm_count = 0;
 }
 /* Note: test_multi_append() steals the input mpz_t */
-static inline bool test_multi_append(mpz_t n, uint t, uint e) {
+static inline bool test_multi_append(mpz_t n, uint vi, uint t, uint e) {
     uint i = tm_count++;
     t_tm *tm = &taum[i];
     mpz_swap(tm->n, n);
+    tm->vi = vi;
     tm->t = t;
     tm->e = e;
     return tau_multi_prep(i);
@@ -324,6 +325,29 @@ uint know_target(uint vi) {
     return n;
 #endif
 }
+
+#ifdef TRACK_STATS
+    ulong* count_bad;
+    static inline void TRACK_GOOD(uint vk, uint vi) { }
+    static inline void TRACK_BAD(uint vk, uint vi) {
+        ++count_bad[vk];
+    }
+    static inline void TRACK_MULTI(uint count, uint* need, t_tm *tm) {
+        ++count_bad[k - count];
+    }
+    void init_stats(uint k) {
+        count_bad = calloc(k, sizeof(ulong));
+    }
+    void done_stats(void) {
+        free(count_bad);
+    }
+#else
+    static inline void TRACK_GOOD(uint vk, uint vi) { }
+    static inline void TRACK_BAD(uint vk, uint vi) { }
+    static inline void TRACK_MULTI(uint count, uint* need, t_tm *tm) { }
+    void init_stats(uint k) { }
+    void done_stats(void) { }
+#endif
 
 void update_window(t_level *cur_level) {
     if (vt100) {
@@ -515,7 +539,17 @@ void diag_any(t_level *cur_level, bool need_disp) {
     }
 
     if (rfp && need_log) {
+#ifdef TRACK_STATS
+        fprintf(rfp, "305 %s%s (%.2fs) [", diag_buf, aux_buf, seconds(t1));
+        for (uint i = 0; i < k; ++i) {
+            if (i)
+                fprintf(rfp, " ");
+            fprintf(rfp, "%lu", count_bad[i]);
+        }
+        fprintf(rfp, "]\n");
+#else
         fprintf(rfp, "305 %s%s (%.2fs)\n", diag_buf, aux_buf, seconds(t1));
+#endif
         logt = t1 + log_delay;
         need_log = 0;
     }
@@ -682,6 +716,7 @@ void done(void) {
     mpz_clear(best);
     done_pell();
     done_rootmod();
+    done_stats();
     done_tau();
     _GMP_destroy();
 }
@@ -871,8 +906,31 @@ void parse_305(char *s) {
     }
     if (s[0] == 0 || s[0] == '\n')
         dtime = 0;
-    else if (EOF == sscanf(s, " (%lfs)\n", &dtime))
-        fail("could not parse 305 time: '%s'", s);
+    else {
+        int off = 0;
+        if (EOF == sscanf(s, " (%lfs)%n", &dtime, &off))
+            fail("could not parse 305 time: '%s'", s);
+#ifdef TRACK_STATS
+        s += off;
+        if (EOF != sscanf(s, " [")) {
+            s += 2;
+            for (uint i = 0; i < k; ++i) {
+                if (i) {
+                    if (s[0] == ' ')
+                        ++s;
+                    else
+                        fail("could not parse 305 time: '%s'", s);
+                }
+                if (EOF == sscanf(s, "%lu%n", &count_bad[i], &off))
+                    fail("could not parse 305 time: '%s'", s);
+                s += off;
+            }
+            if (s[0] != ']')
+                fail("could not parse 305 time: '%s'", s);
+            ++s;
+        }
+#endif
+    }
     if (is_W && !need_midp)
         fail("recovery expected -W option");
     t0 -= dtime;
@@ -1426,6 +1484,7 @@ void prep_presquare(void) {
 
 void init_post(void) {
     init_tau(rough);
+    init_stats(k);
     alloc_taum(k);
     if (randseed != 1) {
         /* hard to guarantee we haven't used any randomness before this.
@@ -1751,10 +1810,14 @@ bool test_1multi(uint *need, uint nc, uint *t) {
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
         mpz_set(Z(temp), wv_o[vi]);
-        if (!test_multi_append(Z(temp), t[vi], 1))
+        if (!test_multi_append(Z(temp), vi, t[vi], 1)) {
+            TRACK_BAD(k - nc, vi);
             return 0;
+        }
     }
-    return test_multi_run();
+    bool result = test_multi_run();
+    TRACK_MULTI(nc, need, taum);
+    return result;
 }
 
 bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
@@ -1763,10 +1826,14 @@ bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
         uint vi = need[i];
         mpz_mul_ui(Z(temp), wv_qq[vi], ati);
         mpz_add(Z(temp), Z(temp), wv_o[vi]);
-        if (!test_multi_append(Z(temp), t[vi], 1))
+        if (!test_multi_append(Z(temp), vi, t[vi], 1)) {
+            TRACK_BAD(k - nc, vi);
             return 0;
+        }
     }
-    return test_multi_run();
+    bool result = test_multi_run();
+    TRACK_MULTI(nc, need, taum);
+    return result;
 }
 
 bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
@@ -1774,10 +1841,14 @@ bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
         uint vi = need[i];
         mpz_mul(Z(temp), wv_qq[vi], ati);
         mpz_add(Z(temp), Z(temp), wv_o[vi]);
-        if (!test_multi_append(Z(temp), t[vi], 1))
+        if (!test_multi_append(Z(temp), vi, t[vi], 1)) {
+            TRACK_BAD(k - nc, vi);
             return 0;
+        }
     }
-    return test_multi_run();
+    bool result = test_multi_run();
+    TRACK_MULTI(nc, need, taum);
+    return result;
 }
 
 bool test_other(mpz_t qq, mpz_t o, ulong ati, uint t) {
@@ -1973,12 +2044,18 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 mpz_gcd(Z(wv_temp), Z(wv_y), *qqj);
                 if (mpz_cmp_ui(Z(wv_temp), 1) != 0)
                     continue;
+
                 test_multi_reset();
                 /* note: steals Z(wv_x), Z(wv_y) */
-                if (!test_multi_append(*pellx[0], pellt[0], 2)
-                    || !test_multi_append(*pellx[1], pellt[1], 2)
-                )
+                /* FIXME: order of (sqi, sqj), if we care */
+                if (!test_multi_append(*pellx[0], sqi, pellt[0], 2)) {
+                    TRACK_BAD(0, sqi);
                     goto next_pell;
+                }
+                if (!test_multi_append(*pellx[1], sqj, pellt[1], 2)) {
+                    TRACK_BAD(1, sqj);
+                    goto next_pell;
+                }
 
                 mpz_sub(Z(wv_ati), Z(wv_x2), *oi);
                 mpz_divexact(Z(wv_ati), Z(wv_ati), *qqi);
@@ -1993,10 +2070,15 @@ void walk_v(t_level *cur_level, mpz_t start) {
                     if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
                         goto next_pell;
                 }
+
                 for (uint i = 0; i < npc; ++i) {
                     uint vi = need_prime[i];
-                    if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati)))
+                    if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati))) {
+                        TRACK_BAD(nqc + i, need_prime[i]);
                         goto next_pell;
+                    } else {
+                        TRACK_GOOD(nqc + i, need_prime[i]);
+                    }
                 }
                 /* TODO: bail and print somewhere here if 'opt_print' */
                 if (!test_zmulti(need_other, noc, Z(wv_ati), t))
@@ -2094,16 +2176,25 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
             test_multi_reset();
             /* note: test_multi_append() steals Z(wv_r) */
-            if (prime_power
-                ? !_GMP_is_prob_prime(Z(wv_r))
-                : !test_multi_append(Z(wv_r), ti, xi)
-            )
+            if (prime_power) {
+                if (!_GMP_is_prob_prime(Z(wv_r))) {
+                    TRACK_BAD(0, sqi);
+                    goto next_sqati;
+                } else
+                    TRACK_GOOD(0, sqi);
+            } else if (!test_multi_append(Z(wv_r), sqi, ti, xi)) {
+                TRACK_BAD(0, sqi);
                 goto next_sqati;
+            }
 
             for (uint i = 0; i < npc; ++i) {
                 uint vi = need_prime[i];
-                if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati)))
+                if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati))) {
+                    TRACK_BAD(1 + i, need_prime[i]);
                     goto next_sqati;
+                } else {
+                    TRACK_GOOD(1 + i, need_prime[i]);
+                }
             }
             /* TODO: bail and print somewhere here if 'opt_print' */
             if (!test_zmulti(need_other, noc, Z(wv_ati), t))
@@ -2160,8 +2251,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
         /* note: we have no squares */
         for (uint i = 0; i < npc; ++i) {
             uint vi = need_prime[i];
-            if (!test_prime(wv_qq[vi], wv_o[vi], ati))
+            if (!test_prime(wv_qq[vi], wv_o[vi], ati)) {
+                TRACK_BAD(i, need_prime[i]);
                 goto next_ati;
+            } else {
+                TRACK_GOOD(i, need_prime[i]);
+            }
         }
         /* TODO: bail and print somewhere here if 'opt_print' */
         if (!test_multi(need_other, noc, ati, t))
@@ -2232,9 +2327,14 @@ void walk_1(t_level *cur_level, uint vi) {
         mpz_set(wv_o[vj], Z(w1_j));
     }
     ++countwi;
+    TRACK_GOOD(0, vi);
     for (uint i = 0; i < npc; ++i)
-        if (!_GMP_is_prob_prime(wv_o[need_prime[i]]))
+        if (!_GMP_is_prob_prime(wv_o[need_prime[i]])) {
+            TRACK_BAD(1 + i, need_prime[i]);
             return;
+        } else {
+            TRACK_GOOD(1 + i, need_prime[i]);
+        }
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
     if (!test_1multi(need_other, noc, t))
@@ -4069,8 +4169,19 @@ int main(int argc, char **argv, char **envp) {
     keep_diag();
 
     double tz = utime();
-    report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)\n",
+    report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)",
             typename(), n, k, countr, countw, countwi, seconds(tz));
+#ifdef TRACK_STATS
+    report(" [");
+    for (uint i = 0; i < k; ++i) {
+        if (i)
+            report(" ");
+        report("%lu", count_bad[i]);
+    }
+    report("]\n");
+#else
+    report("\n");
+#endif
     if (!seen_valid && !seen_best)
         report("406 Error: no valid arrangement of powers\n");
     else if (log_full)
