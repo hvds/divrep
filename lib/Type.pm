@@ -11,6 +11,7 @@ my %types = (
     o => 'Type::OneSeq',
     d => 'Type::AscDPrime',
     n => 'Type::AscNPrime',
+    r => 'Type::Track',
 );
 my %typename = reverse %types;
 
@@ -134,6 +135,9 @@ sub dbpass { 'hv' }
 
 sub c { $_[0]->{c} }
 sub debug { $_[0]->{debug} }
+
+# return TRUE to disallow testing this value of $cur
+sub disallow { 0 }
 
 sub to_test {
     my($self) = @_;
