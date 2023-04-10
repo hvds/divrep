@@ -211,6 +211,8 @@ sub apply {
             print "311 Fixing power d = ${x}y^$z - ${k}n\n";
         } elsif ($type->name eq 'oneseq') {
             print "311 Fixing power d = ${x}y^$z - ${k}\n";
+        } elsif ($type->name eq 'track') {
+            print "311 Fixing power d = ${x}y^$z - ${k}\n";
         } else {
             die "unexpected type @{[ $type->name ]}\n";
         }

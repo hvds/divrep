@@ -2,7 +2,7 @@ package Type::Track;
 use strict;
 use warnings;
 
-use parent qw{ Type };
+use parent qw{ Type::Tauish };
 use Math::GMP;
 use Math::Prime::Util qw{ factor_exp is_prime };
 use Memoize;
@@ -59,8 +59,6 @@ sub func_value {
     return $d + $k;
 }
 
-sub func_name { 'tau' }
-sub func { tau($_[1]) }
 sub func_target {
     my($self, $k) = @_;
     use Carp; Carp::confess("no k for func_target") unless defined $k;
@@ -102,6 +100,58 @@ sub disallow {
     return $self->n == $d;
 }
 
+sub check_fixed {
+    my($self) = @_;
+    my $n = $self->n;
+    my $f = $self->f;
+    #
+    # Go through each k working out what factors are fixed, to find
+    # opportunities for additional constraint optimizations.
+    #
+    my $fixpow;
+    for my $k (@{ $self->to_test }) {
+        my $tk = $self->func_target($k);
+        my $force = $self->find_fixed($n, $tk, $k) or next;
+        if ($fixpow) {
+            printf "317 Ignoring secondary fix_power(%s)\n", join ', ', @$force;
+            my $pell = $self->fix_pell($n, $fixpow, $force);
+            if ($pell) {
+                my($a, $b, $c) = @$pell;
+                my $sign = ($b >= 0) ? '+' : do { $b = -$b; '-' };
+                # FIXME: can we upgrade to resolving the Pell equation here?
+                printf "317 satisfying Pell %s x^2 %s %s y^2 = %s\n",
+                        $a, $sign, $b, $c;
+            }
+        } else {
+            $fixpow = $force;
+        }
+    }
+    return $fixpow;
+}
+
+sub float_spare {
+    my($self, $n, $k) = @_;
+    my $c = $self->c;
+    my $kmult = $c->mult;
+    my $kmod = ($c->mod_mult + $k) % $kmult;
+    my $float = gcd($kmult, $kmod);
+    my $spare = $kmult / $float;
+    return ($float, $spare);
+}
+
+sub fix_pell {
+    my($self, $n, $fix1, $fix2) = @_;
+    my($k1, $x1, $z1) = @$fix1;
+    my($k2, $x2, $z2) = @$fix2;
+    return undef unless ($z1 & 1) == 0 && ($z2 & 1) == 0;
+
+    my $a = $x1 ** ($z1 >> 1);
+    my $b = -$x2 ** ($z2 >> 1);
+    my $c = $k1 - $k2;
+    my $g = gcd($a, gcd($b, $c));
+    return [ map $_ / $g, ($a, $b, $c) ];
+}
+
 sub to_testf {
     my($self, $f) = @_;
     return [ 0 .. $f - 1 ];
@@ -118,11 +168,47 @@ sub test_target {
 }   
 
 #
+# Calculate floor(y) given d: floor(y) = floor(((d + k) / x) ^ (1/z))
+#
+sub dtoy {
+    my($self, $c, $val) = @_;
+    my $base = $val + $c->pow_k;
+    return +($base / $c->pow_x)->broot($c->pow_z);
+}
+
+sub dtoceily {
+    my($self, $c, $val) = @_;
+    my $g = $c->pow_g;
+    return $g + $self->dtoy($c, $val - $g);
+}
+
+#
+# Calculate d given y: d = xy^z - k
+#
+sub ytod {
+    my($self, $c, $val) = @_;
+    return $c->pow_x * $val ** $c->pow_z - $c->pow_k;
+}
+
+#
+# Given y == y_m (mod m) and d = xy^z - k, return (d_s, s) as the
+# value and modulus of the corresponding constraint on d, d == d_s (mod s).
+# If no valid d is possible, returns s == 0.
+#
+sub mod_ytod {
+    my($self, $c, $val, $mod) = @_;
+    my($n, $k, $x, $z) = ($c->n, $c->pow_k, $c->pow_x, $c->pow_z);
+    my $base = $x * $val ** $z - $k;
+# CHECKME: should we increase $mod if gcd($mod, $z) > 1?
+    return ($base % $mod, $mod);
+}
+
+#
 # Given integer s, returns rad(s).
 #
 sub rad {
     my($s) = @_;
-    my $p = $zone;
+    my $p = 1;
     $p *= $_->[0] for factor_exp($s);
     return $p;
 }
