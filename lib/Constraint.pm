@@ -127,6 +127,25 @@ sub c {
         @$c[2, 5, 8] = ($vn, $new, $dis);
         ($debug > 2) && warn "init $n with vec [@{[ unpack 'b*', $c->[2] ]}]\n";
         _insert($self->{'allc'}, $c);
+
+        # must stash before propagation
+        $self->{'c'}{$n} = $c;
+
+        # now check for crossover: a value permitted by one of my divisors
+        # may, through me, have been suppressed by my other divisors.
+        if (@$div > 1) {
+            for my $d (map "$_", @$div) {
+                my $cd =  $self->c($d);
+                my $vd = $cd->[2];
+                my $q = $ni / $d;
+                CROSSOVER: for my $v (0 .. $d - 1) {
+                    next if vec($vd, $v, 1);
+                    vec($vn, $d * $_ + $v, 1) or next CROSSOVER
+                            for 0 .. $q - 1;
+                    $self->suppress($d, $v, 0, 0);
+                }
+            }
+        }
         $c;
     };
 }
