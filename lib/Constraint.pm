@@ -381,6 +381,8 @@ sub Dump {
         }
         $d;
     }) for qw/ c /;
+    delete $self->{type};
+
     use Data::Dumper;
     local $Data::Dumper::Indent=1;
     local $Data::Dumper::Sortkeys = sub {
@@ -851,6 +853,32 @@ sub numify {
     return $v if $v;
     # Math::GMP intifies to 0 if out of range of IV/UV
     return "$n" + 0;
+}
+
+sub _showvec {
+    my($size, $v) = @_;
+    my(@yes, @no);
+    for (0 .. $size - 1) {
+        push @{ vec($v, $_, 1) ? \@yes : \@no }, $_;
+    }
+    return +(@yes < @no) ? "[+@yes]" : "[-@no]";
+}
+
+sub Dumpvecs {
+    my($self) = @_;
+    my $c = $self->{c};
+    for my $m (sort { $a <=> $b } keys %$c) {
+        my $cm = $c->{$m};
+        local $cm->[0] = "$cm->[0]";
+        local $cm->[1] = _showvec($m, $cm->[1]);
+        local $cm->[2] = _showvec($m, $cm->[2]);
+        local $cm->[6] = "[@{ $cm->[6] }]";
+        local $cm->[7] = "[@{ $cm->[7] }]";
+        use Data::Dumper;
+        local $Data::Dumper::Indent = 1;
+        print STDERR Dumper($cm);
+    }
+    return;
 }
 
 1;

@@ -123,6 +123,10 @@ sub mod_dump {
         }
     }
     for my $mod (@$which) {
+        if ($mod eq 'a') {
+            $c->Dumpvecs;
+            next;
+        }
         my $cm = $c->c($mod);
         my $vm = $cm->[2];  # bit vector of all disallowed values
         if ($c->debug < 1) {
