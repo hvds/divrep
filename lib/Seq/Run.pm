@@ -243,6 +243,13 @@ sub finalize {
         $self->preptime($t);
         $ugly = 1;
     }
+    for (@{ $line{502} // [] }) {
+        # 502 Error: fixed 8 not available in tau 12 for k=1
+        my($t) = m{
+            ^ 502 \s+ Error: \s+ fixed \s+ \d+
+        }x or return $self->failed("Can't parse 502 result: '$_'");
+        $ugly = 1;
+    }
     for (@{ $line{201} // [] }) {
         my($k, $dm, $dn) = m{
             ^ 201 \s+ Dependent \s+ - \s+
