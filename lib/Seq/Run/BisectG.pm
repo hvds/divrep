@@ -97,7 +97,7 @@ sub finalize {
         return ();
     }
     my $fail = join "\n", map @{ $line{$_} }, grep /^5/, keys %line;
-    return $self->failed("bisect failed: $_", $fail // 'unknown cause');
+    return $self->failed("bisect failed: " . ($fail // 'unknown cause'));
 }
 
 1;
