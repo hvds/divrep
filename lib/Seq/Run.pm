@@ -145,6 +145,7 @@ sub failed {
 sub parse_ta {
     my($self, $type, $ta) = @_;
     my($base, @num) = split /\s+/, $ta;
+    return [] unless @num;  # no candidate passed modular tests
     my $which = $type->to_testf($self->k);
     # higher numbers are better at rejecting candidates, so should come first
     return [ sort { $num[$b - 1] <=> $num[$a - 1] } @$which ];
