@@ -65,8 +65,8 @@ extern t_level *levels;
 typedef struct s_allocation {
     ulong p;
     uint x;
-    mpz_t q;
     uint t;
+    mpz_t q;
 } t_allocation;
 typedef struct s_value {
     t_allocation *alloc;    /* size maxfact */
