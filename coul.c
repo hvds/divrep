@@ -991,13 +991,6 @@ void prep_forcep(void) {
 #endif
     mpz_clear(pz);
 
-    uint first_bad = n + 1;
-    for (uint div = 2; div < n; ++div)
-        if (n % div) {
-            first_bad = div;
-            break;
-        }
-
     forcep = (t_forcep *)malloc(forcedp * sizeof(t_forcep));
     t_divisors *d = &divisors[n];
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
@@ -2351,7 +2344,6 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
         return 0;
 
     /* check if we overshot */
-    t_value *vp = &value[vi];
     if (mpz_cmp(cur->rq, max) > 0)
         return 0;
 
