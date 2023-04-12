@@ -78,6 +78,10 @@ sub func_target {
     return $self->{_target}[$k] //= tau($self->n + $k);
 }
 
+# TODO: if d+k+r^2 = z^2 (typically with r=1), then d+k = (z-r)(z+r),
+# so tau(d+k) is at least 4, and may be forced higher if we know further
+# divisibility of z-r or z+r. Is there some way we can track that, eg
+# after applying a fix_power?
 sub apply_m {
     my($self, $m, $fm) = @_;
     my $c = $self->c;
@@ -117,6 +121,7 @@ sub check_fixed {
     my($self) = @_;
     my $n = $self->n;
     my $f = $self->f;
+    my $c = $self->c;
     #
     # Go through each k working out what factors are fixed, to find
     # opportunities for additional constraint optimizations.
@@ -138,6 +143,58 @@ sub check_fixed {
         } else {
             $fixpow = $force;
         }
+        # given d+k = xy^2 is known, does the factorization x(y-i)(y+i) have
+        # useful consequences for d+k-xi^2?
+if (1) {
+        my $x = remove_squares($force->[1]);
+        for (my $i = 1; $i * $i * $x <= $k; ++$i) {
+            my $ki = $k - $i * $i * $x;
+            my $ti = $self->func_target($ki);
+            if ($ti < 4) {
+                # must fail when y-i > 1
+warn sprintf "track($n,$f) for fixpow at %s with t=%s at %s suppress all after %s\n", $k, $ti, $ki, $x * ($i + 2)**2 - $k;
+                $c->suppress(1, 0, $x * ($i + 2)**2 - $k);
+                next;
+            }
+            my($float, $spare) = $self->float_spare($n, $ki);
+            my $fixp = gcd($spare, $float);
+            my($fixed_tau, $fixed_mult) = (1, 1);
+            my($float_tau, $float_mult) = (1, 1);
+            for (factor_exp($float)) {
+                my($p, $x) = @$_;
+                if ($self->is_fixed($p, $x, $c, $n, $fixp)) {
+                    # take the fixed power, splice out of the list of remaining
+                    # floating powers
+                    $fixed_tau *= $x + 1;
+                    $fixed_mult *= $p ** $x;
+                } else {
+                    $float_tau *= $x + 1;
+                    $float_mult *= $p ** $x;
+                };
+            }
+            if ($ti % $fixed_tau) {
+                printf <<OUT, $fixed_tau, $tk, $k;
+502 Error: fixed %s not available in tau %s for k=%s
+OUT
+                exit 1;
+            }
+            my $tf = $ti / $fixed_tau;
+            if ($float_tau > $tf) {
+                printf <<OUT, $fixed_tau, $float_tau, $tk, $k;
+502 Error: fixed %s, float %s not available in tau %s for k=%s
+OUT
+                exit 1;
+            }
+            if ($float_tau * 2 >= $tf) {
+                # the highest case that can hit required tau occurs when
+                # x(y-i) = float, y + i is prime
+                my $y = $float / $x + $i;
+warn sprintf "track($n,$f) for fixpow at %s with t=%s at %s suppress all after %s\n", $k, $ti, $ki, $x * $y * $y - $k;
+                $c->suppress(1, 0, $x * $y * $y - $k);
+            }
+            # TODO: more cases, eg float_tau=2, tf=6 may require float_mult^2
+        }
+}
     }
     return $fixpow;
 }
@@ -214,6 +271,17 @@ sub mod_ytod {
     my $base = $x * $val ** $z - $k;
 # CHECKME: should we increase $mod if gcd($mod, $z) > 1?
     return ($base % $mod, $mod);
+}
+
+# Given n, return min x: n = xy^2 for any y.
+sub remove_squares {
+    my($n) = @_;
+    my $s = 1;
+    for (factor_exp($n)) {
+        my($p, $x) = @$_;
+        $s *= $p if $x & 1;
+    }
+    return $s;
 }
 
 #
