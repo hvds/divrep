@@ -283,13 +283,13 @@ void prep_show_v(t_level *cur_level) {
                 - ((in_midp && vi == mid_vi) ? 1 : 0);
         if (vi)
             diag_buf[offset++] = ' ';
-        if (vlevel == 0)
+        if (vlevel == 1)
             diag_buf[offset++] = '.';
         else {
             t_value *vp = &value[vi];
-            for (uint ai = 0; ai < vlevel; ++ai) {
+            for (uint ai = 1; ai < vlevel; ++ai) {
                 t_allocation *ap = &vp->alloc[ai];
-                if (ai)
+                if (ai > 1)
                     diag_buf[offset++] = '.';
                 offset += sprintf(&diag_buf[offset], "%lu", ap->p);
                 if (ap->x > 2)
@@ -450,13 +450,15 @@ void init_levels(void) {
     levels[0].have_min = (sminp || sminpx) ? 0 : 1;
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
+    for (uint j = 0; j < k; ++j)
+        levels[0].vlevel[j] = 1;
     level = 1;
 }
 
 void free_value(void) {
     for (int i = 0; i < k; ++i) {
         t_value *v = &value[i];
-        for (int j = 0; j < maxfact; ++j)
+        for (int j = 0; j <= maxfact; ++j)
             mpz_clear(v->alloc[j].q);
         free(v->alloc);
     }
@@ -467,9 +469,14 @@ void init_value(void) {
     value = (t_value *)malloc(k * sizeof(t_value));
     for (int i = 0; i < k; ++i) {
         t_value *v = &value[i];
-        v->alloc = (t_allocation *)malloc(maxfact * sizeof(t_allocation));
-        for (uint j = 0; j < maxfact; ++j)
+        v->alloc = (t_allocation *)malloc((maxfact + 1) * sizeof(t_allocation));
+        for (uint j = 0; j <= maxfact; ++j)
             mpz_init(v->alloc[j].q);
+        t_allocation *ap = &v->alloc[0];
+        ap->p = 0;
+        ap->x = 0;
+        ap->t = target_t(i);
+        mpz_set_ui(ap->q, 1);
     }
 }
 
@@ -1570,12 +1577,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
         uint vlevel = cur_level->vlevel[vi];
-        q[vi] = vlevel ? &vp->alloc[vlevel - 1].q : ZP(zone);
-        t[vi] = vlevel ? vp->alloc[vlevel - 1].t : n;
+        q[vi] = &vp->alloc[vlevel - 1].q;
+        t[vi] = vp->alloc[vlevel - 1].t;
         mpz_divexact(wv_qq[vi], *aq, *q[vi]);
         mpz_add_ui(wv_o[vi], *m, TYPE_OFFSET(vi));
         mpz_divexact(wv_o[vi], wv_o[vi], *q[vi]);
-        for (uint ai = 0; ai < vlevel; ++ai) {
+        for (uint ai = 1; ai < vlevel; ++ai) {
             t_allocation *ap = &vp->alloc[ai];
             /* the case for p=2 is handled in advance by update_chinese */
             if (ap->p == 2)
@@ -1879,9 +1886,11 @@ void walk_1(t_level *cur_level, uint vi) {
     if (!cur_level->have_min)
         return;
 
-    t_value *vip = &value[vi];
-    t_allocation *aip = &vip->alloc[cur_level->vlevel[vi] - 1];
-    mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
+    {
+        t_value *vip = &value[vi];
+        t_allocation *aip = &vip->alloc[cur_level->vlevel[vi] - 1];
+        mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
+    }
 
     if (mpz_cmp(Z(w1_v), min) < 0)
         return;
@@ -1963,8 +1972,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             continue;
         t_value *vjp = &value[vj];
         uint vjl = cur_level->vlevel[vj];
-        t_allocation *ajp = vjl ? &vjp->alloc[vjl - 1] : NULL;
-        t[vj] = ajp ? ajp->t : n;
+        t_allocation *ajp = &vjp->alloc[vjl - 1];
+        t[vj] = ajp->t;
         if (t[vj] == 1)
             fail("should never see multiple values with t==1");
         if (t[vj] == 2)
@@ -1978,7 +1987,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
     level_setp(cur_level, plow - 1);    /* next prime should be plow */
     t_value *vip = &value[vi];
     uint vil = cur_level->vlevel[vi];
-    t_allocation *aip = vil ? &vip->alloc[vil - 1] : NULL;
+    t_allocation *aip = &vip->alloc[vil - 1];
     while (1) {
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh)
@@ -1993,8 +2002,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             --cur_level->vlevel[vi];
         }
         mpz_ui_pow_ui(Z(w1_v), p, x - 1);
-        if (aip)
-            mpz_mul(Z(w1_v), Z(w1_v), aip->q);
+        mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
 
         if (mpz_cmp(Z(w1_v), min) < 0)
@@ -2004,16 +2012,14 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         for (uint vj = 0; vj < k; ++vj) {
             t_value *vjp = &value[vj];
             uint vjl = cur_level->vlevel[vj];
-            t_allocation *ajp = vjl ? &vjp->alloc[vjl - 1] : NULL;
+            t_allocation *ajp = &vjp->alloc[vjl - 1];
             mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
-            if (ajp) {
-                mpz_fdiv_qr(Z(w1_j), Z(w1_r), Z(w1_j), ajp->q);
-                if (mpz_sgn(Z(w1_r)) != 0)
-                    goto reject_this_one;
-                mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
-                if (mpz_cmp(Z(w1_r), Z(zone)) != 0)
-                    goto reject_this_one;
-            }
+            mpz_fdiv_qr(Z(w1_j), Z(w1_r), Z(w1_j), ajp->q);
+            if (mpz_sgn(Z(w1_r)) != 0)
+                goto reject_this_one;
+            mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
+            if (mpz_cmp(Z(w1_r), Z(zone)) != 0)
+                goto reject_this_one;
             mpz_set(wv_o[vj], Z(w1_j));
         }
         ++countwi;
@@ -2217,23 +2223,20 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
         uint vi, ulong p, uint x, mpz_t px) {
     t_value *v = &value[vi];
     uint vlevel = cur_level->vlevel[vi]++;
-    t_allocation *prev = vlevel ? &v->alloc[vlevel - 1] : NULL;
+    t_allocation *prev = &v->alloc[vlevel - 1];
     t_allocation *cur = &v->alloc[vlevel];
-    uint prevt = prev ? prev->t : n;
+
     /* invalid if x does not divide remaining tau */
-    if (prevt % x)
+    if (prev->t % x)
         return 0;
 
     cur->p = p;
     cur->x = x;
-    cur->t = prevt / x;
-    if (prev)
-        mpz_mul(cur->q, prev->q, px);
-    else
-        mpz_set(cur->q, px);
+    cur->t = prev->t / x;
+    mpz_mul(cur->q, prev->q, px);
 
     /* is this newly a square? */
-    if ((cur->t > 1) && (cur->t & 1) && !(prevt & 1))
+    if ((cur->t > 1) && (cur->t & 1) && !(prev->t & 1))
         if (!alloc_square(cur_level, vi))
             return 0;
 
@@ -2617,8 +2620,8 @@ void prep_midp(t_level *cur_level) {
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
         uint vil = cur_level->vlevel[vi];
-        t_allocation *ap = vil ? &vp->alloc[vil - 1] : NULL;
-        uint t = ap ? ap->t : n;
+        t_allocation *ap = &vp->alloc[vil - 1];
+        uint t = ap->t;
         if ((t & (t - 1)) == 0)
             continue;
         t_divisors *dp = &divisors[t];
@@ -2631,8 +2634,7 @@ void prep_midp(t_level *cur_level) {
             mpz_add_ui(Z(temp), max, TYPE_OFFSET(vi));
             mintau(prev_level, Z(wv_cand), t / x);
             mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
-            if (ap)
-                mpz_fdiv_q(Z(temp), Z(temp), ap->q);
+            mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
 
             /* our range of interest is p: midp[e] <= p < maxp[e] */
@@ -2860,9 +2862,9 @@ uint best_v0(t_level *cur_level) {
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
-        t_allocation *apj = vjl ? &vpj->alloc[vjl - 1] : NULL;
-        uint tj = apj ? apj->t : n;
-        mpz_t *qj = apj ? &apj->q : ZP(zone);
+        t_allocation *apj = &vpj->alloc[vjl - 1];
+        uint tj = apj->t;
+        mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
         if (divisors[tj].high <= 2)
@@ -2895,9 +2897,9 @@ uint best_v1(t_level *cur_level) {
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
-        t_allocation *apj = vjl ? &vpj->alloc[vjl - 1] : NULL;
-        uint tj = apj ? apj->t : n;
-        mpz_t *qj = apj ? &apj->q : ZP(zone);
+        t_allocation *apj = &vpj->alloc[vjl - 1];
+        uint tj = apj->t;
+        mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
         if (divisors[tj].high <= 2)
@@ -2932,9 +2934,9 @@ uint best_v2(t_level *cur_level) {
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
-        t_allocation *apj = vjl ? &vpj->alloc[vjl - 1] : NULL;
-        uint tj = apj ? apj->t : n;
-        mpz_t *qj = apj ? &apj->q : ZP(zone);
+        t_allocation *apj = &vpj->alloc[vjl - 1];
+        uint tj = apj->t;
+        mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
         if (divisors[tj].high <= 2)
@@ -2965,9 +2967,9 @@ uint best_v3(t_level *cur_level) {
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
-        t_allocation *apj = vjl ? &vpj->alloc[vjl - 1] : NULL;
-        uint tj = apj ? apj->t : n;
-        mpz_t *qj = apj ? &apj->q : ZP(zone);
+        t_allocation *apj = &vpj->alloc[vjl - 1];
+        uint tj = apj->t;
+        mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
         if (divisors[tj].high <= 2)
@@ -2976,7 +2978,7 @@ uint best_v3(t_level *cur_level) {
         if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         /* shortcircuit if single allocation of (even) sqrt(n) */
-        if ((tj & 1) == 0 && apj && apj->x == apj->t) {
+        if ((tj & 1) == 0 && apj->x == apj->t) {
             /* shortcircuit if last allocation was of sqrt(t) */
             /* but only if it was unforced */
             ulong p = apj->p;
@@ -3021,11 +3023,9 @@ uint best_v(t_level *cur_level) {
 ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     t_value *vp = &value[vi];
     uint vil = cur_level->vlevel[vi];
-    t_allocation *ap = vil ? &vp->alloc[vil - 1] : NULL;
+    t_allocation *ap = &vp->alloc[vil - 1];
     mpz_add_ui(Z(lp_x), max, TYPE_OFFSET(vi));
-    if (ap)
-        mpz_div(Z(lp_x), Z(lp_x), ap->q);
-    /* else notional ap->q is 1 */
+    mpz_div(Z(lp_x), Z(lp_x), ap->q);
 
     if (x == nextt && divisors[x].high == x) {
         /* We are allocating p^{x-1} with x prime, leaving x as the
@@ -3074,7 +3074,7 @@ e_pux prep_unforced_x(
     uint vi = cur_level->vi;
     t_value *vp = &value[vi];
     uint vil = cur_level->vlevel[vi];
-    t_allocation *ap = vil ? &vp->alloc[vil - 1] : NULL;
+    t_allocation *ap = &vp->alloc[vil - 1];
     ulong limp = 0;
     /* if part of an init_pattern, we don't care about the checks,
      * we will never continue from this allocation */
@@ -3084,7 +3084,7 @@ e_pux prep_unforced_x(
     /* pick up any previous unforced x */
     uint nextt = ti / x;
     if (p == 0) {
-        uint prevx = (ap && ap->p > maxforce[vi]
+        uint prevx = (ap->p > maxforce[vi]
 #ifdef TYPE_a
             && (n % ap->p)
 #endif
@@ -3294,7 +3294,7 @@ e_is insert_stack(void) {
         uint x = rs->ppow[rs->count].e + 1;
         t_value *vp = &value[vi];
         uint vil = cur_level->vlevel[vi];
-        uint ti = vil ? vp->alloc[vil - 1].t : n;
+        uint ti = vp->alloc[vil - 1].t;
         t_divisors *dp = &divisors[ti];
         if (dp->highdiv == 0)
             fail("best_v() returned %u, but nothing to do there", vi);
@@ -3440,7 +3440,7 @@ void recurse(e_is jump_continue) {
             }
             t_value *vp = &value[vi];
             uint vil = cur_level->vlevel[vi];
-            uint ti = vil ? vp->alloc[vil - 1].t : n;
+            uint ti = vp->alloc[vil - 1].t;
             t_divisors *dp = &divisors[ti];
             if (dp->highdiv == 0)
                 fail("best_v() returned %u, but nothing to do there", vi);
