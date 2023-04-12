@@ -77,7 +77,11 @@ typedef struct s_mod {
     ulong m;
 } t_mod;
 
+/* warn if the divisor array will be bigger than this */
+#define DIVISOR_WARN_LIMIT (100000)
 t_divisors *divisors = NULL;
+#define target_lcm (n)
+static inline uint target_t(uint vi) { return n; }
 
 /* For prime p < k, we "force" allocation of powers in a batch to ensure
  * that multiple allocations of the same prime are coherent. Whereas normal
@@ -511,7 +515,7 @@ void done(void) {
     free(forcep);
     free(maxforce);
     if (divisors)
-        for (int i = 0; i <= n; ++i)
+        for (int i = 0; i <= target_lcm; ++i)
             free(divisors[i].div);
     free(divisors);
     if (have_rwalk) {
@@ -815,6 +819,38 @@ ulong next_prime(ulong cur) {
     fail("next_prime overflow\n");
 }
 
+/* prep target_tau[], target_lcm, maxfact, maxodd */
+void prep_target(void) {
+    t_fact f;
+    init_fact(&f);
+
+    maxfact = 0;
+    maxodd = 0;
+    for (uint i = 0; i < k; ++i) {
+        uint t;
+        t = n;
+
+        uint thisfact = 0;
+        uint thisodd = 0;
+        f.count = 0;
+        simple_fact(t, &f);
+        for (int i = 0; i < f.count; ++i)
+            thisfact += f.ppow[i].e;
+        thisodd = thisfact;
+        if (f.ppow[0].p == 2)
+            thisodd -= f.ppow[0].e;
+        if (maxfact < thisfact)
+            maxfact = thisfact;
+        if (maxodd < thisodd)
+            maxodd = thisodd;
+    }
+    free_fact(&f);
+    if (target_lcm > DIVISOR_WARN_LIMIT) {
+        fprintf(stderr, "Warning, target LCM %lu > warn limit %lu\n",
+                (ulong)target_lcm, (ulong)DIVISOR_WARN_LIMIT);
+    }
+}
+
 /* recurse() wants the list of powers to try: each divisor of t_i (which
  * itself divides n) that is divisible by the highest odd prime factor
  * dividing t_i, in increasing order.
@@ -830,10 +866,10 @@ ulong next_prime(ulong cur) {
 void prep_fact(void) {
     t_fact f;
 
-    divisors = (t_divisors *)calloc(n + 1, sizeof(t_divisors));
+    divisors = (t_divisors *)calloc(target_lcm + 1, sizeof(t_divisors));
     init_fact(&f);
-    for (uint i = 1; i <= n; ++i) {
-        if (n % i)
+    for (uint i = 1; i <= target_lcm; ++i) {
+        if (target_lcm % i)
             continue;
         t_divisors *dp = &divisors[i];
         f.count = 0;
@@ -924,7 +960,7 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
         uint ej = simple_valuation(off, p);
         if (ej == 0)
             continue;
-        if (n % (ej + 1))
+        if (target_t(vj) % (ej + 1))
             return TFP_BAD;
         seen_any = 1;
         if (ej & (ej + 1))
@@ -949,7 +985,7 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
             seen_odd = 1;
         if (ej > ei)
             continue;   /* p^e_i + p^e_j will have valuation e_i */
-        if (n % (ej + 1))
+        if (target_t(vj) % (ej + 1))
             return TFP_BAD;
         if (ej < ei)
             continue;
@@ -1003,7 +1039,6 @@ void prep_forcep(void) {
     mpz_clear(pz);
 
     forcep = (t_forcep *)malloc(forcedp * sizeof(t_forcep));
-    t_divisors *d = &divisors[n];
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
         p = pi[fpi];
         t_forcep *fp = &forcep[fpi];
@@ -1021,6 +1056,7 @@ void prep_forcep(void) {
 #endif
         bool have_unforced_tail = 0;
         for (uint vi = 0; vi < k; ++vi) {
+            t_divisors *d = &divisors[ target_t(vi) ];
             for (uint di = 0; di < d->alldiv; ++di) {
                 uint fx = d->div[di];
                 if (fx == 1)
@@ -1206,10 +1242,7 @@ void init_post(void) {
 #endif
     simple_fact(n, &nf);
     tn = simple_tau(&nf);
-    maxfact = 0;
-    for (int i = 0; i < nf.count; ++i)
-        maxfact += nf.ppow[i].e;
-    maxodd = maxfact - nf.ppow[0].e;    /* n is always even */
+    prep_target();
 
     /* Strategy 1 is preferred when n is divisible by two or more
      * distinct odd primes. Otherwise, strategy 0 always gives the same
@@ -1225,7 +1258,11 @@ void init_post(void) {
     prep_mintau();
     prep_mp();  /* maxp[], minp[], midp[] */
     sqg = (uint *)malloc(maxfact * sizeof(uint));
-    midpp = malloc(sizeof(t_midpp) * k * divisors[n].alldiv);
+
+    uint maxmidpp = 0;
+    for (uint i = 0; i < k; ++i)
+        maxmidpp += divisors[ target_t(i) ].alldiv;
+    midpp = malloc(sizeof(t_midpp) * maxmidpp);
 
     if (debugw) {
         diag_delay = 0;
