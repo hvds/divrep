@@ -11,7 +11,7 @@ ifeq "${GCC_MAJOR}" "7"
   CC_EXTRA_OPT = -ftree-loop-linear -ftree-loop-distribution -ftree-loop-im
 endif
 CC_OPT = -O6 -fgcse-sm -fgcse-las -fgcse-after-reload -fivopts -ftracer -funroll-loops -fvariable-expansion-in-unroller -freorder-blocks-and-partition -funswitch-loops ${CC_EXTRA_OPT}
-dcoul dpcoul dpcaul dsq12: CC_OPT = -O0
+dpcoul dpcaul dpcrul dsq12: CC_OPT = -O0
 
 CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/pbrent63.c ${MPUGMP}/isaac.c ${MPUGMP}/tinyqs.c ${MPUGMP}/squfof126.c ${MPUGMP}/simpqs.c ${MPUGMP}/primality.c ${MPUGMP}/utility.c ${MPUGMP}/gmp_main.c ${MPUGMP}/bls75.c ${MPUGMP}/real.c ${MPUGMP}/ecpp.c
 HFACTOR = ${MPUGMP}/factor.h
@@ -20,10 +20,11 @@ ifeq ($(MPUGMP_VER), cbf87f5e18)
 endif
 
 DEFINES := -DSTANDALONE
-coul pcoul dcoul dpcoul: DEFINES += -DTYPE_o
+pcoul dpcoul: DEFINES += -DTYPE_o
 pcaul dpcaul: DEFINES += -DTYPE_a
+pcrul dpcrul: DEFINES += -DTYPE_r
 
-pcoul dpcoul pcaul dpcaul ftest: DEFINES += -DPARALLEL
+pcoul dpcoul pcaul dpcaul pcrul dpcrul ftest: DEFINES += -DPARALLEL
 ifdef SQONLY
     DEFINES += -DSQONLY
 endif
@@ -47,9 +48,9 @@ ifdef NATIVE
 endif
 
 default: pcoul
-all: pcoul dpcoul pcaul dpcaul
+all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
 
-coul pcoul dcoul dpcoul pcaul dpcaul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
+pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 test_pell: Makefile test_pell.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}

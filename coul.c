@@ -80,8 +80,14 @@ typedef struct s_mod {
 /* warn if the divisor array will be bigger than this */
 #define DIVISOR_WARN_LIMIT (100000)
 t_divisors *divisors = NULL;
-#define target_lcm (n)
-static inline uint target_t(uint vi) { return n; }
+#if defined(TYPE_r)
+    uint *target_tau = NULL;
+    uint target_lcm;
+    static inline uint target_t(uint vi) { return target_tau[vi]; }
+#else
+#   define target_lcm (n)
+    static inline uint target_t(uint vi) { return n; }
+#endif
 
 /* For prime p < k, we "force" allocation of powers in a batch to ensure
  * that multiple allocations of the same prime are coherent. Whereas normal
@@ -220,7 +226,6 @@ mpz_t rwalk_from;
 mpz_t rwalk_to;
 
 t_fact nf;      /* factors of n */
-uint tn;        /* tau(n) */
 uint maxfact;   /* count of prime factors dividing n, with multiplicity */
 uint maxodd;    /* as above for odd prime factors */
 uint *maxforce = NULL;  /* max prime to force at v_i */
@@ -248,7 +253,7 @@ typedef struct s_modfix {
 t_modfix *modfix = NULL;
 uint modfix_count = 0;
 
-#if defined(TYPE_o)
+#if defined(TYPE_o) || defined(TYPE_r)
     static inline uint TYPE_OFFSET(uint i) {
         return i;
     }
@@ -412,6 +417,10 @@ void diag_walk_pell(t_level *cur_level, uint pc) {
  * larger candidates with the current set of allocations.
  */
 bool candidate(mpz_t c) {
+#if defined(TYPE_r)
+    if (mpz_fits_ulong_p(c) && mpz_get_ui(c) == n)
+        return 0;
+#endif
     keep_diag();
     double t1 = utime();
     report("202 Candidate %Zu (%.2fs)\n", c, seconds(t1));
@@ -518,6 +527,9 @@ void done(void) {
         for (int i = 0; i <= target_lcm; ++i)
             free(divisors[i].div);
     free(divisors);
+#if defined(TYPE_r)
+    free(target_tau);
+#endif
     if (have_rwalk) {
         mpz_clear(rwalk_from);
         mpz_clear(rwalk_to);
@@ -824,11 +836,24 @@ void prep_target(void) {
     t_fact f;
     init_fact(&f);
 
+#if defined(TYPE_r)
+    target_tau = malloc(k * sizeof(uint));
+    target_lcm = 1;
+#endif
     maxfact = 0;
     maxodd = 0;
     for (uint i = 0; i < k; ++i) {
         uint t;
+#if defined(TYPE_r)
+        f.count = 0;
+        simple_fact(n + i, &f);
+        t = simple_tau(&f);
+        target_tau[i] = t;
+        ulong g = simple_gcd(target_lcm, t);
+        target_lcm *= t / g;
+#else
         t = n;
+#endif
 
         uint thisfact = 0;
         uint thisodd = 0;
@@ -1013,7 +1038,7 @@ void prep_forcep(void) {
 
     forcedp = 0;
     mpz_init_set_ui(pz, 1);
-#if defined(TYPE_o)
+#if defined(TYPE_o) || defined(TYPE_r)
     while (1) {
         _GMP_next_prime(pz);
         p = mpz_get_ui(pz);
@@ -1245,7 +1270,6 @@ void init_post(void) {
     setproctitle("oul(%lu %lu)", n, k);
 #endif
     simple_fact(n, &nf);
-    tn = simple_tau(&nf);
     prep_target();
     /* level[0] is special;
      * then we can have forcedp batch allocations and maxodd * k normal
@@ -1319,6 +1343,8 @@ void report_init(FILE *fp, char *prog) {
             "o",
 #elif defined(TYPE_a)
             "a",
+#elif defined(TYPE_r)
+            "r",
 #endif
             n, k);
 
@@ -3736,6 +3762,8 @@ int main(int argc, char **argv, char **envp) {
             "o",
 #elif defined(TYPE_a)
             "a",
+#elif defined(TYPE_r)
+            "r",
 #endif
             n, k, countr, countw, countwi, seconds(tz));
     if (seen_best)

@@ -34,11 +34,10 @@ There is no installation process: it is intended that the code should be
 built and run in place.
 
 The 'make' targets are:
-coul: optimized non-parallel search
 pcoul: optimized parallel search
-dcoul: debugging non-parallel search
 dpcoul: debugging parallel search
 pcaul/dpcaul: equivalent to pcoul for A165498/A165499
+pcrul/dpcrul: equivalent to pcoul for A309981
 test_pell: a tool to solve Pell equations
 ftest: test a specific factorization
 
