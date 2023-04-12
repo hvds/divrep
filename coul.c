@@ -403,7 +403,10 @@ void diag_walk_pell(t_level *cur_level, uint pc) {
     diag_any(cur_level, !(debugw && pc));
 }
 
-void candidate(mpz_t c) {
+/* Record a found candidate; returns FALSE if we should continue testing
+ * larger candidates with the current set of allocations.
+ */
+bool candidate(mpz_t c) {
     keep_diag();
     double t1 = utime();
     report("202 Candidate %Zu (%.2fs)\n", c, seconds(t1));
@@ -413,6 +416,7 @@ void candidate(mpz_t c) {
     }
     if (improve_max && mpz_cmp(c, max) <= 0)
         mpz_set(max, c);
+    return improve_max;
 }
 
 void free_levels(void) {
@@ -1696,8 +1700,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
                 mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
                 mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
-                candidate(Z(wv_cand));
-                if (improve_max)
+                if (candidate(Z(wv_cand)))
                     break;
 
               next_pell:
@@ -1798,8 +1801,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
             mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
             mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
             mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
-            candidate(Z(wv_cand));
-            if (improve_max)
+            if (candidate(Z(wv_cand)))
                 return;
           next_sqati:
             ++rindex;
@@ -1859,8 +1861,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
         mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
-        candidate(Z(wv_cand));
-        if (improve_max)
+        if (candidate(Z(wv_cand)))
             return;
       next_ati:
         ;
@@ -2032,8 +2033,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             if (!is_taux(wv_o[need_other[i]], t[need_other[i]], 1))
                 goto reject_this_one;
 #endif
-        candidate(Z(w1_v));
-        if (improve_max)
+        if (candidate(Z(w1_v)))
             return;
       reject_this_one:
         ;
