@@ -41,8 +41,21 @@ memoize('gprio', NORMALIZER => sub { "$_[1]" });
 sub gprio {
     my($self, $n) = @_;
     return -(
-        (log($n) / log(2)) ** 1.8
+        (log($n) / log(2)) ** 2.0
     );
+}
+
+sub fprio {
+    my($self, $n, $k, $expect) = @_;
+    my $prio = $self->gprio($n);
+    if ($expect) {
+        if ($expect < 0) {
+            use Carp; Carp::confess("$expect");
+        }
+        # deprioritize more rapidly than the default with rising $expect
+        $prio += List::Util::min(0, -(log($expect) / log(2)) ** 1.6);
+    }
+    return $prio;
 }
 
 sub ming { 0 }
