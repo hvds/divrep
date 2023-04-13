@@ -244,6 +244,13 @@ sub finalize {
         $self->preptime($t);
         $ugly = 1;
     }
+    for (@{ $line{405} // [] }) {
+        # 405 Error: Fixed power v_$k = ${x}y^$z is non-residue $v (mod $m)
+        my($t) = m{
+            ^ 405 \s+ Error: \s+ Fixed \s+ power
+        }x or return $self->failed("Can't parse 405 result: '$_'");
+        $ugly = 1;
+    }
     for (@{ $line{502} // [] }) {
         # 502 Error: fixed 8 not available in tau 12 for k=1
         my($t) = m{

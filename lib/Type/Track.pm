@@ -117,6 +117,21 @@ sub disallow {
     return $self->n == $d;
 }
 
+sub validate_fixpow {
+    my($self, $force) = @_;
+    my $c = $self->c;
+    my($k, $x, $z) = @$force;
+    my($v, $m) = ($c->mod_mult, $c->mult);
+    $v = ($v + $k) % $m;
+    $v /= $x;
+    $m /= $x;
+    return if is_residue($v, $m);
+    printf <<OUT, $k, ($x != 1 ? $x : ''), $z, $v, $m;
+405 Error: Fixed power v_%s = %sy^%s is non-residue %s (mod %s)
+OUT
+    exit 1;
+}
+
 sub check_fixed {
     my($self) = @_;
     my $n = $self->n;
@@ -130,6 +145,7 @@ sub check_fixed {
     for my $k (@{ $self->to_test }) {
         my $tk = $self->func_target($k);
         my $force = $self->find_fixed($n, $tk, $k) or next;
+        $self->validate_fixpow($force);
         if ($fixpow) {
             printf "317 Ignoring secondary fix_power(%s)\n", join ', ', @$force;
             my $pell = $self->fix_pell($n, $fixpow, $force);
