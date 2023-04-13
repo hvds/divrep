@@ -1969,7 +1969,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         if (t[vj] == 2)
             need_prime[npc++] = vj;
         else if (t[vj] & 1)
-            need_prime[npc++] = vj;
+            need_square[nqc++] = vj;
         else
             need_other[noc++] = vj;
     }
