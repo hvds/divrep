@@ -3115,6 +3115,7 @@ e_pux prep_unforced_x(
     } else if (limp < p + 1)
         return PUX_SKIP_THIS_X; /* nothing to do here */
     if (nextt == 1) {
+        cur_level->have_min = prev_level->have_min;
         walk_1_set(cur_level, vi, p, limp, x);
         return PUX_SKIP_THIS_X;
     }
