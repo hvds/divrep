@@ -1238,6 +1238,38 @@ void prep_mp(void) {
     }
 }
 
+/* Record a new square at v_i; return FALSE if invalid.
+ * Finds the quadratic (or higher-order) residues; stash them for later
+ * propagation if this is the first square; fail if there are none.
+ * Note: we just allocated to vi, so at least one allocation exists.
+ */
+bool alloc_square(t_level *cur, uint vi) {
+    t_value *v = &value[vi];
+    uint vlevel = cur->vlevel[vi];
+    t_allocation *ap = &v->alloc[vlevel - 1];
+    uint sqi = cur->have_square++;
+    uint g = divisors[ap->t].gcddm;
+    if (sqi == 0) {
+        sq0 = vi;
+        sqg[vlevel - 1] = g;
+    }
+
+    /* if this is first square, store in the level for further propagation;
+     * else use level 0 as temporary */
+    uint stash_level = (sqi == 0) ? cur->level : 0;
+    /* o = (rq + i) / q */
+    mpz_add_ui(Z(asq_o), cur->rq, TYPE_OFFSET(vi));
+    mpz_divexact(Z(asq_o), Z(asq_o), ap->q);
+    /* qq = aq / q */
+    mpz_divexact(Z(asq_qq), cur->aq, ap->q);
+
+    allrootmod(stash_level, Z(asq_o), g, Z(asq_qq));
+    t_results *rp = res_array(stash_level);
+    if (rp->count == 0)
+        return 0;
+    return 1;
+}
+
 void init_post(void) {
     init_tau(rough);
     alloc_taum(k);
@@ -2262,38 +2294,6 @@ bool update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
     return 0;
 }
 
-/* Record a new square at v_i; return FALSE if invalid.
- * Finds the quadratic (or higher-order) residues; stash them for later
- * propagation if this is the first square; fail if there are none.
- * Note: we just allocated to vi, so at least one allocation exists.
- */
-bool alloc_square(t_level *cur, uint vi) {
-    t_value *v = &value[vi];
-    uint vlevel = cur->vlevel[vi];
-    t_allocation *ap = &v->alloc[vlevel - 1];
-    uint sqi = cur->have_square++;
-    uint g = divisors[ap->t].gcddm;
-    if (sqi == 0) {
-        sq0 = vi;
-        sqg[vlevel - 1] = g;
-    }
-
-    /* if this is first square, store in the level for further propagation;
-     * else use level 0 as temporary */
-    uint stash_level = (sqi == 0) ? cur->level : 0;
-    /* o = (rq + i) / q */
-    mpz_add_ui(Z(asq_o), cur->rq, TYPE_OFFSET(vi));
-    mpz_divexact(Z(asq_o), Z(asq_o), ap->q);
-    /* qq = aq / q */
-    mpz_divexact(Z(asq_qq), cur->aq, ap->q);
-
-    allrootmod(stash_level, Z(asq_o), g, Z(asq_qq));
-    t_results *rp = res_array(stash_level);
-    if (rp->count == 0)
-        return 0;
-    return 1;
-}
-
 /* Allocate p^{x-1} to v_{vi}. Returns FALSE if it is invalid.
  * Updates value[vi], and checks if this creates a new square.
  * Does not update existing square residues, see update_residues() for that.
@@ -2417,7 +2417,7 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
     mpz_ui_pow_ui(px, p, x - 1);
     /* this is wasted effort if x does not divide v_i.t, but we need it
-     * for the apply_square() calculation */
+     * for the alloc_square() calculation */
     if (!update_chinese(prev, cur, vi, px)) {
         ++cur->vlevel[vi];
         return 0;
