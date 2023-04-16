@@ -410,7 +410,7 @@ void diag_walk_zv(t_level *cur_level, mpz_t ati, mpz_t end) {
 
 void diag_walk_pell(t_level *cur_level, uint pc) {
     aux_sprintf(": P%u", pc);
-    diag_any(cur_level, !(debugw && pc));
+    diag_any(cur_level, !(debugw && !debugW && pc));
 }
 
 /* Record a found candidate; returns FALSE if we should continue testing
