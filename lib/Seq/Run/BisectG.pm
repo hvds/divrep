@@ -8,6 +8,8 @@ Seq::Run::BisectG
 
 =head1 DESCRIPTION
 
+Use bisect-g to update Seq::TauG->maxg.
+
 =cut
 
 sub new {

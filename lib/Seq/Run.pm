@@ -26,7 +26,7 @@ __PACKAGE__->define($TABLE, 'run', [
     'bigint optx',
     'uint optc',
     'maybe uint optcp',
-    'maybe modlist optm',
+    'modlist optm',
     'maybe float preptime',
     'maybe float runtime',
     'float priority',
@@ -56,6 +56,7 @@ sub gen {
         n => $tauf->n,
         k => $tauf->k,
         owner => $owner,
+        optm => '',     # default
         %$args{qw{ optn optx optc optcp optm priority }},
     });
     $self->optimizing(1) if $args->{optimize};
@@ -95,7 +96,7 @@ sub command {
 # FIXME: we want them deflated
         ($self->optc ? ('-c', $self->optc) : ()),
         ($self->optcp ? ('-cp', $self->optcp) : ()),
-        ($self->optm ? ('-m', $self->optm) : ()),
+        (map +('-m', $_), @{ $self->optm // [] }),
         ($ts ? ('-ts', $ts)
             : $self->optimizing ? ('-ta') : ()),
         $self->n,
@@ -182,8 +183,9 @@ sub finalize {
     for (@{ $line{200} // [] }) {
         my($n, $k, $d, $t) = m{
             ^ 200 \s+ f\( (\d+) ,\s+ (\d+) \)
-            \s+ = \s+ ($ren) \s+
-            \( (\d+\.\d+) s \)
+            \s+ = \s+ ($ren)
+            (?: \s+ mod\( \d+ [=!] \d+ (?: , \s+ \d+ [=!] \d+ )* \) )?
+            \s+ \( (\d+\.\d+) s \)
             \s* $
         }x or return $self->failed("Can't parse 200 result: '$_'");
         $n == $self->n && $k == $self->k
@@ -211,8 +213,9 @@ sub finalize {
     for (@{ $line{500} // [] }) {
         my($n, $k, $d, $t) = m{
             ^ 500 \s+ f\( (\d+) ,\s+ (\d+) \)
-            \s+ > \s+ ($ren) \s+
-            \( (\d+\.\d+) s \)
+            \s+ > \s+ ($ren)
+            (?: \s+ mod\( \d+ [=!] \d+ (?: , \s+ \d+ [=!] \d+ )* \) )?
+            \s+ \( (\d+\.\d+) s \)
             \s* $
         }x or return $self->failed("Can't parse 500 result: '$_'");
         $n == $self->n && $k == $self->k

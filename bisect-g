@@ -113,8 +113,11 @@ sub option_g {
     Seq::TauG->genTo($db, $n);
     my $g = $db->resultset('TauG')->find({ n => $n })
             // die "cannot find TauG entry for n=$n";
+    my $f = $g->fnext($db)
+            // die "cannot find next TauF entry for n=$n";
     my @opts = (
         ($opt_M ? "-M$opt_M" : ()),
+        (map "-m$_", @{ $f->optm }),
     );
     my $r = Seq::Run::BisectG->new($type, $g, undef, $optc, \@opts);
     my @t0 = times;

@@ -1120,6 +1120,7 @@ sub prep_run {
         optn => $zero,
         optx => $zero,
         optc => $gain,
+        optm => $f->optm,
         priority => 0,
     });
     $r->partial(1) unless $complete;

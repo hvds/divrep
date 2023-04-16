@@ -47,6 +47,7 @@ my $r = $dryrun ? undef : do {
         optn => $d,
         optx => $d,
         optc => 0,
+        optm => $f->optm,
         priority => 0,
     });
     $ar->partial(1) unless $full;

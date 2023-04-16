@@ -44,6 +44,7 @@ $tauf->define($TABLE, 'tauf', [
     'maybe uint depend_n',
     'maybe uint minc',
     'modlist test_order',
+    'modlist optm',
     'flags(complete external estimated depend impossible) status',
 ]);
 $tauf->belongs_to(
@@ -174,6 +175,7 @@ sub update_depends {
                 n => $n,
                 k => $fd->k,
                 test_order => '',
+                optm => '',
             });
             $self->f($fd->f * $m);
             $self->depend_m($m);
@@ -201,6 +203,7 @@ sub _strategy {
                 optn => $g->checked || 1,
                 optx => $SIMPLE,
                 optc => 100,
+                optm => $self->optm,
                 priority => $type->fprio($self->n, $self->k, 0),
             },
         );
@@ -250,6 +253,7 @@ sub _strategy {
                 optn => $optn,
                 optx => $optx,
                 optc => $optc,
+                optm => $self->optm,
                 priority => $type->fprio($self->n, $self->k, $expect),
             },
         );
@@ -305,6 +309,7 @@ sub _strategy {
                 optn => $optn,
                 optx => $optx,
                 optc => $optc,
+                optm => $self->optm,
                 optimize => 1,
                 priority => $type->fprio($self->n, $self->k, $expect),
             },
@@ -316,6 +321,7 @@ sub _strategy {
             optn => $optn,
             optx => $optx,
             optc => $optc,
+            optm => $self->optm,
             optimize => 0,
             priority => $type->fprio($self->n, $self->k, $expect),
         },
@@ -327,7 +333,8 @@ sub maybe_bisectg {
     my $depth = 1000 * (1 + int(log($expect / $SLOW) / log(10)));
     my $g = $self->g;
     return undef if $depth <= ($g->bisected // 0);
-    return Seq::Run::BisectG->new($type, $g, $self, $depth);
+    return Seq::Run::BisectG->new($type, $g, $self, $depth,
+            [ map "-m$_", @{ $self->optm } ]);
 }
 
 sub lastRun {
@@ -359,11 +366,13 @@ sub forceFor {
     unless ($self) {
         die "g($n) <= @{[ $taug->maxg ]}, not forcing k=$k"
                 unless $k <= $taug->maxg;
+        my $prev = $db->resultset($TABLE)->find({ n => $n, k => $k - 1 });
         $self = $db->resultset($TABLE)->new({
             n => $n,
             k => $k,
             f => $zero,
             test_order => '',
+            optm => ($prev ? $prev->optm : ''),
         });
         $self->insert;
     }
