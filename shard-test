@@ -1,0 +1,161 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+use lib 'lib';
+use List::Util qw{ sum };
+use Type;
+use Seq::Db;
+use ModFunc qw{ gcd };
+
+my $typename = 't';
+my($opt_g) = (0);
+my @opts;
+
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    $typename = $1, next if $arg =~ /^-y(.*)/;
+    $opt_g = 1, next if $arg eq '-g';
+    push(@opts, $arg), next if $arg =~ /^-m/;
+    die "Unknown option '$arg'";
+}
+my $type = Type->new($typename);
+option_g(@ARGV) if $opt_g;  # does not return
+@ARGV == 5 or die "500 Usage: $0 n k m d optc";
+my($n, $k, $m, $d, $optc) = @ARGV;
+
+=head1 shard-test: find disallowed values (mod m) for f(n,k)
+
+Given inputs I<n>, I<k>, I<m>, I<d>, I<optc>, check if any values (mod m)
+are disallowed for f(n,k).
+
+I<d> should be the greatest difference checked to; I<optc> is the
+requested number of values to check.
+
+The program will invoke C<gtauseq> once to determine that we currently
+fix values to V (mod M) (before any fixed power), then invoke it again
+to force iM + V (mod Mm) for each i in (0 .. m - 1), checking in each
+case whether the modulus is permitted or not.
+
+Any moduli not permitted are then reported as disallowed.
+
+=cut
+
+my($knownV, $knownM) = reduce_m($m, fetchVM($type));
+my $tryM = $knownM * $m;
+my @try = (0 .. $m - 1);
+my @bad;
+for my $try (0 .. $m - 1) {
+    my $tryV = $try * $knownM + $knownV;
+    push @bad, $tryV if bad($type, $tryV, $tryM);
+}
+final(join ' ', map "$tryM!$_", @bad);
+exit 0;
+
+sub final {
+    my($mods) = @_;
+    my $time = sum(times());
+    printf "200 f(%s,%s) has [%s] (%.2fs)\n", $n, $k, $mods // '', $time;
+    exit 0;
+}
+
+sub fetchVM {
+    my($type) = @_;
+    my $log = sprintf "%s/st%s.%s-i", $type->logpath, $n, $k;
+    my @args = ('-nx', $d, '-c', $optc, @opts, '-D', '-f', $n, $k);
+    my $lines = $type->invoked('gtauseq', "st($n, $k)", \@args, $log);
+    if (@{ $lines->{302} // [] }) {
+        my $line = $lines->{302}[0];
+        if ($line =~ m{ ^ 302 \s+ checking \s+ (\d+) \( mod \s+ (\d+) \) }x) {
+            # FIXME: may need bigint
+            return +("$1", "$2");
+        }
+        print "514 Could not parse 302 line to check initial mod: '$line'\n";
+        exit 1;
+    }
+    if (grep @{ $lines->{$_} // [] }, qw{ 402 403 404 405 502 }) {
+        # ok, nothing to find
+        final();
+    }
+    print "513 No 302 lines found to check initial mod\n";
+    exit 1;
+}
+
+sub bad {
+    my($type, $tryv, $trym) = @_;
+    my $log = sprintf "%s/st%s.%s-%s.%s", $type->logpath, $n, $k, $trym, $tryv;
+    my @args = (
+        '-nx', $d, '-c', $optc, @opts, '-m', "$trym=$tryv",
+        '-D', '-f', $n, $k,
+    );
+    my $lines = $type->invoked('gtauseq', "st($n, $k)", \@args, $log);
+    if ($lines->{402}) {
+        # 402 Error: all values (mod 2) disallowed (4.680s)
+        return 1;
+    }
+    if ($lines->{403}) {
+        # 403 Error: f(243) > 4 known impossible by exception (4.680s)
+        return 1;
+    }
+    if ($lines->{404}) {
+        # 404 Error: n + ${k}d must be divisible by n
+        return 1;
+    }
+    if ($lines->{405}) {
+        # 405 Error: Fixed power v_$k = ${x}y^$z is non-residue $v (mod $m)
+        return 1;
+    }
+    if ($lines->{502}) {
+        # Error: fixed 18 not available in tau 48
+        return 1;
+    }
+    if ($lines->{309}) {
+        # Prep finished, frequency 36.91 (184.980s)
+        return 0;
+    }
+    # Not an expected result.
+    die "501 Error parsing logs from '$log'\n";
+}
+
+sub reduce_m {
+    my($targM, $v, $m) = @_;
+    my $keepm = 1;
+    while (1) {
+        my $g = gcd($targM, $m);
+        last if $g == 1;
+        $keepm *= $g;
+        $m /= $g;
+    }
+    return +($v % $keepm, $keepm);
+}
+
+# -g is a request to use database detail to decide parameters, and
+# update database with results. We create a Run object to mediate
+# the process, then reinvoke ourselves through it.
+sub option_g {
+    @_ == 2 or die "Usage: $0 -g [options, ...] <n> <m>\n";
+    my($n, $m) = @_;
+    $type->bind_owner('harness');
+    $type->bind($n);
+    my $db = Seq::Db->new($type, 0);
+    Seq::TauG->genTo($db, $n);
+    my $g = $db->resultset('TauG')->find({ n => $n })
+            // die "cannot find TauG entry for n=$n";
+    my $f = $g->fnext($db)
+            // die "cannot find next TauF entry to use for n=$n";
+    my $run = $f->lastRun($db)
+            // die "cannot find last run for n=$n, k=@{[ $f->k ]}";
+    my $optc = $run->optc;
+    use Seq::Run::ShardTest;
+    my $r = Seq::Run::ShardTest->new($type, $g, $f, $optc, $m,
+            [ map "-m$_", @{ $f->optm } ]);
+    my @t0 = times;
+    my $pid = $r->run;
+    waitpid($pid, 0);
+    my @t1 = times;
+    my $time = $t1[2] + $t1[3] - $t0[2] - $t0[3];
+    my $log = $r->logpath;
+    system("cat $log");
+    $r->finalize($db, $time);
+    exit(0);
+}

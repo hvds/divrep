@@ -21,6 +21,7 @@ my %PROG = (
     bisect_fp => './bisect-fp',
     bisect_g => './bisect-g',
     find_shard => './find-shard',
+    shard_test => './shard-test',
 );
 
 my %owner = (

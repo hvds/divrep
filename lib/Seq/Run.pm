@@ -4,6 +4,7 @@ use warnings;
 
 use Seq::Run::BisectG;
 use Seq::Run::BisectFP;
+use Seq::Run::ShardTest;
 use List::Util qw{ max };
 
 =head1 NAME

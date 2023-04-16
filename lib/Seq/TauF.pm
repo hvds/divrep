@@ -12,6 +12,7 @@ my $SIMPLE = Math::GMP->new(1 << 20);
 # Assume we don't need to do much clever if expected runtime is this fast.
 my $FAST = 10;
 my $SLOW = 600;
+my $SHARD_RATE = 60;
 my $USE_TS = 1200;
 my $EXPECT_TS = 1200;
 
@@ -44,6 +45,7 @@ $tauf->define($TABLE, 'tauf', [
     'maybe uint depend_n',
     'maybe uint minc',
     'modlist test_order',
+    'uint sharded',
     'modlist optm',
     'flags(complete external estimated depend impossible) status',
 ]);
@@ -123,6 +125,23 @@ sub set_minc {
     return ($self);
 }
 
+# Note: we do not attempt to discern the consequences of new mods, we let
+# the next run discover that for itself.
+sub shard_test {
+    my($self, $db, $shard, $mods) = @_;
+    my %known = map +($_ => 1), @{ $self->optm };
+    my @new = grep !$known{$_}, @$mods;
+    return () unless $shard > $self->sharded || @new;
+    if (@new) {
+        printf "f(%s,%s) shard %s [%s]\n",
+                $self->n, $self->k, $shard, join(' ', @new);
+    }
+    $self->sharded($shard) if $shard > $self->sharded;
+    $self->optm([ @{ $self->optm }, @new ]) if @new;
+    $self->update;
+    return ();
+}
+
 sub depends {
     my($self, $db, $depend_m, $depend_n) = @_;
 # FIXME: g(depend_n).max may already be less than our k, in which case now
@@ -175,6 +194,7 @@ sub update_depends {
                 n => $n,
                 k => $fd->k,
                 test_order => '',
+                sharded => 0,
                 optm => '',
             });
             $self->f($fd->f * $m);
@@ -245,8 +265,13 @@ sub _strategy {
     $eprep = $prep * $optc / $r->optc;
     $expect = ($eprep + $run) || 1;
 
+    my @extra = grep defined, (
+        $self->maybe_bisectg($db->type, $expect),
+        $self->maybe_shardtest($db->type, $expect, $optc),
+    );
+
     if ($expect < $SLOW) {
-        return Seq::Run->gen(
+        return (Seq::Run->gen(
             $self, $db, {
                 optn => $optn,
                 optx => $optx,
@@ -254,10 +279,8 @@ sub _strategy {
                 optm => $self->optm,
                 priority => $type->fprio($self->n, $self->k, $expect),
             },
-        );
+        ), @extra);
     }
-
-    my $bisect = $self->maybe_bisectg($db->type, $expect);
 
     # If it's slow we could try sharding, but for now just reduce the range
     my $factor = (1 + $SLOW / $expect) / 2;
@@ -312,7 +335,7 @@ sub _strategy {
                 optimize => 1,
                 priority => $type->fprio($self->n, $self->k, $expect),
             },
-        ), ($bisect // ()));
+        ), @extra);
     }
 
     return (Seq::Run->gen(
@@ -324,7 +347,7 @@ sub _strategy {
             optimize => 0,
             priority => $type->fprio($self->n, $self->k, $expect),
         },
-    ), ($bisect // ()));
+    ), @extra);
 }
 
 sub maybe_bisectg {
@@ -333,6 +356,17 @@ sub maybe_bisectg {
     my $g = $self->g;
     return undef if $depth <= ($g->bisected // 0);
     return Seq::Run::BisectG->new($type, $g, $self, $depth,
+            [ map "-m$_", @{ $self->optm } ]);
+}
+
+sub maybe_shardtest {
+    my($self, $type, $expect, $optc) = @_;
+    my $target = (1 + int(log($expect / $SHARD_RATE) * 2 / log(10)));
+    my $prev = $self->sharded || 1;
+    return undef if $target <= $prev;
+#warn sprintf "for f(%s,%s) target $target > $prev\n", $self->n, $self->k;
+    # always step through shards in order
+    return Seq::Run::ShardTest->new($type, $self->g, $self, $optc, $prev + 1,
             [ map "-m$_", @{ $self->optm } ]);
 }
 
@@ -373,6 +407,7 @@ sub forceFor {
             k => $k,
             f => $zero,
             test_order => '',
+            sharded => 0,
             optm => ($prev ? $prev->optm : ''),
         });
         $self->insert;
