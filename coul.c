@@ -1270,6 +1270,39 @@ bool alloc_square(t_level *cur, uint vi) {
     return 1;
 }
 
+/* If any value is forced to be square even before any allocations,
+ * we must insert a dummy level (so there is a unique place to hold
+ * the set of valid residues), and then call alloc_square() to
+ * initialize things correctly.
+ */
+void prep_presquare(void) {
+    bool saw_square = 0;
+    for (uint vi = 0; vi < k; ++vi)
+        if (target_t(vi) & 1)
+            saw_square = 1;
+    if (saw_square) {
+        /* we rely on resarray(0) being available for other uses, so we
+         * must use a dummy level here before allocating the square(s)
+         */
+        t_level *prev = &levels[level - 1];
+        t_level *cur = &levels[level];
+        cur->have_min = prev->have_min;
+        cur->nextpi = prev->nextpi;
+        cur->maxp = prev->maxp;
+        memcpy(cur->vlevel, prev->vlevel, k * sizeof(uint));
+        mpz_set(cur->aq, prev->aq);
+        mpz_set(cur->rq, prev->rq);
+        cur->is_forced = 2;     /* special value for dummy entry */
+        cur->p = 0;
+        cur->have_square = 0;
+        for (uint vi = 0; vi < k; ++vi)
+            if (target_t(vi) & 1)
+                alloc_square(cur, vi);
+        ++level;
+        ++final_level;
+    }
+}
+
 void init_post(void) {
     init_tau(rough);
     alloc_taum(k);
@@ -1303,14 +1336,14 @@ void init_post(void) {
 #endif
     simple_fact(n, &nf);
     prep_target();
-    /* level[0] is special;
+    /* level[0] is special, level[1] is special if any target_t is odd;
      * then we can have forcedp batch allocations and maxodd * k normal
      * allocations; however we don't know forcedp yet, only that it will
      * be at most |{ p: p < k }| for TYPE_o and TYPE_r, and
      * |{ p: p < k or p | n }| for TYPE_a.
      * So pick something conservative enough for all cases.
      */
-    maxlevel = 1 + k * maxodd + k
+    maxlevel = 1 + 1 + k * maxodd + k
 #if defined(TYPE_a)
             + nf.count
 #endif
@@ -1350,6 +1383,7 @@ void init_post(void) {
     init_levels();
     init_modfix();
     init_value();
+    prep_presquare();
     countr = 0;
     countw = 0;
     countwi = 0;
@@ -2898,6 +2932,10 @@ bool apply_batch(
             }
         }
     }
+    if (cur_level->have_square > 1) {
+        walk_v(cur_level, Z(zero));
+        return 0;
+    }
     return 1;
 }
 
@@ -3489,7 +3527,7 @@ void recurse(e_is jump_continue) {
         cur_level = &levels[level];
 
         /* recurse deeper */
-        fi = level - 1;
+        fi = level - final_level - 1;
         if (fi < forcedp && (fi == 0 || prev_level->is_forced)) {
             fp = &forcep[fi];
             if (fp->count == 0)
@@ -3510,7 +3548,7 @@ void recurse(e_is jump_continue) {
 #ifdef SQONLY
                 if (prev_level->have_square)
                     walk_v(prev_level, Z(zero));
-                else if (level > 1 && !prev_level->is_forced)
+                else if (level > final_level + 1 && !prev_level->is_forced)
                     level_setp(prev_level, prev_level->limp);
 #else
                 walk_v(prev_level, Z(zero));
@@ -3561,7 +3599,7 @@ void recurse(e_is jump_continue) {
         /* goto continue_recurse; */
       continue_recurse:
         if (cur_level->is_forced) {
-            fi = level - 1;
+            fi = level - final_level - 1;
             fp = &forcep[fi];
             bi = cur_level->bi + 1;
           continue_forced:
@@ -3581,7 +3619,7 @@ void recurse(e_is jump_continue) {
                 goto derecurse;
             }
             if (apply_batch(prev_level, cur_level, fp, bi)
-                && (level != forcedp || process_batch(cur_level))
+                && (level != final_level + forcedp || process_batch(cur_level))
             ) {
                 if (need_work)
                     diag_plain(cur_level);

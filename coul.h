@@ -35,7 +35,8 @@ extern t_divisors *divisors;
  */
 typedef struct s_level {
     uint level;     /* index of this entry */
-    bool is_forced; /* this is a forced-prime entry */
+    uint is_forced; /* this is a forced-prime entry if 1 */
+                    /* this is a dummy entry for initial squares if 2 */
     bool have_min;  /* we have passed any minp requirement */
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
