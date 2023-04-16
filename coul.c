@@ -121,6 +121,7 @@ uint unforce_all = 0;
 uint sq0 = 0;
 uint *sqg = NULL;   /* size maxfact */
 
+uint maxlevel;              /* avvailable entries in levels[] */
 t_level *levels = NULL;     /* one level per allocated prime */
 uint level = 0;             /* current recursion level */
 uint final_level = 0;       /* level at which to terminate */
@@ -424,7 +425,7 @@ bool candidate(mpz_t c) {
 }
 
 void free_levels(void) {
-    for (uint i = 0; i < k * maxfact + 1; ++i) {
+    for (uint i = 0; i < maxlevel; ++i) {
         t_level *l = &levels[i];
         free(l->vlevel);
         mpz_clear(l->aq);
@@ -435,9 +436,8 @@ void free_levels(void) {
 }
 
 void init_levels(void) {
-    /* CHECKME: can this be maxodd * k + forcedp? */
-    levels = (t_level *)calloc(k * maxfact + nf.count + 1, sizeof(t_level));
-    for (uint i = 0; i < k * maxfact + 1; ++i) {
+    levels = (t_level *)calloc(maxlevel, sizeof(t_level));
+    for (uint i = 0; i < maxlevel; ++i) {
         t_level *l = &levels[i];
         l->level = i;
         l->vlevel = calloc(k, sizeof(uint));
@@ -1038,13 +1038,17 @@ void prep_forcep(void) {
 #endif
     mpz_clear(pz);
 
+    uint maxbatch = 0;
+    for (uint i = 0; i < k; ++i)
+        maxbatch += divisors[ target_t(i) ].alldiv;
+
     forcep = (t_forcep *)malloc(forcedp * sizeof(t_forcep));
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
         p = pi[fpi];
         t_forcep *fp = &forcep[fpi];
         fp->p = p;
         fp->count = 0;
-        fp->batch = (t_forcebatch *)malloc(tn * k * sizeof(t_forcebatch));
+        fp->batch = (t_forcebatch *)malloc(maxbatch * sizeof(t_forcebatch));
 
         bool keep_single = (p <= force_all) ? 1 : 0;
 #if defined(TYPE_o)
@@ -1243,6 +1247,18 @@ void init_post(void) {
     simple_fact(n, &nf);
     tn = simple_tau(&nf);
     prep_target();
+    /* level[0] is special;
+     * then we can have forcedp batch allocations and maxodd * k normal
+     * allocations; however we don't know forcedp yet, only that it will
+     * be at most |{ p: p < k }| for TYPE_o and TYPE_r, and
+     * |{ p: p < k or p | n }| for TYPE_a.
+     * So pick something conservative enough for all cases.
+     */
+    maxlevel = 1 + k * maxodd + k
+#if defined(TYPE_a)
+            + nf.count
+#endif
+            ;
 
     /* Strategy 1 is preferred when n is divisible by two or more
      * distinct odd primes. Otherwise, strategy 0 always gives the same
@@ -1250,7 +1266,7 @@ void init_post(void) {
     if (!strategy_set)
         strategy = (nf.count > 2) ? 1 : 0;
 
-    init_rootmod(k * maxfact + 1);
+    init_rootmod(maxlevel);
     prep_fact();
     prep_maxforce();
     prep_forcep();
