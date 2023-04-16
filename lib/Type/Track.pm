@@ -135,8 +135,6 @@ OUT
 sub check_fixed {
     my($self) = @_;
     my $n = $self->n;
-    my $f = $self->f;
-    my $c = $self->c;
     #
     # Go through each k working out what factors are fixed, to find
     # opportunities for additional constraint optimizations.
@@ -159,60 +157,133 @@ sub check_fixed {
         } else {
             $fixpow = $force;
         }
-        # given d+k = xy^2 is known, does the factorization x(y-i)(y+i) have
-        # useful consequences for d+k-xi^2?
-if (1) {
-        my $x = remove_squares($force->[1]);
-        for (my $i = 1; $i * $i * $x <= $k; ++$i) {
-            my $ki = $k - $i * $i * $x;
-            my $ti = $self->func_target($ki);
-            if ($ti < 4) {
-                # must fail when y-i > 1
-warn sprintf "track($n,$f) for fixpow at %s with t=%s at %s suppress all after %s\n", $k, $ti, $ki, $x * ($i + 2)**2 - $k;
-                $c->suppress(1, 0, $x * ($i + 2)**2 - $k);
-                next;
-            }
-            my($float, $spare) = $self->float_spare($n, $ki);
-            my $fixp = gcd($spare, $float);
-            my($fixed_tau, $fixed_mult) = (1, 1);
-            my($float_tau, $float_mult) = (1, 1);
-            for (factor_exp($float)) {
-                my($p, $x) = @$_;
-                if ($self->is_fixed($p, $x, $c, $n, $fixp)) {
-                    # take the fixed power, splice out of the list of remaining
-                    # floating powers
-                    $fixed_tau *= $x + 1;
-                    $fixed_mult *= $p ** $x;
-                } else {
-                    $float_tau *= $x + 1;
-                    $float_mult *= $p ** $x;
-                };
-            }
-            if ($ti % $fixed_tau) {
-                printf <<OUT, $fixed_tau, $tk, $k;
-502 Error: fixed %s not available in tau %s for k=%s
-OUT
-                exit 1;
-            }
-            my $tf = $ti / $fixed_tau;
-            if ($float_tau > $tf) {
-                printf <<OUT, $fixed_tau, $float_tau, $tk, $k;
-502 Error: fixed %s, float %s not available in tau %s for k=%s
-OUT
-                exit 1;
-            }
-            if ($float_tau * 2 >= $tf) {
-                # the highest case that can hit required tau occurs when
-                # x(y-i) = float, y + i is prime
-                my $y = $float / $x + $i;
-warn sprintf "track($n,$f) for fixpow at %s with t=%s at %s suppress all after %s\n", $k, $ti, $ki, $x * $y * $y - $k;
-                $c->suppress(1, 0, $x * $y * $y - $k);
-            }
-            # TODO: more cases, eg float_tau=2, tf=6 may require float_mult^2
-        }
-}
+        # dig for more information
+        $self->from_fixpow($force);
     }
     return $fixpow;
+}
+
+# given d+k = xy^z is known, do other d+i have known factorizations?
+sub from_fixpow {
+    my($self, $fixpow) = @_;
+    my $c = $self->c;
+    my $n = $self->n;
+    my($k, $x, $z) = @$fixpow;
+    my $xq = remove_squares($x);
+
+    # try x_q(y-i)(y+i)
+    for (my $i = 1; $i * $i * $xq <= $k; ++$i) {
+        my $ki = $k - $i * $i * $xq;
+        my $ti = $self->func_target($ki);
+        if ($ti < 4) {
+            # must fail when y-i > 1
+            $c->suppress(1, 0, $xq * ($i + 2)**2 - $k);
+            next;
+        }
+        my($float, $spare) = $self->float_spare($n, $ki);
+        my $fixp = gcd($spare, $float);
+        my($fixed_tau, $fixed, $float_tau, @ffact) = (1, $zone, 1);
+        for (factor_exp($float)) {
+            my($p, $px) = @$_;
+            if ($self->is_fixed($p, $px, $c, $n, $fixp)) {
+                # take the fixed power, splice out of the list of remaining
+                # floating powers
+                $fixed_tau *= $px + 1;
+                $fixed *= $p ** ($px - 1);
+            } else {
+                $float_tau *= $px + 1;
+                push @ffact, [$p, $px];
+            };
+        }
+
+        my $fail = sub {
+            printf <<OUT, $fixed_tau, $float_tau, $ti, $ki;
+502 Error: fixed %s, float %s not available in tau %s for k=%s
+OUT
+            exit 1;
+        };
+        $fail->() if $ti % $fixed_tau;
+
+        my $tf = $ti / $fixed_tau;
+        $fail->() if $tf < $float_tau;
+
+        my @tff = factor_exp($tf);
+        # If we can satisfy floating powers with two spare factors,
+        # we have no constraint.
+        next if liftable($tf, 2, $float_tau, \@ffact);
+
+        # If we can satisfy with one spare factor, best is when all
+        # fixed and (maximized) floating factors are on one side.
+        my $best = $fixed * liftable($tf, 1, $float_tau, \@ffact);
+
+        unless ($best) {
+            # If we can satisfy only without spare factors, best (if
+            # it exists at all) will involve a balance of the fixed
+            # and floating factors on either side; we assume this is
+            # already so restrictive that a crude approximation will do.
+            $best = $fixed * liftable($tf, 0, $float_tau, \@ffact);
+            $fail->() unless $best;
+            $best = int(sqrt($best));
+        }
+
+        # the highest case that can hit required tau occurs when
+        # x_q(y-i) = best, (y+i) is prime
+        my $y = $best / $xq + $i;
+        printf <<OUT, $k, $float, $float * $spare, $ki, $xq, $y;
+318 fix_power at v_%s with %s (mod %s) at v_%s fails after %s.%s^2
+OUT
+        $c->suppress(1, 0, $xq * $y * $y - $k);
+    }
+
+    # TODO: try x(y^2+i)(...) if z is divisible by any odd prime
+}
+
+sub liftable {
+    my($target, $sparep, $prod, $powers) = @_;
+    while ($sparep) {
+        return 0 if $target <= 1;
+        my $minp = [ factor_exp($target) ]->[0][0];
+        $target /= $minp;
+        --$sparep;
+    }
+    return 0 if $target < $prod;
+    return 1 unless @$powers;
+    my @uppowers = map {
+        my($p, $e) = @$_;
+        [ $p, $e + 1 ];
+    } @$powers;
+    my $best = 0;
+    _liftable_r($target, $prod, \@uppowers, 0, \$best);
+    return $best;
+}
+
+sub _liftable_r {
+    my($target, $prod, $powers, $index, $rbest) = @_;
+    return if $target < $prod;
+    if (($target % $prod) == 0) {
+        local $powers->[-1][1] = $powers->[-1][1] * ($target / $prod);
+        my $this = _deprod($powers);
+        $$rbest = $this if $$rbest < $this;
+        return;
+    }
+    return if $index >= @$powers;
+    my $base = $powers->[$index][1];
+    for my $newpow ($base .. 2 * $base - 1) {
+        my $newprod = $prod * $newpow / $base;
+        local $powers->[$index][1] = $newpow;
+        _liftable_r($target, $newprod, $powers, $index + 1, $rbest);
+    }
+    return;
+}
+
+sub _deprod {
+    my($powers) = @_;
+    my $s = $zone;
+    for (@$powers) {
+        my($p, $x) = @$_;
+        $s *= $p ** ($x - 1);
+    }
+    return $s;
 }
 
 sub float_spare {
