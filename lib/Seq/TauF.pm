@@ -300,7 +300,8 @@ sub _strategy {
         # a normal run took $sum tests for $keep values; an optimizing
         # run will take $self->k * $keep tests, so scale it down,
         # with care to avoid mixing bigints and floats
-        $optx = $optn + int(('' . ($optx - $optn)) * ($sum / $self->k / $keep)
+        $optx = $optn + int(('' . ($optx - $optn))
+                * ($sum / ($self->k || 1) / ($keep || 1))
                 * ($EXPECT_TS / $SLOW));
         return (Seq::Run->gen(
             $self, $db, {
