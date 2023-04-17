@@ -48,7 +48,7 @@ sub prep { () }
 sub runnable {
     my($self, $db) = @_;
     return () if $self->g->complete
-            || $self->g->prime
+#            || $self->g->prime
             || $self->g->depend
             || $self->f->minc;
     return $self;

@@ -38,7 +38,7 @@ sub logpath {
 
 sub rprio {
     my($self, $type) = @_;
-    return $type->gprio($self->n) + 1;
+    return $type->gprio($self->n) + 100;
 }
 
 sub desc {
@@ -51,7 +51,7 @@ sub prep { () }
 sub runnable {
     my($self, $db) = @_;
     return () if $self->g->complete
-            || $self->g->prime
+#            || $self->g->prime
             || $self->g->depend;
     return $self;
 }

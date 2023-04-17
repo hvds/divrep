@@ -15,9 +15,10 @@ my $SIMPLE = Math::GMP->new(1 << 20);
 # Assume we don't need to do much clever if expected runtime is this fast.
 my $FAST = 10;
 my $SLOW = 600;
+my $BISECT_RATE = 60;
 my $SHARD_RATE = 60;
-my $USE_TS = 1200;
-my $EXPECT_TS = 1200;
+my $USE_TS = 12000;
+my $EXPECT_TS = 12000;
 
 =head1 NAME
 
@@ -259,7 +260,7 @@ sub _strategy {
     if ($expect < $FAST) {
         $optc = max(100, $r->optc / 2);
     } else {
-        $optc = 100 + $optx->sizeinbase_gmp(2) * 50;
+        $optc = 100 + ($optx->sizeinbase_gmp(2) ** 1.3) * 50;
         $optc /= 4 if $r->fix_power;
     }
     my $eprep = $prep * $optc / $r->optc;
@@ -267,6 +268,7 @@ sub _strategy {
         ($optc > $r->optc && $prep > $run)
         || ($optc < $r->optc && $prep < $run / 10)
     );
+    $optc = min($optc, 20000);
     $optc = max($optc, $self->minc // 0);
     $optc = int($optc);
     $eprep = $prep * $optc / $r->optc;
@@ -302,7 +304,7 @@ sub _strategy {
     # c) we haven't already done so ($self->test_order)
     # and d) we have at least one run with this k
     if ($expect > $USE_TS
-        && !$g->prime
+#        && !$g->prime
         && !@{ $self->test_order }
         && $r->k == $self->k
         && !$self->cul
@@ -362,8 +364,21 @@ sub _strategy {
 
 sub maybe_bisectg {
     my($self, $type, $expect) = @_;
-    my $depth = 1000 * (1 + int(log($expect / $SLOW) / log(10)));
+    my $depth = max(20000, min(30000,
+        max(100 * $self->k, $self->n + $self->k,
+            1000 * (1 + int(log($expect / $BISECT_RATE) * 1.5 / log(10))),
+        )
+    ));
     my $g = $self->g;
+    if ($expect < 1) {
+        # If there's a Pell equation or high power, we can get very fast
+        # runs even as we check high numbers. Let's make sure we continue
+        # to push the bisect envelope in that case.
+        my $depth2 = min(20000,
+            1000 * (1 + int($g->checked->sizeinbase_gmp(2) / 100))
+        );
+        $depth = $depth2 if $depth <= $depth2;
+    }
     return undef if $depth <= ($g->bisected // 0);
     return Seq::Run::BisectG->new($type, $g, $self, $depth,
             [ map "-m$_", @{ $self->optm } ]);
@@ -374,7 +389,7 @@ sub maybe_shardtest {
     my $k = $self->k;
     my $target = (1 + int(log($expect / $SHARD_RATE) * 4 / log(10)));
     $target = 0 if $target < 0;
-    $target = $k + ($target - $k) / 4 if $target > $k;
+    $target = $k + ($target - $k) / 4;
     my $prev = $self->sharded || 1;
     return undef if $target <= $prev;
     # always step through shards in order
@@ -422,7 +437,7 @@ sub forceFor {
             sharded => 0,
             optm => ($prev ? $prev->optm : ''),
         });
-        $self->cul(1) if $prev->cul;
+        $self->cul(1);
         $self->insert;
     }
     return $self;
