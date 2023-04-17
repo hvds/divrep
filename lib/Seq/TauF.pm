@@ -221,10 +221,8 @@ sub _strategy {
     my $optn = $g->checked + 1;
     my $optx = $g->checked * 2;
     my $_n = sub { "$_[0]" + 0 };
-    # last run may not have completed, in which case the actual point reached
-    # will be in g->checked; but the latter may also have been advanced by
-    # someone else, so take optx as the safer guess if it's the smaller
-    my $prevrange = $_n->(min($g->checked, $r->optx) - $r->optn);
+    # last run's optx has been updated to reflect what was actually reached
+    my $prevrange = $_n->($r->optx - $r->optn);
     my $prep = $r->preptime // 0;
     my $run = $r->runtime * $_n->($optx + 1 - $optn) / $prevrange;
     my $expect = ($prep + $run) || 1;
@@ -339,8 +337,10 @@ sub maybe_bisectg {
 
 sub lastRun {
     my($self, $db) = @_;
+    my $owner = $db->type->owner;
     my @r = sort { $a->runid <=> $b->runid }
-            grep !$_->optimizing, $self->runs->all;
+            grep $_->owner == $owner && !$_->optimizing,
+            $self->runs->all;
     return $r[-1] if @r;
     my $r = Seq::Run->lastForN($db, $self->n);
     return $r if $r;

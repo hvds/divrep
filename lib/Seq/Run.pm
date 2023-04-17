@@ -78,6 +78,7 @@ sub restrategise {
 sub lastForN {
     my($self, $db, $n) = @_;
     my $owner = $db->type->owner;
+    # FIXME: should also avoid optimizing runs
     return $db->resultset($TABLE)->find({
         n => $n,
         owner => $owner,
@@ -192,6 +193,7 @@ sub finalize {
                 or return $self->failed("(n, k) mismatch in '$_'");
         $self->runtime($t - ($self->preptime // 0));
         $good = $rend->($d);
+        $self->optx($good);
     }
     for (( $line{301} // [] )->[-1] // ()) {
         my($n, $k, $d, $ta) = m{
@@ -222,6 +224,7 @@ sub finalize {
                 or return $self->failed("(n, k) mismatch in '$_'");
         $self->runtime($t - ($self->preptime // 0));
         $bad = $rend->($d);
+        $self->optx($last_fail // $bad);
     }
     for (@{ $line{402} // [] }) {
         # 402 Error: all values ... disallowed (${time}s)
@@ -291,6 +294,12 @@ sub finalize {
     $self->complete(1);
     $self->running(0);
 
+    eval { $self->update; 1 } or do {
+        my $e = $@;
+        print $self->Dump;
+        die $e;
+    };
+
     my $tauf = $self->f;
     my @result = $self->partial ? (
         $good ? $tauf->partial($db, $self, $good, $best)
@@ -312,11 +321,6 @@ sub finalize {
         : die "panic"
     );
 
-    eval { $self->update; 1 } or do {
-        my $e = $@;
-        print $self->Dump;
-        die $e;
-    };
     return @result;
 }
 
