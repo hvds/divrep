@@ -261,7 +261,7 @@ void update_window(t_level *cur_level) {
         uint this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
         printf("\x1b]0;b%d:", this_batch);
         uint pc = 0;
-        for (uint i = 1; i < cur_level->level && pc < 3; ++i) {
+        for (uint i = 1; i <= cur_level->level && pc < 3; ++i) {
             if (levels[i].is_forced)
                 continue;
             printf(" %lu", levels[i].p);
