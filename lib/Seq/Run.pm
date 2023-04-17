@@ -220,7 +220,7 @@ sub finalize {
         }x or return $self->failed("Can't parse 500 result: '$_'");
         $n == $self->n && $k == $self->k
                 or return $self->failed("(n, k) mismatch in '$_'");
-        $self->runtime($t - $self->preptime);
+        $self->runtime($t - ($self->preptime // 0));
         $bad = $rend->($d);
     }
     for (@{ $line{402} // [] }) {

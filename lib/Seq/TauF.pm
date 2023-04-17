@@ -225,7 +225,7 @@ sub _strategy {
     # will be in g->checked; but the latter may also have been advanced by
     # someone else, so take optx as the safer guess if it's the smaller
     my $prevrange = $_n->(min($g->checked, $r->optx) - $r->optn);
-    my $prep = $r->preptime;
+    my $prep = $r->preptime // 0;
     my $run = $r->runtime * $_n->($optx + 1 - $optn) / $prevrange;
     my $expect = ($prep + $run) || 1;
 
