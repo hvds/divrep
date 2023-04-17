@@ -107,7 +107,8 @@ sub report_g {
         }
         next if $g->checked == 0 && !$g->complete;
         next if $opt_composite && (
-            $g->prime || $g->complete || $g->depend
+#            $g->prime || $g->complete || $g->depend
+            $g->complete || $g->depend
         );
         if ($opt_table) {
             my $f = (

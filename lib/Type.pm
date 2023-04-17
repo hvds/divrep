@@ -9,6 +9,7 @@ my %types = (
     a => 'Type::AddSeq',
     s => 'Type::Semip',
     o => 'Type::OneSeq',
+    O => 'Type::OneSeq2',
     d => 'Type::AscDPrime',
     n => 'Type::AscNPrime',
     r => 'Type::Track',
