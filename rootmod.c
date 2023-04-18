@@ -131,6 +131,7 @@ void done_rootmod(void) {
             rp->size = 0;
         }
     }
+    free(ra);
 }
 
 void save_result(t_results *rp, mpz_t r) {

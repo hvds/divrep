@@ -548,6 +548,7 @@ void done(void) {
     free_fact(&nf);
     mpz_clear(max);
     mpz_clear(min);
+    mpz_clear(best);
     done_pell();
     done_rootmod();
     done_tau();
