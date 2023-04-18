@@ -14,7 +14,7 @@ my $zero = MBI(0);
 
 my $typename = 'o';
 # Only known tauish types supported for now.
-my %supported = map +($_ => 1), qw{ t a o };
+my %supported = map +($_ => 1), qw{ t a r o };
 my $dryrun = 0;
 my $full = 0;
 my $hlim = 16000;   # same as default trial_factor limit for factor_exp

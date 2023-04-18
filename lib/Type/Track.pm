@@ -63,7 +63,7 @@ sub ming { 0 }
 sub maxg {
     my($self, $n) = @_;
     # Cannot have two consecutive squares
-    my $q = int(sqrt($n - 1)) + 2;
+    my $q = isqrt($n - 1) + 2;
     return $q * $q - 1 - $n;
 }
 
@@ -223,7 +223,7 @@ OUT
             # already so restrictive that a crude approximation will do.
             $best = $fixed * liftable($tf, 0, $float_tau, \@ffact);
             $fail->() unless $best;
-            $best = int(sqrt($best));
+            $best = isqrt($best);
         }
 
         # the highest case that can hit required tau occurs when
@@ -369,6 +369,11 @@ sub remove_squares {
         $s *= $p if $x & 1;
     }
     return $s;
+}
+
+sub isqrt {
+    my($n) = @_;
+    return ref($n) ? $n->bsqrt : int(sqrt($n));
 }
 
 #
