@@ -1,0 +1,140 @@
+RUN
+===
+
+The Makefile will typically build a binary called 'pcoul'. The standard
+way to run it is:
+  pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
+      [-g<damp:gain] [-p<minp:maxp>] [-s<randseed>] [-o] [-d]
+      [-j<strategy>] <n> <k>
+
+On a Unix-like system you will usually invoke it as "./pcoul". On Windows
+you will usually invoke it as "pcoul" or as "pcoul.exe".
+
+Options:
+If "-r/path/to/logfile" is specified, progress is regularly written to the
+specified file (by default at least once every 600s, see 'LOG' in coul.c).
+If the file already exists, it will attempt to determine the last point
+reached according to that log, and continue processing from that point.
+By default there is no logfile, and progress will only be shown on the
+terminal.
+
+If "-R" is specified, the file is _not_ read to determine the point to
+recover from: calculation always goes from the beginning. This can be
+useful to combine several separate runs into a single log file.
+
+If "-f7" is specified, it will set force_all = 7 to treat all primes p <= 7
+as fully forced primes (see 'HOW IT WORKS' below). By default, force_all is
+set to k (the maximum) when n == 2 (mod 4), and to 0 otherwise.
+
+If "-F7" is specified, it will set unforce_all = 7 to treat all primes
+p >= 7 as unforceable. Unforceable primes are treated like partially
+forced primes by suppressing batches where each power of the relevant
+prime is one less than a power of 2. "-F" is equivalent to "-F1", to
+treat all primes as unforceable. Default is 0, in which case no primes
+are unforceable.
+
+If "-x100:1000" is specified, it will look for solutions v_0 with
+100 < v_0 <= 1000. "-x:1000" or "-x1000" are equivalent to "-x0:1000".
+Also supports exponential notation (without decimal), so "-x13e6"
+is equivalent to "-x13000000".
+The default minimum is zero; there is no default maximum: this is a
+required option.
+
+If "-X" is specified, it will search for all solutions up to the
+specified maximum. By default, it will search only for solutions that
+improve on the best found so far.
+Even with -X, it will still track the best solution found to report it
+at the end of the run.
+
+If "-g2:3" is specified, it will set gain = 3/2. This is a multiplier
+used to control the transition from recurse() to walk_v() (see 'HOW IT
+WORKS' below). A higher gain means it spends more time in recurse(),
+a lower gain means it spends more time in walk_v().  Also supports
+exponential notation (without decimal), so "-g13e6" is equivalent to
+"-g13000000". Fine-tuning the gain can make a big difference to runtime;
+default gain is 1.
+
+If "-p50:100" is specified, it will allocate (see 'HOW IT WORKS' below)
+only powers of primes p < 100, and will allocate at least one power of
+a prime p > 50. This can be used to search more selectively to improve
+an upper limit.  "-p:100" or "-p100" are equivalent to "-p0:100".
+By default it considers all possible allocations.
+
+If "-W100" is specified, it will use a different process to test all
+possible cases involving p^e with p > 100, and then continue with the
+normal process as if "-p100" had been specified. This can give a very
+substantial speed improvement if the -W value is chosen with care.
+Default is not to do this (equivalent to -Winfinity).
+
+"-p" and "-W" may also be specified in the form "100^2" rather than
+as a simple integer, in which case it expresses a limit on the
+allocated power p^e rather than a limit on the prime regardless of
+power.
+
+The extended forms "-px" and "-Wx" can be used for fine-grained control:
+the minimum, maximum and threshold values in this case should be a
+comma-separated list of "p^e" override values. Thus "-p100 -px1^5,0^11"
+allows p <= 100 for all powers except that no powers of the form p^5
+are allowed, and all powers of the form p^11.
+
+If "-s2" is specified, it will initialize the random number generator
+with seed 2, used at least for ECM factorization. The default seed is 1,
+intended to help make results more reproducible.
+
+If "-o" is specified, it will not attempt to factorize numbers beyond
+a certain point, but will instead print them as a possible candidate.
+(**Not yet implemented.**) The default is to fully factorize numbers
+as far as needed to prove whether they are or are not a candidate.
+
+If "-a" is specified, it will establish only each valid set of batch
+allocations of forced primes, and output those sets assigning an index
+to each one (for use by '-b' below).
+
+If "-b100" is specified, it will find the set of batch allocations of
+forced primes with index 100, and run the normal calculations only
+over that batch.
+
+If "-j1" is specified, it will use "strategy 1" when determining the
+next position to which to allocate another prime power (default
+"strategy 0"). For D(120,2) with pattern "2^7 3^4", for example,
+strategy 0 will pick the second position and start allocating p^2,
+since it has the highest remaining tau to fulfill; strategy 1 will
+pick the first position and start allocating p^4, since it has the
+highest prime dividing the remaining tau to fulfill. "-j2" uses
+"strategy 2", which is the opposite of "strategy 0": it looks for
+the _lowest_ remaining tau to fill. "-j3" uses "strategy 3", which
+is identical to "strategy 0" except that if the last allocation at
+some position was a) unforced, and b) the square root of the remaining
+(even) tau, that position will automatically be picked.
+"-j1" is the default when n is divisible by at least two distinct odd
+primes; "-j0" is the default in all other cases.
+
+If "-I..." is specified, the argument should be a pattern of the same
+form as that generated for progress lines. All prime powers specified
+are then forced into place.
+
+If "-m9=5" is specified, the first element of the sequence v_0 is
+forced to satisfy v_0 == 5 (mod 9). This option may be specified
+multiple times. Note that this means only that allocations will be
+rejected if they are not consistent with the modular constraints:
+we do not preemptively work out what allocations would be required
+for consistency.
+
+Specifying "-d" enables debugging. By default, progress is shown on the
+terminal every 1 seconds (see "DIAG" in coul.c), overwriting the previous
+progress line each time. With "-d", it instead shows progress at every
+step on a new line (but only a single line for walk_v()). If "-d" is
+specified twice, a line is shown for each iteration of walk_v().
+
+<n> and <k> are mandatory arguments, specifying that we want to search
+for D(n, k) (equivalently T(n/2, k) in the terminology of A292580).
+<n> must be a positive even integer; <k> must be a positive integer.
+Note that this code is optimized for relatively small values of <n>,
+targetting 2 <= n <= 100; much higher n may require a lot of memory
+and long start-up times.
+
+
+HOW IT WORKS
+============
+
+See the wiki page <https://github.com/hvds/divrep/wiki/D(n,k)-calculation>.

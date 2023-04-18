@@ -1,6 +1,12 @@
 /* needed on FreeBSD for getline() to be exported from stdio.h */
 #define _WITH_GETLINE
 
+#define ANSI_COLOR_RED	"\x1b[31m"
+#define ANSI_COLOR_RESET	"\x1b[0m"
+#define ANSI_COLOR_GREEN	"\x1b[32m"
+#define ANSI_COLOR_YELLOW	"\x1b[33m"
+#define ANSI_COLOR_BLUE	"\x1b[34m"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -12,7 +18,11 @@
 #   include <sys/types.h>
 #endif
 #include <signal.h>
+#ifdef __CYGWIN__
+/* noop */
+#else
 #include <time.h>
+#endif
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -142,9 +152,12 @@ uint nsprimes;
 double t0 = 0;
 struct rusage rusage_buf;
 static inline double utime(void) {
+#ifdef __CYGWIN__
+      return clock() / 1000;
+#else
     getrusage(RUSAGE_SELF, &rusage_buf);
-    return (double)rusage_buf.ru_utime.tv_sec
-            + (double)rusage_buf.ru_utime.tv_usec / 1000000;
+    return (double)rusage_buf.ru_utime.tv_sec + (double)rusage_buf.ru_utime.tv_usec / 1000000;
+#endif
 }
 timer_t diag_timerid, log_timerid;
 volatile bool need_work, need_diag, need_log;
@@ -261,7 +274,7 @@ void update_window(t_level *cur_level) {
         uint this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
         printf("\x1b]0;b%d:", this_batch);
         uint pc = 0;
-        for (uint i = 1; i < cur_level->level && pc < 3; ++i) {
+        for (uint i = 1; i <= cur_level->level && pc < 3; ++i) {
             if (levels[i].is_forced)
                 continue;
             printf(" %lu", levels[i].p);
@@ -317,6 +330,7 @@ void report(char *format, ...) {
         gmp_vfprintf(rfp, format, ap);
         va_end(ap);
         fflush(rfp);
+        t0 = utime();
     }
 }
 
@@ -734,6 +748,7 @@ void recover(FILE *fp) {
     char *curbuf = NULL;
     size_t len = 120, len305 = 0, len202 = 0;
 
+    fseek(fp, 0L, SEEK_SET);
     while (1) {
         ssize_t nread = getline(&curbuf, &len, fp);
         if (nread <= 0) {
@@ -782,10 +797,12 @@ void recover(FILE *fp) {
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
+    fseek(fp, 0L, SEEK_END);
     if (improve_max && seen_best && mpz_cmp(best, max) < 0)
         mpz_set(max, best);
     if (last305)
         parse_305(last305 + 4);
+    fseek(fp, 0L, SEEK_SET);
     free(curbuf);
     free(last305);
 }
@@ -1162,7 +1179,7 @@ void prep_mp(void) {
     }
 }
 
-void init_post(void) {
+void init_post(FILE *rfp2) {
     init_tau(rough);
     alloc_taum(k);
     if (randseed != 1) {
@@ -1173,20 +1190,9 @@ void init_post(void) {
         clear_randstate();
         init_randstate(randseed);
     }
-    if (rpath) {
-        printf("path %s\n", rpath);
-        if (!skip_recover) {
-            FILE *fp = fopen(rpath, "r");
-            if (fp) {
-                recover(fp);
-                fclose(fp);
-            }
-        }
-
-        rfp = fopen(rpath, "a");
-        if (rfp == NULL)
-            fail("%s: %s", rpath, strerror(errno));
-        setlinebuf(rfp);
+    if (rfp2) {
+        recover(rfp2);
+        setlinebuf(rfp2);
     }
     if (init_pattern)
         parse_305(init_pattern);
@@ -3550,6 +3556,17 @@ void recurse(e_is jump_continue) {
     }
 }
 
+void readme_help(void) {
+
+#include "read-line-coded.txt"
+  printf("\a\a\a");
+  printf("\non Windows use like:\n");
+  printf("start pcoul.exe -rresults119.txt -x9887353188984012120346 -f11 -g3 -b119 12 11\n");
+  printf("pcoul.exe -x9000000000 -a 12 11\n");
+  printf("For help run: pcoul.exe\n");
+  printf("Print help to file run: pcoul.exe > pcoul.txt\n\n");
+}
+
 int main(int argc, char **argv, char **envp) {
     int i = 1;
 #ifdef HAVE_SETPROCTITLE
@@ -3651,16 +3668,38 @@ int main(int argc, char **argv, char **envp) {
         skip_recover = 1;
     if (i + 2 == argc) {
         n = strtoul(argv[i++], NULL, 10);
+        if (n == '\0') {
+           printf("\a\a\a");
+           fail("\n" ANSI_COLOR_RED "Error:" ANSI_COLOR_RESET ANSI_COLOR_YELLOW "D(n,k) 'n' - Must be digit! Break." ANSI_COLOR_RESET "\n");
+           }
         k = strtoul(argv[i++], NULL, 10);
-    } else
-        fail("wrong number of arguments");
+        if (k == '\0') {
+           printf("\a\a\a");
+           fail("\n" ANSI_COLOR_RED "Error:" ANSI_COLOR_RESET ANSI_COLOR_YELLOW "D(n,k) 'k' - Must be digit! Break." ANSI_COLOR_RESET "\n");
+           }
+    } else {
+        readme_help();
+        printf("\a\a\a");
+        fail("\n" ANSI_COLOR_RED "Error:" ANSI_COLOR_RESET ANSI_COLOR_YELLOW " wrong number of arguments" ANSI_COLOR_RESET);
+        }
     if (force_all > k)
         fail("require force_all <= k");
 
-    init_post();
+    if (rpath) {
+      printf("path %s\n", rpath);
+      rfp = fopen(rpath, "a+");
+      if (rfp == NULL)
+        fail("%s: %s", rpath, strerror(errno));
+      setvbuf(rfp, NULL, 0, _IOLBF);
+    }
+    init_post(rfp);
     report_init(stdout, argv[0]);
-    if (rfp) report_init(rfp, argv[0]);
-
+    if (rfp) {
+       report_init(rfp, argv[0]);
+       if (freopen(rpath, "a+", rfp) == NULL)
+          fail("could not reopen %s: %s", rpath, strerror(errno));
+       setvbuf(rfp, NULL, 0, _IOLBF);
+    }
     bool jump = IS_DEEPER;
     if (rstack) {
         jump = insert_stack();
