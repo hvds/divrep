@@ -212,6 +212,7 @@ bool debugW = 0;    /* diag and keep every case seen (including walk) */
 bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
 bool debugB = 0;    /* show every batch id */
+bool debugt = 0;    /* show target_t() */
 
 ulong randseed = 1; /* for ECM, etc */
 bool vt100 = 0;     /* update window title with VT100 escape sequences */
@@ -1477,6 +1478,15 @@ void report_init(FILE *fp, char *prog) {
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
     fprintf(fp, "\n");
+    if (debugt) {
+        fprintf(fp, "312 target tau: [");
+        for (uint i = 0; i < k; ++i) {
+            if (i)
+                fprintf(fp, " ");
+            fprintf(fp, "%d", target_t(i));
+        }
+        fprintf(fp, "]\n");
+    }
 }
 
 void set_minmax(char *s) {
@@ -3751,6 +3761,9 @@ int main(int argc, char **argv, char **envp) {
                 break;
               case 'x':
                 debugx = 1;
+                break;
+              case 't':
+                debugt = 1;
                 break;
               default:
                 fail("Unknown debug option '%s'", arg);
