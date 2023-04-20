@@ -8,7 +8,7 @@ use Seq::Db;
 use ModFunc qw{ gcd };
 
 my $typename = 't';
-my($opt_g) = (0);
+my($opt_g, $opt_cp) = (0, 20);
 my @opts;
 
 while (@ARGV && $ARGV[0] =~ /^-/) {
@@ -16,6 +16,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     last if $arg eq '--';
     $typename = $1, next if $arg =~ /^-y(.*)/;
     $opt_g = 1, next if $arg eq '-g';
+    $opt_cp = $1, next if $arg =~ /^-cp(.+)/;
     push(@opts, $arg), next if $arg =~ /^-m/;
     die "Unknown option '$arg'";
 }
@@ -23,6 +24,7 @@ my $type = Type->new($typename);
 option_g(@ARGV) if $opt_g;  # does not return
 @ARGV == 5 or die "500 Usage: $0 n k m d optc";
 my($n, $k, $m, $d, $optc) = @ARGV;
+$opt_cp = $m + 1 if $opt_cp < $m + 1;
 
 =head1 shard-test: find disallowed values (mod m) for f(n,k)
 
@@ -62,7 +64,10 @@ sub final {
 sub fetchVM {
     my($type) = @_;
     my $log = sprintf "%s/st%s.%s-i", $type->logpath, $n, $k;
-    my @args = ('-nx', $d, '-c', $optc, @opts, '-D', '-f', $n, $k);
+    my @args = (
+        '-nx', $d, '-c', $optc, '-cp', $opt_cp, @opts,
+        '-D', '-f', $n, $k
+    );
     my $lines = $type->invoked('gtauseq', "st($n, $k)", \@args, $log);
     if (@{ $lines->{302} // [] }) {
         my $line = $lines->{302}[0];
@@ -85,7 +90,7 @@ sub bad {
     my($type, $tryv, $trym) = @_;
     my $log = sprintf "%s/st%s.%s-%s.%s", $type->logpath, $n, $k, $trym, $tryv;
     my @args = (
-        '-nx', $d, '-c', $optc, @opts, '-m', "$trym=$tryv",
+        '-nx', $d, '-c', $optc, '-cp', $opt_cp, @opts, '-m', "$trym=$tryv",
         '-D', '-f', $n, $k,
     );
     my $lines = $type->invoked('gtauseq', "st($n, $k)", \@args, $log);
