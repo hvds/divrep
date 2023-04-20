@@ -361,10 +361,12 @@ sub maybe_bisectg {
 
 sub maybe_shardtest {
     my($self, $type, $expect, $optc) = @_;
-    my $target = (1 + int(log($expect / $SHARD_RATE) * 2 / log(10)));
+    my $k = $self->k;
+    my $target = (1 + int(log($expect / $SHARD_RATE) * 4 / log(10)));
+    $target = 0 if $target < 0;
+    $target = $k + ($target - $k) / 4 if $target > $k;
     my $prev = $self->sharded || 1;
     return undef if $target <= $prev;
-#warn sprintf "for f(%s,%s) target $target > $prev\n", $self->n, $self->k;
     # always step through shards in order
     return Seq::Run::ShardTest->new($type, $self->g, $self, $optc, $prev + 1,
             [ map "-m$_", @{ $self->optm } ]);
