@@ -213,6 +213,7 @@ bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
 bool debugB = 0;    /* show every batch id */
 bool debugt = 0;    /* show target_t() */
+bool log_full = 0;  /* show prefinal result for harness */
 
 ulong randseed = 1; /* for ECM, etc */
 bool vt100 = 0;     /* update window title with VT100 escape sequences */
@@ -253,6 +254,11 @@ typedef struct s_modfix {
 } t_modfix;
 t_modfix *modfix = NULL;
 uint modfix_count = 0;
+
+typedef struct s_sizedstr {
+    char *s;
+    size_t size;
+} t_sizedstr;
 
 #if defined(TYPE_o) || defined(TYPE_r)
     static inline uint TYPE_OFFSET(uint i) {
@@ -346,6 +352,72 @@ void report(char *format, ...) {
 
 double seconds(double t1) {
     return (t1 - t0);
+}
+
+uint _sizeinbase(uint n, uint base) {
+    uint size = 1;
+    while (n >= base) {
+        ++size;
+        n /= base;
+    }
+    return size;
+}
+
+uint write_fact(t_sizedstr *bufp, mpz_t v, uint target) {
+    factor_state fs;
+    uint t = 1;
+
+    if (mpz_cmp_ui(v, 1) == 0) {
+        bufp->s = realloc(bufp->s, 2);
+        bufp->size = sprintf(bufp->s, "1");
+        return t;
+    }
+
+    fs_init(&fs);
+    mpz_set(fs.n, v);
+    while (1) {
+        if (!factor_one(&fs))
+            break;
+        t *= fs.e + 1;
+        uint next = bufp->size ? 1 : 0;
+        uint size = bufp->size + next + 1;
+        size += mpz_sizeinbase(fs.f, 10);
+        if (fs.e > 1)
+            size += 1 + _sizeinbase(fs.e, 10);
+        bufp->s = realloc(bufp->s, size);
+        bufp->size += gmp_sprintf(&bufp->s[bufp->size], "%s%Zu",
+                (next ? "." : ""), fs.f);
+        if (fs.e > 1)
+            bufp->size += sprintf(&bufp->s[bufp->size], "^%u", fs.e);
+    }
+    fs_clear(&fs);
+    return t;
+}
+
+bool report_211(uint vi, t_sizedstr *bufp) {
+    /* 211 Sequence  0:  4 = tau(1248619267217398415 = 5.249723853443479683) */
+    mpz_add_ui(Z(temp), best, vi);
+    uint target = know_target(vi);
+    uint t = write_fact(bufp, Z(temp), target);
+    report("211 Sequence %d: %d = tau(%Zu = %s)\n",
+            vi, t, Z(temp), bufp->s);
+    bufp->size = 0;
+    return t == target;
+}
+
+void report_prefinal(double tz) {
+    if (!seen_best) {
+        /* 500 f(241, 9) > 56346707724292074686037507 (655.570s) */
+        report("500 f(%d, %d) > %Zd (%.3fs)\n",
+                n, k, max, seconds(tz));
+        return;
+    }
+    t_sizedstr buf = { NULL, 0 };
+    bool good = 1;
+    for (uint i = 0; i <= k || good; ++i)
+        if (!report_211(i, &buf))
+            good = 0;
+    free(buf.s);
 }
 
 /* gmp_sprintf into aux_buf, resizing as needed */
@@ -3775,6 +3847,9 @@ int main(int argc, char **argv, char **envp) {
               case 't':
                 debugt = 1;
                 break;
+              case 'l':
+                log_full = 1;
+                break;
               default:
                 fail("Unknown debug option '%s'", arg);
             }
@@ -3828,6 +3903,8 @@ int main(int argc, char **argv, char **envp) {
             "r",
 #endif
             n, k, countr, countw, countwi, seconds(tz));
+    if (log_full)
+        report_prefinal(tz);
     if (seen_best)
         report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, best, seconds(tz));
     done();
