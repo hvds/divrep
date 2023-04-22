@@ -22,7 +22,7 @@ __PACKAGE__->define($TABLE, 'run', [
     'uint n',
     'uint k',
     'uint owner',
-    'flags(complete running optimizing fix_power old partial) status',
+    'flags(complete running optimizing fix_power old partial cul) status',
     'bigint optn',
     'bigint optx',
     'uint optc',
@@ -61,6 +61,7 @@ sub gen {
         %$args{qw{ optn optx optc optcp optm priority }},
     });
     $self->optimizing(1) if $args->{optimize};
+    $self->cul(1) if $args->{cul};
     $self->insert;
     return $self;
 }
@@ -91,6 +92,17 @@ sub lastForN {
 
 sub command {
     my($self) = @_;
+    if ($self->cul) {
+        return [
+            '-dl',
+            '-Ls0',
+            # minimum is exclusive for cul
+            "-x@{[ $self->optn - 1 ]}:@{[$self->optx ]}",
+            "-f@{[ $self->k ]}",
+            $self->n,
+            $self->k,
+        ];
+    }
     my $ts = join ',', @{ $self->f->test_order };
     return [
         '-n', '' . $self->optn,
@@ -121,9 +133,10 @@ sub runnable {
 
 sub run {
     my($self, $db) = @_;
+    my $cul = $self->cul;
     my $type = $db->type;
     my $cmd = $self->command;
-    my $named = sprintf 'gt(%s,%s)', $self->n, $self->k;
+    my $named = sprintf '%s(%s,%s)', ($cul ? 'cl' : 'gt'), $self->n, $self->k;
     my $log = $self->logpath($type);
     if ($self->running || -e $log) {
         use Carp;
@@ -131,7 +144,7 @@ sub run {
                 $self->runid, $self->n, $self->k);
         return undef;
     }
-    my $pid = $type->invoke('gtauseq', $named, $cmd, $log);
+    my $pid = $type->invoke($cul ? 'cul' : 'gtauseq', $named, $cmd, $log);
     $self->running(1);
     $self->update;
     return $pid;

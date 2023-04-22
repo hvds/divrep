@@ -47,7 +47,7 @@ $tauf->define($TABLE, 'tauf', [
     'modlist test_order',
     'uint sharded',
     'modlist optm',
-    'flags(complete external estimated depend impossible) status',
+    'flags(complete external estimated depend impossible unused cul) status',
 ]);
 $tauf->belongs_to(
     g => 'Seq::TauG', {
@@ -224,6 +224,7 @@ sub _strategy {
                 optx => $SIMPLE,
                 optc => 100,
                 optm => $self->optm,
+                cul => $self->cul,
                 priority => $type->fprio($self->n, $self->k, 0),
             },
         );
@@ -277,6 +278,7 @@ sub _strategy {
                 optx => $optx,
                 optc => $optc,
                 optm => $self->optm,
+                cul => $self->cul,
                 priority => $type->fprio($self->n, $self->k, $expect),
             },
         ), @extra);
@@ -297,6 +299,7 @@ sub _strategy {
         && !$g->prime
         && !@{ $self->test_order }
         && $r->k == $self->k
+        && !$self->cul
     ) {
         # test order runs are slow, we need to scale our range down
         my $log = $r->logpath($type);
@@ -345,6 +348,7 @@ sub _strategy {
             optc => $optc,
             optm => $self->optm,
             optimize => 0,
+            cul => $self->cul,
             priority => $type->fprio($self->n, $self->k, $expect),
         },
     ), @extra);
@@ -412,6 +416,7 @@ sub forceFor {
             sharded => 0,
             optm => ($prev ? $prev->optm : ''),
         });
+        $self->cul(1) if $prev->cul;
         $self->insert;
     }
     return $self;
