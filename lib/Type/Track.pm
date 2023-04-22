@@ -11,6 +11,10 @@ use ModFunc qw{ is_residue gcd };
 
 my $zone = Math::GMP->new(1);
 
+my %PROG = (
+    cul => './pcrul',
+);
+
 =head2 Type::Track
 
 tau(d + i) = tau(n + i) for 0 <= i < k
@@ -76,6 +80,11 @@ sub func_target {
     my($self, $k) = @_;
     use Carp; Carp::confess("no k for func_target") unless defined $k;
     return $self->{_target}[$k] //= tau($self->n + $k);
+}
+
+sub prog {
+    my($self, $which) = @_;
+    return $PROG{$which} // $self->SUPER::prog($which);
 }
 
 # TODO: if d+k+r^2 = z^2 (typically with r=1), then d+k = (z-r)(z+r),

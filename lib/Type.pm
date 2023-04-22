@@ -74,9 +74,14 @@ sub owner {
     return $self->{owner_id} // die "No owner bound";
 }
 
+sub prog {
+    my($self, $which) = @_;
+    return $PROG{$which} // die "Unknown prog to invoke '$which'";
+}
+
 sub invoke {
     my($self, $which, $named, $args, $log) = @_;
-    my $prog = $PROG{$which} // die "Unknown prog to invoke '$which'";
+    my $prog = $self->prog($which);
     my $typename = $self->typename;
     my $pid = fork();
     unless ($pid) {
