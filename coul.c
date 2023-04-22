@@ -1883,7 +1883,20 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 pellt[1] = ti;
             }
 
+            /* FIXME: handle recovery too */
+            if (mpz_cmp_ui(min, 0) > 0) {
+                mpz_fdiv_q(Z(temp), min, *qi);
+                mpz_sqrt(Z(temp), Z(temp));
+                while (next_pell(Z(wv_x), Z(wv_y))) {
+                    if (mpz_cmp(Z(temp), Z(wv_x)) <= 0)
+                        goto continue_pell;
+                    ++pc;
+                }
+                goto done_pell;
+            }
+
             while (next_pell(Z(wv_x), Z(wv_y))) {
+              continue_pell:
                 /* v_{sqi} = x^2 . q_i; v_{sqj} = y^2 . q_j */
                 mpz_mul(Z(wv_x2), Z(wv_x), Z(wv_x));
 
@@ -1964,6 +1977,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
               next_pell:
                 ;
             }
+          done_pell:
             /* clear_pell(); */
             return;
         }
