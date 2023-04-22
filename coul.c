@@ -266,6 +266,19 @@ uint modfix_count = 0;
 #   error "No type defined"
 #endif
 
+uint know_target(uint vi) {
+#if defined(TYPE_r)
+    t_fact f;
+    init_fact(&f);
+    simple_fact(n + vi, &f);
+    uint t = simple_tau(&f);
+    free_fact(&f);
+    return t;
+#else
+    return n;
+#endif
+}
+
 void update_window(t_level *cur_level) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
@@ -845,11 +858,8 @@ void prep_target(void) {
     maxfact = 0;
     maxodd = 0;
     for (uint i = 0; i < k; ++i) {
-        uint t;
+        uint t = know_target(i);
 #if defined(TYPE_r)
-        f.count = 0;
-        simple_fact(n + i, &f);
-        t = simple_tau(&f);
         target_tau[i] = t;
         ulong g = simple_gcd(target_lcm, t);
         target_lcm *= t / g;
