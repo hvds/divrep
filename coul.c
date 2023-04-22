@@ -1868,6 +1868,21 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 : (int)TYPE_OFFSET(sqi - sqj);
             new_pell(*qi, *qj, sqoff, Z(wv_endr));
             uint pc = 0;
+
+            mpz_t *pellx[2];
+            uint pellt[2];
+            if (ti <= tj || (ti == tj && mpz_cmp(*qi, *qj) > 0)) {
+                pellx[0] = ZP(wv_x);
+                pellx[1] = ZP(wv_y);
+                pellt[0] = ti;
+                pellt[1] = tj;
+            } else {
+                pellx[0] = ZP(wv_y);
+                pellx[1] = ZP(wv_x);
+                pellt[0] = tj;
+                pellt[1] = ti;
+            }
+
             while (next_pell(Z(wv_x), Z(wv_y))) {
                 /* v_{sqi} = x^2 . q_i; v_{sqj} = y^2 . q_j */
                 mpz_mul(Z(wv_x2), Z(wv_x), Z(wv_x));
@@ -1897,12 +1912,10 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 mpz_gcd(Z(wv_temp), Z(wv_y), *qqj);
                 if (mpz_cmp_ui(Z(wv_temp), 1) != 0)
                     continue;
-                /* Note: assume the square roots are small enough to
-                 * factorize without fuss */
-                if (!is_taux(Z(wv_x), ti, 2))
-                    continue;
-                if (!is_taux(Z(wv_y), tj, 2))
-                    continue;
+                for (uint i = 0; i < 2; ++i) {
+                    if (!is_taux(*pellx[i], pellt[i], 2))
+                        goto next_pell;
+                }
 
                 mpz_sub(Z(wv_ati), Z(wv_x2), *oi);
                 mpz_divexact(Z(wv_ati), Z(wv_ati), *qqi);
