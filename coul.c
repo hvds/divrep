@@ -272,6 +272,16 @@ typedef struct s_sizedstr {
 #   error "No type defined"
 #endif
 
+static inline char typename(void) {
+#if defined(TYPE_o)
+    return 'o';
+#elif defined(TYPE_a)
+    return 'a';
+#elif defined(TYPE_r)
+    return 'r';
+#endif
+}
+
 uint know_target(uint vi) {
 #if defined(TYPE_r)
     t_fact f;
@@ -1483,20 +1493,13 @@ void init_post(void) {
 }
 
 void report_init(FILE *fp, char *prog) {
-    fprintf(fp, "001 %s%sc%sul(%u %u)", (start_seen ? "recover " : ""),
+    fprintf(fp, "001 %s%sc%cul(%u %u)", (start_seen ? "recover " : ""),
 #ifdef PARALLEL
             "p",
 #else
             "",
 #endif
-#if defined(TYPE_o)
-            "o",
-#elif defined(TYPE_a)
-            "a",
-#elif defined(TYPE_r)
-            "r",
-#endif
-            n, k);
+            typename(), n, k);
 
     if (strategy)
         fprintf(fp, " -j%u", strategy);
@@ -3887,6 +3890,10 @@ int main(int argc, char **argv, char **envp) {
             if (strategy >= NUM_STRATEGIES)
                 fail("Invalid strategy %u", strategy);
             strategy_set = 1;
+        } else if (arg[1] == 'y') {
+            if (arg[2] != typename())
+                fail("Invalid type option '%s'", arg);
+            /* else ok */
         } else
             fail("unknown option '%s'", arg);
     }
@@ -3921,15 +3928,8 @@ int main(int argc, char **argv, char **envp) {
     keep_diag();
 
     double tz = utime();
-    report("367 c%sul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)\n",
-#if defined(TYPE_o)
-            "o",
-#elif defined(TYPE_a)
-            "a",
-#elif defined(TYPE_r)
-            "r",
-#endif
-            n, k, countr, countw, countwi, seconds(tz));
+    report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)\n",
+            typename(), n, k, countr, countw, countwi, seconds(tz));
     if (log_full)
         report_prefinal(tz);
     if (seen_best)
