@@ -2231,6 +2231,20 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
     if (plow < 2)
         plow = 2;
 
+    t_value *vip = &value[vi];
+    uint vil = cur_level->vlevel[vi];
+    t_allocation *aip = &vip->alloc[vil - 1];
+    if (mpz_sgn(min) > 0) {
+        mpz_add_ui(Z(temp), min, TYPE_OFFSET(vi));
+        mpz_cdiv_q(Z(temp), Z(temp), aip->q);
+        mpz_root(Z(temp), Z(temp), x - 1);
+        if (!mpz_fits_ulong_p(Z(temp)))
+            return;
+        ulong pmin = mpz_get_ui(Z(temp));
+        if (plow < pmin)
+            plow = pmin - 1;
+    }
+
     uint t[k];
     uint need_prime[k];
     uint need_square[k];
@@ -2254,9 +2268,6 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
     }
 
     level_setp(cur_level, plow - 1);    /* next prime should be plow */
-    t_value *vip = &value[vi];
-    uint vil = cur_level->vlevel[vi];
-    t_allocation *aip = &vip->alloc[vil - 1];
     while (1) {
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh)
@@ -2273,9 +2284,6 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         mpz_ui_pow_ui(Z(w1_v), p, x - 1);
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
-
-        if (mpz_cmp(Z(w1_v), min) < 0)
-            break;
         ++countw;
 
         for (uint vj = 0; vj < k; ++vj) {
