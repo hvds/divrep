@@ -1572,6 +1572,7 @@ void report_init(FILE *fp, char *prog) {
         }
         fprintf(fp, "]\n");
     }
+    fflush(fp);
 }
 
 void set_minmax(char *s) {
