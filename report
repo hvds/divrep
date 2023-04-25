@@ -7,6 +7,7 @@ use List::Util qw{ first reduce };
 use lib ('./lib');
 use Seq::Db;
 use Type;
+use Math::xGMP;
 
 my($debug, $opt_composite, $opt_table, $opt_run, $commas) = (0, 0, 0, 0, 0);
 my $typename = 't';
@@ -329,7 +330,15 @@ sub _f {
 }
 sub _fe {
     my($ft, $n) = @_;
-    (sprintf $ft, "$n") =~ s{e\+?0*(?=\d)}{e}r;
+    my $s = (sprintf $ft, "$n") =~ s{e\+?0*(?=\d)}{e}r;
+    if ($s =~ /inf/i) {
+        my $log = $n->log10;
+        my $exp = int($log);
+        my $rem = $log - $exp;
+        $s = sprintf $ft, 10 ** $rem;
+        $s =~ s{e\d+|$}{e$exp};
+    }
+    return $s;
 }
 sub _fc {
     my($n) = @_;

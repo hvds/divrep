@@ -6,6 +6,9 @@ use feature qw{state};
 use Math::GMP;
 use List::Util qw{ first min max };
 
+use lib 'lib';
+use Math::xGMP; # bfdiv()
+
 my $zero = Math::GMP->new('0');
 # Assume we don't need to do anything clever to check values to this limit.
 my $SIMPLE = Math::GMP->new(1 << 20);
@@ -241,11 +244,10 @@ sub _strategy {
 
     my $optn = $g->checked + 1;
     my $optx = $g->checked * 2;
-    my $_n = sub { "$_[0]" + 0 };
     # last run's optx has been updated to reflect what was actually reached
-    my $prevrange = $_n->($r->optx - $r->optn);
     my $prep = $r->preptime // 0;
-    my $run = $r->runtime * $_n->($optx + 1 - $optn) / $prevrange;
+    my $zruntime = $r->runtime || 0.01;
+    my $run = $zruntime * ($optx + 1 - $optn)->bfdiv($r->optx - $r->optn);
     my $expect = ($prep + $run) || 1;
 
     # decide what -c value to supply
