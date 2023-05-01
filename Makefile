@@ -3,8 +3,9 @@ MPUGMP = /src/perl/Math-Prime-Util-GMP
 MPUGMP_VER = db88b861fe
 # 2023-05-15
 #MPUGMP_VER = cbf87f5e18
-COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c
-HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h
+COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
+HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
+    coulvec.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"

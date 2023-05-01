@@ -21,6 +21,7 @@
 #include "rootmod.h"
 #include "coultau.h"
 #include "pell.h"
+#include "coulvec.h"
 
 /* from MPUG */
 #include "factor.h"
@@ -207,12 +208,19 @@ bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 
+uint check = 0;         /* modulus to check up to */
+uint check_prime = 0;   /* skip moduli divisible by prime greater than this */
+double check_ratio = 1.0;  /* drop moduli that have too low rejection ratio */
+uint check_chunk = 0;   /* combine moduli into chunks of this size */
+
 bool debugw = 0;    /* diag and keep every case seen (excluding walk) */
 bool debugW = 0;    /* diag and keep every case seen (including walk) */
 bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
 bool debugB = 0;    /* show every batch id */
 bool debugt = 0;    /* show target_t() */
+bool debugv = 0;    /* show modular constraints */
+bool debugV = 0;    /* show more modular constraints */
 bool log_full = 0;  /* show prefinal result for harness */
 
 ulong randseed = 1; /* for ECM, etc */
@@ -251,9 +259,11 @@ char *init_pattern = NULL;
 typedef struct s_modfix {
     mpz_t mod;
     mpz_t val;
+    bool negate;
 } t_modfix;
 t_modfix *modfix = NULL;
 uint modfix_count = 0;
+bool have_modfix = 0;
 
 typedef struct s_sizedstr {
     char *s;
@@ -616,6 +626,8 @@ void done(void) {
         printf("\x1b]2;b%d: done\a",
                 opt_batch_min < 0 ? batch_alloc : opt_batch_max);
 
+    if (check)
+        cvec_done();
     free(diag_buf);
     free(aux_buf);
     if (wv_qq)
@@ -626,7 +638,6 @@ void done(void) {
         for (uint i = 0; i < k; ++i)
             mpz_clear(wv_o[i]);
     free(wv_o);
-    free(modfix);
     free(minp);
     free(maxp);
     free(midp);
@@ -696,22 +707,6 @@ void handle_sig(int sig) {
         need_diag = 1;
     else
         need_log = 1;
-}
-
-void init_modfix(void) {
-    for (uint mfi = 0; mfi < modfix_count; ++mfi) {
-        t_modfix *mfp = &modfix[mfi];
-        mpz_t zarray[4];
-        /* TODO: write a custom chinese() */
-        memcpy(&zarray[0], levels[0].rq, sizeof(mpz_t));
-        memcpy(&zarray[1], mfp->val, sizeof(mpz_t));
-        memcpy(&zarray[2], levels[0].aq, sizeof(mpz_t));
-        memcpy(&zarray[3], mfp->mod, sizeof(mpz_t));
-        if (!chinese(levels[0].rq, levels[0].aq, &zarray[0], &zarray[2], 2))
-            fail("failed to apply v_0 == %Zu (mod %Zu)", mfp->val, mfp->mod);
-        mpz_clear(mfp->mod);
-        mpz_clear(mfp->val);
-    }
 }
 
 void init_time(void) {
@@ -1501,7 +1496,6 @@ void init_post(void) {
     init_time();
 
     init_levels();
-    init_modfix();
     init_value();
     countr = 0;
     countw = 0;
@@ -1580,6 +1574,22 @@ void report_init(FILE *fp, char *prog) {
                 fprintf(fp, "%u", opt_batch_max);
         }
     }
+    if (check > 1) {
+        fprintf(fp, " -c%u", check);
+        if (check_prime)
+            fprintf(fp, " -cp%u", check_prime);
+        if (check_ratio > 1.0)
+            fprintf(fp, " -cr%f", check_ratio);
+        if (check_chunk)
+            fprintf(fp, " -cc%u", check_chunk);
+    }
+    if (modfix) {
+        for (uint i = 0; i < modfix_count; ++i) {
+            t_modfix *mfp = &modfix[i];
+            gmp_fprintf(fp, " -m%Zu%c%Zu",
+                    mfp->mod, mfp->negate ? '!' : '=', mfp->val);
+        }
+    }
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
     fprintf(fp, "\n");
@@ -1652,10 +1662,24 @@ void set_batch(char *s) {
     opt_alloc = 1;
 }
 
+void done_modfix(void) {
+    for (uint mfi = 0; mfi < modfix_count; ++mfi) {
+        mpz_clear(modfix[mfi].mod);
+        mpz_clear(modfix[mfi].val);
+    }
+    free(modfix);
+}
+
 void set_modfix(char *s) {
+    bool negate = 0;
     char *t = strchr(s, '=');
-    if (!t)
-        fail("-m option must be of form '-m<modulus>=<value>'");
+    if (!t) {
+        negate = 1;
+        t = strchr(s, '!');
+        if (!t)
+            fail("-m option must be of form '-m<modulus>=<value>'"
+                    " or '-m<modulus>!<value>'");
+    }
     *t++ = 0;
     uint mfi = modfix_count++;
     modfix = realloc(modfix, modfix_count * sizeof(t_modfix));
@@ -1664,6 +1688,7 @@ void set_modfix(char *s) {
     mpz_init(mfp->val);
     ston(mfp->mod, s);
     ston(mfp->val, t);
+    mfp->negate = negate;
 }
 
 /* Return p if no inverse exists.
@@ -2095,10 +2120,14 @@ void walk_v(t_level *cur_level, mpz_t start) {
     if (!mpz_fits_ulong_p(Z(wv_ati)))
         fail("TODO: non-square min > 2^64");
 #endif
+    if (check)
+        cvec_prep_test(m, aq);
     for (ulong ati = mpz_get_ui(Z(wv_ati)); ati <= end; ++ati) {
         ++countwi;
         if (need_work)
             diag_walk_v(cur_level, ati, end);
+        if (check && !cvec_test_prepped(ati))
+            goto next_ati;
         for (uint ii = 0; ii < inv_count; ++ii) {
             t_mod *ip = &inv[ii];
             if (ati % ip->m == ip->v)
@@ -2151,6 +2180,8 @@ void walk_1(t_level *cur_level, uint vi) {
     if (mpz_cmp(Z(w1_v), min) < 0)
         return;
     ++countw;
+    if (check && !cvec_testv(Z(w1_v)))
+        return;
 
     uint t[k];
     uint need_prime[k];
@@ -2257,6 +2288,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
         ++countw;
+        if (check && !cvec_testv(Z(w1_v)))
+            continue;
 
         for (uint vj = 0; vj < k; ++vj) {
             t_value *vjp = &value[vj];
@@ -2360,7 +2393,7 @@ bool update_residues(t_level *old, t_level *new,
     uint from = retry ? new->level : old->level;
 
     /* we may have a modfix */
-    if (modfix && mpz_divisible_ui_p(levels[0].aq, p)) {
+    if (have_modfix && mpz_divisible_ui_p(levels[0].aq, p)) {
         /* root_extend() needs coprime moduli to deal with, so we must
          * downgrade the input roots before calling it */
         uint fix = 0;
@@ -3831,6 +3864,16 @@ int main(int argc, char **argv, char **envp) {
             set_batch(&arg[2]);
         else if (arg[1] == 'o')
             opt_print = 1;
+        else if (arg[1] == 'c') {
+            if (arg[2] == 'p')
+                check_prime = strtoul(&arg[3], NULL, 10);
+            else if (arg[2] == 'r')
+                check_ratio = strtod(&arg[3], NULL);
+            else if (arg[2] == 'c')
+                check_chunk = strtoul(&arg[3], NULL, 10);
+            else
+                check = strtoul(&arg[2], NULL, 10);
+        }
         else if (arg[1] == 'd') {
             switch (arg[2]) {
               case 0: {
@@ -3859,6 +3902,13 @@ int main(int argc, char **argv, char **envp) {
                 break;
               case 't':
                 debugt = 1;
+                break;
+              case 'v':
+                debugv = 1;
+                break;
+              case 'V':
+                debugV = 1;
+                debugv = 1;
                 break;
               case 'l':
                 log_full = 1;
@@ -3894,6 +3944,37 @@ int main(int argc, char **argv, char **envp) {
     report_init(stdout, argv[0]);
     if (rfp) report_init(rfp, argv[0]);
 
+    if (check || modfix) {
+        uint *tt = calloc(k, sizeof(uint));
+        for (uint i = 0; i < k; ++i)
+            tt[i] = target_t(i);
+        cvec_init(n, k, &min, tt);
+
+        for (uint mfi = 0; mfi < modfix_count; ++mfi) {
+            t_modfix *mfp = &modfix[mfi];
+            apply_modfix(mfp->mod, mfp->val, mfp->negate, check);
+        }
+
+        t_fact f;
+        init_fact(&f);
+        for (uint m = 2; m <= check; ++m) {
+            f.count = 0;
+            simple_fact(m, &f);
+            if (check_prime && f.ppow[f.count - 1].p > check_prime)
+                continue;
+            apply_m(m, &f);
+        }
+        free_fact(&f);
+        cvec_pack(check_chunk ? check_chunk : check, check_ratio);
+        free(tt);
+
+        cvec_mult(&levels[0].rq, &levels[0].aq);
+        if (mpz_cmp_ui(levels[0].aq, 1) > 0)
+            have_modfix = 1;
+        done_modfix();
+        if (!check)
+            check = 1;
+    }
     prep_presquare();
 
     bool jump = IS_DEEPER;
