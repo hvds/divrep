@@ -297,6 +297,10 @@ sub pack_sc {
             splice(@aux, $j, 1);
             my $gcd = $nij / $ni;
             if ($gcd > 1) {
+                # NOTE: if in the future we allow maxsize to be set to
+                # something greater than $self->check, this fetch may
+                # cause cross-propagation that invalidates the prep we've
+                # done. It isn't obvious how we would cater for that.
                 $ai->{'sc'} = $self->c($nij);
                 my $ivu = $ai->{'vunique'};
                 $ai->{'vunique'} = pack "b$nij", (unpack("b$ni", $ivu) x $gcd);
