@@ -5,6 +5,10 @@
 #include "types.h"
 #include "prime_iterator.h"
 
+double elapsed(void);
+double seconds(double t1);
+void fail(char *format, ...);
+
 /* 'divisors[i].div' is a list of divisors of 'i' in descending order of
  * highest prime factor, then ascending. 'high' is the highest prime
  * factor of 'i'; 'alldiv' is the number of factors; 'highdiv' is the

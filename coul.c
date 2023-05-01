@@ -364,6 +364,10 @@ double seconds(double t1) {
     return (t1 - t0);
 }
 
+double elapsed(void) {
+    return seconds(utime());
+}
+
 uint _sizeinbase(uint n, uint base) {
     uint size = 1;
     while (n >= base) {
