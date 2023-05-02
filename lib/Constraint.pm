@@ -67,7 +67,7 @@ sub parent {
 }
 
 for my $method (qw/
-    cur n f tell_count t0 min max check min_potency mult mod_mult type
+    cur n f tell_count t0 min max check checkp min_potency mult mod_mult type
 /) {
     my $sub = sub { shift->{$method} };
     no strict 'refs';

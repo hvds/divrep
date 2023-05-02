@@ -67,6 +67,7 @@ my $c = Constraint->new(
     'min' => $opt_n,
     'max' => $opt_x,
     'check' => $opt_c,
+    'checkp' => $opt_cp,
     'min_potency' => $opt_cr,
 );
 my $type = Type->new($typename, $c);
