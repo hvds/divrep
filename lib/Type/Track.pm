@@ -4,7 +4,7 @@ use warnings;
 
 use parent qw{ Type::Tauish };
 use Math::GMP;
-use Math::Prime::Util qw{ factor_exp is_prime };
+use Math::Prime::Util qw{ factor_exp is_prime invmod };
 use Memoize;
 
 use ModFunc qw{ is_residue gcd };
@@ -179,6 +179,34 @@ sub from_fixpow {
     my $n = $self->n;
     my($k, $x, $z) = @$fixpow;
     my $xq = remove_squares($x);
+
+    # Main apply() will not have seen v_k = xy^z when x > 1, but does
+    # this achieve anything if we're about to fix a power anyway?
+    # Probably only for discarded secondary fixes.
+    if (0 && $x > 1) {
+        my $cp = $c->checkp;
+        for my $p (grep is_prime($_), 2 .. $c->check) {
+            last if $cp && $p > $cp;
+            my $px = 1;
+            if (($x % $p) == 0) {
+                my $xx = $x;
+                while (($xx % $p) == 0) {
+                    $xx /= $p;
+                    $px *= $p;
+                }
+            }
+            $p = 8 if $p == 2;
+            my $inv = (($x % $p) == 0) ? 1 : (
+                invmod($x, $p) // do { warn "($x,$p) noinv\n"; next }
+            );
+            my $pxx = $px * $p;
+warn "for [$k, $x, $z] p=$p: px=$px, inv=$inv\n";
+            for my $d (grep !is_residue($_, $p), 0 .. $p - 1) {
+warn ".. nr $d => @{[ ($d * $px * $inv - $k) % $pxx ]} mod $pxx\n";
+                $c->suppress($pxx, ($d * $px * $inv - $k) % $pxx);
+            }
+        }
+    }
 
     # try x_q(y-i)(y+i)
     for (my $i = 1; $i * $i * $xq <= $k; ++$i) {
