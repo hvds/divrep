@@ -644,13 +644,14 @@ static inline bool prep_abort(t_tm *tm, bool result) {
 bool tau_multi_prep(uint i) {
     t_tm *tm = &taum[i];
     uint t = tm->t;
+    uint e = tm->e;
     uint nbits = mpz_sizeinbase(tm->n, 2);
     if (nbits <= 1)
         return 0;
     tm->state = 1;  /* init */
 
 #ifdef VERBOSE
-    gmp_printf("tau_multi_prep t=%u (%u) %Zu\n", t, nbits, tm->n);
+    gmp_printf("tau_multi_prep t=%u e=%u (%u) %Zu\n", t, e, nbits, tm->n);
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
 #endif
     if (t == 1) {
@@ -665,11 +666,12 @@ bool tau_multi_prep(uint i) {
         ++ep;
     }
     if (ep) {
-        if ((t % (ep + 1)) != 0) {
-            dz("div: %u ~| t=%u", ep + 1, t);
+        uint et = ep * e + 1;
+        if ((t % et) != 0) {
+            dz("div: %u ~| t=%u", et, t);
             return 0;
         }
-        t /= ep + 1;
+        t /= et;
         if (t == 1) {
             dz("div: t=1");
             return prep_abort(tm, mpz_cmp_ui(tm->n, 1) == 0);
@@ -705,18 +707,23 @@ bool tau_multi_prep(uint i) {
             ++ep;
         }
         if (ep) {
-            if ((t % (ep + 1)) != 0) {
-                dz("div: %u ~| t=%u", ep + 1, t);
+            uint et = ep * e + 1;
+            if ((t % et) != 0) {
+                dz("div: %u ~| t=%u", et, t);
                 prime_iterator_destroy(&iter);
                 return 0;
             }
-            t /= ep + 1;
+            t /= et;
             if (t == 1) {
                 dz("div: t=1");
                 prime_iterator_destroy(&iter);
                 return prep_abort(tm, mpz_cmp_ui(tm->n, 1) == 0);
-            } else if (t == 2) {
-                dz("div: t=2");
+            } else if (t < e + 1) {
+                dz("div: t=%u < %u", t, e + 1);
+                prime_iterator_destroy(&iter);
+                return 0;
+            } else if (t == e + 1) {
+                dz("div: t=%u", e + 1);
                 prime_iterator_destroy(&iter);
                 return prep_abort(tm, ct_prime(tm->n));
             } else if (mpz_cmp_ui(tm->n, 1) == 0) {
@@ -744,12 +751,15 @@ bool tau_multi_prep(uint i) {
 
     if (un < p * p) {
         dz("div: tail is prime");
-        return prep_abort(tm, t == ((mpz_cmp_ui(tm->n, 1) == 0) ? 1 : 2));
+        return prep_abort(tm, t == ((mpz_cmp_ui(tm->n, 1) == 0) ? 1 : e + 1));
     } else if (mpz_cmp_ui(tm->n, 1) == 0) {
         dz("div: n = 1");
         return prep_abort(tm, t == 1);
-    } else if (t == 2) {
-        dz("div: t == 2");
+    } else if (t < e + 1) {
+        dz("div: t=%u < %u", t, e + 1);
+        return 0;
+    } else if (t == e + 1) {
+        dz("div: t == %u", e + 1);
         return prep_abort(tm, ct_prime(tm->n));
     }
     if (test_rough && t >= test_rough) {
@@ -759,16 +769,16 @@ bool tau_multi_prep(uint i) {
             return 0;
         }
     }
-    dz("div: done, t=%u", t);
+    dz("div: done, t=%u, e=%u", t, e);
     if (ct_prime(tm->n))
         return prep_abort(tm, t == 2);
-    tm->e = ct_power(tm->n);
-    if (tm->e) {
+    e = ct_power(tm->n);
+    if (e) {
         /* we found a power, did it leave a prime? */
+        tm->e *= e;
         if (ct_prime(tm->n))
             return prep_abort(tm, t == tm->e + 1);
-    } else
-        tm->e = 1;
+    }
     if ((t & 1) && (tm->e & 1))
         return 0;
     if (!(t & 1) && !(tm->e & 1))

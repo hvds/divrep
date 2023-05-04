@@ -55,6 +55,7 @@ int main(int argc, char **argv) {
         count = strtoul(argv[4], NULL, 10);
 
     tm->t = 4;
+    tm->e = 1;
     tau_multi_prep(0);
     for (uint i = 1; i <= count; ++i) {
         gmp_printf("Test %u on %Zu seed %lu (%.2f)\n", test, tm->n, randseed,

@@ -1709,6 +1709,7 @@ bool test_1multi(uint *need, uint nc, uint *t) {
         t_tm *tm = &taum[i];
         mpz_set(tm->n, wv_o[vi]);
         tm->t = t[vi];
+        tm->e = 1;
         if (!tau_multi_prep(i))
             return 0;
     }
@@ -1722,6 +1723,7 @@ bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
         mpz_mul_ui(tm->n, wv_qq[vi], ati);
         mpz_add(tm->n, tm->n, wv_o[vi]);
         tm->t = t[vi];
+        tm->e = 1;
         if (!tau_multi_prep(i))
             return 0;
     }
@@ -1735,6 +1737,7 @@ bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
         mpz_mul(tm->n, wv_qq[vi], ati);
         mpz_add(tm->n, tm->n, wv_o[vi]);
         tm->t = t[vi];
+        tm->e = 1;
         if (!tau_multi_prep(i))
             return 0;
     }
