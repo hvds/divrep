@@ -42,18 +42,11 @@ test_pell: a tool to solve Pell equations
 ftest: test a specific factorization
 
 Build-time options are set with defines, by passing "-D<name>" as a
-parameter to the compile step. For PARALLEL this is done by selecting
-the target to build ("pcoul", "dpcoul" or "ftest"); the others can be
-used by setting them on the command line before the invocation of make,
-like:
+parameter to the compile step. This is done by setting them on the
+command line before the invocation of make, like:
   CHECK_OVERFLOW=1 make pcoul
 
 The current build options are:
-
--DPARALLEL: in walk_v(), test factors of non-prime, non-square values
-in parallel (ie breadth first) rather than in series (depth first).
-This is expected to give substantial gains when the values to be
-factorized are large (more than 10^80 or so), and is now the default.
 
 -DSQONLY: skip any walk_v() call unless at least one value is forced
 to be a square. Temporary facility to allow faster rechecking if bugs
@@ -64,18 +57,16 @@ that exceeds our limit. This is not enabled by default because it
 appears to cost more than it saves in almost all cases.
 
 -DVERBOSE: print verbose information about factorization timings.
-Intended to help understand how -DPARALLEL can be improved.
 
 -DLARGE_MIN: add extra checks to cope better with runs where the
 minimum value to check is relatively large (as specified with -x<min>:<max>).
 For the majority case where min is 0 or small, we assume these checks
 are an unnecessary expense; hence we do not enable them by default.
 
--DTRY_HARDER: (only with -DPARALLEL) also try slower factorization
-tests before giving up. This adds 10 more ECM trials, the first taking
-about 15 minutes and each subsequent one doubling the time.
-Generally this isn't worthwhile: if we didn't find a factor before
-these tests, ECM probably won't find it.
+-DTRY_HARDER: also try slower factorization tests before giving up. This
+adds 10 more ECM trials, the first taking about 15 minutes and each
+subsequent one doubling the time. Generally this isn't worthwhile: if we
+didn't find a factor before these tests, ECM probably won't find it.
 
 -DDEBUG_ALL: print to the log file every number tested by linear search
 (without a fixed square). Will fail if run without a log file.

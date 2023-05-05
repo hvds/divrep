@@ -24,7 +24,6 @@ pcoul dpcoul: DEFINES += -DTYPE_o
 pcaul dpcaul: DEFINES += -DTYPE_a
 pcrul dpcrul: DEFINES += -DTYPE_r
 
-pcoul dpcoul pcaul dpcaul pcrul dpcrul ftest: DEFINES += -DPARALLEL
 ifdef SQONLY
     DEFINES += -DSQONLY
 endif

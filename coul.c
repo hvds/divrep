@@ -1497,13 +1497,8 @@ void init_post(void) {
 }
 
 void report_init(FILE *fp, char *prog) {
-    fprintf(fp, "001 %s%sc%cul(%u %u)", (start_seen ? "recover " : ""),
-#ifdef PARALLEL
-            "p",
-#else
-            "",
-#endif
-            typename(), n, k);
+    fprintf(fp, "001 %spc%cul(%u %u)",
+            (start_seen ? "recover " : ""), typename(), n, k);
 
     if (strategy)
         fprintf(fp, " -j%u", strategy);
@@ -1965,16 +1960,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
                         goto next_pell;
                 }
                 /* TODO: bail and print somewhere here if 'opt_print' */
-#ifdef PARALLEL
                 if (!test_zmulti(need_other, noc, Z(wv_ati), t))
                     goto next_pell;
-#else
-                for (uint i = 0; i < noc; ++i) {
-                    uint vi = need_other[i];
-                    if (!test_zother(wv_qq[vi], wv_o[vi], Z(wv_ati), t[vi]))
-                        goto next_pell;
-                }
-#endif
                 /* have candidate: calculate and apply it */
                 mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
                 mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -2067,16 +2054,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
                     goto next_sqati;
             }
             /* TODO: bail and print somewhere here if 'opt_print' */
-#ifdef PARALLEL
             if (!test_zmulti(need_other, noc, Z(wv_ati), t))
                 goto next_sqati;
-#else
-            for (uint i = 0; i < noc; ++i) {
-                uint vi = need_other[i];
-                if (!test_zother(wv_qq[vi], wv_o[vi], Z(wv_ati), t[vi]))
-                    goto next_sqati;
-            }
-#endif
             /* have candidate: calculate and apply it */
             mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
             mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -2127,16 +2106,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 goto next_ati;
         }
         /* TODO: bail and print somewhere here if 'opt_print' */
-#ifdef PARALLEL
         if (!test_multi(need_other, noc, ati, t))
             goto next_ati;
-#else
-        for (uint i = 0; i < noc; ++i) {
-            uint vi = need_other[i];
-            if (!test_other(wv_qq[vi], wv_o[vi], ati, t[vi]))
-                goto next_ati;
-        }
-#endif
         /* have candidate: calculate and apply it */
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -2212,14 +2183,8 @@ void walk_1(t_level *cur_level, uint vi) {
             return;
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
-#ifdef PARALLEL
     if (!test_1multi(need_other, noc, t))
         return;
-#else
-    for (uint i = 0; i < noc; ++i)
-        if (!is_taux(wv_o[need_other[i]], t[need_other[i]], 1))
-            return;
-#endif
     candidate(Z(w1_v));
     return;
 }
@@ -2312,14 +2277,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
                 goto reject_this_one;
         oc_t = t;
         qsort(need_other, noc, sizeof(uint), &other_comparator);
-#ifdef PARALLEL
         if (!test_1multi(need_other, noc, t))
             goto reject_this_one;
-#else
-        for (uint i = 0; i < noc; ++i)
-            if (!is_taux(wv_o[need_other[i]], t[need_other[i]], 1))
-                goto reject_this_one;
-#endif
         if (candidate(Z(w1_v)))
             return;
       reject_this_one:
