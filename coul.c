@@ -8,9 +8,8 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
-#ifdef HAVE_SETPROCTITLE
-#   include <sys/types.h>
-#endif
+/* used to set process title */
+#include <sys/prctl.h>
 #include <signal.h>
 #include <time.h>
 #include <sys/time.h>
@@ -1451,9 +1450,6 @@ void init_post(void) {
     }
     if (init_pattern)
         parse_305(init_pattern);
-#ifdef HAVE_SETPROCTITLE
-    setproctitle("oul(%lu %lu)", n, k);
-#endif
     simple_fact(n, &nf);
     prep_target();
     /* level[0] is special, level[1] is special if any target_t is odd;
@@ -3764,9 +3760,7 @@ void recurse(e_is jump_continue) {
 
 int main(int argc, char **argv, char **envp) {
     int i = 1;
-#ifdef HAVE_SETPROCTITLE
-    setproctitle_init(argc, argv, envp);
-#endif
+    prctl(PR_SET_NAME, argv[0]);
     init_pre();
     while (i < argc && argv[i][0] == '-') {
         char *arg = argv[i++];
