@@ -260,6 +260,23 @@ typedef struct s_sizedstr {
     size_t size;
 } t_sizedstr;
 
+uint tm_count = 0;
+static inline void test_multi_reset(void) {
+    tm_count = 0;
+}
+/* Note: test_multi_append() steals the input mpz_t */
+static inline bool test_multi_append(mpz_t n, uint t, uint e) {
+    uint i = tm_count++;
+    t_tm *tm = &taum[i];
+    mpz_swap(tm->n, n);
+    tm->t = t;
+    tm->e = e;
+    return tau_multi_prep(i);
+}
+static inline bool test_multi_run(void) {
+    return tau_multi_run(tm_count);
+}
+
 #if defined(TYPE_o) || defined(TYPE_r)
     static inline uint TYPE_OFFSET(uint i) {
         return i;
@@ -1345,7 +1362,6 @@ void prep_mp(void) {
 /* Record a new square at v_i; return FALSE if invalid.
  * Finds the quadratic (or higher-order) residues; stash them for later
  * propagation if this is the first square; fail if there are none.
- * Note: we just allocated to vi, so at least one allocation exists.
  */
 bool alloc_square(t_level *cur, uint vi) {
     t_value *v = &value[vi];
@@ -1487,7 +1503,6 @@ void init_post(void) {
     init_levels();
     init_modfix();
     init_value();
-    prep_presquare();
     countr = 0;
     countw = 0;
     countwi = 0;
@@ -1704,44 +1719,37 @@ bool test_zprime(mpz_t qq, mpz_t o, mpz_t ati) {
 }
 
 bool test_1multi(uint *need, uint nc, uint *t) {
+    test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
-        t_tm *tm = &taum[i];
-        mpz_set(tm->n, wv_o[vi]);
-        tm->t = t[vi];
-        tm->e = 1;
-        if (!tau_multi_prep(i))
+        mpz_set(Z(temp), wv_o[vi]);
+        if (!test_multi_append(Z(temp), t[vi], 1))
             return 0;
     }
-    return tau_multi_run(nc);
+    return test_multi_run();
 }
 
 bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
+    test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
-        t_tm *tm = &taum[i];
-        mpz_mul_ui(tm->n, wv_qq[vi], ati);
-        mpz_add(tm->n, tm->n, wv_o[vi]);
-        tm->t = t[vi];
-        tm->e = 1;
-        if (!tau_multi_prep(i))
+        mpz_mul_ui(Z(temp), wv_qq[vi], ati);
+        mpz_add(Z(temp), Z(temp), wv_o[vi]);
+        if (!test_multi_append(Z(temp), t[vi], 1))
             return 0;
     }
-    return tau_multi_run(nc);
+    return test_multi_run();
 }
 
 bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
-        t_tm *tm = &taum[i];
-        mpz_mul(tm->n, wv_qq[vi], ati);
-        mpz_add(tm->n, tm->n, wv_o[vi]);
-        tm->t = t[vi];
-        tm->e = 1;
-        if (!tau_multi_prep(i))
+        mpz_mul(Z(temp), wv_qq[vi], ati);
+        mpz_add(Z(temp), Z(temp), wv_o[vi]);
+        if (!test_multi_append(Z(temp), t[vi], 1))
             return 0;
     }
-    return tau_multi_run(nc);
+    return test_multi_run();
 }
 
 bool test_other(mpz_t qq, mpz_t o, ulong ati, uint t) {
@@ -1846,7 +1854,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         }
         if (t[vi] == 2)
             need_prime[npc++] = vi;
-        else if (t[vi] & 1)
+        else if (t[vi] & 1 && nqc < 2)
             need_square[nqc++] = vi;
         else
             need_other[noc++] = vi;
@@ -1937,10 +1945,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 mpz_gcd(Z(wv_temp), Z(wv_y), *qqj);
                 if (mpz_cmp_ui(Z(wv_temp), 1) != 0)
                     continue;
-                for (uint i = 0; i < 2; ++i) {
-                    if (!is_taux(*pellx[i], pellt[i], 2))
-                        goto next_pell;
-                }
+                test_multi_reset();
+                /* note: steals Z(wv_x), Z(wv_y) */
+                if (!test_multi_append(*pellx[0], pellt[0], 2)
+                    || !test_multi_append(*pellx[1], pellt[1], 2)
+                )
+                    goto next_pell;
 
                 mpz_sub(Z(wv_ati), Z(wv_x2), *oi);
                 mpz_divexact(Z(wv_ati), Z(wv_ati), *qqi);
@@ -1953,14 +1963,6 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 for (uint ii = 0; ii < inv_count; ++ii) {
                     t_mod *ip = &inv[ii];
                     if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
-                        goto next_pell;
-                }
-                /* note: we may have had more than 2 squares */
-                for (uint i = 2; i < nqc; ++i) {
-                    uint vi = need_square[i];
-                    mpz_mul(Z(wv_cand), wv_qq[vi], Z(wv_ati));
-                    mpz_add(Z(wv_cand), Z(wv_cand), wv_o[vi]);
-                    if (!is_taux(Z(wv_cand), t[vi], 1))
                         goto next_pell;
                 }
                 for (uint i = 0; i < npc; ++i) {
@@ -2054,9 +2056,10 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
                     goto next_sqati;
             }
-            if (!is_taux(Z(wv_r), ti, xi))
+            test_multi_reset();
+            /* note: steals Z(wv_r) */
+            if (!test_multi_append(Z(wv_r), ti, xi))
                 goto next_sqati;
-            /* note: we have no more squares */
             for (uint i = 0; i < npc; ++i) {
                 uint vi = need_prime[i];
                 if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati)))
@@ -2151,9 +2154,8 @@ void walk_1(t_level *cur_level, uint vi) {
 
     uint t[k];
     uint need_prime[k];
-    uint need_square[k];
     uint need_other[k];
-    uint npc = 0, nqc = 0, noc = 0;
+    uint npc = 0, noc = 0;
     for (uint vj = 0; vj < k; ++vj) {
         if (vi == vj)
             continue;
@@ -2177,8 +2179,6 @@ void walk_1(t_level *cur_level, uint vi) {
                 return;
         } else if (t[vj] == 2)
             need_prime[npc++] = vj;
-        else if (t[vj] & 1)
-            need_square[nqc++] = vj;
         else
             need_other[noc++] = vj;
         mpz_set(wv_o[vj], Z(w1_j));
@@ -2186,9 +2186,6 @@ void walk_1(t_level *cur_level, uint vi) {
     ++countwi;
     for (uint i = 0; i < npc; ++i)
         if (!_GMP_is_prob_prime(wv_o[need_prime[i]]))
-            return;
-    for (uint i = 0; i < nqc; ++i)
-        if (!is_taux(wv_o[need_square[i]], t[need_square[i]], 1))
             return;
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
@@ -2225,9 +2222,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
 
     uint t[k];
     uint need_prime[k];
-    uint need_square[k];
     uint need_other[k];
-    uint npc = 0, nqc = 0, noc = 0;
+    uint npc = 0, noc = 0;
     for (uint vj = 0; vj < k; ++vj) {
         if (vi == vj)
             continue;
@@ -2239,8 +2235,6 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             fail("should never see multiple values with t==1");
         if (t[vj] == 2)
             need_prime[npc++] = vj;
-        else if (t[vj] & 1)
-            need_square[nqc++] = vj;
         else
             need_other[noc++] = vj;
     }
@@ -2280,9 +2274,6 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         ++countwi;
         for (uint i = 0; i < npc; ++i)
             if (!_GMP_is_prob_prime(wv_o[need_prime[i]]))
-                goto reject_this_one;
-        for (uint i = 0; i < nqc; ++i)
-            if (!is_taux(wv_o[need_square[i]], t[need_square[i]], 1))
                 goto reject_this_one;
         oc_t = t;
         qsort(need_other, noc, sizeof(uint), &other_comparator);
@@ -3891,6 +3882,8 @@ int main(int argc, char **argv, char **envp) {
     init_post();
     report_init(stdout, argv[0]);
     if (rfp) report_init(rfp, argv[0]);
+
+    prep_presquare();
 
     bool jump = IS_DEEPER;
     if (rstack) {
