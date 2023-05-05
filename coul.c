@@ -655,6 +655,12 @@ void done(void) {
     _GMP_destroy();
 }
 
+void fail_silent(void) {
+    /* we accept leaks on fatal error, but should close the log file */
+    if (rfp)
+        fclose(rfp);
+    exit(0);
+}
 void fail(char *format, ...) {
     va_list ap;
     va_start(ap, format);

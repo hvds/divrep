@@ -8,6 +8,8 @@
 double elapsed(void);
 double seconds(double t1);
 void fail(char *format, ...);
+void fail_silent(void);
+void report(char *format, ...);
 
 /* 'divisors[i].div' is a list of divisors of 'i' in descending order of
  * highest prime factor, then ascending. 'high' is the highest prime
