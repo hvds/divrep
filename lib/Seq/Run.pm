@@ -238,7 +238,8 @@ sub finalize {
                 or return $self->failed("(n, k) mismatch in '$_'");
         $self->runtime($t - ($self->preptime // 0));
         $bad = $rend->($d);
-        $self->optx($last_fail // $bad);
+        $self->optx(defined($last_fail)
+                ? Math::GMP->new($last_fail) - 1 : $bad);
     }
     for (@{ $line{402} // [] }) {
         # 402 Error: all values ... disallowed (${time}s)
@@ -327,8 +328,11 @@ sub finalize {
                 $tauf->test_order($test_order);
                 $tauf->update;
             }
-            my $badm = max(map Math::GMP->new($_),
-                    $bad, grep defined, $last_fail);
+            my $badm = Math::GMP->new($bad);
+            if (defined $last_fail) {
+                my $lf = Math::GMP->new($last_fail) - 1;
+                $badm = $lf if $badm < $lf;
+            }
             $tauf->bad($db, $self, $badm);
         } : $ugly ? $tauf->ugly($db, $self)
         : $depend_n ? $tauf->depends($db, $depend_m, $depend_n)
