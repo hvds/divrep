@@ -237,8 +237,8 @@ warn ".. nr $d => @{[ ($d * $px * $inv - $k) % $pxx ]} mod $pxx\n";
         }
 
         my $fail = sub {
-            printf <<OUT, $fixed_tau, $float_tau, $ti, $ki;
-502 Error: fixed %s, float %s not available in tau %s for k=%s
+            printf <<OUT, $fixed_tau, $float_tau, $ti, $ki, $c->elapsed;
+502 Error: fixed %s, float %s not available in tau %s for k=%s (%.2fs)
 OUT
             exit 1;
         };
