@@ -1,9 +1,11 @@
 package Constraint;
 use strict;
-use ModFunc qw/ quadvec mod_combine /;
-use Math::Prime::Util qw();
+use Math::Prime::Util qw( chinese );
 use warnings;
 no warnings qw/ recursion /;
+
+use lib 'lib';
+use ModFunc qw{ gcd };
 
 sub MBI { return Math::GMP->new(@_) }
 
@@ -217,7 +219,7 @@ OUT
                 }
                 ($debug > 2)
                         && warn "fix $v(mod $d) in $mod_mult(mod $mult)\n";
-                ($mod_mult, $mult) = mod_combine($mod_mult, $mult, $v, $d);
+                ($mod_mult, $mult) = $self->combine($mod_mult, $mult, $v, $d);
                 ($debug > 1) && warn "now fixed: $mod_mult(mod $mult)\n";
                 @$self{qw/ mod_mult mult /} = ($mod_mult, $mult);
                 $c->[4] = 1;
@@ -718,11 +720,11 @@ sub require {
     }
 
     my($mod_mult, $mult) = @$self{qw{mod_mult mult}};
-    my($newmod, $newmult) = eval { mod_combine($mod_mult, $mult, $v, $p) };
-    my $error = $@;
+    my($newmod, $newmult) = $self->combine($mod_mult, $mult, $v, $p,
+            $min >= $cmin);
     if ($min >= $cmin) {
         # we don't have deferred mult other than via the bitvectors
-        if ($@) {
+        if ($newmult == 0) {
             printf <<LOG, $mod_mult, $mult, $v, $p, $min;
 307 Discarding deferred inconsistent moduli: (%s %% %s) v. (%s %% %s) at %s
 LOG
@@ -732,7 +734,6 @@ LOG
 LOG
         }
     } else {
-        die $@ if $@;
         ($debug > 2)
                 && warn "fix $v(mod $p) in $mod_mult(mod $mult)\n";
         @$self{qw{ mod_mult mult }} = ($newmod, $newmult);
@@ -845,6 +846,24 @@ sub _insert {
         }
     }
     splice(@$aref, $low + 1, 0, $val);
+}
+
+#
+# Return (e, f) = chinese([ a, b ], [ c, d ]). If no solution, returns
+# (0, 0) if lax is true, else prints an error and exits.
+#
+sub combine {
+    my($self, $a, $b, $c, $d, $lax) = @_;
+    my $e = chinese([ $a, $b ], [ $c, $d ]);
+    if (!defined $e) {
+        return (0, 0) if $lax;
+        printf <<OUT, $a, $b, $c, $d, $self->elapsed;
+402 Error: all values disallowed at %s (mod %s) with %s (mod %s) (%.2fs)
+OUT
+        exit 0;
+    }
+    my $f = $b * $d / gcd($b, $d);
+    return ($e, $f);
 }
 
 #

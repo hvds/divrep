@@ -22,7 +22,7 @@ as the squared factor in the various spots available.
 =cut
 
 use lib './lib';
-use ModFunc qw/ mod_combine quadvec gcd /;
+use ModFunc qw/ gcd /;
 
 sub MBI { return Math::GMP->new(@_) }
 

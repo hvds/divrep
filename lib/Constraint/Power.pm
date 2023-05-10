@@ -2,7 +2,7 @@ package Constraint::Power;
 use strict;
 our @ISA = qw/ Constraint /;
 
-use ModFunc qw{ quadvec mod_combine gcd };
+use ModFunc qw{ gcd };
 use RootMod qw{ allrootmod };   # will come from Math::Prime::Util when released
 use warnings;
 no warnings qw{ recursion };
