@@ -268,10 +268,9 @@ sub _strategy {
     $eprep = $prep * $optc / $r->optc;
     $expect = ($eprep + $run) || 1;
 
-    my @extra = grep defined, (
-        $self->maybe_bisectg($db->type, $expect),
-        $self->maybe_shardtest($db->type, $expect, $optc),
-    );
+    my $extra = $self->maybe_shardtest($db->type, $expect, $optc)
+                // $self->maybe_bisectg($db->type, $expect);
+    return $extra if $extra;
 
     if ($expect < $SLOW) {
         return (Seq::Run->gen(
@@ -283,7 +282,7 @@ sub _strategy {
                 cul => $self->cul,
                 priority => $type->fprio($self->n, $self->k, $expect),
             },
-        ), @extra);
+        ));
     }
 
     # If it's slow we could try sharding, but for now just reduce the range
@@ -340,7 +339,7 @@ sub _strategy {
                 optimize => 1,
                 priority => $type->fprio($self->n, $self->k, $expect),
             },
-        ), @extra);
+        ));
     }
 
     return (Seq::Run->gen(
@@ -353,7 +352,7 @@ sub _strategy {
             cul => $self->cul,
             priority => $type->fprio($self->n, $self->k, $expect),
         },
-    ), @extra);
+    ));
 }
 
 sub maybe_bisectg {

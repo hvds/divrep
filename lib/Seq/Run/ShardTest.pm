@@ -99,7 +99,7 @@ sub finalize {
     }
     if (defined $mods) {
         $self->f->shard_test($db, $self->m, [split /\s+/, $mods]);
-        return ();
+        return $self->g->final($db);
     }
     my $fail = join "\n", map @{ $line{$_} }, grep /^5/, keys %line;
     my $n = $self->n;

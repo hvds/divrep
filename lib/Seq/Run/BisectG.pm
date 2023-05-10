@@ -96,7 +96,7 @@ sub finalize {
     }
     if ($maxg) {
         $self->g->bisect($db, $maxg, $self->c, $btime);
-        return ();
+        return $self->g->final($db);
     }
     my $fail = join "\n", map @{ $line{$_} }, grep /^5/, keys %line;
     return $self->failed("bisect failed: " . ($fail // 'unknown cause'));
