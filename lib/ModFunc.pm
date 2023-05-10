@@ -7,7 +7,7 @@ use List::Util qw{ reduce };
 require Exporter;
 our @ISA = qw{ Exporter };
 our @EXPORT_OK = qw{
-    quadres is_residue quadvec
+    quadres quadvec
     mod_combine
     gcd
 };
@@ -24,15 +24,6 @@ our @EXPORT_OK = qw{
         return 0 if gcd($n, $m) > 1;
         my $v = quadvec($m);
         return vec($v, ($n % $m), 1) ? 1 : -1;
-    }
-
-    #
-    # Returns true if Legendre ( n / m ) is 0 or 1.
-    #
-    sub is_residue {
-        my($n, $m) = @_;
-        my $v = quadvec($m);
-        return vec($v, ($n % $m), 1);
     }
 
     #

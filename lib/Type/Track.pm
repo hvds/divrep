@@ -7,7 +7,8 @@ use Math::GMP;
 use Math::Prime::Util qw{ factor_exp is_prime invmod };
 use Memoize;
 
-use ModFunc qw{ is_residue gcd };
+use ModFunc qw{ gcd };
+use RootMod qw{ is_residue };
 
 my $zone = Math::GMP->new(1);
 

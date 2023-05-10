@@ -5,7 +5,7 @@ use warnings;
 require Exporter;
 our @ISA = qw{ Exporter };
 our @EXPORT_OK = qw{
-    allsqrtmod allrootmod
+    allsqrtmod allrootmod is_residue
 };
 
 use List::Util qw{ reduce };
@@ -25,6 +25,9 @@ sub MBI { defined($_[0]) ? Math::GMP->new(@_) : undef }
 *allsqrtmod = Math::Prime::Util->can('allsqrtmod')
     ? sub { map MBI($_), Math::Prime::Util::allsqrtmod(@_) }
     : \&_allsqrtmod;
+*is_residue = Math::Prime::Util->can('is_residue')
+    ? sub { Math::Prime::Util::is_residue(@_) }
+    : \&_is_residue;
 
 sub _numeric { $a <=> $b }
 my $zero = MBI(0);
@@ -445,6 +448,42 @@ sub _allrootmod {
         @roots = map allrootmod_kprime($_, $kp, $n, $nf), @roots;
     }
     return sort _numeric @roots;
+}
+
+=head2 _is_residue($a, $n, [ $k ])
+
+Given integers C<a>, C<n> and C<k>, return C<TRUE> if there exists
+a C<k>'th root of C<a mod n>, else C<FALSE>.
+
+If C<k> is not defined, it is treated as 2.
+
+=cut
+
+sub _is_residue {
+    my($a, $n, $k) = @_;
+    return 0 if $n == 0;
+    $a %= $n;
+    $k //= 2;
+    if ($k < 0) {
+        $a = MBI(invmod($a, $n));
+        return 0 unless defined($a) && $a > 0;
+        $k = -$k;
+    }
+    return 1 if $n <= 2 || $k == 1;
+    return +($a == 1) ? 1 : 0 if $k == 0;
+    return 1 if $a == 0 || $a == 1;
+
+    my $nf = [ factor_exp($n) ];
+    if (is_prime($k)) {
+        my @roots = allrootmod_kprime($a, $k, $n, $nf);
+        return @roots ? 1 : 0;
+    }
+
+    my @roots = ($a);
+    for my $kp (factor($k)) {
+        @roots = map allrootmod_kprime($_, $kp, $n, $nf), @roots;
+    }
+    return @roots ? 1 : 0;
 }
 
 1;
