@@ -50,6 +50,14 @@ sub logpath {
             $type->logpath, $self->n, $self->k, $self->runid;
 }
 
+sub desc {
+    my($self) = @_;
+    return sprintf "run(%s %s)%s", $self->n, $self->k, join '', map ", $_",
+        ($self->optimizing ? "optimizing" : ()),
+        ($self->cul ? "cul" : ()),
+    ;
+}
+
 sub gen {
     my($class, $tauf, $db, $args) = @_;
     my $owner = $db->type->owner;
@@ -299,7 +307,7 @@ sub finalize {
         $fix_power = 1;
     }
     if ($good && $best < $self->k) {
-        return $self->failed("Inconsistent results: success with best $best");
+        return $self->failed("@{[ $self->desc ]}: Inconsistent results: success with best $best");
     }
     unless ($good || $bad || $ugly || $depend_n) {
         return $self->failed("No valid result in $log");

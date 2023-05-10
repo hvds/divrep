@@ -41,6 +41,11 @@ sub rprio {
     return $type->gprio($self->n) + 1;
 }
 
+sub desc {
+    my($self) = @_;
+    return sprintf "bg(%s) -c%s", $self->n, $self->c;
+}
+
 sub prep { () }
 
 sub runnable {
@@ -99,7 +104,8 @@ sub finalize {
         return $self->g->final($db);
     }
     my $fail = join "\n", map @{ $line{$_} }, grep /^5/, keys %line;
-    return $self->failed("bisect failed: " . ($fail // 'unknown cause'));
+    return $self->failed("@{[ $self->desc ]} failed: "
+            . ($fail || 'unknown cause'));
 }
 
 1;

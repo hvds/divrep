@@ -44,6 +44,11 @@ sub rprio {
     return $type->gprio($self->n) + 100;
 }
 
+sub desc {
+    my($self) = @_;
+    return sprintf "st(%s,%s) -m%s", $self->n, $self->k, $self->m;
+}
+
 sub prep { () }
 
 sub runnable {
@@ -103,7 +108,8 @@ sub finalize {
     }
     my $fail = join "\n", map @{ $line{$_} }, grep /^5/, keys %line;
     my $n = $self->n;
-    return $self->failed("shardtest($n) failed: " . ($fail // 'unknown cause'));
+    return $self->failed("@{[ $self->desc ]} failed: "
+            . ($fail || 'unknown cause'));
 }
 
 1;

@@ -38,6 +38,11 @@ sub rprio {
     return $type->gprio($self->n) + 1;
 }
 
+sub desc {
+    my($self) = @_;
+    return sprintf "bf(%s,%s)", $self->n, $self->f->k;
+}
+
 sub prep { () }
 
 sub runnable {
