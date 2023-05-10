@@ -67,6 +67,8 @@ sub ming { 0 }
 
 sub maxg {
     my($self, $n) = @_;
+    # Special-case, since pcrul doesn't handle it
+    return 0 if $n == 1;
     # Cannot have two consecutive squares
     my $q = isqrt($n - 1) + 2;
     return $q * $q - 1 - $n;

@@ -98,6 +98,7 @@ sub generate {
             status => (is_prime($n) ? [ 'prime' ] : 0),
             checked => $zero,
         });
+        $self->complete(1) if $self->ming == $self->maxg;
         $self->insert;
     }
 }
