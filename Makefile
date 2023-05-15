@@ -1,4 +1,8 @@
 MPUGMP = /src/perl/Math-Prime-Util-GMP
+# 2021-09-05
+MPUGMP_VER = db88b861fe
+# 2023-05-15
+#MPUGMP_VER = cbf87f5e18
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h
 
@@ -11,6 +15,9 @@ dcoul dpcoul dpcaul dsq12: CC_OPT = -O0
 
 CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/pbrent63.c ${MPUGMP}/isaac.c ${MPUGMP}/tinyqs.c ${MPUGMP}/squfof126.c ${MPUGMP}/simpqs.c ${MPUGMP}/primality.c ${MPUGMP}/utility.c ${MPUGMP}/gmp_main.c ${MPUGMP}/bls75.c ${MPUGMP}/real.c ${MPUGMP}/ecpp.c
 HFACTOR = ${MPUGMP}/factor.h
+ifeq ($(MPUGMP_VER), cbf87f5e18)
+    CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c
+endif
 
 DEFINES := -DSTANDALONE
 coul pcoul dcoul dpcoul: DEFINES += -DTYPE_o
