@@ -1232,7 +1232,10 @@ void prep_forcep(void) {
                 free(fp->batch);
                 break;
             }
-            fail("No valid arrangement of powers for p=%u", p);
+            if (seen_best)
+                break;
+            report("406 Error: no valid arrangement of powers for p=%u", p);
+            fail_silent();
         }
         if (have_unforced_tail)
             fp->batch[fp->count++] = (t_forcebatch){ .vi = 1, .x = 0 };
