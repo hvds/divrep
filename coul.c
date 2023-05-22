@@ -203,6 +203,7 @@ int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
 uint cur_batch_level = 0;   /* for disp_batch */
+bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 
@@ -2992,7 +2993,18 @@ bool apply_batch(
     }
 
     if (terminal < k) {
-        walk_1(cur_level, terminal);
+        bool valid = 1;
+        if (!seen_valid && mpz_sgn(min)) {
+            vp = &value[terminal];
+            uint vlevel = cur_level->vlevel[terminal];
+            mpz_sub_ui(Z(temp), vp->alloc[vlevel - 1].q, terminal);
+            if (mpz_cmp(Z(temp), min) <= 0)
+                valid = 0;
+        }
+        if (valid) {
+            seen_valid = 1;
+            walk_1(cur_level, terminal);
+        }
         /* nothing more to do */
         return 0;
     }
@@ -3027,6 +3039,7 @@ bool apply_batch(
         }
     }
     if (cur_level->have_square > 1) {
+        seen_valid = 1;
         walk_v(cur_level, Z(zero));
         return 0;
     }
@@ -3041,6 +3054,7 @@ bool apply_batch(
 bool process_batch(t_level *cur_level) {
     uint batch_id = batch_alloc++;
     cur_batch_level = cur_level->level;
+    seen_valid = 1;
     if (debugB)
         disp_batch();
     if (opt_alloc) {
@@ -3901,7 +3915,9 @@ int main(int argc, char **argv, char **envp) {
     double tz = utime();
     report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)\n",
             typename(), n, k, countr, countw, countwi, seconds(tz));
-    if (log_full)
+    if (!seen_valid && !seen_best)
+        report("406 Error: no valid arrangement of powers\n");
+    else if (log_full)
         report_prefinal(tz);
     if (seen_best)
         report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, best, seconds(tz));
