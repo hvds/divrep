@@ -21,6 +21,10 @@ the minimal starting point of such an AP for each possible length?
 
 my $INF = 1_000_000;
 
+my %PROG = (
+    cul => './pcoul',
+);
+
 sub init {
     my($self) = @_;
     my $n = $self->n;
@@ -77,6 +81,11 @@ sub test_target {
         return [ "$k", sub { is_prime($_[0] + $k) } ];
     }
     return [ "$k", sub { $tau == tau($_[0] + $k) } ];
+}
+
+sub prog {
+    my($self, $which) = @_;
+    return $PROG{$which} // $self->SUPER::prog($which);
 }
 
 sub float_spare {
