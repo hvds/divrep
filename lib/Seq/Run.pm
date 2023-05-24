@@ -275,14 +275,21 @@ sub finalize {
     }
     for (@{ $line{405} // [] }) {
         # 405 Error: Fixed power v_$k = ${x}y^$z is non-residue $v (mod $m)
-        my($t) = m{
+        m{
             ^ 405 \s+ Error: \s+ Fixed \s+ power
         }x or return $self->failed("Can't parse 405 result: '$_'");
         $ugly = 1;
     }
+    for (@{ $line{406} // [] }) {
+        # 406 Error: no valid arrangement of powers for p=$p
+        m{
+            ^ 406 \s+ Error: \s+ no \s+ valid \s+ arrangement
+        }x or return $self->failed("Can't parse 406 result: '$_'");
+        $ugly = 1;
+    }
     for (@{ $line{502} // [] }) {
         # 502 Error: fixed 8 not available in tau 12 for k=1
-        my($t) = m{
+        m{
             ^ 502 \s+ Error: \s+ fixed \s+ \d+
         }x or return $self->failed("Can't parse 502 result: '$_'");
         $ugly = 1;
