@@ -11,7 +11,7 @@ use Type;
 print "kill -HUP $$\n";
 
 my($opt_recreate, $debug, $opt_strategy, $opt_gain) = (0, 0, 0, 0);
-my($maxproc, $maxrun, $maxload, $drain) = (10, 100, 0, 0);
+my($maxproc, $maxrun, $maxload, $limit, $drain) = (10, 100, 0, 0);
 my $typename = 't';
 my %override;
 $SIG{'HUP'} = sub { $drain = 1 };
@@ -21,6 +21,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $opt_recreate = 1, next if $arg eq '-r';
     $opt_strategy = 1, next if $arg eq '-s';
     ($maxload = $1 || shift(@ARGV)), next if $arg =~ /^-a(\d*)$/;
+    ($limit = 1, $maxload = $1 || shift(@ARGV)), next if $arg =~ /^-A(\d*)$/;
     $debug = 1, next if $arg eq '-d';
     $override{$1} = $2, next if $arg =~ /^-p(-?\d+)=(-?\d+(?:\.\d+)?)$/;
     $opt_gain = $1, next if $arg =~ /^-g(-?\d+(?:\.\d+)?)$/;
@@ -126,7 +127,7 @@ package Seq::Starter {
             Seq::TauG->genTo($db, $end);
         }
         return (
-            Seq::Starter->new($self->type, $end + 1, $count),
+            ($limit ? () : Seq::Starter->new($self->type, $end + 1, $count)),
             Seq::TauG->range($db, $start, $end),
         );
     }
