@@ -104,9 +104,10 @@ sub command {
         return [
             '-dl',
             '-Ls0',
-            # minimum is exclusive for cul
-            "-x@{[ $self->optn - 1 ]}:@{[$self->optx ]}",
+            "-x@{[ $self->optn ]}:@{[$self->optx ]}",
             "-f@{[ $self->k ]}",
+            ($self->optc ? "-c@{[ $self->optc ]}" : ()),
+            (map "-m$_", @{ $self->optm // [] }),
             $self->n,
             $self->k,
         ];
