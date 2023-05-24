@@ -154,6 +154,8 @@ sub c {
 
 sub init {
     my($self) = @_;
+    Constraint::_free_sc();
+
     my $min = $self->min();
 
     # We may get a very large number of pending values: just recording the
@@ -478,6 +480,7 @@ void _free_sc() {
         if (scl->base) SvREFCNT_dec(scl->base);
         if (scl->mult) SvREFCNT_dec(scl->mult);
         free(scl);
+        scl = NULL;
     }
 }
 
