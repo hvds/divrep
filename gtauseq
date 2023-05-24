@@ -51,6 +51,7 @@ $| = 1;
 my($n, $f) = map MBI($_), @ARGV;
 $0 = "gt($n $f)";
 $_ = ston($_) for ($opt_n, $opt_x);
+$opt_n = MBI(1) if $opt_n < 1;
 
 printf "100 ./gtauseq -y%s %s %s%s%s%s -c%s -t%s %s %s\n",
         $typename, ($opt_n == $opt_x ? "-nx$opt_n" : "-n$opt_n -x$opt_x"),
