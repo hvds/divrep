@@ -184,6 +184,7 @@ sub final {
 
 sub prep {
     my($self, $db) = @_;
+    return () if $self->complete;
     return $self->fnext($db);
 }
 
@@ -191,6 +192,7 @@ sub runnable { return () }
 
 sub fnext {
     my($self, $db) = @_;
+    return () if $self->complete;
     return Seq::TauF->nextFor($self, $db);
 }
 
