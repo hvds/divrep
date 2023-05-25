@@ -2073,6 +2073,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
             ++countwi;
             mpz_pow_ui(Z(wv_rx), Z(wv_r), xi);
             mpz_sub(Z(wv_ati), Z(wv_rx), *oi);
+            /* this could be divexact, since we know the roots are valid,
+             * or we could verify validity here */
             mpz_fdiv_q(Z(wv_ati), Z(wv_ati), *qqi);
             if (need_work)
                 diag_walk_zv(cur_level, Z(wv_ati), Z(wv_end));
@@ -2327,6 +2329,10 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
  * For a batch allocation where we apply p^x at v_i and a secondary
  * p^x' at v_j, we call this twice: first with (j, p, x') and then
  * with (i, p, x - x'). For the second call we set retry=1.
+ * This function was originally designed around the assumption that,
+ * other than for the retry=1 case, p would not previously have been
+ * seen; however modular fixes via -m or -c change that, requiring a
+ * rethink of the logic as a whole.
  */
 bool update_residues(t_level *old, t_level *new,
         uint vi, ulong p, uint x, mpz_t px, uint retry) {
@@ -2338,21 +2344,41 @@ bool update_residues(t_level *old, t_level *new,
         return 1;
     }
     if (vi == vj) {
-        /* Another allocation on our square, so q_j changes but aq/q_j does
-         * not. We must divide the known residues by p^((x-1)/g) mod aq/q_j,
-         * and if the required power g has changed take roots again. */
+        /* Another allocation on our square. In the simple case, when
+         * aq = aq' p^e, we must divide the known residues by
+         * p^(e/g) mod aq/q_j, and if the required power g has
+         * changed take roots again. Complex cases arise if -m or -c
+         * options mean that p | aq', or for p=2 when p^{e+1} | aq.
+         */
         uint oldg = sqg[jlevel - 1];
         uint newg = divisors[vjp->alloc[jlevel].t].gcddm;
         uint divpow = (x - 1) / oldg;
+        uint source = old->level;
 
         /* note: if this is the secondary of a batch, new may have
          * inappropriate values for this stage */
         mpz_divexact(Z(ur_m), old->aq, vjp->alloc[jlevel - 1].q);
+        /* if this prime was already represented in the modulus,
+         * get a downgraded copy of the residues and rebuild */
+        uint aqe = 0;
+        while (mpz_fdiv_ui(Z(ur_m), p) == 0) {
+            ++aqe;
+            mpz_divexact_ui(Z(ur_m), Z(ur_m), p);
+        }
+        if (aqe) {
+            t_results *rsrc = res_array(source);
+            source = 0;
+            t_results *rdest = res_array(source);
+            resize_results(rdest, rsrc->count);
+            for (uint i = 0; i < rsrc->count; ++i)
+                mpz_mod(rdest->r[i], rsrc->r[i], Z(ur_m));
+            rdest->count = rsrc->count;
+        }
         mpz_ui_pow_ui(Z(ur_ipg), p, divpow);
         if (!mpz_invert(Z(ur_ipg), Z(ur_ipg), Z(ur_m)))
             fail("Cannot find mandatory inverse for %lu^%u", p, divpow);
 
-        t_results *rsrc = res_array(old->level);
+        t_results *rsrc = res_array(source);
         t_results *rdest = res_array(new->level);
         resize_results(rdest, rsrc->count);
         for (uint i = 0; i < rsrc->count; ++i) {
@@ -2360,6 +2386,19 @@ bool update_residues(t_level *old, t_level *new,
             mpz_mod(rdest->r[i], rdest->r[i], Z(ur_m));
         }
         rdest->count = rsrc->count;
+
+        if (p == 2) {
+            /* We have residues mod p^e x, but we need them mod p^{e+1} x.
+             * So we take the odd one of (r, r + m) before doubling m. */
+            for (uint i = 0; i < rdest->count; ++i) {
+                if (mpz_odd_p(rdest->r[i]))
+                    continue;
+                mpz_add(rdest->r[i], rdest->r[i], Z(ur_m));
+            }
+            /* update ur_m for passing to root_extract */
+            if (oldg != newg)
+                mpz_mul_2exp(Z(ur_m), Z(ur_m), 1);
+        }
 
         sqg[jlevel] = newg;
         if (oldg == newg)
@@ -2379,16 +2418,27 @@ bool update_residues(t_level *old, t_level *new,
         ? -(int)TYPE_OFFSET(vi - vj)
         : (int)TYPE_OFFSET(vj - vi);
     mpz_set_si(Z(ur_a), off);
-    /* in the non-retry case, m = old->aq / q_j; in the retry case,
-     * we need to take the previous value of q_j */
+    mpz_t *ppx;
+    if (p == 2) {
+        ++x;
+        mpz_add(Z(ur_a), Z(ur_a), px);
+        mpz_mul_2exp(Z(ur_ipg), px, 1);
+        ppx = ZP(ur_ipg);
+    } else {
+        ppx = PARAM_TO_PTR(px);
+    }
+
+    /* in the non-retry case, m = old->aq * 2c(p==2) / q_j; in the retry
+     * case, we need to take the previous value of q_j */
     uint mlevel = retry ? jlevel - 1 : jlevel;
     if (retry) {
         mpz_ui_pow_ui(Z(ur_m), p, retry);
         mpz_divexact(Z(ur_a), Z(ur_a), Z(ur_m));
     }
-    if (!divmod(Z(ur_a), Z(ur_a), vjp->alloc[mlevel].q, px))
+    if (!divmod(Z(ur_a), Z(ur_a), vjp->alloc[mlevel].q, *ppx))
         return 0;
     mpz_divexact(Z(ur_m), old->aq, vjp->alloc[mlevel].q);
+
     /* on retry, residues to update are already at new */
     uint from = retry ? new->level : old->level;
 
@@ -2428,7 +2478,7 @@ bool update_residues(t_level *old, t_level *new,
         r->count = rd;
     }
 
-    root_extend(new->level, from, Z(ur_m), Z(ur_a), g, p, x - 1, px);
+    root_extend(new->level, from, Z(ur_m), Z(ur_a), g, p, x - 1, *ppx);
     if (res_array(new->level)->count == 0)
         return 0;
     return 1;
@@ -3615,6 +3665,7 @@ e_is insert_stack(void) {
     if (init_pattern) {
         for (uint l = 1; l < level; ++l)
             levels[l].is_forced = 1;
+        fail("fix the FIXME for chinese() combine first");
         final_level = level;
     }
     if (need_midp && midp_recover.valid) {
@@ -3969,8 +4020,17 @@ int main(int argc, char **argv, char **envp) {
         free(tt);
 
         cvec_mult(&levels[0].rq, &levels[0].aq);
-        if (mpz_cmp_ui(levels[0].aq, 1) > 0)
+        if (mpz_cmp_ui(levels[0].aq, 1) > 0) {
             have_modfix = 1;
+            if (levels[final_level].have_square)
+                fail("FIXME: don't know how to propagate efffects of -c and"
+                        " -m over pre-fixed square");
+            /* FIXME: we should be doing a chinese() combine here */
+            for (uint i = 1; i <= final_level; ++i) {
+                mpz_set(levels[i].aq, levels[0].aq);
+                mpz_set(levels[i].rq, levels[0].rq);
+            }
+        }
         done_modfix();
         if (!check)
             check = 1;
