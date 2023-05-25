@@ -235,6 +235,7 @@ sub _strategy {
 
     # This must exist if we're not SIMPLE
     my $r = $self->lastRun($db);
+    my $first = ($r->k < $self->k);
 
     # If we've seen a fix_power once, make sure we set a min value for -c
     # so we don't lose it again.
@@ -280,7 +281,8 @@ sub _strategy {
                 optc => $optc,
                 optm => $self->optm,
                 cul => $self->cul,
-                priority => $type->fprio($self->n, $self->k, $expect),
+                priority => $type->fprio($self->n, $self->k,
+                        $first ? 0 : $expect),
             },
         ));
     }
@@ -350,7 +352,7 @@ sub _strategy {
             optm => $self->optm,
             optimize => 0,
             cul => $self->cul,
-            priority => $type->fprio($self->n, $self->k, $expect),
+            priority => $type->fprio($self->n, $self->k, $first ? 0 : $expect),
         },
     ));
 }
