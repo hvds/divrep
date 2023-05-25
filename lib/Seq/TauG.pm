@@ -176,6 +176,7 @@ sub final {
     for ($self->f->search({ k => { '>', $self->maxg } })
             ->search_bitfield({ 'complete' => 0 })) {
         # cannot delete, since there may already be runs
+        $_->complete(1);
         $_->impossible(1);
         $_->update;
     }
