@@ -44,11 +44,16 @@ Any moduli not permitted are then reported as disallowed.
 =cut
 
 my($knownV, $knownM) = reduce_m($m, fetchVM($type));
+init_mod();
 my $tryM = $knownM * $m;
 my @try = (0 .. $m - 1);
 my @bad;
 for my $try (0 .. $m - 1) {
     my $tryV = $try * $knownM + $knownV;
+    if (skip_this($tryV, $tryM)) {
+        print "308 skip $try\n";
+        next;
+    }
     push @bad, $tryV if bad($type, $tryV, $tryM);
 }
 final(join ' ', map "$tryM!$_", @bad);
@@ -59,6 +64,31 @@ sub final {
     my $time = sum(times());
     printf "200 f(%s,%s) has [%s] (%.2fs)\n", $n, $k, $mods // '', $time;
     exit 0;
+}
+
+{
+    my %mod;
+    sub init_mod {
+        for my $m (@opts) {
+            if ($m =~ /^-m(\d+)=(\d+)$/) {
+                push @{ $mod{$1} }, [ 0, $2 ];
+            } elsif ($m =~ /^-m(\d+)!(\d+)$/) {
+                push @{ $mod{$1} }, [ 1, $2 ];
+            }
+        }
+    }
+    sub skip_this {
+        my($tryv, $trym) = @_;
+        for my $m (keys %mod) {
+            next if $trym % $m;
+            for (@{ $mod{$m} }) {
+                my($bad, $v) = @$_;
+                return 1 if $bad && ($tryv % $m) == $v;
+                return 1 if !$bad && ($tryv % $m) != $v;
+            }
+        }
+        return 0;
+    }
 }
 
 sub fetchVM {
