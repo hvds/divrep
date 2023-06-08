@@ -138,6 +138,9 @@ sub shard_test {
     if (@new) {
         printf "f(%s,%s) shard %s [%s]\n",
                 $self->n, $self->k, $shard, join(' ', @new);
+        my $g = $self->g;
+        $g->bisected(0);
+        $g->update;
     }
     $self->sharded($shard) if $shard > $self->sharded;
     $self->optm([ @{ $self->optm }, @new ]) if @new;
