@@ -261,12 +261,13 @@ t_cvec *new_cvec(t_context *cx, uint m) {
             if (!TESTBIT(vd, j))
                 continue;
             for (uint k = 0; k < mp; ++k) {
-                if (TESTBIT(v, k * md + j))
+                uint jk = k * md + j;
+                if (TESTBIT(v, jk))
                     continue;
                 if (debugV)
                     printf("init %u (mod %u) from %u (mod %u)\n",
-                            k * md + j, m, j, md);
-                SETBIT(v, k * md + j);
+                            jk, m, j, md);
+                SETBIT(v, jk);
                 ++cv->count;
             }
         }
