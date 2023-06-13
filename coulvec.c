@@ -127,6 +127,11 @@ void cvec_done(t_context *cx) {
     mpz_clear(temp);
 }
 
+static inline void fail_402(uint m) {
+    report("402 Error: all values (mod %u) disallowed (%.3fs)\n", m, elapsed());
+    fail_silent();
+}
+
 /* size in bytes */
 static inline uint vecsize(uint m) {
     return (m + 7) >> 3;
@@ -553,11 +558,8 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
             continue;
         if (cv->in_mult)
             continue;
-        if (cv->count == m) {
-            report("402 Error: all values (mod %u) disallowed (%.3fs)\n",
-                    m, elapsed());
-            fail_silent();
-        }
+        if (cv->count == m)
+            fail_402(m);
         if (cv->count == m - 1) {
             uint last;
             for (uint i = 0; i < m; ++i)
