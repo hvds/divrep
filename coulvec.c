@@ -297,6 +297,30 @@ t_cvec *new_cvec(t_context *cx, uint m) {
     return cv;
 }
 
+void fix_cvec(t_context *cx, uint m, uint v) {
+    t_cvec *cv = get_cvec(cx, m);
+    if (cv->in_mult) {
+        return;
+    }
+
+    if (TESTBIT(cv->v, v))
+        fail_402(m);
+    cv->count = m - 1;
+    mult_combine_ui(cx, m, v);
+    cv->in_mult = 1;
+
+    if (debugv)
+        report("fix %u (mod %u) giving %Zu (mod %Zu)\n",
+                v, m, cx->mod_mult, cx->mult);
+
+    t_sui *div = &cv->div;
+    for (int i = 0; i < div->count; ++i) {
+        uint d = div->ui[i];
+        if (d > 1)
+            fix_cvec(cx, d, v % d);
+    }
+}
+
 void suppress(t_context *cx, uint m, uint v, bool depend) {
     if (suppress_count + 1 >= suppress_size) {
         uint newsize = suppress_size ? (suppress_size * 3 / 2) : 100;
@@ -568,8 +592,7 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
                     last = i;
                     break;
                 }
-            mult_combine_ui(cx, m, last);
-            cv->in_mult = 1;
+            fix_cvec(cx, m, last);
             continue;
         }
         uint g = mpz_gcd_ui(NULL, cx->mult, m);
