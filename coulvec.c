@@ -553,7 +553,7 @@ void cvec_merge(t_context *cx, uint md, uint ms) {
  */
 void cvec_pack(t_context *cx, uint chunksize, double minratio) {
     cx->sc_count = 0;
-    for (uint m = 0; m < cx->nvec; ++m) {
+    for (uint m = 2; m < cx->nvec; ++m) {
         t_cvec *cv = get_if_cvec(cx, m);
         if (!cv)
             continue;
