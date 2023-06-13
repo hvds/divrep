@@ -29,6 +29,7 @@ static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
 
 mpz_t temp;
 
+/* resizable list of uints */
 typedef struct s_sui {
     uint size;
     uint count;
@@ -53,17 +54,17 @@ typedef struct s_cvec {
 typedef struct s_context {
     uint n;
     uint k;
-    mpz_t *min;
-    uint *target_t;
-    t_cvec **vec;
+    mpz_t *min;         /* requested minimum d, passed in */
+    uint *target_t;     /* vector of (remaining) tau */
+    t_cvec **vec;       /* modular constraints: vec[m] is mod m */
     uint nvec;
-    mpz_t mod_mult;
+    mpz_t mod_mult;     /* fixed moduli: d == mod_mult (mod mult) */
     mpz_t mult;
-    uint *sc;
-    uint *sc_add;
+    uint *sc;           /* list of packed moduli */
+    uint *sc_add;       /* sc_add/mult used by prep_test/test_prepped */
     uint *sc_mult;
     uint sc_size;
-    uint sc_count;
+    uint sc_count;      /* number of active packed moduli */
 } t_context;
 t_context *cx = NULL;
 
@@ -122,6 +123,7 @@ void cvec_done(void) {
     mpz_clear(temp);
 }
 
+/* size in bytes */
 static inline uint vecsize(uint m) {
     return (m + 7) >> 3;
 }
@@ -362,6 +364,10 @@ void mult_combine_ui(uint modulus, uint offset) {
     mpz_clear(mod);
 }
 
+/* apply an external positive or negative modular constraint,
+ * restricting constraint vectors to use moduli only up to limit
+ * (for positive constraints).
+ */
 void apply_modfix(mpz_t m, mpz_t v, bool negate, uint limit) {
     mpz_mod(v, v, m);
     if (negate) {
@@ -422,8 +428,12 @@ void apply_modfix(mpz_t m, mpz_t v, bool negate, uint limit) {
     mult_combine(m, v);
 }
 
+/* Search for and apply constraints for modulus m (with factorization fm).
+ */
 void apply_m(uint m, t_fact *fm) {
-    uint tm = 1, r = 1, tmr = 1;
+    uint tm = 1;    /* tau(m) */
+    uint r = 1;     /* rad(m) */
+    uint tmr = 1;   /* tau(m/r) */
     for (uint i = 0; i < fm->count; ++i) {
         t_ppow *pp = &fm->ppow[i];
         tm *= pp->e + 1;
@@ -440,18 +450,22 @@ void apply_m(uint m, t_fact *fm) {
  * we should compare a lower ti */
         if (ti < tm || (ti == tm && mpz_cmp_ui(*cx->min, (int)m - (int)di) > 0))
             suppress(m, mod(-(int)di, m), 0);
+
         /* mx (mod m rad(m)) with (x, rad(m)) = 1 gives forced multiple */
         if ((mr % r) == 0 && (ti % tmr))
             for (uint j = 1; j < r; ++j)
                 if (tiny_gcd(j, r) == 1)
                     suppress(m, mod((int)mr * j - (int)di, m), 0);
+
         /* suppress all quadratic non-residues for square target */
         if (ti & 1) {
             char *res = residues(m);
             for (uint j = 0; j < m; ++j)
                 if (!TESTBIT(res, j))
                     suppress(m, mod((int)j - (int)di, m), 0);
+
             /* special-case p^6 + 1 factorization */
+            /* FIXME: generalize to p^{2x} + a^{x} for odd x: 2x+1 prime */
             if (ti == 7 && i + 1 < cx->k && cx->target_t[i + 1] < 8
                 && mpz_cmp_ui(*cx->min, 729 - i) > 0
             ) {
@@ -495,6 +509,9 @@ int cmp_potency(const void *va, const void *vb) {
     return (pa > pb) ? -1 : (pa < pb) ? 1 : 0;
 }
 
+/* Pack vector for modulus ms into that for modulus md, given that md
+ * is a multiple of ms.
+ */
 void cvec_merge(uint md, uint ms) {
     if (debugv)
         printf("pack %u into %u\n", ms, md);
@@ -521,8 +538,9 @@ void cvec_merge(uint md, uint ms) {
     cvd->potency = potency(md / gd, cvd->unfixed_count, cvd->unique_merged);
 }
 
+/* Find active constraints; absorb into mod_mult where possible.
+ */
 void cvec_pack(uint chunksize, double minratio) {
-    /* find active constraints; absorb into mod_mult where possible */
     cx->sc_count = 0;
     for (uint m = 0; m < cx->nvec; ++m) {
         t_cvec *cv = get_if_cvec(m);
@@ -661,7 +679,10 @@ bool cvec_test_ui(ulong value, mpz_t *mod, mpz_t *mult) {
     return cvec_testv(temp);
 }
 
-/* FIXME: if prep finds sc_mult = 0, we can immediately look up whether
+/* Initialize for multiple tests of numbers each of the form d = r_q + a_q v,
+ * for fixed r_q (mult) and a_q (mod); subsequent calls to cvec_test_prepped()
+ * pass in v.
+ * FIXME: if prep finds sc_mult = 0, we can immediately look up whether
  * sc_add is suppressed: if it is the whole walk can be aborted; if not,
  * we can mark this modulus test to be skipped in cvec_test_prepped.
  */
