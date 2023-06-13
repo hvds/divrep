@@ -42,6 +42,7 @@ typedef struct s_cvec {
     uint unfixed_count; /* count of unfixed disallowed values */
     uint unique_count;  /* count of uniquely disallowed values */
     uint unique_merged; /* unique count including merged */
+    uint modval;        /* fixed value if in_mult */
     bool in_mult;       /* TRUE if included in overall modulus */
     char *v;            /* vector of disallowed values */
     char *vu;           /* vector of uniquely disallowed values */
@@ -258,7 +259,7 @@ t_cvec *new_cvec(t_context *cx, uint m) {
             continue;
         char *vd = cvd->v;
         for (uint j = 0; j < md; ++j) {
-            if (!TESTBIT(vd, j))
+            if ((cvd->in_mult) ? (j == cvd->modval) : !TESTBIT(vd, j))
                 continue;
             for (uint k = 0; k < mp; ++k) {
                 uint jk = k * md + j;
@@ -300,11 +301,14 @@ t_cvec *new_cvec(t_context *cx, uint m) {
 void fix_cvec(t_context *cx, uint m, uint v) {
     t_cvec *cv = get_cvec(cx, m);
     if (cv->in_mult) {
+        if (v != cv->modval)
+            fail_402(m);
         return;
     }
 
     if (TESTBIT(cv->v, v))
         fail_402(m);
+    cv->modval = v;
     cv->count = m - 1;
     mult_combine_ui(cx, m, v);
     cv->in_mult = 1;
@@ -346,6 +350,12 @@ void suppress(t_context *cx, uint m, uint v, bool depend) {
         depend = ssp->depend;
 
         t_cvec *cm = get_cvec(cx, m);
+        if (cm->in_mult) {
+            if (v == cm->modval)
+                fail_402(m);
+            /* nothing to do */
+            continue;
+        }
         if (depend) {
             if (TESTBIT(cm->vu, v)) {
                 if (debugV)
@@ -367,6 +377,21 @@ void suppress(t_context *cx, uint m, uint v, bool depend) {
             printf("suppress %u (mod %u), is set\n", v, m);
         SETBIT(cm->v, v);
         ++cm->count;
+        if (cm->count >= cm->modulus - 1) {
+            /* should not be possible */
+            if (cm->count >= cm->modulus)
+                fail_402(m);
+            uint last = m;
+            for (uint i = 0; i < m; ++i) {
+                if (TESTBIT(cm->v, i))
+                    continue;
+                last = i;
+                break;
+            }
+            if (last >= m)
+                fail("logic error");
+            fix_cvec(cx, m, last);
+        }
 
         for (uint i = 0; i < cm->mult.count; ++i) {
             uint mp = cm->mult.ui[i];
