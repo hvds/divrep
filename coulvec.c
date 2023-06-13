@@ -188,6 +188,27 @@ void add_sui(t_sui *suip, uint v) {
     suip->ui[suip->count++] = v;
 }
 
+void mult_combine(t_context *cx, mpz_t modulus, mpz_t offset) {
+    mpz_t zarray[4];
+    mpz_t *modp = PARAM_TO_PTR(modulus);
+    mpz_t *offp = PARAM_TO_PTR(offset);
+    memcpy(&zarray[0], cx->mod_mult, sizeof(mpz_t));
+    memcpy(&zarray[1], *offp, sizeof(mpz_t));
+    memcpy(&zarray[2], cx->mult, sizeof(mpz_t));
+    memcpy(&zarray[3], *modp, sizeof(mpz_t));
+    if (!chinese(cx->mod_mult, cx->mult, &zarray[0], &zarray[2], 2))
+        fail("chinese");
+}
+
+void mult_combine_ui(t_context *cx, uint modulus, uint offset) {
+    mpz_t off, mod;
+    mpz_init_set_ui(off, offset);
+    mpz_init_set_ui(mod, modulus);
+    mult_combine(cx, mod, off);
+    mpz_clear(off);
+    mpz_clear(mod);
+}
+
 void resize_cvec(t_context *cx, uint size) {
     if (size < cx->nvec)
         return;
@@ -350,27 +371,6 @@ void suppress(t_context *cx, uint m, uint v, bool depend) {
             ;
         }
     }
-}
-
-void mult_combine(t_context *cx, mpz_t modulus, mpz_t offset) {
-    mpz_t zarray[4];
-    mpz_t *modp = PARAM_TO_PTR(modulus);
-    mpz_t *offp = PARAM_TO_PTR(offset);
-    memcpy(&zarray[0], cx->mod_mult, sizeof(mpz_t));
-    memcpy(&zarray[1], *offp, sizeof(mpz_t));
-    memcpy(&zarray[2], cx->mult, sizeof(mpz_t));
-    memcpy(&zarray[3], *modp, sizeof(mpz_t));
-    if (!chinese(cx->mod_mult, cx->mult, &zarray[0], &zarray[2], 2))
-        fail("chinese");
-}
-
-void mult_combine_ui(t_context *cx, uint modulus, uint offset) {
-    mpz_t off, mod;
-    mpz_init_set_ui(off, offset);
-    mpz_init_set_ui(mod, modulus);
-    mult_combine(cx, mod, off);
-    mpz_clear(off);
-    mpz_clear(mod);
 }
 
 /* apply an external positive or negative modular constraint,
