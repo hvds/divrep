@@ -51,7 +51,8 @@ typedef struct s_cvec {
     double potency;     /* ratio uniquely disallowed including merged */
 } t_cvec;
 
-typedef struct s_context {
+/* typedef struct s_context t_context (in header) */
+struct s_context {
     uint n;
     uint k;
     mpz_t *min;         /* requested minimum d, passed in */
@@ -65,8 +66,7 @@ typedef struct s_context {
     uint *sc_mult;
     uint sc_size;
     uint sc_count;      /* number of active packed moduli */
-} t_context;
-t_context *cx = NULL;
+};
 
 char *vresidues = NULL;
 uint nvresidues = 0;
@@ -80,8 +80,8 @@ t_suppress *suppress_stack = NULL;
 uint suppress_count = 0;
 uint suppress_size = 0;
 
-void cvec_init(uint n, uint k, mpz_t *min, uint *target_t) {
-    cx = malloc(sizeof(t_context));
+t_context *cvec_init(uint n, uint k, mpz_t *min, uint *target_t) {
+    t_context *cx = malloc(sizeof(t_context));
     cx->n = n;
     cx->k = k;
     cx->min = min;
@@ -96,9 +96,10 @@ void cvec_init(uint n, uint k, mpz_t *min, uint *target_t) {
     cx->sc_size = 0;
     cx->sc_count = 0;
     mpz_init(temp);
+    return cx;
 }
 
-void cvec_done(void) {
+void context_done(t_context *cx) {
     for (uint i = 0; i < cx->nvec; ++i) {
         t_cvec *cv = cx->vec[i];
         if (!cv)
@@ -116,8 +117,11 @@ void cvec_done(void) {
     free(cx->sc);
     free(cx->sc_add);
     free(cx->sc_mult);
-
     free(cx);
+}
+
+void cvec_done(t_context *cx) {
+    context_done(cx);
     free(vresidues);
     free(suppress_stack);
     mpz_clear(temp);
@@ -179,7 +183,7 @@ void add_sui(t_sui *suip, uint v) {
     suip->ui[suip->count++] = v;
 }
 
-void resize_cvec(uint size) {
+void resize_cvec(t_context *cx, uint size) {
     if (size < cx->nvec)
         return;
     uint newsize = cx->nvec ? (cx->nvec * 3 / 2) : 100;
@@ -191,21 +195,21 @@ void resize_cvec(uint size) {
     cx->nvec = newsize;
 }
 
-t_cvec *new_cvec(uint m);
-static inline t_cvec *get_cvec(uint m) {
+t_cvec *new_cvec(t_context *cx, uint m);
+static inline t_cvec *get_cvec(t_context *cx, uint m) {
     if (m < cx->nvec && cx->vec[m])
         return cx->vec[m];
-    return new_cvec(m);
+    return new_cvec(cx, m);
 }
-static inline t_cvec *get_if_cvec(uint m) {
+static inline t_cvec *get_if_cvec(t_context *cx, uint m) {
     if (m < cx->nvec && cx->vec[m])
         return cx->vec[m];
     return NULL;
 }
 
-t_cvec *new_cvec(uint m) {
+t_cvec *new_cvec(t_context *cx, uint m) {
     if (m >= cx->nvec)
-        resize_cvec(m);
+        resize_cvec(cx, m);
     t_cvec *cv = calloc(1, sizeof(t_cvec));
     cx->vec[m] = cv;
     uint vsize = vecsize(m);
@@ -221,7 +225,7 @@ t_cvec *new_cvec(uint m) {
     for (uint fi = 0; fi < f.count; ++fi) {
         uint mp = f.ppow[fi].p;
         uint md = m / mp;
-        t_cvec *cvd = get_cvec(md);
+        t_cvec *cvd = get_cvec(cx, md);
         add_sui(&cv->div, md);
         add_sui(&cvd->mult, m);
         if (cvd->count == 0)
@@ -248,7 +252,7 @@ t_cvec *new_cvec(uint m) {
         for (uint di = 0; di < cv->div.count; ++di) {
             uint md = cv->div.ui[di];
             uint mp = m / md;
-            t_cvec *cvd = get_cvec(md);
+            t_cvec *cvd = get_cvec(cx, md);
             char *vd = cvd->v;
             for (uint j = 0; j < md; ++j) {
                 if (TESTBIT(vd, j))
@@ -256,7 +260,7 @@ t_cvec *new_cvec(uint m) {
                 for (uint k = 0; k < mp; ++k)
                     if (!TESTBIT(v, k * md + j))
                         goto no_propagate;
-                suppress(md, j, 0);
+                suppress(cx, md, j, 0);
                 /* FIXME: short-circuit */
               no_propagate:
                 ;
@@ -266,7 +270,7 @@ t_cvec *new_cvec(uint m) {
     return cv;
 }
 
-void suppress(uint m, uint v, bool depend) {
+void suppress(t_context *cx, uint m, uint v, bool depend) {
     if (suppress_count + 1 >= suppress_size) {
         uint newsize = suppress_size ? (suppress_size * 3 / 2) : 100;
         suppress_stack = realloc(suppress_stack, newsize * sizeof(t_suppress));
@@ -290,7 +294,7 @@ void suppress(uint m, uint v, bool depend) {
         v = ssp->offset;
         depend = ssp->depend;
 
-        t_cvec *cm = get_cvec(m);
+        t_cvec *cm = get_cvec(cx, m);
         if (depend) {
             if (TESTBIT(cm->vu, v)) {
                 if (debugV)
@@ -317,7 +321,7 @@ void suppress(uint m, uint v, bool depend) {
             uint mp = cm->mult.ui[i];
             uint d = mp / m;
             for (uint j = 0; j < d; ++j)
-                suppress(mp, m * j + v, 1);
+                suppress(cx, mp, m * j + v, 1);
         }
 
         for (uint i = 0; i < cm->div.count; ++i) {
@@ -336,14 +340,14 @@ void suppress(uint m, uint v, bool depend) {
                 CLRBIT(cm->vu, mdv);
                 --cm->unique_count;
             }
-            suppress(d, dv, 0);
+            suppress(cx, d, dv, 0);
           next_suppress_divisor:
             ;
         }
     }
 }
 
-void mult_combine(mpz_t modulus, mpz_t offset) {
+void mult_combine(t_context *cx, mpz_t modulus, mpz_t offset) {
     mpz_t zarray[4];
     mpz_t *modp = PARAM_TO_PTR(modulus);
     mpz_t *offp = PARAM_TO_PTR(offset);
@@ -355,11 +359,11 @@ void mult_combine(mpz_t modulus, mpz_t offset) {
         fail("chinese");
 }
 
-void mult_combine_ui(uint modulus, uint offset) {
+void mult_combine_ui(t_context *cx, uint modulus, uint offset) {
     mpz_t off, mod;
     mpz_init_set_ui(off, offset);
     mpz_init_set_ui(mod, modulus);
-    mult_combine(mod, off);
+    mult_combine(cx, mod, off);
     mpz_clear(off);
     mpz_clear(mod);
 }
@@ -368,12 +372,12 @@ void mult_combine_ui(uint modulus, uint offset) {
  * restricting constraint vectors to use moduli only up to limit
  * (for positive constraints).
  */
-void apply_modfix(mpz_t m, mpz_t v, bool negate, uint limit) {
+void apply_modfix(t_context *cx, mpz_t m, mpz_t v, bool negate, uint limit) {
     mpz_mod(v, v, m);
     if (negate) {
         if (!mpz_fits_uint_p(m))
             fail("negated modulus %Zu is too large");
-        suppress(mpz_get_ui(m), mpz_get_ui(v), 0);
+        suppress(cx, mpz_get_ui(m), mpz_get_ui(v), 0);
         return;
     }
     /* positive: require v (mod m) for factors up to limit, force
@@ -384,7 +388,7 @@ void apply_modfix(mpz_t m, mpz_t v, bool negate, uint limit) {
         for (uint i = 0; i < um; ++i) {
             if (i == uv)
                 continue;
-            suppress(um, uv, 0);
+            suppress(cx, um, uv, 0);
         }
         return;
     }
@@ -415,7 +419,7 @@ void apply_modfix(mpz_t m, mpz_t v, bool negate, uint limit) {
                 uint jval = prevpp * j + prevval;
                 if (jval == thisval)
                     continue;
-                suppress(pp, jval, 0);
+                suppress(cx, pp, jval, 0);
             }
             if (pp > plim)
                 break;
@@ -425,12 +429,12 @@ void apply_modfix(mpz_t m, mpz_t v, bool negate, uint limit) {
         }
     }
     free_fact(&f);
-    mult_combine(m, v);
+    mult_combine(cx, m, v);
 }
 
 /* Search for and apply constraints for modulus m (with factorization fm).
  */
-void apply_m(uint m, t_fact *fm) {
+void apply_m(t_context *cx, uint m, t_fact *fm) {
     uint tm = 1;    /* tau(m) */
     uint r = 1;     /* rad(m) */
     uint tmr = 1;   /* tau(m/r) */
@@ -449,20 +453,20 @@ void apply_m(uint m, t_fact *fm) {
 /* FIXME: if v_k is fixed to a multiple of anything coprime to m,
  * we should compare a lower ti */
         if (ti < tm || (ti == tm && mpz_cmp_ui(*cx->min, (int)m - (int)di) > 0))
-            suppress(m, mod(-(int)di, m), 0);
+            suppress(cx, m, mod(-(int)di, m), 0);
 
         /* mx (mod m rad(m)) with (x, rad(m)) = 1 gives forced multiple */
         if ((mr % r) == 0 && (ti % tmr))
             for (uint j = 1; j < r; ++j)
                 if (tiny_gcd(j, r) == 1)
-                    suppress(m, mod((int)mr * j - (int)di, m), 0);
+                    suppress(cx, m, mod((int)mr * j - (int)di, m), 0);
 
         /* suppress all quadratic non-residues for square target */
         if (ti & 1) {
             char *res = residues(m);
             for (uint j = 0; j < m; ++j)
                 if (!TESTBIT(res, j))
-                    suppress(m, mod((int)j - (int)di, m), 0);
+                    suppress(cx, m, mod((int)j - (int)di, m), 0);
 
             /* special-case p^6 + 1 factorization */
             /* FIXME: generalize to p^{2x} + a^{x} for odd x: 2x+1 prime */
@@ -477,11 +481,11 @@ void apply_m(uint m, t_fact *fm) {
     }
 }
 
-void dump_sc(void) {
+void dump_sc(t_context *cx) {
     gmp_printf("fixed: %Zu (mod %Zu)\n", cx->mod_mult, cx->mult);
     for (uint i = 0; i < cx->sc_count; ++i) {
         uint mi = cx->sc[i];
-        t_cvec *cv = get_if_cvec(mi);
+        t_cvec *cv = get_if_cvec(cx, mi);
         if (!cv)
             fail("logic error, constraints for m=%u not available", mi);
         uint gi = mpz_gcd_ui(NULL, cx->mult, mi);
@@ -491,7 +495,7 @@ void dump_sc(void) {
     }
 }
 
-void push_sc(uint m) {
+void push_sc(t_context *cx, uint m) {
     if (cx->sc_count + 1 >= cx->sc_size) {
         uint newsize = cx->sc_size ? (cx->sc_size * 3 / 2) : 100;
         cx->sc = realloc(cx->sc, newsize * sizeof(uint));
@@ -503,20 +507,21 @@ void push_sc(uint m) {
 }
 
 /* sort by potency descending */
+t_context *sortcx;
 int cmp_potency(const void *va, const void *vb) {
     uint a = *(uint *)va, b = *(uint *)vb;
-    double pa = cx->vec[a]->potency, pb = cx->vec[b]->potency;
+    double pa = sortcx->vec[a]->potency, pb = sortcx->vec[b]->potency;
     return (pa > pb) ? -1 : (pa < pb) ? 1 : 0;
 }
 
 /* Pack vector for modulus ms into that for modulus md, given that md
  * is a multiple of ms.
  */
-void cvec_merge(uint md, uint ms) {
+void cvec_merge(t_context *cx, uint md, uint ms) {
     if (debugv)
         printf("pack %u into %u\n", ms, md);
-    t_cvec *cvd = get_cvec(md);
-    t_cvec *cvs = get_cvec(ms);
+    t_cvec *cvd = get_cvec(cx, md);
+    t_cvec *cvs = get_cvec(cx, ms);
     char *vums = cvs->vum;
     char *vumd = cvd->vum;
     uint p = md / ms;
@@ -540,10 +545,10 @@ void cvec_merge(uint md, uint ms) {
 
 /* Find active constraints; absorb into mod_mult where possible.
  */
-void cvec_pack(uint chunksize, double minratio) {
+void cvec_pack(t_context *cx, uint chunksize, double minratio) {
     cx->sc_count = 0;
     for (uint m = 0; m < cx->nvec; ++m) {
-        t_cvec *cv = get_if_cvec(m);
+        t_cvec *cv = get_if_cvec(cx, m);
         if (!cv)
             continue;
         if (cv->in_mult)
@@ -560,7 +565,7 @@ void cvec_pack(uint chunksize, double minratio) {
                     last = i;
                     break;
                 }
-            mult_combine_ui(m, last);
+            mult_combine_ui(cx, m, last);
             cv->in_mult = 1;
             continue;
         }
@@ -583,10 +588,11 @@ void cvec_pack(uint chunksize, double minratio) {
          * we call it a positive potency of a / (a - u) */
         cv->potency = potency(m / g, cv->unfixed_count, cv->unique_count);
         if (cv->unique_count)
-            push_sc(m);
+            push_sc(cx, m);
     }
 
     /* optimize, combine, sort by potency */
+    sortcx = cx;
     qsort(cx->sc, cx->sc_count, sizeof(uint), &cmp_potency);
 
     for (uint i = 0; i < cx->sc_count; ++i) {
@@ -603,9 +609,9 @@ void cvec_pack(uint chunksize, double minratio) {
             if (scmove)
                 memmove(&cx->sc[j], &cx->sc[j + 1], scmove * sizeof(uint));
             if (mi == mij) {
-                cvec_merge(mi, mj);
+                cvec_merge(cx, mi, mj);
             } else if (mj == mij) {
-                cvec_merge(mj, mi);
+                cvec_merge(cx, mj, mi);
                 cx->sc[i] = mj;
                 goto redo_mi;
             } else {
@@ -615,8 +621,8 @@ void cvec_pack(uint chunksize, double minratio) {
                  * (correctly) react to the changes? It would be a big
                  * shame if we have to start again each time.
                  */
-                cvec_merge(mij, mi);
-                cvec_merge(mij, mj);
+                cvec_merge(cx, mij, mi);
+                cvec_merge(cx, mij, mj);
                 cx->sc[i] = mij;
                 /* splice it out if it is listed */
                 for (uint ij = i + 1; ij < cx->sc_count; ++ij)
@@ -634,6 +640,7 @@ void cvec_pack(uint chunksize, double minratio) {
     }
 
     /* sort again */
+    sortcx = cx;
     qsort(cx->sc, cx->sc_count, sizeof(uint), &cmp_potency);
 
     /* find the cutoff */
@@ -647,16 +654,16 @@ void cvec_pack(uint chunksize, double minratio) {
         }
 
     if (debugv)
-        dump_sc();
+        dump_sc(cx);
 }
 
-bool cvec_mult(mpz_t *mod_mult, mpz_t *mult) {
+bool cvec_mult(t_context *cx, mpz_t *mod_mult, mpz_t *mult) {
     mpz_set(*mod_mult, cx->mod_mult);
     mpz_set(*mult, cx->mult);
     return mpz_cmp_ui(cx->mult, 1);
 }
 
-bool cvec_testv(mpz_t v) {
+bool cvec_testv(t_context *cx, mpz_t v) {
     for (uint i = 0; i < cx->sc_count; ++i) {
         uint m = cx->sc[i];
         t_cvec *cv = cx->vec[m];
@@ -667,16 +674,16 @@ bool cvec_testv(mpz_t v) {
     return 1;
 }
 
-bool cvec_test(mpz_t value, mpz_t *mod, mpz_t *mult) {
+bool cvec_test(t_context *cx, mpz_t value, mpz_t *mod, mpz_t *mult) {
     mpz_mul(temp, *mult, value);
     mpz_add(temp, temp, *mod);
-    return cvec_testv(temp);
+    return cvec_testv(cx, temp);
 }
 
-bool cvec_test_ui(ulong value, mpz_t *mod, mpz_t *mult) {
+bool cvec_test_ui(t_context *cx, ulong value, mpz_t *mod, mpz_t *mult) {
     mpz_mul_ui(temp, *mult, value);
     mpz_add(temp, temp, *mod);
-    return cvec_testv(temp);
+    return cvec_testv(cx, temp);
 }
 
 /* Initialize for multiple tests of numbers each of the form d = r_q + a_q v,
@@ -686,14 +693,14 @@ bool cvec_test_ui(ulong value, mpz_t *mod, mpz_t *mult) {
  * sc_add is suppressed: if it is the whole walk can be aborted; if not,
  * we can mark this modulus test to be skipped in cvec_test_prepped.
  */
-void cvec_prep_test(mpz_t *mod, mpz_t *mult) {
+void cvec_prep_test(t_context *cx, mpz_t *mod, mpz_t *mult) {
     for (uint i = 0; i < cx->sc_count; ++i) {
         uint m = cx->sc[i];
         cx->sc_mult[i] = mpz_fdiv_ui(*mult, m);
         cx->sc_add[i] = mpz_fdiv_ui(*mod, m);
     }
 }
-bool cvec_test_prepped(ulong value) {
+bool cvec_test_prepped(t_context *cx, ulong value) {
     for (uint i = 0; i < cx->sc_count; ++i) {
         uint m = cx->sc[i];
         uint v = value % m;

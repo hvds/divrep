@@ -255,6 +255,9 @@ char *aux_buf = NULL;
 /* Initial pattern set with -I */
 char *init_pattern = NULL;
 
+/* Default cvec context */
+t_context *cx0 = NULL;
+
 /* Mod constraints set with -m */
 typedef struct s_modfix {
     mpz_t mod;
@@ -627,7 +630,7 @@ void done(void) {
                 opt_batch_min < 0 ? batch_alloc : opt_batch_max);
 
     if (check)
-        cvec_done();
+        cvec_done(cx0);
     free(diag_buf);
     free(aux_buf);
     if (wv_qq)
@@ -2123,12 +2126,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
         fail("TODO: non-square min > 2^64");
 #endif
     if (check)
-        cvec_prep_test(m, aq);
+        cvec_prep_test(cx0, m, aq);
     for (ulong ati = mpz_get_ui(Z(wv_ati)); ati <= end; ++ati) {
         ++countwi;
         if (need_work)
             diag_walk_v(cur_level, ati, end);
-        if (check && !cvec_test_prepped(ati))
+        if (check && !cvec_test_prepped(cx0, ati))
             goto next_ati;
         for (uint ii = 0; ii < inv_count; ++ii) {
             t_mod *ip = &inv[ii];
@@ -2182,7 +2185,7 @@ void walk_1(t_level *cur_level, uint vi) {
     if (mpz_cmp(Z(w1_v), min) < 0)
         return;
     ++countw;
-    if (check && !cvec_testv(Z(w1_v)))
+    if (check && !cvec_testv(cx0, Z(w1_v)))
         return;
 
     uint t[k];
@@ -2290,7 +2293,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
         ++countw;
-        if (check && !cvec_testv(Z(w1_v)))
+        if (check && !cvec_testv(cx0, Z(w1_v)))
             continue;
 
         for (uint vj = 0; vj < k; ++vj) {
@@ -3999,11 +4002,11 @@ int main(int argc, char **argv, char **envp) {
         uint *tt = calloc(k, sizeof(uint));
         for (uint i = 0; i < k; ++i)
             tt[i] = target_t(i);
-        cvec_init(n, k, &min, tt);
+        cx0 = cvec_init(n, k, &min, tt);
 
         for (uint mfi = 0; mfi < modfix_count; ++mfi) {
             t_modfix *mfp = &modfix[mfi];
-            apply_modfix(mfp->mod, mfp->val, mfp->negate, check);
+            apply_modfix(cx0, mfp->mod, mfp->val, mfp->negate, check);
         }
 
         t_fact f;
@@ -4013,13 +4016,13 @@ int main(int argc, char **argv, char **envp) {
             simple_fact(m, &f);
             if (check_prime && f.ppow[f.count - 1].p > check_prime)
                 continue;
-            apply_m(m, &f);
+            apply_m(cx0, m, &f);
         }
         free_fact(&f);
-        cvec_pack(check_chunk ? check_chunk : check, check_ratio);
+        cvec_pack(cx0, check_chunk ? check_chunk : check, check_ratio);
         free(tt);
 
-        cvec_mult(&levels[0].rq, &levels[0].aq);
+        cvec_mult(cx0, &levels[0].rq, &levels[0].aq);
         if (mpz_cmp_ui(levels[0].aq, 1) > 0) {
             have_modfix = 1;
             if (levels[final_level].have_square)
