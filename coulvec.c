@@ -81,6 +81,12 @@ t_suppress *suppress_stack = NULL;
 uint suppress_count = 0;
 uint suppress_size = 0;
 
+void *mem_dup(void *src, uint size) {
+    void *dest = malloc(size);
+    memcpy(dest, src, size);
+    return dest;
+}
+
 t_context *cvec_init(uint n, uint k, mpz_t *min, uint *target_t) {
     t_context *cx = malloc(sizeof(t_context));
     cx->n = n;
@@ -100,7 +106,7 @@ t_context *cvec_init(uint n, uint k, mpz_t *min, uint *target_t) {
     return cx;
 }
 
-void context_done(t_context *cx) {
+void ctx_free(t_context *cx) {
     for (uint i = 0; i < cx->nvec; ++i) {
         t_cvec *cv = cx->vec[i];
         if (!cv)
@@ -122,7 +128,7 @@ void context_done(t_context *cx) {
 }
 
 void cvec_done(t_context *cx) {
-    context_done(cx);
+    ctx_free(cx);
     free(vresidues);
     free(suppress_stack);
     mpz_clear(temp);
@@ -165,6 +171,45 @@ static inline uint mod(int i, int m) {
 static inline double potency(uint modulus, uint count, uint unique) {
     uint avail = modulus - (count - unique);
     return (double)avail / (double)(avail - unique);
+}
+
+t_cvec **vec_dup(t_cvec **src, uint size) {
+    t_cvec **dest = malloc(size * sizeof(t_cvec *));
+    for (uint i = 0; i < size; ++i) {
+        t_cvec *si = src[i];
+        if (si == NULL) {
+            dest[i] = NULL;
+            continue;
+        }
+        t_cvec *di = mem_dup(si, sizeof(t_cvec));
+        di->v = mem_dup(si->v, vecsize(i));
+        di->vu = mem_dup(si->vu, vecsize(i));
+        di->vum = mem_dup(si->vum, vecsize(i));
+        di->div.ui = mem_dup(si->div.ui, si->div.count * sizeof(uint));
+        di->div.size = di->div.count;
+        di->mult.ui = mem_dup(si->mult.ui, si->mult.count * sizeof(uint));
+        di->mult.size = di->mult.count;
+        dest[i] = di;
+    }
+    return dest;
+}
+
+t_context *ctx_dup(t_context *cx) {
+    t_context *cy = malloc(sizeof(t_context));
+    cy->n = cx->n;
+    cy->k = cx->k;
+    cy->min = cx->min;
+    cy->target_t = cx->target_t;
+    cy->vec = vec_dup(cx->vec, cx->nvec);
+    cy->nvec = cx->nvec;
+    mpz_init_set(cy->mod_mult, cx->mod_mult);
+    mpz_init_set(cy->mult, cx->mult);
+    cy->sc = NULL;
+    cy->sc_add = NULL;
+    cy->sc_mult = NULL;
+    cy->sc_size = 0;
+    cy->sc_count = 0;
+    return cy;
 }
 
 char *residues(uint m) {
