@@ -42,6 +42,9 @@ endif
 ifdef DEBUG_ALL
     DEFINES += -DDEBUG_ALL
 endif
+ifdef NATIVE
+    CC_OPT += -march=native
+endif
 
 default: pcoul
 all: pcoul dpcoul pcaul dpcaul
