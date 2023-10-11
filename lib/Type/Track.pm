@@ -90,6 +90,32 @@ sub prog {
     return $PROG{$which} // $self->SUPER::prog($which);
 }
 
+#
+# For certain individual cases we have proven limits that we cannot easily
+# derive generically here. Avoid wasting time attempting to discover those
+# unless the user asks to ignore exceptions (-ix).
+#
+# TODO: in from_fixpow() try x(y^2+i)(...) if z is divisible by any odd prime
+# For example with track(729, 5), we have tau(v_i) = (7, 8, 4, 12, 2) giving
+# (p^6, 2.5.p, 3p, 2^2.p, p); however v_1 = p^6 + 1 = (p^2 + 1)(p^4 - p^2 + 1).
+# This can give 2.5.p only if p^2 + 1 = 10, not possible for p > 3.
+#
+sub check_exceptions {
+    my($self) = @_;
+    for (
+        [ 625, 4 ], # see Constraint::Fact
+        [ 729, 4 ], # see TODO above
+    ) {
+        my($n, $f) = @$_;
+        if ($self->n == $n && $self->f > $f) {
+            printf <<OUT, $n, $f, $self->c->elapsed;
+403 Error: f(%s) > %s known impossible by exception (%.2fs)
+OUT
+            exit 1;
+        }
+    }
+}
+
 # TODO: if d+k+r^2 = z^2 (typically with r=1), then d+k = (z-r)(z+r),
 # so tau(d+k) is at least 4, and may be forced higher if we know further
 # divisibility of z-r or z+r. Is there some way we can track that, eg

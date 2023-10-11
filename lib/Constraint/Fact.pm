@@ -96,6 +96,14 @@ shows immediately that no solution is possible.
 (Future handling of Pell equations may make it possible to discover this
 sort of thing automatically.)
 
+=head2 p^4
+
+p^4 + 4 = (p^2 - 2p + 2)(p^2 + 2p + 2)
+
+For track(625, f) for f > 4, we find v_0 = p^4, p > 5, and we need
+tau(v_4) = 4. However p^4 + 4 is divisible by 5 for all p > 5, and
+both of the factors above are > 5 for p > 5, so we must have tau > 4.
+
 =cut
 
 sub new {
