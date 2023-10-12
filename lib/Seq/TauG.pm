@@ -34,6 +34,13 @@ For a given C<n>, the C<status> flag C<complete> is set to C<TRUE>
 to imply that a) C<ming == maxg>, b) there are associated L<Seq::TauF>
 entries for each of C<f(n, 2) .. f(n, maxg)> that are proven minimal.
 
+For a given C<n>, the C<status> flag C<superset> is set to C<TRUE>
+when C<n.ming = 1 + {n+1}.ming>, with both C<n> and C<n+1> not C<complete>,
+and the C<status> flag C<subset> is set for C<n+1> in the same case.
+The run harness does not run those C<n> that are marked as C<superset>,
+and C<bad()> on a C<subset> propagates the new C<checked> value to its
+C<superset(s)>.
+
 For a given C<n>, C<priority> is used as an input to determine priority
 of associated L<Seq::TauF> entries; by default it starts off as
 C< -log_2(n) >, but is then lowered when we find results unreasonably
@@ -51,7 +58,7 @@ $taug->define($TABLE, 'taug', [
     'maybe uint depend_n',
     'maybe uint bisected',
     'maybe float bisect_time',
-    'flags(complete depend prime) status',
+    'flags(complete depend prime superset subset) status',
 ]);
 $taug->has_many(f => 'Seq::TauF', 'n', { order_by => 'k' });
 $taug->might_have(depended => 'Seq::TauG', { 'foreign.n' => 'self.depend_n' });
@@ -68,6 +75,8 @@ sub max_known {
             || ($db->type->smallest - 1);
 }
 
+# Return a list of taug entries for harness to process, within the
+# given range.
 sub range {
     my($class, $db, $start, $end) = @_;
     return $db->resultset($TABLE)->search({
@@ -75,7 +84,10 @@ sub range {
             '>=' => $start,
             '<=' => $end,
         },
-    })->search_bitfield({ complete => 0 })->all;
+    })->search_bitfield({
+        complete => 0,
+        superset => 0,
+    })->all;
 }
 
 sub genTo {
@@ -105,8 +117,14 @@ sub generate {
 
 sub good {
     my($self, $db, $ming, $checked) = @_;
-    $self->ming($ming) if $ming > $self->ming;
     $self->checked($checked) if $checked > $self->checked;
+    if ($self->subset) {
+        my $gp = $self->predecessor($db);
+        # propagate recursively, but ignore any return objects
+        $gp->bad($db, $checked - 2) if $gp && !$gp->complete
+                && $gp->superset && $gp->ming == $self->ming + 1;
+    }
+    $self->ming($ming) if $ming > $self->ming;
     return $self->final($db);
 }
 
@@ -121,6 +139,12 @@ sub partial {
 sub bad {
     my($self, $db, $checked) = @_;
     $self->checked($checked) if $checked > $self->checked;
+    if ($self->subset) {
+        my $gp = $self->predecessor($db);
+        # propagate recursively, but ignore any return objects
+        $gp->bad($db, $checked - 1) if $gp && !$gp->complete
+                && $gp->superset && $gp->ming == $self->ming + 1;
+    }
     return $self->final($db);
 }
 
@@ -180,16 +204,58 @@ sub final {
         $_->impossible(1);
         $_->update;
     }
-    return $self->complete ? () : ($self->fnext($db));
+    my @extra;
+    my($gp, $gs) = ($self->predecessor($db), $self->successor($db));
+    $self->propagate_set($gs);
+    push @extra, $gp if $gp && $gp->propagate_set($self);
+    return map +($_->complete ? () : $_->fnext($db)), ($self, @extra);
+}
+
+# update subset/superset flags on a predecessor/successor pair; returns
+# C<TRUE> if the predecessor is newly runnable.
+sub propagate_set {
+    my($gp, $gs, $db) = @_;
+    return 0 unless $gs;
+    if ($gs->complete || $gp->complete || $gp->ming <= $gs->ming) {
+        if ($gs->subset) {
+            $gs->subset(0);
+            $gs->update;
+        }
+        if ($gp->superset) {
+            $gp->superset(0);
+            $gp->update;
+            return 1;
+        }
+    } else {
+        if (!$gs->subset) {
+            $gs->subset(1);
+            $gs->update;
+        }
+        if (!$gp->superset) {
+            $gp->superset(1);
+            $gp->update;
+        }
+    }
+    return 0;
 }
 
 sub prep {
     my($self, $db) = @_;
-    return () if $self->complete;
+    return () if $self->complete || $self->superset;
     return $self->fnext($db);
 }
 
 sub runnable { return () }
+
+sub predecessor {
+    my($self, $db) = @_;
+    return $db->resultset('TauG')->find({ n => $self->n - 1 });
+}
+
+sub successor {
+    my($self, $db) = @_;
+    return $db->resultset('TauG')->find({ n => $self->n + 1 });
+}
 
 sub fnext {
     my($self, $db) = @_;

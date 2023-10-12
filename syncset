@@ -1,0 +1,53 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+use lib 'lib';
+use Type;
+use Seq::Db;
+
+my $typename = 'r';
+# Only track() supports this logic
+my %supported = map +($_ => 1), qw{ r };
+
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift(@ARGV);
+    last if $arg eq '--';
+    $typename = $1, next if $arg =~ /^-y(.*)/;
+    die "Unknown option '$arg'";
+}
+
+die "Type '$typename' not yet supported" unless $supported{$typename};
+my $type = Type->new($typename);
+my $db = Seq::Db->new($type, 0);
+
+my $prev = -1;
+my $prevg = undef;
+for my $g ($db->resultset('TauG')->search(
+    undef, { order_by => 'n' }
+)->all) {
+    my $n = $g->n;
+    if ($n != $prev + 1) {
+        if ($prevg) {
+            $prevg->superset(0);
+            $prevg->update;
+        }
+        goto doneg;
+    }
+    if (!$prevg->complete && !$g->complete
+        && $prevg->ming == $g->ming + 1
+    ) {
+        $prevg->superset(1);
+        $g->subset(1);
+    } else {
+        $prevg->superset(0);
+        $g->subset(0);
+    }
+    $prevg->update;
+  doneg:
+    $prev = $n;
+    $prevg = $g;
+}
+if ($prevg) {
+    $prevg->superset(0);
+    $prevg->update;
+}

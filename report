@@ -102,15 +102,18 @@ sub report_g {
                 !$g->complete && $g->depend && $g->depended->ming == $g->ming
             ) ? sprintf('g(%s)', $g->depend_n)
                 : _fc(_maxf($g));
+            my $ming = ($g->superset ? '+' : '')
+                    . ($g->subset ? '-' : '')
+                    . $g->ming;
             if ($tauish) {
                 printf(
                     "%5s | %4s | %5s | %5s | %20s | %s\n",
-                    $n, _tau($n), $g->ming, $g->maxg, $f, _comments($g),
+                    $n, _tau($n), $ming, $g->maxg, $f, _comments($g),
                 );
             } else {
                 printf(
                     "%5s | %5s | %5s | %27s | %s\n",
-                    $n, $g->ming, $g->maxg, $f, _comments($g),
+                    $n, $ming, $g->maxg, $f, _comments($g),
                 );
             }
             next;
