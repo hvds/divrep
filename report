@@ -10,6 +10,7 @@ use Type;
 use Math::xGMP;
 
 my($debug, $opt_composite, $opt_table, $opt_run, $commas) = (0, 0, 0, 0, 0);
+my $order = 'n';
 my $typename = 't';
 my $nfilter;
 my $filter = sub { 1 };
@@ -21,6 +22,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $opt_table = 1, next if $arg eq '-t';
     $opt_run = 1, next if $arg eq '-r';
     $commas = 1, next if $arg eq '-C';
+    $order = [ \'LENGTH(checked)', 'checked' ], next if $arg eq '-z';
     $typename = $1, next if $arg =~ /^-y(.*)/;
     $filter = chain_sig($filter, $1 || shift(@ARGV)), next
             if $arg =~ /^-s(.*)/;
@@ -68,7 +70,7 @@ exit 0;
 
 sub report_all {
     for my $g ($db->resultset('TauG')->search(
-        undef, { order_by => 'n' }
+        undef, { order_by => $order }
     )->all) {
         my $n = $g->n;
         next unless $nfilter->($n);
@@ -86,7 +88,7 @@ sub report_g {
     my $tauish = ($type->typename =~ /^[ta]$/) ? 1 : 0;
 
     for my $g ($db->resultset('TauG')->search(
-        undef, { order_by => 'n' }
+        undef, { order_by => $order }
     )->all) {
         my $n = $g->n;
         next unless $filter->($n);
