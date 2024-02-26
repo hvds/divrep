@@ -15,17 +15,6 @@ extern bool debugv, debugV;
 static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
     return (mpz_t *)z;
 }
-#if defined(TYPE_o) || defined(TYPE_r)
-    static inline uint TYPE_OFFSET(uint i) {
-        return i;
-    }
-#elif defined(TYPE_a)
-    static inline uint TYPE_OFFSET(uint i) {
-        return i * n;
-    }
-#else
-#   error "No type defined"
-#endif
 
 mpz_t temp;
 
@@ -80,6 +69,18 @@ typedef struct s_suppress {
 t_suppress *suppress_stack = NULL;
 uint suppress_count = 0;
 uint suppress_size = 0;
+
+#if defined(TYPE_o) || defined(TYPE_r)
+    static inline uint TYPE_OFFSET(t_context *cx, uint i) {
+        return i;
+    }
+#elif defined(TYPE_a)
+    static inline uint TYPE_OFFSET(t_context *cx, uint i) {
+        return i * cx->n;
+    }
+#else
+#   error "No type defined"
+#endif
 
 void *mem_dup(void *src, uint size) {
     void *dest = malloc(size);
@@ -546,7 +547,7 @@ void apply_m(t_context *cx, uint m, t_fact *fm) {
     }
     uint mr = m / r;
     for (uint i = 0; i < cx->k; ++i) {
-        uint di = TYPE_OFFSET(i);
+        uint di = TYPE_OFFSET(cx, i);
         uint ti = cx->target_t[i];
         /* tau(mx) > tau(m) for all x > 1 */
         /* TODO: if ti == tm, then walk_1() and suppress anyway */
