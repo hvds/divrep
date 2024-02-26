@@ -255,8 +255,9 @@ char *aux_buf = NULL;
 /* Initial pattern set with -I */
 char *init_pattern = NULL;
 
-/* Default cvec context */
-t_context *cx0 = NULL;
+t_context *cx0 = NULL;  /* base cvec context */
+t_context *cx1 = NULL;  /* post-batch context */
+t_context *cxt = NULL;  /* active context */
 
 /* Mod constraints set with -m */
 typedef struct s_modfix {
@@ -629,8 +630,11 @@ void done(void) {
         printf("\x1b]2;b%d: done\a",
                 opt_batch_min < 0 ? batch_alloc : opt_batch_max);
 
-    if (check)
+    if (check) {
+        if (cx1)
+            ctx_free(cx1);
         cvec_done(cx0);
+    }
     free(diag_buf);
     free(aux_buf);
     if (wv_qq)
@@ -2126,12 +2130,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
         fail("TODO: non-square min > 2^64");
 #endif
     if (check)
-        cvec_prep_test(cx0, m, aq);
+        cvec_prep_test(cxt, m, aq);
     for (ulong ati = mpz_get_ui(Z(wv_ati)); ati <= end; ++ati) {
         ++countwi;
         if (need_work)
             diag_walk_v(cur_level, ati, end);
-        if (check && !cvec_test_prepped(cx0, ati))
+        if (check && !cvec_test_prepped(cxt, ati))
             goto next_ati;
         for (uint ii = 0; ii < inv_count; ++ii) {
             t_mod *ip = &inv[ii];
@@ -2185,7 +2189,7 @@ void walk_1(t_level *cur_level, uint vi) {
     if (mpz_cmp(Z(w1_v), min) < 0)
         return;
     ++countw;
-    if (check && !cvec_testv(cx0, Z(w1_v)))
+    if (check && !cvec_testv(cxt, Z(w1_v)))
         return;
 
     uint t[k];
@@ -2293,7 +2297,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
         ++countw;
-        if (check && !cvec_testv(cx0, Z(w1_v)))
+        if (check && !cvec_testv(cxt, Z(w1_v)))
             continue;
 
         for (uint vj = 0; vj < k; ++vj) {
@@ -3025,6 +3029,20 @@ void walk_midp(t_level *prev_level, bool recover) {
     in_midp = 0;
 }
 
+void apply_checks(t_context *cx) {
+    t_fact f;
+    init_fact(&f);
+    for (uint m = 2; m <= check; ++m) {
+        f.count = 0;
+        simple_fact(m, &f);
+        if (check_prime && f.ppow[f.count - 1].p > check_prime)
+            continue;
+        apply_m(cx, m, &f);
+    }
+    free_fact(&f);
+    cvec_pack(cx, check_chunk ? check_chunk : check, check_ratio);
+}
+
 uint relative_valuation(uint i, ulong p, uint e) {
     uint re = simple_valuation(TYPE_OFFSET(i), p);
     if (re < e)
@@ -3159,6 +3177,20 @@ bool process_batch(t_level *cur_level) {
         walk_midp(cur_level, 0);
         if (midp_only)
             return 0;
+    }
+    if (check) {
+        if (cx1)
+            ctx_free(cx1);
+        cx1 = ctx_dup(cx0);
+        apply_modfix(cx1, cur_level->aq, cur_level->rq, 0, check);
+        apply_checks(cx1);
+/* FIXME: if this would change aq, we need to propagate to squares -
+ * either inject another level, or modify in place.
+ * However we cannot check cx1->mult directly, since the structure is
+ * opaque.
+ */
+        cvec_mult(cx1, &cur_level->rq, &cur_level->aq);
+        cxt = cx1;
     }
     return 1;
 }
@@ -3781,6 +3813,8 @@ void recurse(e_is jump_continue) {
         break;
       /* entry point, must set prev_level/cur_level before using */
       derecurse:
+        if (cur_level->is_forced)
+            cxt = cx0;  /* post-batch context no longer active */
         --level;
         if (level <= final_level)
             break;
@@ -4003,24 +4037,13 @@ int main(int argc, char **argv, char **envp) {
         for (uint i = 0; i < k; ++i)
             tt[i] = target_t(i);
         cx0 = cvec_init(n, k, &min, tt);
+        free(tt);
 
         for (uint mfi = 0; mfi < modfix_count; ++mfi) {
             t_modfix *mfp = &modfix[mfi];
             apply_modfix(cx0, mfp->mod, mfp->val, mfp->negate, check);
         }
-
-        t_fact f;
-        init_fact(&f);
-        for (uint m = 2; m <= check; ++m) {
-            f.count = 0;
-            simple_fact(m, &f);
-            if (check_prime && f.ppow[f.count - 1].p > check_prime)
-                continue;
-            apply_m(cx0, m, &f);
-        }
-        free_fact(&f);
-        cvec_pack(cx0, check_chunk ? check_chunk : check, check_ratio);
-        free(tt);
+        apply_checks(cx0);
 
         cvec_mult(cx0, &levels[0].rq, &levels[0].aq);
         if (mpz_cmp_ui(levels[0].aq, 1) > 0) {
@@ -4037,6 +4060,7 @@ int main(int argc, char **argv, char **envp) {
         done_modfix();
         if (!check)
             check = 1;
+        cxt = cx0;
     }
     prep_presquare();
 

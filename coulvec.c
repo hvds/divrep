@@ -92,7 +92,7 @@ t_context *cvec_init(uint n, uint k, mpz_t *min, uint *target_t) {
     cx->n = n;
     cx->k = k;
     cx->min = min;
-    cx->target_t = target_t;
+    cx->target_t = mem_dup(target_t, k * sizeof(uint));
     cx->vec = NULL;
     cx->nvec = 0;
     mpz_init_set_ui(cx->mod_mult, 0);
@@ -119,6 +119,7 @@ void ctx_free(t_context *cx) {
         free(cv);
     }
     free(cx->vec);
+    free(cx->target_t);
     mpz_clear(cx->mod_mult);
     mpz_clear(cx->mult);
     free(cx->sc);
@@ -199,7 +200,7 @@ t_context *ctx_dup(t_context *cx) {
     cy->n = cx->n;
     cy->k = cx->k;
     cy->min = cx->min;
-    cy->target_t = cx->target_t;
+    cy->target_t = mem_dup(cx->target_t, cx->k * sizeof(uint));
     cy->vec = vec_dup(cx->vec, cx->nvec);
     cy->nvec = cx->nvec;
     mpz_init_set(cy->mod_mult, cx->mod_mult);
@@ -485,11 +486,7 @@ void apply_modfix(t_context *cx, mpz_t m, mpz_t v, bool negate, uint limit) {
     if (mpz_cmp_ui(m, limit) <= 0) {
         uint um = mpz_get_ui(m);
         uint uv = mpz_get_ui(v);
-        for (uint i = 0; i < um; ++i) {
-            if (i == uv)
-                continue;
-            suppress(cx, um, uv, 0);
-        }
+        fix_cvec(cx, um, uv);
         return;
     }
     factor_state fs;
@@ -506,6 +503,7 @@ void apply_modfix(t_context *cx, mpz_t m, mpz_t v, bool negate, uint limit) {
         add_fact(&f, pp);
     }
     fs_clear(&fs);
+/* FIXME: rearrange this to use fix_cvec */
     for (uint i = 0; i < f.count; ++i) {
         uint p = f.ppow[i].p;
         uint e = f.ppow[i].e;
@@ -568,6 +566,7 @@ void apply_m(t_context *cx, uint m, t_fact *fm) {
                 if (!TESTBIT(res, j))
                     suppress(cx, m, mod((int)j - (int)di, m), 0);
 
+/* FIXME: check also for v_i = kx^2 => v_{i-kj^2} = k(x-j)(x+j) */
             /* special-case p^6 + 1 factorization */
             /* FIXME: generalize to p^{2x} + a^{x} for odd x: 2x+1 prime */
             if (ti == 7 && i + 1 < cx->k && cx->target_t[i + 1] < 8
