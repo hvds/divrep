@@ -607,6 +607,22 @@ void push_sc(t_context *cx, uint m) {
     cx->sc[cx->sc_count++] = m;
 }
 
+/* splice out by index */
+static inline void splice_sci(t_context *cx, uint sci) {
+    --cx->sc_count;
+    uint scmove = cx->sc_count - sci;
+    if (scmove)
+        memmove(&cx->sc[sci], &cx->sc[sci + 1], scmove * sizeof(uint));
+}
+/* splice out by modulus, for index > sci */
+static inline void splice_sc(t_context *cx, uint m, uint sci) {
+    for (uint scj = sci + 1; scj < cx->sc_count; ++scj)
+        if (cx->sc[scj] == m) {
+            splice_sci(cx, scj);
+            break;
+        }
+}
+
 /* sort by potency descending */
 t_context *sortcx;
 int cmp_potency(const void *va, const void *vb) {
@@ -701,10 +717,7 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
             if (mij > chunksize && mij > mi && mij > mj)
                 continue;
             /* splice [j] out of the list, then merge them */
-            --cx->sc_count;
-            uint scmove = cx->sc_count - j;
-            if (scmove)
-                memmove(&cx->sc[j], &cx->sc[j + 1], scmove * sizeof(uint));
+            splice_sci(cx, j);
             if (mi == mij) {
                 cvec_merge(cx, mi, mj);
             } else if (mj == mij) {
@@ -721,16 +734,7 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
                 cvec_merge(cx, mij, mi);
                 cvec_merge(cx, mij, mj);
                 cx->sc[i] = mij;
-                /* splice it out if it is listed */
-                for (uint ij = i + 1; ij < cx->sc_count; ++ij)
-                    if (cx->sc[ij] == mij) {
-                        --cx->sc_count;
-                        scmove = cx->sc_count - ij;
-                        if (scmove)
-                            memmove(&cx->sc[ij], &cx->sc[ij + 1],
-                                    scmove * sizeof(uint));
-                        break;
-                    }
+                splice_sc(cx, mij, i);
                 goto redo_mi;
             }
         }
