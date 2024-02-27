@@ -25,6 +25,7 @@ typedef struct s_sui {
     uint *ui;
 } t_sui;
 
+/* constraints for a single modulus */
 typedef struct s_cvec {
     uint modulus;
     uint count;         /* count of disallowed values */
@@ -42,6 +43,7 @@ typedef struct s_cvec {
 } t_cvec;
 
 /* typedef struct s_context t_context (in header) */
+/* constraints for all moduli */
 struct s_context {
     uint n;
     uint k;
@@ -61,6 +63,7 @@ struct s_context {
 char *vresidues = NULL;
 uint nvresidues = 0;
 
+/* a single pending constraint: v !== offset (mod modulus) */
 typedef struct s_suppress {
     uint modulus;
     uint offset;
@@ -344,6 +347,8 @@ t_cvec *new_cvec(t_context *cx, uint m) {
     return cv;
 }
 
+/* we know the value is fixed to be == v (mod m), so make sure that is
+ * marked in mult/mod_mult, and propagate */
 void fix_cvec(t_context *cx, uint m, uint v) {
     t_cvec *cv = get_cvec(cx, m);
     if (cv->in_mult) {
@@ -371,6 +376,10 @@ void fix_cvec(t_context *cx, uint m, uint v) {
     }
 }
 
+/* constraint the value to be !== v (mod m)
+   if (depend) then this is not unique, ie there is some d > 1: m = dm'
+   such that we already constrain !== v (mod m')
+*/
 void suppress(t_context *cx, uint m, uint v, bool depend) {
     if (suppress_count + 1 >= suppress_size) {
         uint newsize = suppress_size ? (suppress_size * 3 / 2) : 100;
@@ -715,7 +724,7 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
             uint mj = cx->sc[j];
             uint mij = mi * mj / tiny_gcd(mi, mj);
             if (mij > chunksize && mij > mi && mij > mj)
-                continue;
+                continue;   /* too big to merge */
             /* splice [j] out of the list, then merge them */
             splice_sci(cx, j);
             if (mi == mij) {
@@ -725,11 +734,9 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
                 cx->sc[i] = mj;
                 goto redo_mi;
             } else {
-                /* FIXME: constructing v_ij may propagate new
-                 * suppressions, changing all the information our prep
-                 * was based on. Can we construct it in advance? Or
-                 * (correctly) react to the changes? It would be a big
-                 * shame if we have to start again each time.
+                /* FIXME: we should be searching the combined vector for new
+                 * fixed moduli to push to mult/mod_mult, but if we find any
+                 * we'd essentially have to start again, which is a bother.
                  */
                 cvec_merge(cx, mij, mi);
                 cvec_merge(cx, mij, mj);
@@ -758,12 +765,17 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
         dump_sc(cx);
 }
 
+/* Stores mult/mod_mult into the supplied mpz_t*; returns TRUE if there
+ * is an effective fixed modulus.
+ */
 bool cvec_mult(t_context *cx, mpz_t *mod_mult, mpz_t *mult) {
     mpz_set(*mod_mult, cx->mod_mult);
     mpz_set(*mult, cx->mult);
     return mpz_cmp_ui(cx->mult, 1);
 }
 
+/* Returns TRUE if v is suppressed by any known constraint, else FALSE.
+ */
 bool cvec_testv(t_context *cx, mpz_t v) {
     for (uint i = 0; i < cx->sc_count; ++i) {
         uint m = cx->sc[i];
