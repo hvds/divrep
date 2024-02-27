@@ -52,7 +52,7 @@ typedef enum {
     ur_a, ur_m, ur_ipg,         /* update_residues */
     asq_o, asq_qq, asq_m,       /* alloc_square */
     wv_ati, wv_end, wv_cand,    /* walk_v */
-    wv_startr, wv_endr, wv_qqr, wv_r, wv_rx, wv_temp,
+    wv_startr, wv_endr, wv_qqr, wv_qqnext, wv_r, wv_rx, wv_temp,
     wv_x, wv_y, wv_x2, wv_y2,
     w1_v, w1_j, w1_r,           /* walk_1 */
     lp_x, lp_mint,              /* limit_p */
@@ -2017,6 +2017,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
         }
         /* gcd(d - 1) for all divisors d of ti */
         uint xi = divisors[ti].gcddm;
+        bool prime_power = (divisors[ti].alldiv == 2);
+
         t_results *xr = res_array(cur_level->level);
         qsort(xr->r, xr->count, sizeof(mpz_t), &_mpz_comparator);
         uint rindex = 0;
@@ -2069,9 +2071,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
         mpz_fdiv_q(Z(wv_endr), Z(wv_endr), *qi);
         mpz_root(Z(wv_endr), Z(wv_endr), xi);
 
+        mpz_add(Z(wv_qqnext), Z(wv_qqr), *qqi);
+        bool tester = (mpz_cmp(Z(wv_qqnext), Z(wv_endr)) > 0);
+
         while (1) {
             mpz_add(Z(wv_r), Z(wv_qqr), xr->r[rindex]);
-            if (mpz_cmp(Z(wv_r), Z(wv_endr)) > 0)
+            if (tester && mpz_cmp(Z(wv_r), Z(wv_endr)) > 0)
                 return;
             ++countwi;
             mpz_pow_ui(Z(wv_rx), Z(wv_r), xi);
@@ -2086,10 +2091,15 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
                     goto next_sqati;
             }
+
             test_multi_reset();
-            /* note: steals Z(wv_r) */
-            if (!test_multi_append(Z(wv_r), ti, xi))
+            /* note: test_multi_append() steals Z(wv_r) */
+            if (prime_power
+                ? !_GMP_is_prob_prime(Z(wv_r))
+                : !test_multi_append(Z(wv_r), ti, xi)
+            )
                 goto next_sqati;
+
             for (uint i = 0; i < npc; ++i) {
                 uint vi = need_prime[i];
                 if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati)))
@@ -2107,7 +2117,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
           next_sqati:
             ++rindex;
             if (rindex >= xr->count) {
-                mpz_add(Z(wv_qqr), Z(wv_qqr), *qqi);
+                mpz_swap(Z(wv_qqr), Z(wv_qqnext));
+                mpz_add(Z(wv_qqnext), Z(wv_qqr), *qqi);
+                tester = (mpz_cmp(Z(wv_qqnext), Z(wv_endr)) > 0);
                 rindex = 0;
             }
         }
