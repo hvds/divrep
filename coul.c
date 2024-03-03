@@ -3940,17 +3940,18 @@ void recurse(e_is jump_continue) {
         }
       continue_unforced:
         {
-            ulong p = cur_level->p;
             /* recalculate limit if we have an improved maximum */
             if (improve_max && seen_best > cur_level->max_at)
-                switch (prep_unforced_x(prev_level, cur_level, p, 0)) {
+                switch (prep_unforced_x(
+                    prev_level, cur_level, cur_level->p, 0
+                )) {
                   case PUX_NOTHING_TO_DO:
                   case PUX_ALL_DONE:
                     goto continue_unforced_x;
                 }
             /* note: only valid to use from just below here */
-          redo_unforced:
-            p = prime_iterator_next(&cur_level->piter);
+          redo_unforced: ;
+            ulong p = prime_iterator_next(&cur_level->piter);
             if (p > cur_level->limp)
                 goto continue_unforced_x;
             if (p <= prev_level->maxp)
