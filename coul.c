@@ -1903,8 +1903,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
     if (!cur_level->have_square)
         return;
 #endif
-    if (!cur_level->have_min)
+    if (!cur_level->have_min) {
+        uint min = minp[cur_level->x - 1];
+        if (min)
+            level_setp(cur_level, min);
         return;
+    }
 
     mpz_t *q[k];
     mpz_t *m = &cur_level->rq;
@@ -2280,8 +2284,12 @@ void walk_1(t_level *cur_level, uint vi) {
     if (!cur_level->have_square)
         return;
 #endif
-    if (!cur_level->have_min)
+    if (!cur_level->have_min) {
+        uint min = minp[cur_level->x - 1];
+        if (min)
+            level_setp(cur_level, min);
         return;
+    }
 
     {
         t_value *vip = &value[vi];
