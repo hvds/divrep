@@ -22,6 +22,7 @@
 #include "coultau.h"
 #include "pell.h"
 #include "coulvec.h"
+#include "assume.h"
 
 /* from MPUG */
 #include "factor.h"
@@ -3290,6 +3291,8 @@ bool process_batch(t_level *cur_level) {
 uint best_v0(t_level *cur_level) {
     uint vi, ti = 0;
     mpz_t *qi;
+
+    assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
@@ -3325,6 +3328,8 @@ uint best_v0(t_level *cur_level) {
 uint best_v1(t_level *cur_level) {
     uint vi, ti = 0;
     mpz_t *qi;
+
+    assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
@@ -3362,6 +3367,8 @@ uint best_v1(t_level *cur_level) {
 uint best_v2(t_level *cur_level) {
     uint vi, ti = 0;
     mpz_t *qi;
+
+    assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
@@ -3395,6 +3402,8 @@ uint best_v2(t_level *cur_level) {
 uint best_v3(t_level *cur_level) {
     uint vi, ti = 0;
     mpz_t *qi;
+
+    assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
         uint vjl = cur_level->vlevel[vj];
