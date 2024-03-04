@@ -30,8 +30,13 @@
 #include "utility.h"
 #include "primality.h"
 
-/* primary parameters - we are searching for D(n, k), the least d such
- * that tau(d + i) = n for all 0 <= i < k.
+/* primary parameters - we are searching for f(n, k), the least d such
+ * that for all 0 <= i < k:
+ *   (if compiled with TYPE_o): tau(d + i) = n
+ *   (if compiled with TYPE_a): tau(d + in) = n
+ *   (if compiled with TYPE_r): tau(d + i) = tau(n + i), d <> n
+ *   (if compiled with TYPE_t): tau(n + di) = tau(n)
+ * (TYPE_t not yet supported.)
  */
 uint n, k;
 
