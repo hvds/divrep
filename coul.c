@@ -615,7 +615,7 @@ void free_levels(void) {
 }
 
 void init_levels(void) {
-    levels = (t_level *)calloc(maxlevel, sizeof(t_level));
+    levels = (t_level *)calloc(maxlevel + 1, sizeof(t_level));
     for (uint i = 0; i < maxlevel; ++i) {
         t_level *l = &levels[i];
         l->level = i;
@@ -631,6 +631,7 @@ void init_levels(void) {
     mpz_set_ui(levels[0].rq, 0);
     levels[0].have_square = 0;
     levels[0].have_min = (sminp || sminpx) ? 0 : 1;
+    levels[0].next_best = 0;
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
     for (uint j = 0; j < k; ++j)
@@ -3869,11 +3870,15 @@ void recurse(e_is jump_continue) {
             /* note: cur_level->is_forced is either always 0 by calloc(),
              * or gets set to 0 on the tail of a batch */
             /* cur_level->is_forced = 0; */
+
+            if (cur_level->next_best)
+                goto walk_now;
             uint vi = best_v(cur_level);
-            /* TODO: walk_v() directly at previous level, if best_v() would
-             * give same result each time.
-             */
             if (vi == k) {
+                /* failure result is stable if last allocation was unforced */
+                if (!prev_level->is_forced)
+                    cur_level->next_best = 1;
+              walk_now:
 #ifdef SQONLY
                 if (prev_level->have_square)
                     walk_v(prev_level, Z(zero));
@@ -3915,6 +3920,7 @@ void recurse(e_is jump_continue) {
         break;
       /* entry point, must set prev_level/cur_level before using */
       derecurse:
+        levels[level + 1].next_best = 0;
         --level;
         if (level <= final_level)
             break;

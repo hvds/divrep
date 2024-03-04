@@ -44,6 +44,7 @@ typedef struct s_level {
     uint is_forced; /* this is a forced-prime entry if 1 */
                     /* this is a dummy entry for initial squares if 2 */
     bool have_min;  /* we have passed any minp requirement */
+    bool next_best; /* vi is known stable result of best_v() */
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;
