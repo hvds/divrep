@@ -4109,7 +4109,11 @@ int main(int argc, char **argv, char **envp) {
         skip_recover = 1;
     if (i + 2 == argc) {
         n = strtoul(argv[i++], NULL, 10);
+        if (n < 1)
+            fail("require n >= 1, not %lu", n);
         k = strtoul(argv[i++], NULL, 10);
+        if (k < 1)
+            fail("require k >= 1, not %lu", k);
     } else
         fail("wrong number of arguments");
     if (force_all > k)
