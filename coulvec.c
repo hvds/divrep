@@ -813,10 +813,24 @@ void cvec_prep_test(t_context *cx, mpz_t *mod, mpz_t *mult) {
         cx->sc_add[i] = mpz_fdiv_ui(*mod, m);
     }
 }
-bool cvec_test_prepped(t_context *cx, ulong value) {
+bool cvec_test_ui_prepped(t_context *cx, ulong value) {
     for (uint i = 0; i < cx->sc_count; ++i) {
         uint m = cx->sc[i];
         uint v = value % m;
+        v = (v * cx->sc_mult[i] + cx->sc_add[i]) % m;
+        t_cvec *cv = cx->vec[m];
+        if (TESTBIT(cv->v, v))
+            return 0;
+    }
+    return 1;
+}
+bool cvec_test_prepped(t_context *cx, mpz_t *value) {
+    if (mpz_fits_ulong_p(*value))
+        return cvec_test_ui_prepped(cx, mpz_get_ui(*value));
+
+    for (uint i = 0; i < cx->sc_count; ++i) {
+        uint m = cx->sc[i];
+        uint v = mpz_fdiv_ui(*value, m);
         v = (v * cx->sc_mult[i] + cx->sc_add[i]) % m;
         t_cvec *cv = cx->vec[m];
         if (TESTBIT(cv->v, v))

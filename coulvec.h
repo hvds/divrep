@@ -18,6 +18,7 @@ bool cvec_testv(t_context *cx, mpz_t value);
 bool cvec_test(t_context *cx, mpz_t value, mpz_t *mod, mpz_t *mult);
 bool cvec_test_ui(t_context *cx, ulong value, mpz_t *mod, mpz_t *mult);
 void cvec_prep_test(t_context *cx, mpz_t *mod, mpz_t *mult);
-bool cvec_test_prepped(t_context *cx, ulong value);
+bool cvec_test_prepped(t_context *cx, mpz_t *value);
+bool cvec_test_ui_prepped(t_context *cx, ulong value);
 
 #endif

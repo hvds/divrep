@@ -2166,6 +2166,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
         mpz_add(Z(wv_qqnext), Z(wv_qqr), *qqi);
         bool tester = (mpz_cmp(Z(wv_qqnext), Z(wv_endr)) > 0);
+        if (check)
+            cvec_prep_test(cx0, m, aq);
 
         while (1) {
             mpz_add(Z(wv_r), Z(wv_qqr), xr->r[rindex]);
@@ -2179,6 +2181,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
             mpz_fdiv_q(Z(wv_ati), Z(wv_ati), *qqi);
             if (need_work)
                 diag_walk_zv(cur_level, Z(wv_ati), Z(wv_end));
+            if (check && !cvec_test_prepped(cx0, ZP(wv_ati)))
+                goto next_sqati;
             for (uint ii = 0; ii < inv_count; ++ii) {
                 t_mod *ip = &inv[ii];
                 if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
@@ -2245,7 +2249,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         ++countwi;
         if (need_work)
             diag_walk_v(cur_level, ati, end);
-        if (check && !cvec_test_prepped(cx0, ati))
+        if (check && !cvec_test_ui_prepped(cx0, ati))
             goto next_ati;
         for (uint ii = 0; ii < inv_count; ++ii) {
             t_mod *ip = &inv[ii];
