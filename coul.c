@@ -53,6 +53,7 @@ static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
 typedef enum {
     zero, zone,                 /* constants */
     temp,
+    tfp_v,                      /* test_forcep */
     sqm_t, sqm_q, sqm_b, sqm_z, sqm_x,  /* sqrtmod_t */
     uc_minusvi, uc_px,          /* update_chinese */
     ur_a, ur_m, ur_ipg,         /* update_residues */
@@ -1143,6 +1144,19 @@ void prep_primes(void) {
     }
 }
 
+uint mpz_valuation(mpz_t z, uint n) {
+    uint x = 0;
+    if (mpz_sgn(z) == 0)
+        fail("Cannot take valuation of (0_z, %u)", n);
+    mpz_set(Z(temp), z);
+    while (1) {
+        uint off = mpz_fdiv_q_ui(Z(temp), Z(temp), n);
+        if (off)
+            return x;
+        ++x;
+    }
+}
+
 typedef enum {
     TFP_BAD = 0,
     TFP_SINGLE,
@@ -1151,6 +1165,65 @@ typedef enum {
 e_tfp test_forcep(uint p, uint vi, uint x) {
     bool seen_any = 0;
     bool seen_odd = 0;
+
+    if (modfix_count) {
+        uint pe = x ? x - 1 : x;
+        for (uint i = 0; i < modfix_count; ++i) {
+            t_modfix *mfp = &modfix[i];
+            uint me = mpz_valuation(mfp->mod, p);
+            if (me == 0)
+                continue;
+            mpz_add_ui(Z(tfp_v), mfp->val, TYPE_OFFSET(vi));
+            /* v_i := tfp_v (mod mfp->mod), with negate */
+            uint ve = mpz_sgn(Z(tfp_v)) ? mpz_valuation(Z(tfp_v), p) : me;
+            if (ve > me)
+                ve = me;
+            if (pe >= me) {
+                if (ve == me) {
+                    if (mfp->negate)
+                        /* v_i != 0 (mod 2^2) contradicts test 2^3 */
+                        return TFP_BAD;
+                    else
+                        /* v_i == 0 (mod 2^2) is fine for test 2^3 */
+                        continue;
+                } else { /* ve < me */
+                    if (mfp->negate)
+                        /* v_i != 2 (mod 2^2) is fine for test 2^3 */
+                        continue;
+                    else
+                        /* v_i == 2 (mod 2^2) contradicts test 2^3 */
+                        return TFP_BAD;
+                }
+            } else { /* pe < me */
+                if (ve < pe) {
+                    if (mfp->negate)
+                        /* v_i != 2 (mod 2^3) is fine for test 2^2 */
+                        continue;
+                    else
+                        /* v_i == 2 (mod 2^3) contradicts test 2^2 */
+                        return TFP_BAD;
+                } else if (ve == pe) {
+                    if (mfp->negate) {
+                        if (p == 2 && ve + 1 == me)
+                            /* v_i != 2^2 (mod 2^3) contradicts test 2^2 */
+                            return TFP_BAD;
+                        /* v_i != 2^1 (mod 2^3) is fine for test 2^1 */
+                        /* v_i != 3^2 (mod 3^3) is fine for test 3^2 */
+                        continue;
+                    } else
+                        /* v_i == 2^2 (mod 2^3) is fine for test 2^2 */
+                        continue;
+                } else { /* ve > pe */
+                    if (mfp->negate)
+                        /* v_i != 2^2 (mod 2^3) is fine for test 2^1 */
+                        continue;
+                    else
+                        /* v_i == 2^2 (mod 2^3) contradicts test 2^1 */
+                        return TFP_BAD;
+                }
+            }
+        }
+    }
 
     if (x == 0) {
         /* p^0 is valid iff the differences are a multiple of p */
