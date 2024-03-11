@@ -343,7 +343,7 @@ uint know_target(uint vi) {
         ++count_bad[k - count];
     }
     void init_stats(uint k) {
-        count_bad = calloc(k, sizeof(ulong));
+        count_bad = calloc(k + 1, sizeof(ulong));
     }
     void done_stats(void) {
         free(count_bad);
