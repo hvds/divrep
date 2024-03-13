@@ -83,6 +83,16 @@ sub report_all {
     return;
 }
 
+sub knowng {
+    my($g) = @_;
+    my $max = 0;
+    for my $f (@{ $g->fall($db) }) {
+        next if $f->k <= $max;
+        $max = $f->k if $f->f;  # whether or not $f->complete
+    }
+    return $max;
+}
+
 sub report_g {
     # tau(n) only relevant for tauseq, addseq
     my $tauish = ($type->typename =~ /^[ta]$/) ? 1 : 0;
@@ -125,8 +135,11 @@ sub report_g {
         } elsif ($g->depend) {
             printf "g(%s) = g(%s)\n", $g->n, $g->depend_n;
         } else {
+            my $ming = $g->ming;
+            my $knowng = knowng($g);
+            $ming = "$ming/$knowng" if $ming < $knowng;
             printf "g(%s) in [%s .. %s b%s], checked to %s\n",
-                    $g->n, $g->ming, $g->maxg, $g->bisected // 0, $g->checked;
+                    $g->n, $ming, $g->maxg, $g->bisected // 0, $g->checked;
         }
     }
     return;
