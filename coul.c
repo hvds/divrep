@@ -1886,14 +1886,19 @@ bool test_zprime(mpz_t qq, mpz_t o, mpz_t ati) {
 }
 
 bool test_1multi(uint *need, uint nc, uint *t) {
+    uint good = 0;
     test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
         mpz_set(Z(temp), wv_o[vi]);
         if (!test_multi_append(Z(temp), vi, t[vi], 1)) {
-            TRACK_BAD(k - nc, vi);
+            TRACK_BAD(k - nc + good, vi);
             return 0;
         }
+#ifdef TRACK_STATS
+        if (taum[tm_count - 1].state == 0)
+            ++good;
+#endif
     }
     uint remain = test_multi_run();
     TRACK_MULTI(remain, need, taum);
@@ -1901,15 +1906,20 @@ bool test_1multi(uint *need, uint nc, uint *t) {
 }
 
 bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
+    uint good = 0;
     test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
         mpz_mul_ui(Z(temp), wv_qq[vi], ati);
         mpz_add(Z(temp), Z(temp), wv_o[vi]);
         if (!test_multi_append(Z(temp), vi, t[vi], 1)) {
-            TRACK_BAD(k - nc, vi);
+            TRACK_BAD(k - nc + good, vi);
             return 0;
         }
+#ifdef TRACK_STATS
+        if (taum[tm_count - 1].state == 0)
+            ++good;
+#endif
     }
     uint remain = test_multi_run();
     TRACK_MULTI(remain, need, taum);
@@ -1917,14 +1927,19 @@ bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
 }
 
 bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
+    uint good = 0;
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
         mpz_mul(Z(temp), wv_qq[vi], ati);
         mpz_add(Z(temp), Z(temp), wv_o[vi]);
         if (!test_multi_append(Z(temp), vi, t[vi], 1)) {
-            TRACK_BAD(k - nc, vi);
+            TRACK_BAD(k - nc + good, vi);
             return 0;
         }
+#ifdef TRACK_STATS
+        if (taum[tm_count - 1].state == 0)
+            ++good;
+#endif
     }
     uint remain = test_multi_run();
     TRACK_MULTI(remain, need, taum);
