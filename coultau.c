@@ -947,7 +947,10 @@ mpz_t *tm_factor(t_tm *tm) {
     return &tmf;
 }
 
-bool tau_multi_run(uint count) {
+/* Returns the number of values still being tested at the point a failure
+ * was seen; return value of zero implies success.
+ */
+uint tau_multi_run(uint count) {
     uint i = 0;
     /* Shuffle the entries that did not complete by trial division to
      * the front. Find size and thus the associated tmfb entry for each. */
@@ -965,7 +968,7 @@ bool tau_multi_run(uint count) {
         ++i;
     }
     if (i == 0)
-        return 1;
+        return 0;
     count = i;
 
     qsort(taum, count, sizeof(t_tm), &taum_comparator);
@@ -1002,29 +1005,29 @@ bool tau_multi_run(uint count) {
             }
             e = e * tm->e + 1;
             if (tm->t % e)
-                return 0;
+                return count;
             tm->t /= e;
             if (tm->t == 1) {
                 if (mpz_cmp_ui(tm->n, 1) != 0)
-                    return 0;
+                    return count;
                 goto tmr_splice;
             } else if (tm->t == 2) {
                 if (!ct_prime(tm->n))
-                    return 0;
+                    return count;
                 goto tmr_splice;
             } else if (mpz_cmp_ui(tm->n, 1) == 0)
-                return 0;
+                return count;
             else if (tm->t & 1) {
                 /* odd tau should be easy, do immediate full check */
                 if (!is_taux(tm->n, 1, tm->t))
-                    return 0;
+                    return count;
                 goto tmr_splice;
             } else if (ct_prime(tm->n))
-                return 0;
+                return count;
             else if ((tm->t & 1) && (tm->e & 1)) {
                 e = ct_power(tm->n);
                 if (e == 0 || e & 1 || e > tm->t)
-                    return 0;
+                    return count;
                 tm->e *= e;
             }
             tm->state = TM_INIT;
@@ -1035,7 +1038,7 @@ bool tau_multi_run(uint count) {
           tmr_splice:
             --count;
             if (count == 0)
-                return 1;
+                return 0;
             if (j < count) {
                 mpz_swap(taum[j].n, taum[count].n);
                 taum[j].vi = taum[count].vi;

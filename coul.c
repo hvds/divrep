@@ -294,7 +294,7 @@ static inline bool test_multi_append(mpz_t n, uint vi, uint t, uint e) {
     tm->e = e;
     return tau_multi_prep(i);
 }
-static inline bool test_multi_run(void) {
+static inline uint test_multi_run(void) {
     return tau_multi_run(tm_count);
 }
 
@@ -1895,9 +1895,9 @@ bool test_1multi(uint *need, uint nc, uint *t) {
             return 0;
         }
     }
-    bool result = test_multi_run();
-    TRACK_MULTI(nc, need, taum);
-    return result;
+    uint remain = test_multi_run();
+    TRACK_MULTI(remain, need, taum);
+    return remain ? 0 : 1;
 }
 
 bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
@@ -1911,9 +1911,9 @@ bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
             return 0;
         }
     }
-    bool result = test_multi_run();
-    TRACK_MULTI(nc, need, taum);
-    return result;
+    uint remain = test_multi_run();
+    TRACK_MULTI(remain, need, taum);
+    return remain ? 0 : 1;
 }
 
 bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
@@ -1926,9 +1926,9 @@ bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
             return 0;
         }
     }
-    bool result = test_multi_run();
-    TRACK_MULTI(nc, need, taum);
-    return result;
+    uint remain = test_multi_run();
+    TRACK_MULTI(remain, need, taum);
+    return remain ? 0 : 1;
 }
 
 bool test_other(mpz_t qq, mpz_t o, ulong ati, uint t) {
