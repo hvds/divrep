@@ -57,5 +57,7 @@ extern int is_taux(mpz_t n, uint32_t k, uint32_t x);
 extern void alloc_taum(uint size);
 extern bool tau_multi_prep(uint i);
 extern uint tau_multi_run(uint i);
+extern bool tau_prime_prep(uint i);
+extern uint tau_prime_run(uint i);
 
 #endif

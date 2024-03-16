@@ -3,6 +3,7 @@
 #include "coul.h"
 #include "coultau.h"
 #include "factor.h"
+#include "gmp_main.h"
 #include "primality.h"
 #include "utility.h"
 #include "pbrent63.h"
@@ -641,6 +642,22 @@ static inline bool prep_abort(t_tm *tm, bool result) {
     return result;
 }
 
+bool tau_prime_prep(uint i) {
+    /* FIXME: break this out further */
+    int res = primality_pretest(taum[i].n);
+    if (res == 0)
+        return 0;
+    taum[i].state = (res == 1) ? 1 : 0;
+    return 1;
+}
+
+/* Given taum[i].{n, t, vi, e}, does initial fast tests that may rule
+ * out the possibility that tau(n^e) == t, and prepares for slower tests.
+ * Returns 0 if initial tests rule it out, else 1.
+ * FIXME: external code also wants to know if we have already shown
+ * tau(n^e) == t; it currently checks taum[i].state == 0, but better
+ * to expose this in the return value.
+ */
 bool tau_multi_prep(uint i) {
     t_tm *tm = &taum[i];
     uint t = tm->t;
@@ -1057,6 +1074,35 @@ uint tau_multi_run(uint count) {
         count, taum[0].n, taum[0].t
     );
     exit(1);
+}
+
+/* Same as tau_multi_run() except that all values are required to be prime.
+ * It is the caller's responsibility to ensure the precondition is met.
+ */
+uint tau_prime_run(uint count) {
+    uint i = 0;
+    /* Shuffle the entries that did not complete by trial division to
+     * and order by size */
+    for (uint j = 0; j < count; ++j) {
+        if (taum[j].state == 0)
+            continue;
+        if (i < j) {
+            mpz_swap(taum[i].n, taum[j].n);
+            taum[i].vi = taum[j].vi;
+        }
+        ++i;
+    }
+    if (i == 0)
+        return 0;
+    count = i;
+    qsort(taum, count, sizeof(t_tm), &taum_comparator);
+    for (i = 0; i < count; ++i) {
+        if (!_GMP_BPSW(taum[i].n)) {
+            taum[0].vi = taum[i].vi;
+            return count - i;
+        }
+    }
+    return 0;
 }
 
 bool tau_single_try(uint i) {

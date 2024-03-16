@@ -294,6 +294,19 @@ static inline bool test_multi_append(mpz_t n, uint vi, uint t, uint e) {
     tm->e = e;
     return tau_multi_prep(i);
 }
+/* Note: test_prime_append() steals the input mpz_t */
+static inline bool test_prime_append(mpz_t n, uint vi) {
+    uint i = tm_count++;
+    t_tm *tm = &taum[i];
+    mpz_swap(tm->n, n);
+    tm->vi = vi;
+    tm->t = 2;
+    tm->e = 1;
+    return tau_prime_prep(i);
+}
+static inline uint test_prime_run(void) {
+    return tau_prime_run(tm_count);
+}
 static inline uint test_multi_run(void) {
     return tau_multi_run(tm_count);
 }
@@ -1885,6 +1898,29 @@ bool test_zprime(mpz_t qq, mpz_t o, mpz_t ati) {
     return _GMP_is_prob_prime(Z(wv_cand));
 }
 
+bool test_1primes(uint *need, uint nc) {
+    uint good = 0;
+    test_multi_reset();
+    for (uint i = 0; i < nc; ++i) {
+        uint vi = need[i];
+        mpz_set(Z(temp), wv_o[vi]);
+        if (!test_prime_append(Z(temp), vi)) {
+            TRACK_BAD(good, vi);
+            return 0;
+        }
+#ifdef TRACK_STATS
+        if (taum[tm_count - 1].state == 0)
+            ++good;
+#endif
+    }
+    uint remain = test_prime_run();
+    if (remain) {
+        TRACK_BAD(nc - remain, taum[0].vi);
+        return 0;
+    }
+    return 1;
+}
+
 bool test_1multi(uint *need, uint nc, uint *t) {
     uint good = 0;
     test_multi_reset();
@@ -1903,6 +1939,54 @@ bool test_1multi(uint *need, uint nc, uint *t) {
     uint remain = test_multi_run();
     TRACK_MULTI(remain, need, taum);
     return remain ? 0 : 1;
+}
+
+bool test_primes(uint *need, uint nc, ulong ati) {
+    uint good = 0;
+    test_multi_reset();
+    for (uint i = 0; i < nc; ++i) {
+        uint vi = need[i];
+        mpz_mul_ui(Z(temp), wv_qq[vi], ati);
+        mpz_add(Z(temp), Z(temp), wv_o[vi]);
+        if (!test_prime_append(Z(temp), vi)) {
+            TRACK_BAD(good, vi);
+            return 0;
+        }
+#ifdef TRACK_STATS
+        if (taum[tm_count - 1].state == 0)
+            ++good;
+#endif
+    }
+    uint remain = test_prime_run();
+    if (remain) {
+        TRACK_BAD(nc - remain, taum[0].vi);
+        return 0;
+    }
+    return 1;
+}
+
+bool test_zprimes(uint *need, uint nc, mpz_t ati) {
+    uint good = 0;
+    test_multi_reset();
+    for (uint i = 0; i < nc; ++i) {
+        uint vi = need[i];
+        mpz_mul(Z(temp), wv_qq[vi], ati);
+        mpz_add(Z(temp), Z(temp), wv_o[vi]);
+        if (!test_prime_append(Z(temp), vi)) {
+            TRACK_BAD(good, vi);
+            return 0;
+        }
+#ifdef TRACK_STATS
+        if (taum[tm_count - 1].state == 0)
+            ++good;
+#endif
+    }
+    uint remain = test_prime_run();
+    if (remain) {
+        TRACK_BAD(nc - remain, taum[0].vi);
+        return 0;
+    }
+    return 1;
 }
 
 bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
@@ -2171,15 +2255,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
                         goto next_pell;
                 }
 
-                for (uint i = 0; i < npc; ++i) {
-                    uint vi = need_prime[i];
-                    if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati))) {
-                        TRACK_BAD(nqc + i, need_prime[i]);
-                        goto next_pell;
-                    } else {
-                        TRACK_GOOD(nqc + i, need_prime[i]);
-                    }
-                }
+                if (!test_zprimes(need_prime, npc, Z(wv_ati)))
+                    goto next_pell;
                 /* TODO: bail and print somewhere here if 'opt_print' */
                 if (!test_zmulti(need_other, noc, Z(wv_ati), t))
                     goto next_pell;
@@ -2291,15 +2368,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 goto next_sqati;
             }
 
-            for (uint i = 0; i < npc; ++i) {
-                uint vi = need_prime[i];
-                if (!test_zprime(wv_qq[vi], wv_o[vi], Z(wv_ati))) {
-                    TRACK_BAD(1 + i, need_prime[i]);
-                    goto next_sqati;
-                } else {
-                    TRACK_GOOD(1 + i, need_prime[i]);
-                }
-            }
+            if (!test_zprimes(need_prime, npc, Z(wv_ati)))
+                goto next_sqati;
             /* TODO: bail and print somewhere here if 'opt_print' */
             if (!test_zmulti(need_other, noc, Z(wv_ati), t))
                 goto next_sqati;
@@ -2353,15 +2423,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
         fflush(rfp);
 #endif
         /* note: we have no squares */
-        for (uint i = 0; i < npc; ++i) {
-            uint vi = need_prime[i];
-            if (!test_prime(wv_qq[vi], wv_o[vi], ati)) {
-                TRACK_BAD(i, need_prime[i]);
-                goto next_ati;
-            } else {
-                TRACK_GOOD(i, need_prime[i]);
-            }
-        }
+        if (!test_primes(need_prime, npc, ati))
+            goto next_ati;
         /* TODO: bail and print somewhere here if 'opt_print' */
         if (!test_multi(need_other, noc, ati, t))
             goto next_ati;
@@ -2436,13 +2499,8 @@ void walk_1(t_level *cur_level, uint vi) {
     }
     ++countwi;
     TRACK_GOOD(0, vi);
-    for (uint i = 0; i < npc; ++i)
-        if (!_GMP_is_prob_prime(wv_o[need_prime[i]])) {
-            TRACK_BAD(1 + i, need_prime[i]);
-            return;
-        } else {
-            TRACK_GOOD(1 + i, need_prime[i]);
-        }
+    if (!test_1primes(need_prime, npc))
+        return;
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
     if (!test_1multi(need_other, noc, t))
@@ -2530,9 +2588,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             mpz_set(wv_o[vj], Z(w1_j));
         }
         ++countwi;
-        for (uint i = 0; i < npc; ++i)
-            if (!_GMP_is_prob_prime(wv_o[need_prime[i]]))
-                goto reject_this_one;
+        if (!test_1primes(need_prime, npc))
+            goto reject_this_one;
         oc_t = t;
         qsort(need_other, noc, sizeof(uint), &other_comparator);
         if (!test_1multi(need_other, noc, t))
