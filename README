@@ -103,7 +103,7 @@ RUN
 The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
-      [-g<damp:gain] [-p<minp:maxp>] [-s<randseed>] [-o] [-d]
+      [-g<damp:gain] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
       [-j<strategy>] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
@@ -158,6 +158,15 @@ only powers of primes p < 100, and will allocate at least one power of
 a prime p > 50. This can be used to search more selectively to improve
 an upper limit.  "-p:100" or "-p100" are equivalent to "-p0:100".
 By default it considers all possible allocations.
+
+If "-P50" is specified, it denotes a cap on the effective maximum prime
+used to calculate the transition from recurse() to walk_v() (see 'HOW IT
+WORKS' below), independently of the gain. If it is intended to split
+a single "-p300" run into multiple runs with "-p100", "-p100:200",
+"-p200:300" then each should be run with "-P100" (the smallest of the
+-p values used) to ensure the transitions happen consistently, and so
+the three runs will test all the same cases as a single "-p300" run
+(*also run with -P100*).
 
 If "-W100" is specified, it will use a different process to test all
 possible cases involving p^e with p > 100, and then continue with the

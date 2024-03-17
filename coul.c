@@ -183,6 +183,7 @@ ulong antigain = 0;
 ulong *minp = NULL, *maxp = NULL, *midp = NULL;
 char *sminp = NULL, *smaxp = NULL, *smidp = NULL;
 char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
+ulong limp_cap = 0;
 bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
@@ -3741,7 +3742,8 @@ e_pux prep_unforced_x(
     if (antigain > 1)
         mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
     if (mpz_fits_ulong_p(Z(r_walk))
-        && mpz_get_ui(Z(r_walk)) < limp - p
+        && mpz_get_ui(Z(r_walk))
+                < ((limp_cap && limp_cap < limp) ? limp_cap : limp) - p
     ) {
 #ifdef SQONLY
         if (prev_level->have_square)
@@ -4169,6 +4171,8 @@ int main(int argc, char **argv, char **envp) {
             set_gain(&arg[2]);
         else if (arg[1] == 'p')
             set_cap(&arg[2]);
+        else if (arg[1] == 'P')
+            limp_cap = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'W') {
             need_midp = 1;
             char *w = &arg[2];
