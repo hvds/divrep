@@ -1928,6 +1928,7 @@ bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
 
 bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
     uint good = 0;
+    test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
         mpz_mul(Z(temp), wv_qq[vi], ati);
