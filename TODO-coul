@@ -16,10 +16,6 @@ CHECKME:
 - can best_v do better by picking the most constrained?
 
 TODO (lower priority):
-- add parallelization support to walk_1
-- maintain a dummy alloc[0] on values[], to save lots of special handling
-  - this may remove the need for m[] and t[] in walk_v()
-- short-circuit "used" check with cur->maxp
 - on recover, parse 001 line to check consistency of critical options
 - reimplement small_divmod()
 - reimplement next_prime()
@@ -28,4 +24,3 @@ TODO (lower priority):
   - build it over parallel is_tau() checks, so it can be configurable
 - prep the simple_valuation() checks for apply_batch()
 - for unforced primes, do constant apply_alloc() work in advance
-- avoid recursing when best_v() will find nothing
