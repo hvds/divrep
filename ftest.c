@@ -27,6 +27,7 @@ double seconds(double t1) {
 
 int main(int argc, char **argv) {
     _GMP_init();
+    set_verbose_level(3);
     init_tau(0);
     alloc_taum(1);
     t0 = utime();
