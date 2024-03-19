@@ -3,6 +3,8 @@ MPUGMP = /src/perl/Math-Prime-Util-GMP
 MPUGMP_VER = db88b861fe
 # 2023-05-15
 #MPUGMP_VER = cbf87f5e18
+# 2023-07-09
+#MPUGMP_VER = 2389dcbc44
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
     coulvec.h
@@ -18,6 +20,9 @@ CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/pbrent63.c ${MPUGMP}/isaa
 HFACTOR = ${MPUGMP}/factor.h
 ifeq ($(MPUGMP_VER), cbf87f5e18)
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c
+endif
+ifeq ($(MPUGMP_VER), 2389dcbc44)
+    CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c
 endif
 
 DEFINES := -DSTANDALONE
