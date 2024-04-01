@@ -3187,6 +3187,9 @@ int midpp_comparator(const void *va, const void *vb) {
     return mb->maxp - ma->maxp;
 }
 
+/* Populate midpp[] with the capped min and max p for each possible
+ * allocation of p^{x-1} at each v_i.
+ */
 void prep_midp(t_level *cur_level) {
     t_level *prev_level = &levels[cur_level->level - 1];
     for (uint vi = 0; vi < k; ++vi) {
@@ -3216,6 +3219,7 @@ void prep_midp(t_level *cur_level) {
                 ulong target_limit = mpz_get_ui(Z(temp));
                 if (!target_maxp || target_limit < target_maxp)
                     target_maxp = target_limit;
+                /* if the range is empty, no entry needed for this x */
                 if (target_maxp <= target_minp)
                     continue;
             } else if (!target_maxp)
@@ -3234,6 +3238,9 @@ void prep_midp(t_level *cur_level) {
     return;
 }
 
+/* Try all ways of allocating p^{x-1} at v_i for any p above the selected
+ * -W limit.
+ */
 void walk_midp(t_level *prev_level, bool recover) {
     t_level *cur_level = &levels[prev_level->level + 1];
     reset_vlevel(cur_level);
@@ -3268,7 +3275,7 @@ void walk_midp(t_level *prev_level, bool recover) {
         fail("midp recovery x=%u vi=%u invalid", x, vi);
     }
 
-    while (1) {
+    while (midppc) {
         p = prime_iterator_prev(&cur_level->piter);
         for (mi = 0; mi < midppc; ++mi) {
           redo_mi:
@@ -3296,8 +3303,6 @@ void walk_midp(t_level *prev_level, bool recover) {
             /* unallocate */
             --cur_level->vlevel[vi];
         }
-        if (midppc == 0)
-            break;
     }
   walk_midp_done:
     in_midp = 0;
