@@ -168,10 +168,10 @@ timer_t diag_timerid, log_timerid;
 volatile bool need_work, need_diag, need_log;
 bool clock_is_realtime = 0;
 
-mpz_t min, max;     /* limits to check for v_0 */
+mpz_t zmin, zmax;   /* limits to check for v_0 */
 mpz_t best;         /* best solution seen */
-bool improve_max = 1;   /* reduce max when solution found */
-uint seen_best = 0; /* number of times we've improved max */
+bool improve_max = 1;   /* reduce zmax when solution found */
+uint seen_best = 0; /* number of times we've improved zmax */
 ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
 /* maxp[e] is the greatest prime we should attempt to allocate as power p^e;
@@ -498,7 +498,7 @@ void report_prefinal(double tz) {
     if (!seen_best) {
         /* 500 f(241, 9) > 56346707724292074686037507 (655.570s) */
         report("500 f(%d, %d) > %Zd (%.3fs)\n",
-                n, k, max, seconds(tz));
+                n, k, zmax, seconds(tz));
         return;
     }
     t_sizedstr buf = { NULL, 0 };
@@ -613,8 +613,8 @@ bool candidate(mpz_t c) {
         mpz_set(best, c);
         ++seen_best;
     }
-    if (improve_max && mpz_cmp(c, max) <= 0)
-        mpz_set(max, c);
+    if (improve_max && mpz_cmp(c, zmax) <= 0)
+        mpz_set(zmax, c);
     return improve_max;
 }
 
@@ -733,8 +733,8 @@ void done(void) {
     free(zstash);
     mpz_clear(px);
     free_fact(&nf);
-    mpz_clear(max);
-    mpz_clear(min);
+    mpz_clear(zmax);
+    mpz_clear(zmin);
     mpz_clear(best);
     done_pell();
     done_rootmod();
@@ -828,8 +828,8 @@ void init_pre(void) {
 
     init_pell();
     t0 = utime();
-    mpz_init_set_ui(min, 0);
-    mpz_init_set_ui(max, 0);
+    mpz_init_set_ui(zmin, 0);
+    mpz_init_set_ui(zmax, 0);
     init_fact(&nf);
     mpz_init(px);
     zstash = (mpz_t *)malloc(MAX_ZSTASH * sizeof(mpz_t));
@@ -1011,8 +1011,8 @@ void recover(FILE *fp) {
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
-    if (improve_max && seen_best && mpz_cmp(best, max) < 0)
-        mpz_set(max, best);
+    if (improve_max && seen_best && mpz_cmp(best, zmax) < 0)
+        mpz_set(zmax, best);
     if (last305)
         parse_305(last305 + 4);
     free(curbuf);
@@ -1711,12 +1711,12 @@ void report_init(FILE *fp, char *prog) {
         if (gain > 1)
             fprintf(fp, "%lu", gain);
     }
-    if (mpz_sgn(min) || mpz_sgn(max)) {
+    if (mpz_sgn(zmin) || mpz_sgn(zmax)) {
         fprintf(fp, " -x");
-        if (mpz_sgn(min))
-            gmp_fprintf(fp, "%Zu:", min);
-        if (mpz_sgn(max))
-            gmp_fprintf(fp, "%Zu", max);
+        if (mpz_sgn(zmin))
+            gmp_fprintf(fp, "%Zu:", zmin);
+        if (mpz_sgn(zmax))
+            gmp_fprintf(fp, "%Zu", zmax);
     }
     if (randseed != 1)
         fprintf(fp, " -s%lu", randseed);
@@ -1766,16 +1766,16 @@ void set_minmax(char *s) {
     if (t) {
         *t = 0;
         if (*s)
-            ston(min, s);
+            ston(zmin, s);
         else
-            mpz_set_ui(min, 0);
+            mpz_set_ui(zmin, 0);
         if (t[1])
-            ston(max, &t[1]);
+            ston(zmax, &t[1]);
         else
-            mpz_set_ui(max, 0);
+            mpz_set_ui(zmax, 0);
     } else {
-        mpz_set_ui(min, 0);
-        ston(max, s);
+        mpz_set_ui(zmin, 0);
+        ston(zmax, s);
     }
 }
 
@@ -2104,7 +2104,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
     ++countw;
 
-    mpz_sub(Z(wv_end), max, *m);
+    mpz_sub(Z(wv_end), zmax, *m);
     mpz_fdiv_q(Z(wv_end), Z(wv_end), *aq);
     if (mpz_sgn(Z(wv_end)) < 0)
         return;
@@ -2112,7 +2112,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
     if (mpz_sgn(start)) {
         mpz_set(Z(wv_ati), start);
     } else {
-        mpz_sub(Z(wv_ati), min, *m);
+        mpz_sub(Z(wv_ati), zmin, *m);
         mpz_cdiv_q(Z(wv_ati), Z(wv_ati), *aq);
     }
 
@@ -2164,7 +2164,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
             mpz_t *qqj = &wv_qq[sqj];
             uint tj = t[sqj];
 
-            mpz_fdiv_q(Z(wv_endr), max, *qi);
+            mpz_fdiv_q(Z(wv_endr), zmax, *qi);
             mpz_root(Z(wv_endr), Z(wv_endr), 2);
             /* solve Ax^2 - By^2 = C with x <= D */
             int sqoff = (sqi < sqj)
@@ -2188,8 +2188,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
             }
 
             /* FIXME: handle recovery too */
-            if (mpz_cmp_ui(min, 0) > 0) {
-                mpz_fdiv_q(Z(temp), min, *qi);
+            if (mpz_cmp_ui(zmin, 0) > 0) {
+                mpz_fdiv_q(Z(temp), zmin, *qi);
                 mpz_sqrt(Z(temp), Z(temp));
                 while (next_pell(Z(wv_x), Z(wv_y))) {
                     if (mpz_cmp(Z(temp), Z(wv_x)) <= 0)
@@ -2207,7 +2207,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 /* verify limit */
                 mpz_mul(Z(wv_temp), Z(wv_x2), *qi);
                 mpz_sub_ui(Z(wv_temp), Z(wv_temp), TYPE_OFFSET(sqi));
-                if (mpz_cmp(Z(wv_temp), max) > 0)
+                if (mpz_cmp(Z(wv_temp), zmax) > 0)
                     break;  /* CHECKME: should this be an error? */
 
                 ++countwi;
@@ -2325,9 +2325,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
         } else {
             mpz_set_ui(Z(wv_qqr), 0);
         }
-        mpz_sub(Z(wv_end), max, *m);
+        mpz_sub(Z(wv_end), zmax, *m);
         mpz_fdiv_q(Z(wv_end), Z(wv_end), *aq);
-        mpz_add_ui(Z(wv_endr), max, TYPE_OFFSET(sqi));
+        mpz_add_ui(Z(wv_endr), zmax, TYPE_OFFSET(sqi));
         mpz_fdiv_q(Z(wv_endr), Z(wv_endr), *qi);
         mpz_root(Z(wv_endr), Z(wv_endr), xi);
 
@@ -2461,7 +2461,7 @@ void walk_1(t_level *cur_level, uint vi) {
         mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
     }
 
-    if (mpz_cmp(Z(w1_v), min) < 0)
+    if (mpz_cmp(Z(w1_v), zmin) < 0)
         return;
     ++countw;
     if (check && !cvec_testv(cx0, Z(w1_v)))
@@ -2524,8 +2524,8 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
     t_value *vip = &value[vi];
     uint vil = cur_level->vlevel[vi];
     t_allocation *aip = &vip->alloc[vil - 1];
-    if (mpz_sgn(min) > 0) {
-        mpz_add_ui(Z(temp), min, TYPE_OFFSET(vi));
+    if (mpz_sgn(zmin) > 0) {
+        mpz_add_ui(Z(temp), zmin, TYPE_OFFSET(vi));
         mpz_cdiv_q(Z(temp), Z(temp), aip->q);
         mpz_root(Z(temp), Z(temp), x - 1);
         if (!mpz_fits_ulong_p(Z(temp)))
@@ -2871,8 +2871,8 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
 
 /* CHECKME: this appears to cost more than it saves in almost all cases */
 #ifdef CHECK_OVERFLOW
-    /* if rq > max, no solution <= max is possible */
-    if (mpz_cmp(cur->rq, max) > 0) {
+    /* if rq > zmax, no solution <= zmax is possible */
+    if (mpz_cmp(cur->rq, zmax) > 0) {
         /* caller expects vlevel to have been incremented on failure */
         ++cur->vlevel[vi];
         return 0;
@@ -2919,7 +2919,7 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
         return 0;
 
     /* check if we overshot */
-    if (mpz_cmp(cur->rq, max) > 0)
+    if (mpz_cmp(cur->rq, zmax) > 0)
         return 0;
 
     return 1;
@@ -3206,7 +3206,7 @@ void prep_midp(t_level *cur_level) {
             if ((x & (x - 1)) == 0)
                 break;
             /* find range of p for allocating p^e at v_i */
-            mpz_add_ui(Z(temp), max, TYPE_OFFSET(vi));
+            mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
             mintau(prev_level, Z(wv_cand), t / x);
             mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
@@ -3363,11 +3363,11 @@ bool apply_batch(
 
     if (terminal < k) {
         bool valid = 1;
-        if (!seen_valid && mpz_sgn(min)) {
+        if (!seen_valid && mpz_sgn(zmin)) {
             vp = &value[terminal];
             uint vlevel = cur_level->vlevel[terminal];
             mpz_sub_ui(Z(temp), vp->alloc[vlevel - 1].q, terminal);
-            if (mpz_cmp(Z(temp), min) <= 0)
+            if (mpz_cmp(Z(temp), zmin) <= 0)
                 valid = 0;
         }
         if (valid) {
@@ -3626,14 +3626,14 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     t_value *vp = &value[vi];
     uint vil = cur_level->vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
-    mpz_add_ui(Z(lp_x), max, TYPE_OFFSET(vi));
+    mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
     mpz_div(Z(lp_x), Z(lp_x), ap->q);
 
     if (x == nextt && divisors[x].high == x) {
         /* We are allocating p^{x-1} with x prime, leaving x as the
          * remaining tau; so this and the remaining allocation will
          * be of the form p^{x-1}.q^{x-1}, and we can set the limit
-         * to max^{1/2(x-1)}.
+         * to zmax^{1/2(x-1)}.
          */
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
     } else {
@@ -3703,7 +3703,7 @@ e_pux prep_unforced_x(
             p = maxforce[vi];
     } /* else we're continuing from known p */
 
-    /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > max + i */
+    /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > zmax + i */
     limp = limit_p(cur_level, vi, x, nextt);
     if (limp == 0) {
         /* force walk */
@@ -3722,9 +3722,9 @@ e_pux prep_unforced_x(
         return PUX_SKIP_THIS_X;
     }
 
-    mpz_add_ui(Z(r_walk), max, vi);
+    mpz_add_ui(Z(r_walk), zmax, vi);
 #ifdef LARGE_MIN
-    mpz_sub(Z(r_walk), Z(r_walk), min);
+    mpz_sub(Z(r_walk), Z(r_walk), zmin);
 #endif
     mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
     if (prev_level->have_square) {
@@ -4148,7 +4148,7 @@ void recurse(e_is jump_continue) {
                 if (need_work)
                     diag_plain(cur_level);
                 --cur_level->vlevel[cur_level->vi];
-                /* not redo_unforced, we may have improved max */
+                /* not redo_unforced, we may have improved zmax */
                 goto continue_unforced;
             }
             if (need_work)
@@ -4306,7 +4306,7 @@ int main(int argc, char **argv, char **envp) {
         uint *tt = calloc(k, sizeof(uint));
         for (uint i = 0; i < k; ++i)
             tt[i] = target_t(i);
-        cx0 = cvec_init(n, k, &min, tt);
+        cx0 = cvec_init(n, k, &zmin, tt);
 
         for (uint mfi = 0; mfi < modfix_count; ++mfi) {
             t_modfix *mfp = &modfix[mfi];
