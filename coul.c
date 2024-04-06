@@ -3746,9 +3746,9 @@ e_pux prep_unforced_x(
         mpz_mul_ui(Z(r_walk), Z(r_walk), gain);
     if (antigain > 1)
         mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
+    uint cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
     if (mpz_fits_ulong_p(Z(r_walk))
-        && mpz_get_ui(Z(r_walk))
-                < ((limp_cap && limp_cap < limp) ? limp_cap : limp) - p
+        && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p)
     ) {
 #ifdef SQONLY
         if (prev_level->have_square)
@@ -3822,7 +3822,7 @@ e_is insert_stack(void) {
                 break;
         }
         if (bi >= fp->count) {
-            if (fp->batch[fp->count -1].x != 0)
+            if (fp->batch[fp->count - 1].x != 0)
                 fail("no batch found for %u^{%u-1} at v_%u", p, maxx, mini);
             /* this prime unforced, so any remaining ones are too */
             break;
