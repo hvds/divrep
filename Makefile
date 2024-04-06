@@ -26,6 +26,10 @@ ifeq ($(MPUGMP_VER), 2389dcbc44)
 endif
 
 DEFINES := -DSTANDALONE
+
+# temporary, avoid messing up
+DEFINES += -DLARGE_MIN -DTRACK_STATS
+
 pcoul dpcoul: DEFINES += -DTYPE_o
 pcaul dpcaul: DEFINES += -DTYPE_a
 pcrul dpcrul: DEFINES += -DTYPE_r
