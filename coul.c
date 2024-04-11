@@ -1675,6 +1675,8 @@ void report_init(FILE *fp, char *prog) {
         fprintf(fp, " -j%u", strategy);
     if (opt_print)
         fprintf(fp, " -o");
+    if (limp_cap)
+        fprintf(fp, " -P%lu", limp_cap);
     if (sminp || smaxp) {
         fprintf(fp, " -p");
         if (sminp)
