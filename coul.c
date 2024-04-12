@@ -752,7 +752,7 @@ void fail_silent(void) {
 void fail(char *format, ...) {
     va_list ap;
     va_start(ap, format);
-    vfprintf(stderr, format, ap);
+    gmp_vfprintf(stderr, format, ap);
     fprintf(stderr, "\n");
     va_end(ap);
     /* we accept leaks on fatal error, but should close the log file */
@@ -2304,11 +2304,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
                         rindex = xmi;
                         break;
                     }
-                    gmp_fprintf(stderr,
-                        "from restart %Zu no match found for mod %Zu < %Zu\n",
+                    fail("from restart %Zu no match found for mod %Zu < %Zu\n",
                         Z(wv_ati), Z(wv_temp), xr->r[xmi]
                     );
-                    exit(1);
                 }
                 if (xmi + 1 == xr->count) {
                     if (mpz_sgn(start) == 0) {
@@ -2316,11 +2314,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
                         mpz_add_ui(Z(wv_startr), Z(wv_startr), 1);
                         break;
                     }
-                    gmp_fprintf(stderr,
-                        "from start %Zu no match found for mod %Zu > %Zu\n",
+                    fail("from start %Zu no match found for mod %Zu > %Zu\n",
                         Z(wv_ati), Z(wv_temp), xr->r[xmi]
                     );
-                    exit(1);
                 }
             }
             mpz_mul(Z(wv_qqr), *qqi, Z(wv_startr));

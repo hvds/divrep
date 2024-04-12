@@ -624,13 +624,10 @@ bool do_simpqs(mpz_t n, mpz_t f) {
     factor_state fs;
     fs_init(&fs);
     mpz_set(fs.n, simpqs_array[0]);
-    if (!factor_one(&fs)) {
-        gmp_fprintf(stderr,
-            "factor_one(%Zd) failed to find factor in simpqs composite\n",
+    if (!factor_one(&fs))
+        fail("factor_one(%Zd) failed to find factor in simpqs composite\n",
             fs.n
         );
-        exit(1);
-    }
     mpz_set(f, fs.f);
     fs_clear(&fs);
     return 1;
@@ -955,10 +952,8 @@ mpz_t *tm_factor(t_tm *tm) {
     else
         mpz_set(fs.n, tmf2);
     fs.state = FS_POWER;
-    if (!factor_one(&fs)) {
-        gmp_fprintf(stderr, "no factor found for composite %Zd\n", fs.n);
-        exit(1);
-    }
+    if (!factor_one(&fs))
+        fail("no factor found for composite %Zd\n", fs.n);
     mpz_set(tmf, fs.f);
     fs_clear(&fs);
     return &tmf;
@@ -1013,13 +1008,10 @@ uint tau_multi_run(uint count) {
                 ++e;
                 mpz_divexact(tm->n, tm->n, *f);
             }
-            if (e == 0) {
-                gmp_fprintf(stderr,
-                    "state %d found non-divisible factor %Zd for %Zd\n",
+            if (e == 0)
+                fail("state %d found non-divisible factor %Zd for %Zd\n",
                     tm->state, *f, tm->n
                 );
-                exit(1);
-            }
             e = e * tm->e + 1;
             if (tm->t % e)
                 return count;
@@ -1069,11 +1061,9 @@ uint tau_multi_run(uint count) {
             goto tmr_redo;
         }
     }
-    gmp_fprintf(stderr,
-        "no factors found for %u non-primes starting %Zd (%u)\n",
+    fail("no factors found for %u non-primes starting %Zd (%u)\n",
         count, taum[0].n, taum[0].t
     );
-    exit(1);
 }
 
 /* Same as tau_multi_run() except that all values are required to be prime.

@@ -1,5 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
+
 #include "pell.h"
 #include "rootmod.h"
 #include "coultau.h"
@@ -15,6 +17,15 @@ mpz_t zy;
 /* needed for coultau.c; but not used, since we init_tau(0) */
 #include "coul.h"
 t_divisors *divisors = NULL;
+
+void fail(char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    gmp_vfprintf(stderr, format, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    exit(1);
+}
 
 void ston(mpz_t targ, char *s) {
     char *t = strchr(s, 'e');
@@ -41,7 +52,7 @@ void ston(mpz_t targ, char *s) {
  */
 int main(int argc, char **argv) {
     if (argc < 5)
-        exit(1);
+        fail("Usage: %s <A> <D> <N> <lim> to solve Ax^2 - Dy^2 = N\n", argv[0]);
     mpz_init_set_str(zA, argv[1], 10);
     mpz_init_set_str(zD, argv[2], 10);
     in = strtol(argv[3], NULL, 10);

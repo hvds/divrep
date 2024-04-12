@@ -1,11 +1,13 @@
 #include <stdlib.h>
 #include <string.h>
+
 #include "pell.h"
+#include "coul.h"
 #include "coultau.h"
 #include "rootmod.h"
 
 typedef enum {
-    fail,       /* no results */
+    failed,     /* no results */
     pell,       /* x^2 - Dy^2 = 1   D not square */
     neg_pell,   /* x^2 - Dy^2 = -1  D not square */
     gen_pell,   /* x^2 - Dy^2 = N   D not square */
@@ -188,10 +190,8 @@ void contfrac(void) {
         uint cura = cft.size - 3;
         uint curb = cft.size - 2;
         uint curc = cft.size - 1;
-        if (mpz_sgn(cft.za[curc]) == 0) {
-            fprintf(stderr, "Division by zero\n");
-            exit(1);
-        }
+        if (mpz_sgn(cft.za[curc]) == 0)
+            fail("Division by zero\n");
         if (mpz_sgn(cft.za[cura]) == 0 && mpz_sgn(cft.za[curb]) == 0)
             return;
         if (mpz_sgn(cft.za[curc]) < 0) {
@@ -297,10 +297,8 @@ void pell_fund_sol(void) {
      * this limit */
     uint lim = cf_initial.size + cf_recur.size * 2;
     for (uint i = 0; i < lim; ++i) {
-        if (!next_convergent()) {
-            fprintf(stderr, "no next convergent\n");
-            exit(1);
-        }
+        if (!next_convergent())
+            fail("no next convergent\n");
         mpz_mul(Z(zt1), Z(p), Z(p));
         mpz_mul(Z(zt2), Z(q), Z(q));
         mpz_mul(Z(zt2), Z(zt2), Z(D));
@@ -308,16 +306,14 @@ void pell_fund_sol(void) {
         if (mpz_cmp_ui(Z(zt1), 1) == 0)
             return;
     }
-    gmp_fprintf(stderr, "No principle solution found for pell(%Zu)\n", Z(D));
-    exit(1);
+    fail("No principle solution found for pell(%Zu)\n", Z(D));
 }
 
 void init_sqdiff(void) {
     /* Solve x^2 - y^2 = N */
-    if (mpz_sgn(Z(N)) == 0) {
-        fprintf(stderr, "not trying to solve x^2 = y^2\n");
-        exit(1);
-    } else if (mpz_sgn(Z(N)) < 0) {
+    if (mpz_sgn(Z(N)) == 0)
+        fail("not trying to solve x^2 = y^2\n");
+    else if (mpz_sgn(Z(N)) < 0) {
         filter_swap = 1;
         mpz_swap(Z(filter_x), Z(filter_y));
         mpz_abs(Z(N), Z(N));
@@ -327,7 +323,7 @@ void init_sqdiff(void) {
         type = sqdiff_odd;
     else if (mpz_tstbit(Z(N), 1)) {
         /* cannot have N == 2 (mod 4) */
-        type = fail;
+        type = failed;
         return;
     } else {
         type = sqdiff_even;
@@ -354,14 +350,11 @@ void init_negpell(void) {
     mpz_set_ui(Z(cf_c), 1);
     mpz_set(Z(cf_d), Z(D));
     contfrac();
-    if (cf_recur.size == 0) {
-        gmp_fprintf(stderr,
-                "can't handle neg_pell(%Zu) with square argument\n", Z(D));
-        exit(1);
-    }
+    if (cf_recur.size == 0)
+        fail("can't handle neg_pell(%Zu) with square argument\n", Z(D));
     /* negative Pell's equation has no solutions if period is even */
     if ((cf_recur.size & 1) == 0) {
-        type = fail;
+        type = failed;
         return;
     }
     init_convergents();
@@ -375,7 +368,7 @@ void init_negpell(void) {
         if (mpz_cmp(Z(zt1), Z(zt2)) == 0)
             goto negpell_ok;
     }
-    type = fail;
+    type = failed;
     return;
   negpell_ok:
     type = neg_pell;
@@ -421,13 +414,10 @@ void init_genpell_coprime(t_interleave *gpp) {
             mpz_mul(Z(zt1), Z(Pi), Z(Pi));
             mpz_sub(Z(zt1), Z(zt1), Z(D));
             mpz_fdiv_qr(Z(zt1), Z(zt2), Z(zt1), Z(Qi));
-            if (mpz_sgn(Z(zt2)) != 0) {
-                gmp_fprintf(stderr,
-                    "logic error: expect %Zi^2 == %Zi (mod %Zi)\n",
+            if (mpz_sgn(Z(zt2)) != 0)
+                fail("logic error: expect %Zi^2 == %Zi (mod %Zi)\n",
                     Z(Pi), Z(D), Z(Qi)
                 );
-                exit(1);
-            }
             mpz_mul(Z(Pn), Z(Qi), *cfz);
             mpz_sub(Z(Pn), Z(Pn), Z(Pi));
             mpz_mul_ui(Z(Qn), Z(Pi), 2);
@@ -497,7 +487,7 @@ void init_genpell(void) {
         ++gpsize;
     }
     if (gpsize == 0) {
-        type = fail;
+        type = failed;
         return;
     }
     type = gen_pell;
@@ -539,7 +529,7 @@ void new_pell(mpz_t iA, mpz_t iD, int iN, mpz_t ilimit) {
 bool next_pell(mpz_t ox, mpz_t oy) {
   pell_retry:
     switch (type) {
-      case fail:
+      case failed:
         return 0;
       case pell:
         mpz_set(ox, Z(x));
@@ -628,8 +618,7 @@ bool next_pell(mpz_t ox, mpz_t oy) {
         break;
       }
       default:
-        fprintf(stderr, "unexpected type %u\n", type);
-        exit(1);
+        fail("unexpected type %u\n", type);
     }
 
     if (filter_swap)

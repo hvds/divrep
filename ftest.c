@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdarg.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -23,6 +24,15 @@ static inline double utime(void) {
 
 double seconds(double t1) {
     return t1 - t0;
+}
+
+void fail(char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    gmp_vfprintf(stderr, format, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    exit(1);
 }
 
 int main(int argc, char **argv) {

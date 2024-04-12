@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 #include "coul.h"
 
@@ -17,6 +18,15 @@ mpz_t sum;
 #define ZP(x) &(x)
 
 t_level l_old, l_new;
+
+void fail(char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    gmp_vfprintf(stderr, format, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    exit(1);
+}
 
 void init(void) {
     _GMP_init();
@@ -36,8 +46,7 @@ ulong next_prime(ulong cur) {
     _GMP_next_prime(Z(np_p));
     if (mpz_fits_ulong_p(Z(np_p)))
         return mpz_get_ui(Z(np_p));
-    fprintf(stderr, "002 next_prime overflow\n");
-    exit(1);
+    fail("002 next_prime overflow\n");
 }
 
 /* copy from coul.c */
@@ -63,13 +72,12 @@ void update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
     memcpy(&zarray[3], *pxp, sizeof(mpz_t));
     if (chinese(new->rq, new->aq, &zarray[0], &zarray[2], 2))
         return;
-    fprintf(stderr, "chinese failed");
-    exit(1);
+    fail("chinese failed");
 }
 
 void main(int argc, char **argv) {
     if (argc != 2)
-        exit(1);
+        fail("Usage: %s <target>\n", argv[0]);
     ulong target = strtoul(argv[1], NULL, 10);
     ulong p = 2;
     init();

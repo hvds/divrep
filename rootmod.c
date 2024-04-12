@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
+
 #include "rootmod.h"
+#include "coul.h"
 #include "coulfact.h"
 #include "coultau.h"
 #include "utility.h"
@@ -177,11 +179,8 @@ void _allrootmod_cprod(e_results e2, mpz_t n1, mpz_t n2) {
     resize_results(r, r1->count * r2->count);
 
     mpz_mul(Z(armc_n), n1, n2);
-    if (!mpz_invert(Z(armc_inv), n1, n2)) {
-        gmp_fprintf(stderr, "_allrootmod_cprod(%Zu, %Zu) has no inverse\n",
-                n1, n2);
-        exit(1);
-    }
+    if (!mpz_invert(Z(armc_inv), n1, n2))
+        fail("_allrootmod_cprod(%Zu, %Zu) has no inverse\n", n1, n2);
     for (uint i1 = 0; i1 < r1->count; ++i1) {
         mpz_t *z1 = &r1->r[i1];
         for (uint i2 = 0; i2 < r2->count; ++i2) {
@@ -264,11 +263,8 @@ void _eval_armpp(mpz_t s, mpz_t a, uint k, mpz_t px, mpz_t px2) {
     mpz_divexact(Z(earmpp_t1), Z(earmpp_t1), Z(earmpp_g));
     mpz_divexact(Z(earmpp_t2), Z(earmpp_t2), Z(earmpp_g));
 
-    if (!mpz_invert(Z(earmpp_t2), Z(earmpp_t2), px)) {
-        gmp_fprintf(stderr, "_eval_armpp() no inverse %Zu %% %Zu\n",
-                Z(earmpp_t2), px);
-        exit(1);
-    }
+    if (!mpz_invert(Z(earmpp_t2), Z(earmpp_t2), px))
+        fail("_eval_armpp() no inverse %Zu %% %Zu\n", Z(earmpp_t2), px);
     mpz_mul(Z(rm_r), Z(earmpp_t1), Z(earmpp_t2));
     /* mpz_mod(Z(rm_r), Z(rm_r), px); */
     mpz_add(Z(rm_r), Z(rm_r), s);
@@ -314,15 +310,11 @@ void _allrootmod_prime(mpz_t za, uint k, ulong p) {
     /* Call a Tonelli-Shanks solver that also allows us to get all the roots.
      * Puts result in rm_r and zeta in tsp_z. */
     _ts_prime(Z(armp_a), k, p);
-    if (mpz_sgn(Z(tsp_z)) == 0) {
-        fprintf(stderr, "ts_prime(%lu, %u, %lu) gave zeta=0\n", a, k, p);
-        exit(1);
-    }
+    if (mpz_sgn(Z(tsp_z)) == 0)
+        fail("ts_prime(%lu, %u, %lu) gave zeta=0\n", a, k, p);
     mpz_powm_ui(Z(armp_t), Z(rm_r), k, Z(rm_p));
-    if (mpz_cmp_ui(Z(armp_t), a) != 0) {
-        fprintf(stderr, "ts_prime(%lu, %u, %lu) gave bad result\n", a, k, p);
-        exit(1);
-    }
+    if (mpz_cmp_ui(Z(armp_t), a) != 0)
+        fail("ts_prime(%lu, %u, %lu) gave bad result\n", a, k, p);
 
     t_results *rp = &ra[rm_base];
     uint end = rp->count + k;
@@ -333,13 +325,10 @@ void _allrootmod_prime(mpz_t za, uint k, ulong p) {
         mpz_mod_ui(Z(rm_r), Z(rm_r), p);
         if (mpz_cmp_ui(Z(rm_r), r) == 0)
             break;
-        if (rp->count == end) {
-            fprintf(stderr,
-                "excess roots found for _allrootmod_prime(%lu, %u, %lu)",
+        if (rp->count == end)
+            fail("excess roots found for _allrootmod_prime(%lu, %u, %lu)",
                 a, k, p
             );
-            exit(1);
-        }
         save_base(Z(rm_r));
     }
     return;
@@ -421,11 +410,8 @@ void _allrootmod_prime_power_r(mpz_t a, uint k, ulong p, uint e) {
 void _allrootzero_prime_power(uint k, ulong p, uint e, mpz_t px) {
     uint t = (e - 1) / k + 1;
     mpz_ui_pow_ui(Z(arzpp_px), p, e - t);
-    if (!mpz_fits_uint_p(Z(arzpp_px))) {
-        fprintf(stderr, "_allrootzero_prime_power() overflow %lu^%u\n",
-                p, e - t);
-        exit(1);
-    }
+    if (!mpz_fits_uint_p(Z(arzpp_px)))
+        fail("_allrootzero_prime_power() overflow %lu^%u\n", p, e - t);
     uint r = mpz_get_ui(Z(arzpp_px));
     mpz_ui_pow_ui(Z(arzpp_px), p, t);
     for (uint i = 0; i < r; ++i) {
@@ -473,11 +459,8 @@ void _allrootmod_prime_power(mpz_t a, uint k, ulong p, uint e, mpz_t px) {
     _swapz_r(armpp_copy);
 
     mpz_ui_pow_ui(Z(armpp_px), p, m * (k - 1));
-    if (!mpz_fits_uint_p(Z(armpp_px))) {
-        fprintf(stderr, "_allrootmod_prime_power() overflow %lu^%u\n",
-                p, m * (k - 1));
-        exit(1);
-    }
+    if (!mpz_fits_uint_p(Z(armpp_px)))
+        fail("_allrootmod_prime_power() overflow %lu^%u\n", p, m * (k - 1));
     uint range = mpz_get_ui(Z(armpp_px));
     resize_results(rp, range * r2->count);
 
@@ -583,10 +566,8 @@ void allrootmod(uint level, mpz_t a, uint k, mpz_t n) {
         rm_nf[nfc].e = fs.e;
         ++nfc;
     }
-    if (fs.state != FS_TERM) {
-        gmp_fprintf(stderr, "In allrootmod failed to factorize n=%Zu\n", fs.n);
-        exit(1);
-    }
+    if (fs.state != FS_TERM)
+        fail("In allrootmod failed to factorize n=%Zu\n", fs.n);
     fs_clear(&fs);
 
     /* now similarly factorize k */
@@ -649,10 +630,8 @@ void root_extract(uint new_level, uint old_level, uint k, mpz_t n) {
         rm_nf[nfc].e = fs.e;
         ++nfc;
     }
-    if (fs.state != FS_TERM) {
-        gmp_fprintf(stderr, "In allrootmod failed to factorize n=%Zu\n", fs.n);
-        exit(1);
-    }
+    if (fs.state != FS_TERM)
+        fail("In allrootmod failed to factorize n=%Zu\n", fs.n);
     fs_clear(&fs);
 
     /* now similarly factorize k */
