@@ -174,6 +174,8 @@ bool improve_max = 1;   /* reduce zmax when solution found */
 uint seen_best = 0; /* number of times we've improved zmax */
 ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
+ulong gain2 = 0;    /* as gain/antigain for squares */
+ulong antigain2 = 0;
 /* maxp[e] is the greatest prime we should attempt to allocate as power p^e;
  * minp[e] is the threshold that at least one allocated p^e should exceed
  * (else we can skip the walk); midp[e] is the additional threshold up to
@@ -1665,6 +1667,11 @@ void init_post(void) {
     }
     diag_buf = (char *)malloc(DIAG_BUFSIZE);
     init_diag();    /* ignore result: worst case we lose ^Z handling */
+
+    if (gain2 == 0 && antigain2 == 0) {
+        gain2 = gain;
+        antigain2 = antigain;
+    }
 }
 
 void report_init(FILE *fp, char *prog) {
@@ -1712,6 +1719,13 @@ void report_init(FILE *fp, char *prog) {
             fprintf(fp, "%lu:", antigain);
         if (gain > 1)
             fprintf(fp, "%lu", gain);
+    }
+    if (gain2 != gain || antigain2 != antigain) {
+        fprintf(fp, " -G");
+        if (antigain2 > 1)
+            fprintf(fp, "%lu:", antigain2);
+        if (gain2 > 1)
+            fprintf(fp, "%lu", gain2);
     }
     if (mpz_sgn(zmin) || mpz_sgn(zmax)) {
         fprintf(fp, " -x");
@@ -1790,6 +1804,18 @@ void set_gain(char *s) {
     } else {
         antigain = 0;
         gain = ulston(s);
+    }
+}
+
+void set_gain2(char *s) {
+    char *t = strchr(s, ':');
+    if (t) {
+        *t = 0;
+        antigain2 = *s ? ulston(s) : 0;
+        gain2 = t[1] ? ulston(&t[1]) : 0;
+    } else {
+        antigain2 = 0;
+        gain2 = ulston(s);
     }
 }
 
@@ -3739,11 +3765,16 @@ e_pux prep_unforced_x(
              * treat that as effectively free */
             mpz_set_ui(Z(r_walk), 0);
         }
+        if (gain2 > 1)
+            mpz_mul_ui(Z(r_walk), Z(r_walk), gain2);
+        if (antigain2 > 1)
+            mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain2);
+    } else {
+        if (gain > 1)
+            mpz_mul_ui(Z(r_walk), Z(r_walk), gain);
+        if (antigain > 1)
+            mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
     }
-    if (gain > 1)
-        mpz_mul_ui(Z(r_walk), Z(r_walk), gain);
-    if (antigain > 1)
-        mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
     uint cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
     if (mpz_fits_ulong_p(Z(r_walk))
         && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p)
@@ -4173,6 +4204,8 @@ int main(int argc, char **argv, char **envp) {
             improve_max = 0;
         else if (arg[1] == 'g')
             set_gain(&arg[2]);
+        else if (arg[1] == 'G')
+            set_gain2(&arg[2]);
         else if (arg[1] == 'p')
             set_cap(&arg[2]);
         else if (arg[1] == 'P')
