@@ -1340,6 +1340,19 @@ void prep_forcep(void) {
     for (uint i = 0; i < k; ++i)
         maxbatch += divisors[ target_t(i) ].alldiv;
 
+    /* TODO: fix tail handling (see comment in recurse()), then we can
+     * remove this block */
+    if (unforce_all) {
+        uint need = 0;
+        for (uint i = forcedp; i > 0; ) {
+            --i;
+            if (need && pi[i] >= unforce_all)
+                fail("-F%u is minimum supported for now", need);
+            if (!need && pi[i] < k)
+                need = pi[i];
+        }
+    }
+
     forcep = (t_forcep *)malloc(forcedp * sizeof(t_forcep));
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
         p = pi[fpi];
@@ -4133,6 +4146,10 @@ void recurse(e_is jump_continue) {
 #endif
             ) {
                 /* tail batch: continue with this prime unforced */
+                /* TODO: this may miss mandatory force on higher fixedp.
+                 * Can we simply do a null apply() and step to the next?
+                 * For now we disallow the broken case in prep_forcep().
+                 */
                 cur_level->is_forced = 0;
                 reset_vlevel(cur_level);
                 if (process_batch(prev_level))
