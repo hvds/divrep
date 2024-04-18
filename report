@@ -138,8 +138,10 @@ sub report_g {
             my $ming = $g->ming;
             my $knowng = knowng($g);
             $ming = "$ming/$knowng" if $ming < $knowng;
-            printf "g(%s) in [%s .. %s b%s], checked to %s\n",
-                    $g->n, $ming, $g->maxg, $g->bisected // 0, $g->checked;
+            my $bisected = ($knowng < $g->maxg)
+                    ? sprintf(" b%s", $g->bisected // 0) : '';
+            printf "g(%s) in [%s .. %s%s], checked to %s\n",
+                    $g->n, $ming, $g->maxg, $bisected // 0, $g->checked;
         }
     }
     return;
