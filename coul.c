@@ -77,6 +77,9 @@ static inline mpz_t *ZP(t_zstash e) { return &zstash[e]; }
 #define Z(e) *ZP(e)
 /* additional arrays of mpz_t initialized once at start */
 mpz_t *wv_o = NULL, *wv_qq = NULL;  /* wv_o[k], wv_qq[k] */
+/* for failure diagnostics */
+mpz_t *g_q0;
+uint g_ati;
 
 /* used to store disallowed inverses in walk_v() */
 typedef struct s_mod {
@@ -310,8 +313,8 @@ static inline bool test_prime_append(mpz_t n, uint vi) {
 static inline uint test_prime_run(void) {
     return tau_prime_run(tm_count);
 }
-static inline uint test_multi_run(void) {
-    return tau_multi_run(tm_count);
+static inline uint test_multi_run(tau_failure_handler tfh) {
+    return tau_multi_run(tm_count, tfh);
 }
 
 #if defined(TYPE_o) || defined(TYPE_r)
@@ -1928,6 +1931,47 @@ uint find_nextpi(uint pi) {
     }
 }
 
+uint taum_fail(char *legend, mpz_t target, uint count, t_tm *tm) {
+    keep_diag();
+
+    /* log to file only if opt_print */
+    FILE *was_rfp;
+    if (!opt_print) {
+        was_rfp = rfp;
+        rfp = NULL;
+    }
+
+    /* FIXME: use a real code for these, and cope with that.
+     * That means that candidates lower the upper limit as usual, but
+     * if any of these targets lie below the best candidate we cannot be
+     * final.
+     */
+    report("000 tmf %s %Zu (%.2fs)\n", legend, target, seconds(utime()));
+    for (uint i = 0; i < count; ++i)
+        report("000 (%u) %u -> %u: %Zu\n", i, tm[i].vi, tm[i].t, tm[i].n);
+
+    if (!opt_print) {
+        rfp = was_rfp;
+        fail_silent();
+    }
+    return count;
+}
+uint walk_1_failure(uint count, t_tm *tm) {
+    return taum_fail("walk_1", Z(w1_v), count, tm);
+}
+uint walk_v_failure(uint count, t_tm *tm) {
+    mpz_mul_ui(Z(wv_cand), wv_qq[0], g_ati);
+    mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
+    mpz_mul(Z(wv_cand), Z(wv_cand), *g_q0);
+    return taum_fail("walk_v", Z(wv_cand), count, tm);
+}
+uint walk_zv_failure(uint count, t_tm *tm) {
+    mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
+    mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
+    mpz_mul(Z(wv_cand), Z(wv_cand), *g_q0);
+    return taum_fail("walk_v", Z(wv_cand), count, tm);
+}
+
 bool test_prime(mpz_t qq, mpz_t o, ulong ati) {
     mpz_mul_ui(Z(wv_cand), qq, ati);
     mpz_add(Z(wv_cand), Z(wv_cand), o);
@@ -1963,7 +2007,7 @@ bool test_1primes(uint *need, uint nc) {
     return 1;
 }
 
-bool test_1multi(uint *need, uint nc, uint *t) {
+bool test_1multi(uint *need, uint nc, uint *t, tau_failure_handler tfh) {
     uint good = 0;
     test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
@@ -1978,7 +2022,7 @@ bool test_1multi(uint *need, uint nc, uint *t) {
             ++good;
 #endif
     }
-    uint remain = test_multi_run();
+    uint remain = test_multi_run(tfh);
     TRACK_MULTI(remain, need, taum);
     return remain ? 0 : 1;
 }
@@ -2031,7 +2075,9 @@ bool test_zprimes(uint *need, uint nc, mpz_t ati) {
     return 1;
 }
 
-bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
+bool test_multi(
+    uint *need, uint nc, ulong ati, uint *t, tau_failure_handler tfh
+) {
     uint good = 0;
     test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
@@ -2047,12 +2093,14 @@ bool test_multi(uint *need, uint nc, ulong ati, uint *t) {
             ++good;
 #endif
     }
-    uint remain = test_multi_run();
+    uint remain = test_multi_run(tfh);
     TRACK_MULTI(remain, need, taum);
     return remain ? 0 : 1;
 }
 
-bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
+bool test_zmulti(
+    uint *need, uint nc, mpz_t ati, uint *t, tau_failure_handler tfh
+) {
     uint good = 0;
     test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
@@ -2068,7 +2116,7 @@ bool test_zmulti(uint *need, uint nc, mpz_t ati, uint *t) {
             ++good;
 #endif
     }
-    uint remain = test_multi_run();
+    uint remain = test_multi_run(tfh);
     TRACK_MULTI(remain, need, taum);
     return remain ? 0 : 1;
 }
@@ -2184,6 +2232,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         else
             need_other[noc++] = vi;
     }
+    g_q0 = q[0];
 
 #if 0
     qsort(inv, inv_count, sizeof(t_mod), &inv_comparator);
@@ -2300,7 +2349,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 if (!test_zprimes(need_prime, npc, Z(wv_ati)))
                     goto next_pell;
                 /* TODO: bail and print somewhere here if 'opt_print' */
-                if (!test_zmulti(need_other, noc, Z(wv_ati), t))
+                if (!test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure))
                     goto next_pell;
                 /* have candidate: calculate and apply it */
                 mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
@@ -2409,7 +2458,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
             if (!test_zprimes(need_prime, npc, Z(wv_ati)))
                 goto next_sqati;
             /* TODO: bail and print somewhere here if 'opt_print' */
-            if (!test_zmulti(need_other, noc, Z(wv_ati), t))
+            if (!test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure))
                 goto next_sqati;
             /* have candidate: calculate and apply it */
             mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
@@ -2464,7 +2513,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
         if (!test_primes(need_prime, npc, ati))
             goto next_ati;
         /* TODO: bail and print somewhere here if 'opt_print' */
-        if (!test_multi(need_other, noc, ati, t))
+        g_ati = ati;
+        if (!test_multi(need_other, noc, ati, t, walk_v_failure))
             goto next_ati;
         /* have candidate: calculate and apply it */
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
@@ -2541,7 +2591,7 @@ void walk_1(t_level *cur_level, uint vi) {
         return;
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
-    if (!test_1multi(need_other, noc, t))
+    if (!test_1multi(need_other, noc, t, walk_1_failure))
         return;
     candidate(Z(w1_v));
     return;
@@ -2630,7 +2680,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             goto reject_this_one;
         oc_t = t;
         qsort(need_other, noc, sizeof(uint), &other_comparator);
-        if (!test_1multi(need_other, noc, t))
+        if (!test_1multi(need_other, noc, t, walk_1_failure))
             goto reject_this_one;
         if (candidate(Z(w1_v)))
             return;

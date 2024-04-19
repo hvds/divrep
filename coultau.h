@@ -48,6 +48,8 @@ typedef struct s_tm {
 } t_tm;
 extern t_tm *taum;
 
+typedef uint (*tau_failure_handler)(uint count, t_tm *taum);
+
 extern void init_tau(uint test_rough);
 extern void done_tau(void);
 extern void fs_init(factor_state* fs);
@@ -56,7 +58,7 @@ extern int factor_one(factor_state* fs);
 extern int is_taux(mpz_t n, uint32_t k, uint32_t x);
 extern void alloc_taum(uint size);
 extern bool tau_multi_prep(uint i);
-extern uint tau_multi_run(uint i);
+extern uint tau_multi_run(uint i, tau_failure_handler tfh);
 extern bool tau_prime_prep(uint i);
 extern uint tau_prime_run(uint i);
 

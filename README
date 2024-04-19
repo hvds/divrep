@@ -189,10 +189,9 @@ If "-s2" is specified, it will initialize the random number generator
 with seed 2, used at least for ECM factorization. The default seed is 1,
 intended to help make results more reproducible.
 
-If "-o" is specified, it will not attempt to factorize numbers beyond
-a certain point, but will instead print them as a possible candidate.
-(**Not yet implemented.**) The default is to fully factorize numbers
-as far as needed to prove whether they are or are not a candidate.
+If "-o" is specified, once all factorization strategies are exhausted
+the current target and the numbers still to be factorized are logged,
+and execution continues. The default is to stop execution at this point.
 
 If "-a" is specified, it will establish only each valid set of batch
 allocations of forced primes, and output those sets assigning an index

@@ -962,7 +962,7 @@ mpz_t *tm_factor(t_tm *tm) {
 /* Returns the number of values still being tested at the point a failure
  * was seen; return value of zero implies success.
  */
-uint tau_multi_run(uint count) {
+uint tau_multi_run(uint count, tau_failure_handler tfh) {
     uint i = 0;
     /* Shuffle the entries that did not complete by trial division to
      * the front. Find size and thus the associated tmfb entry for each. */
@@ -1061,6 +1061,9 @@ uint tau_multi_run(uint count) {
             goto tmr_redo;
         }
     }
+    /* handle failure */
+    if (tfh)
+        return (*tfh)(count, taum);
     fail("no factors found for %u non-primes starting %Zd (%u)\n",
         count, taum[0].n, taum[0].t
     );
