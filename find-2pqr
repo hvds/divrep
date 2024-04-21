@@ -1,0 +1,93 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+use Math::GMP;
+use Math::Prime::Util qw{ divisors factor };
+sub MBI { Math::GMP->new(@_) }
+
+my %z = map +($_ => MBI($_)), qw{ 1 2 3 5 23 47 71 73 };
+
+my($n) = @ARGV;
+my @f = factor($n);
+unless ($f[0] == 2 && $f[1] & 1 && (@f == 4 || (@f == 5 && $f[-1] == 3))) {
+    die "factors [@f], this program designed for n = 2pqr\n";
+}
+
+=head1 find-2pqr n
+
+For n == 2 (mod 4), with g(n) >= 6 we have:
+    2^4.3.5 | v_0
+    p | v_1 -> p in {1, -1} mod 23 := { 23, 47, 71, 73, ... }
+    v_2 = 2 x_2^2
+    v_3 = 3 x_3^2
+
+For n = 2pqr, for odd primes p, q, r, we calculate maximum value v_0 can
+take a) of the form 2^a.3^b.5^c, and b) of the form 2^a.3^b.5^c.s with
+s <= 2^{a-3}.3^b.5^c + 1, and the minimum value v_1 can take
+of the form 23^d.47^e.71^f.73^g.
+
+If max(v_0) + 1 < min(v_1) then g(n) >= 6 is not possible.
+
+TODO: is there any way to extend this to handle e.g. 162?
+
+For n < 1000, these are known g(n) <= 5:
+  54 90 126 150 198 210 234 250 294 306 330 342 390 414 462
+  522 546 558 666 738 774 846 954
+.. and these are not known:
+  350 490 510 550 570 650 686 690 714 726 770 798 850 858 870 910 930 950 966
+
+(Note that in the "not known" cases, it may be trivial to check the cases
+from min(v_1) - 1 to max(v_0).)
+
+=cut
+
+my $maxv0a = tmax([ [2, 4], [3, 1], [5, 1] ], $n);
+my $maxv0b = tmax([ [2, 4], [3, 1], [5, 1] ], $n / 2);
+my $v_0 = defined($maxv0b)
+        ? max($maxv0a, $maxv0b * ($maxv0b / 8 + 1)) : $maxv0a;
+my $v_1 = tmin([ map [$_, 0], qw{ 23 47 71 73 } ], $n);
+printf "v_0 max %s; v_1 min %s\n", $v_0, $v_1;
+printf "n = %s [%s]: g(n) <= 5 is %s\n",
+        $n, "@f", $v_0 + 1 < $v_1 ? q{known} : q{unknown};
+exit 0;
+
+sub tmax {
+    my($f, $n) = @_;
+    my($f0, @f1) = @$f;
+    if (@f1 == 0) {
+        return undef if $n < $f0->[1] + 1;
+        return $z{ $f0->[0] } ** ($n - 1);
+    }
+
+    my $best;
+    for my $d (divisors($n)) {
+        next if $d < $f0->[1] + 1;
+        my $tail = tmax(\@f1, $n / $d) // next;
+        my $try = $z{ $f0->[0] } ** ($d - 1) * $tail;
+        $best = $try if !defined($best) || $best < $try;
+    }
+    return $best;
+}
+
+sub tmin {
+    my($f, $n) = @_;
+    my($f0, @f1) = @$f;
+    if (@f1 == 0) {
+        return undef if $n < $f0->[1] + 1;
+        return $z{ $f0->[0] } ** ($n - 1);
+    }
+
+    my $best;
+    for my $d (divisors($n)) {
+        next if $d < $f0->[1] + 1;
+        my $tail = tmin(\@f1, $n / $d) // next;
+        my $try = $z{ $f0->[0] } ** ($d - 1) * $tail;
+        $best = $try if !defined($best) || $best > $try;
+    }
+    return $best;
+}
+
+sub max {
+    my($a, $b) = @_;
+    return ($a < $b) ? $b : $a;
+}
