@@ -1055,8 +1055,6 @@ void prep_target(void) {
         target_tau[i] = t;
         ulong g = simple_gcd(target_lcm, t);
         target_lcm *= t / g;
-#else
-        t = n;
 #endif
 
         uint thisfact = 0;
