@@ -150,6 +150,7 @@ void pdivisors(mpz_t n) {
         }
     }
     qsort(pdiv.za, pdiv.size, sizeof(mpz_t), &pell_comparator);
+    fs_clear(&fs);
 }
 
 /* Find square-free residue and root such that n = residue . root^2.
