@@ -110,17 +110,20 @@ t_divisors *divisors = NULL;
  * are always either at least as powerful as normal allocations _or_ they
  * have x=2, leaving v_i.t odd) or if requested by the -f option (force_all).
  *
- * Each batch describes the location and magnitude of the highest power of p
- * that divides any v_i (using the lower i if there are more than one).
+ * The "primary" of a batch is the least index v_i at which the greatest
+ * power of p appears.
  */
 typedef struct s_forcebatch {
-    uint vi;    /* allocate p^{x-1} at v_{vi} */
-    uint x;
+    uint primary;   /* x[primary] is first max */
+    uint x[0];      /* allocate p^{x-1} at v_i for i: 0..k-1 */
 } t_forcebatch;
+static inline size_t size_forcebatch(void) {
+    return sizeof(t_forcebatch) + k * sizeof(uint);
+}
 typedef struct s_forcep {
     uint p;
     uint count;
-    t_forcebatch *batch;
+    t_forcebatch *batch;    /* beware, struct is dynamically sized */
 } t_forcep;
 t_forcep *forcep = NULL;
 uint forcedp;
@@ -1174,15 +1177,29 @@ uint mpz_valuation(mpz_t z, uint n) {
     }
 }
 
+static inline t_forcebatch *forcebatch_p(t_forcep *fp, uint i) {
+    return (t_forcebatch *)(
+        &(((char *)fp->batch)[i * size_forcebatch()])
+    );
+}
+
+static inline void fpb_init(t_forcebatch *fpb, uint vi, uint x) {
+    fpb->primary = vi;
+    memset(&fpb->x[0], 0, k * sizeof(uint));
+    if (x)
+        fpb->x[vi] = x;
+}
+
 typedef enum {
     TFP_BAD = 0,
     TFP_SINGLE,
     TFP_GOOD
 } e_tfp;
-e_tfp test_forcep(uint p, uint vi, uint x) {
+e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
     bool seen_any = 0;
     bool seen_odd = 0;
 
+    fpb_init(fpb, vi, x);
     if (modfix_count) {
         uint pe = x ? x - 1 : x;
         for (uint i = 0; i < modfix_count; ++i) {
@@ -1261,6 +1278,7 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
             continue;
         if (target_t(vj) % (ej + 1))
             return TFP_BAD;
+        fpb->x[vj] = ej + 1;
         seen_any = 1;
         if (ej & (ej + 1))
             seen_odd = 1;
@@ -1282,10 +1300,14 @@ e_tfp test_forcep(uint p, uint vi, uint x) {
         seen_any = 1;
         if (ej & (ej + 1))
             seen_odd = 1;
-        if (ej > ei)
-            continue;   /* p^e_i + p^e_j will have valuation e_i */
+        if (ej > ei) {
+            /* p^e_i + p^e_j will have valuation e_i */
+            fpb->x[vj] = ei + 1;
+            continue;
+        }
         if (target_t(vj) % (ej + 1))
             return TFP_BAD;
+        fpb->x[vj] = ej + 1;
         if (ej < ei)
             continue;
         /* p^e_i + p^e_i can have valuation e_i as long as we don't
@@ -1360,7 +1382,8 @@ void prep_forcep(void) {
         t_forcep *fp = &forcep[fpi];
         fp->p = p;
         fp->count = 0;
-        fp->batch = (t_forcebatch *)malloc(maxbatch * sizeof(t_forcebatch));
+        fp->batch = (t_forcebatch *)malloc(maxbatch * size_forcebatch());
+        t_forcebatch *fbp = forcebatch_p(fp, 0);
 
         bool keep_single = (p <= force_all) ? 1 : 0;
 #if defined(TYPE_o)
@@ -1377,7 +1400,7 @@ void prep_forcep(void) {
                 uint fx = d->div[di];
                 if (fx == 1)
                     continue;
-                uint status = test_forcep(p, vi, fx);
+                uint status = test_forcep(fbp, p, vi, fx);
                 if (status == TFP_BAD)
                     continue;
                 if (status == TFP_SINGLE && !keep_single) {
@@ -1385,13 +1408,13 @@ void prep_forcep(void) {
                     continue;
                 }
                 /* else status == TFP_GOOD */
-                fp->batch[fp->count++] = (t_forcebatch){ .vi = vi, .x = fx };
+                fbp = forcebatch_p(fp, ++fp->count);
             }
         }
 #if defined(TYPE_a)
-        uint status = test_forcep(p, 0, 0);
+        uint status = test_forcep(fbp, p, 0, 0);
         if (status != TFP_BAD)
-            fp->batch[fp->count++] = (t_forcebatch){ .vi = 0, .x = 0 };
+            fbp = forcebatch_p(fp, ++fp->count);
 #endif
         if (fp->count == 0) {
             if (have_unforced_tail) {
@@ -1404,10 +1427,12 @@ void prep_forcep(void) {
             report("406 Error: no valid arrangement of powers for p=%u", p);
             fail_silent();
         }
-        if (have_unforced_tail)
-            fp->batch[fp->count++] = (t_forcebatch){ .vi = 1, .x = 0 };
+        if (have_unforced_tail) {
+            fpb_init(fbp, 1, 0);
+            fbp = forcebatch_p(fp, ++fp->count);
+        }
         fp->batch = (t_forcebatch *)realloc(fp->batch,
-                fp->count * sizeof(t_forcebatch));
+                fp->count * size_forcebatch());
     }
 }
 
@@ -3407,43 +3432,31 @@ bool apply_batch(
     t_value *vp;
     cur_level->is_forced = 1;
     cur_level->bi = bi;
-    t_forcebatch *bp = &fp->batch[bi];
+    t_forcebatch *bp = forcebatch_p(fp, bi);
     uint terminal = k;
+    uint vi = bp->primary;
 
-    if (bp->x == 0) {
+    if (bp->x[vi] == 0) {
         apply_null(prev_level, cur_level, fp->p);
         return 1;
     }
     cur_level->have_min = prev_level->have_min;
 
-    uint ep = bp->x - 1;
-    if (!apply_primary(prev_level, cur_level, bp->vi, fp->p, bp->x))
+    uint ep = bp->x[vi] - 1;
+    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1))
         return 0;
-    vp = &value[bp->vi];
-    if (vp->alloc[ cur_level->vlevel[bp->vi] - 1 ].t == 1)
-        terminal = bp->vi;
+    vp = &value[vi];
+    if (vp->alloc[ cur_level->vlevel[vi] - 1 ].t == 1)
+        terminal = vi;
 
-    for (uint i = 1; i <= bp->vi; ++i) {
-        uint e = relative_valuation(i, fp->p, ep);
-        if (e == 0)
+    for (uint vj = 0; vj < k; ++vj) {
+        if (vi == vj || bp->x[vj] == 0)
             continue;
-        uint vi = bp->vi - i;
-        if (!apply_secondary(prev_level, cur_level, vi, fp->p, e + 1))
+        if (!apply_secondary(prev_level, cur_level, vj, fp->p, bp->x[vj]))
             return 0;
-        vp = &value[vi];
-        if (vp->alloc[ cur_level->vlevel[vi] - 1 ].t == 1)
-            terminal = vi;
-    }
-    for (uint i = 1; bp->vi + i < k; ++i) {
-        uint e = relative_valuation(i, fp->p, ep);
-        if (e == 0)
-            continue;
-        uint vi = bp->vi + i;
-        if (!apply_secondary(prev_level, cur_level, vi, fp->p, e + 1))
-            return 0;
-        vp = &value[vi];
-        if (vp->alloc[ cur_level->vlevel[vi] - 1 ].t == 1)
-            terminal = vi;
+        vp = &value[vj];
+        if (vp->alloc[ cur_level->vlevel[vj] - 1 ].t == 1)
+            terminal = vj;
     }
 
     if (terminal < k) {
@@ -3465,18 +3478,17 @@ bool apply_batch(
 
     /* did we already have a square? */
     if (prev_level->have_square) {
-        uint i_diff = abs((int)bp->vi - (int)sq0);
-        uint eq = i_diff ? relative_valuation(i_diff, fp->p, ep) : 0;
         /* need extra care only when a secondary hits the square */
         /* so not if a) the primary hits it, or b) nothing hits it */
-        if (i_diff == 0 || eq == 0) {
-            mpz_ui_pow_ui(px, fp->p, bp->x - 1);
+        if (vi == sq0 || bp->x[sq0] == 0) {
+            mpz_ui_pow_ui(px, fp->p, ep);
             if (!update_residues(
-                prev_level, cur_level, bp->vi, fp->p, bp->x, px, 0
+                prev_level, cur_level, vi, fp->p, ep + 1, px, 0
             ))
                 return 0;
         } else {
             /* apply the secondary first, then the primary */
+            uint eq = bp->x[sq0] - 1;
             mpz_ui_pow_ui(px, fp->p, eq);
             if (!update_residues(
                 prev_level, cur_level, sq0, fp->p, eq + 1, px, 0
@@ -3486,7 +3498,7 @@ bool apply_batch(
             if (e2 > 0) {
                 mpz_ui_pow_ui(px, fp->p, e2);
                 if (!update_residues(
-                    prev_level, cur_level, bp->vi, fp->p, e2 + 1, px, eq
+                    prev_level, cur_level, vi, fp->p, e2 + 1, px, eq
                 ))
                     return 0;
             }
@@ -3894,10 +3906,11 @@ e_is insert_stack(void) {
         uint bi;
         if (maxx == 0) {
             bi = fp->count - 1;
-            if (fp->batch[bi].x != 0)
+            t_forcebatch *bp = forcebatch_p(fp, bi);
+            if (bp->x[bp->primary] != 0)
                 goto insert_check;
 #if defined(TYPE_a)
-            if (fp->batch[bi].vi == 0) {
+            if (bp->primary == 0) {
                 mini = 0;
                 goto have_batch;
             }
@@ -3907,12 +3920,13 @@ e_is insert_stack(void) {
         }
 
         for (bi = 0; bi < fp->count; ++bi) {
-            t_forcebatch *b = &fp->batch[bi];
-            if (b->x == maxx && b->vi == mini)
+            t_forcebatch *bp = forcebatch_p(fp, bi);
+            if (bp->primary == mini && bp->x[bp->primary] == maxx)
                 break;
         }
         if (bi >= fp->count) {
-            if (fp->batch[fp->count - 1].x != 0)
+            t_forcebatch *bp = forcebatch_p(fp, fp->count - 1);
+            if (bp->x[bp->primary] != 0)
                 fail("no batch found for %u^{%u-1} at v_%u", p, maxx, mini);
             /* this prime unforced, so any remaining ones are too */
             break;
@@ -4188,9 +4202,10 @@ void recurse(e_is jump_continue) {
             if (bi >= fp->count) {
                 goto derecurse;
             }
-            if (fp->batch[bi].x == 0
+            t_forcebatch *bp = forcebatch_p(fp, bi);
+            if (bp->x[bp->primary] == 0
 #if defined(TYPE_a)
-                && fp->batch[bi].vi != 0
+                && bp->primary != 0
 #endif
             ) {
                 /* tail batch: continue with this prime unforced */
