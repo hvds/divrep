@@ -156,7 +156,7 @@ void init(void) {
         mpz_init(Z(i));
     init_diag();
     init_time();
-    init_tau(0);
+    init_tau(0, 0);
 }
 
 void ston(mpz_t targ, char *s) {

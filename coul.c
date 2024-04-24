@@ -211,6 +211,7 @@ struct {
 } midp_recover;
 uint rough = 0;     /* test roughness if tau >= rough */
 bool opt_print = 0; /* print candidates instead of fully testing them */
+uint opt_flake = 0; /* test less before printing candidates */
 /* If opt_alloc is true and opt_batch < 0, just show the forced-prime
  * allocation; if opt_alloc is true and opt_batch >= 0, just process
  * the specified batch_alloc.
@@ -1618,7 +1619,7 @@ void prep_presquare(void) {
 }
 
 void init_post(void) {
-    init_tau(rough);
+    init_tau(rough, opt_flake);
     init_stats(k);
     alloc_taum(k);
     if (randseed != 1) {
@@ -4328,9 +4329,11 @@ int main(int argc, char **argv, char **envp) {
             opt_alloc = 1;
         else if (arg[1] == 'b')
             set_batch(&arg[2]);
-        else if (arg[1] == 'o')
+        else if (arg[1] == 'o') {
             opt_print = 1;
-        else if (arg[1] == 'c') {
+            if (arg[2])
+                opt_flake = strtoul(&arg[2], NULL, 10);
+        } else if (arg[1] == 'c') {
             if (arg[2] == 'p')
                 check_prime = strtoul(&arg[3], NULL, 10);
             else if (arg[2] == 'r')

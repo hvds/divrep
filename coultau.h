@@ -50,7 +50,7 @@ extern t_tm *taum;
 
 typedef uint (*tau_failure_handler)(uint count, t_tm *taum);
 
-extern void init_tau(uint test_rough);
+extern void init_tau(uint test_rough, uint flake);
 extern void done_tau(void);
 extern void fs_init(factor_state* fs);
 extern void fs_clear(factor_state* fs);

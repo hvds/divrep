@@ -156,9 +156,9 @@ static inline bool ct_trial(factor_state *fs) {
 /* MPUG declares this static, so we must copy it */
 static unsigned short primes_small[NPRIMES_SMALL];
 
-void init_tmfbl(void);
+void init_tmfbl(uint flake);
 void done_tmfbl(void);
-void init_tau(uint rough) {
+void init_tau(uint rough, uint flake) {
     UV pn;
     test_rough = rough;
     PRIME_ITERATOR(iter);
@@ -170,7 +170,7 @@ void init_tau(uint rough) {
     mpz_init(tmf);
     mpz_init(tmf2);
     mpz_init(tmp_lim);
-    init_tmfbl();
+    init_tmfbl(flake);
     for (uint i = 0; i < SIMPQS_SIZE; ++i)
         mpz_init(simpqs_array[i]);
 }
@@ -896,16 +896,21 @@ ulong *tmfbl = NULL;
 uint tmfb_maxb;
 ulong tmfb_lim;
 
-void init_tmfbl(void) {
+/* don't flake out for anything before QS */
+#define NO_FLAKE ((1 << 24) - 1)
+void init_tmfbl(uint flake) {
     tmfb_lim = tmfb[TMFB_MAX - 1].tmf_bits;
     tmfb_maxb = tmfb[TMFB_MAX - 2].maxlen;
+    if (flake && tmfb_maxb > flake)
+        tmfb_lim = tmfb_lim & NO_FLAKE;
+
     tmfbl = (ulong *)malloc((tmfb_maxb + 1) * sizeof(ulong));
     uint i = 0;
     for (uint j = 0; j <= TMFB_MAX - 2; ++j) {
         uint lim = tmfb[j].maxlen;
         ulong bits = tmfb[j].tmf_bits;
         for (; i <= lim; ++i)
-            tmfbl[i] = bits;
+            tmfbl[i] = (flake && i > flake) ? (bits & NO_FLAKE) : bits;
     }
 }
 

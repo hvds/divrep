@@ -14,7 +14,7 @@ mpz_t zlimit;
 mpz_t zx;
 mpz_t zy;
 
-/* needed for coultau.c; but not used, since we init_tau(0) */
+/* needed for coultau.c; but not used, since we init_tau(0, 0) */
 #include "coul.h"
 t_divisors *divisors = NULL;
 
@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
     mpz_init(zx);
     mpz_init(zy);
     _GMP_init();
-    init_tau(0);
+    init_tau(0, 0);
     init_rootmod(1);
     init_pell();
     new_pell(zA, zD, in, zlimit);
