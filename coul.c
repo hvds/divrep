@@ -235,6 +235,7 @@ bool debugW = 0;    /* diag and keep every case seen (including walk) */
 bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
 bool debugB = 0;    /* show every batch id */
+bool debugf = 0;    /* show prepped sub-batches */
 bool debugt = 0;    /* show target_t() */
 bool debugv = 0;    /* show modular constraints */
 bool debugV = 0;    /* show more modular constraints */
@@ -1437,6 +1438,27 @@ void prep_forcep(void) {
     }
 }
 
+void disp_forcep(void) {
+    uint plen;
+    for (uint fi = 0; fi < forcedp; ++fi) {
+        t_forcep *fp = &forcep[fi];
+        printf("204 p=%u count %u\n", fp->p, fp->count);
+        for (uint bi = 0; bi < fp->count; ++bi) {
+            t_forcebatch *fbp = forcebatch_p(fp, bi);
+            printf("204 %u: primary %u [", bi, fbp->primary);
+            for (uint xi = 0; xi < k; ++xi) {
+                if (xi != 0)
+                    printf(" ");
+                if (fbp->x[xi])
+                    printf("%u", fbp->x[xi] - 1);
+                else
+                    printf(".");
+            }
+            printf("]\n");
+        }
+    }
+}
+
 void ston(mpz_t targ, char *s) {
     char *t = strchr(s, 'e');
     if (t) {
@@ -1672,6 +1694,8 @@ void init_post(void) {
     prep_fact();
     prep_maxforce();
     prep_forcep();
+    if (debugf)
+        disp_forcep();
     prep_primes();  /* needs forcedp */
     prep_mintau();
     prep_mp();  /* maxp[], minp[], midp[] */
@@ -4211,7 +4235,9 @@ void recurse(e_is jump_continue) {
             ) {
                 /* tail batch: continue with this prime unforced */
                 /* TODO: this may miss mandatory force on higher fixedp.
-                 * Can we simply do a null apply() and step to the next?
+                 * We cannot simply do a null apply() and step to the next,
+                 * because that would suppress allocation of this prime in
+                 * the unforced positions.
                  * For now we disallow the broken case in prep_forcep().
                  */
                 cur_level->is_forced = 0;
@@ -4365,6 +4391,9 @@ int main(int argc, char **argv, char **envp) {
               case 'B':
                 debugb = 1;
                 debugB = 1;
+                break;
+              case 'f':
+                debugf = 1;
                 break;
               case 'x':
                 debugx = 1;
