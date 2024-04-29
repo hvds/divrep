@@ -699,16 +699,20 @@ bool tau_multi_prep(uint i) {
     UV tlim = (nbits > 80) ? 4001 * 4001 : 16001 * 16001;
     if (test_rough && t >= test_rough) {
         uint roughness = divisors[t].sumpm;
-        mpz_root(tmp_lim, tm->n, roughness);
-        if (mpz_fits_uint_p(tmp_lim)) {
-            ulong lim = mpz_get_ui(tmp_lim);
-            tlim = lim * lim;
+        if (roughness >= test_rough - 1) {
+            mpz_root(tmp_lim, tm->n, roughness);
+            if (mpz_fits_uint_p(tmp_lim)) {
+                ulong lim = mpz_get_ui(tmp_lim);
+                tlim = lim * lim;
+            }
+            /* else what? */
         }
-        /* else what? */
     }
 
+    /* FIXME: 2 * tlim can overflow */
     UV un = mpz_cmp_ui(tm->n, 2 * tlim) >= 0
         ? 2 * tlim
+        /* FIXME: tm->n may not fit in UV */
         : mpz_get_ui(tm->n);
     UV lim = (tlim < un) ? tlim : un;
     PRIME_ITERATOR(iter);
