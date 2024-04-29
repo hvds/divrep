@@ -2694,6 +2694,14 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh)
             break;
+#if 0
+        /* CHECKME: do we gain correctness or speed by including this
+         * check that recurse() has? */
+        if (p <= levels[ cur_level->level - 1 ]->maxp)
+            for (uint li = 1; li < level; ++li)
+                if (p == levels[li].p)
+                    goto reject_this_one;
+#endif
         if (need_work) {
             /* temporarily make this prime power visible to diag code */
             t_allocation *a2ip = &vip->alloc[vil];
