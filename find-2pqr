@@ -46,9 +46,13 @@ my $maxv0b = tmax([ [2, 4], [3, 1], [5, 1] ], $n / 2);
 my $v_0 = defined($maxv0b)
         ? max($maxv0a, $maxv0b * ($maxv0b / 8 + 1)) : $maxv0a;
 my $v_1 = tmin([ map [$_, 0], qw{ 23 47 71 73 } ], $n);
-printf "v_0 max %s; v_1 min %s\n", $v_0, $v_1;
-printf "n = %s [%s]: g(n) <= 5 is %s\n",
+print "100 $0 -yo $n 6\n";
+printf "000 v_0 max %s; v_1 min %s\n", $v_0, $v_1;
+printf "000 n = %s [%s]: g(n) <= 5 is %s\n",
         $n, "@f", $v_0 + 1 < $v_1 ? q{known} : q{unknown};
+if ($v_0 + 1 < $v_1) {
+    printf "402 Error: all values (mod 240) disallowed (%.3fs)\n", (times())[0];
+}
 exit 0;
 
 sub tmax {
