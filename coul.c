@@ -69,6 +69,7 @@ typedef enum {
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
+    j4a, j4b, j4m, j4p, j4q,    /* best_v4() */
 
     MAX_ZSTASH
 } t_zstash;
@@ -224,6 +225,9 @@ uint cur_batch_level = 0;   /* for disp_batch */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
+uint prev_strategy;     /* for special-case strategy override */
+/* best_v4() special-case strategy (TYPE_o only) */
+#define STRATEGY_6X 4
 
 uint check = 0;         /* modulus to check up to */
 uint check_prime = 0;   /* skip moduli divisible by prime greater than this */
@@ -3046,6 +3050,17 @@ bool apply_secondary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     mpz_ui_pow_ui(px, p, x - 1);
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
+#if defined(TYPE_o)
+    if (p == 2 && x == 2 && vi >= 2 && (n % 4) == 2 && cur->have_square == 1) {
+        /* n_i = 2x^2 -> n_{i-2} = 2(x-1)(x+1)
+         * switch to a strategy that takes advantage of this; the strategy
+         * itself will revert when the conditions no longer hold.
+         */
+        if (strategy != STRATEGY_6X)
+            prev_strategy = strategy;
+        strategy = STRATEGY_6X;
+    }
+#endif
     return 1;
 }
 
@@ -3576,6 +3591,8 @@ bool process_batch(t_level *cur_level) {
     return 1;
 }
 
+uint best_v(t_level *cur_level);
+
 /* Choose that v_i with the highest t_i still to fulfil, or (on equality)
  * with the highest q_i, but having at least one factor to allocate.
  * If there is no best entry, returns k.
@@ -3739,10 +3756,91 @@ uint best_v3(t_level *cur_level) {
     return ti ? vi : k;
 }
 
+/* STRATEGY_6X: if we have ...2^{3+} . 2x^2..., the former is of the
+ * form 2(x-1)(x+1), which is very restrictive.
+ */
+uint best_v4(t_level *cur_level) {
+    /* check if we still hold */
+    t_level *prev_level = &levels[ cur_level->level - 1 ];
+    if (!prev_level->have_square || sq0 < 2) {
+        strategy = prev_strategy;
+        return best_v(cur_level);
+    }
+
+    uint vi = sq0 - 2;
+    t_value *vp = &value[vi];
+    uint vlevel = cur_level->vlevel[vi];
+    t_allocation *ap_last = &vp->alloc[vlevel - 1];
+    if (ap_last->t != 2)
+        return vi;  /* allocate some more */
+
+    /* we can fully handle this here */
+    t_allocation *ap_next = &vp->alloc[vlevel], *ap;
+    ap_next->t = 1;
+    ap_next->p = 0; /* the real value may well not fit */
+    ap_next->x = 2;
+    cur_level->vlevel[vi] = vlevel + 1;
+    cur_level->have_min = 1;
+    mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
+
+    /* we need prime p: v_0 = 8abp, bp +/- 1 == a */
+    uint l2 = 0;
+    for (uint i = 1; i < vlevel; ++i) {
+        ap = &vp->alloc[i];
+        if (ap->p == 2) {
+            if (ap->x < 5)
+                fail("panic: STRATEGY_6X in use but have only 2^%u assigned",
+                        ap->x - 1);
+            l2 = i;
+            break;
+        }
+    }
+    if (l2 == 0)
+        fail("panic: STRATEGY_6X in use but no power of 2 found");
+    if (vlevel > sizeof(uint) * 8 - 1)
+        fail("FIXME: too many factors for STRATEGY_6X");
+    /* we don't need to check the a = 0 case, since it gives Z(j4a) = 1 */
+    for (uint a = (1 << vlevel) - 2; a; a -= 2) {
+        mpz_set_ui(Z(j4a), 1);
+        for (uint i = 1; i < vlevel; ++i) {
+            if ((a & (1 << i)) == 0)
+                continue;
+            ap = &vp->alloc[i];
+            if (ap->p == 2)
+                mpz_mul_2exp(Z(j4a), Z(j4a), ap->x - 4);
+            else {
+                mpz_ui_pow_ui(Z(temp), ap->p, ap->x - 1);
+                mpz_mul(Z(j4a), Z(j4a), Z(temp));
+            }
+        }
+        mpz_divexact(Z(j4b), Z(j4q), Z(j4a));
+        if (mpz_cmp(Z(j4a), Z(j4b)) < 0)
+            continue;
+        mpz_sub_ui(Z(temp), Z(j4a), 1);
+        mpz_fdiv_qr(Z(j4p), Z(j4m), Z(temp), Z(j4b));
+        if (mpz_cmp_ui(Z(j4m), 2) <= 0) {
+            if (_GMP_is_prob_prime(Z(j4p))) {
+                /* p = Z(j4p) is prime and yields v_{i+2} = 2x^2 */
+                mpz_mul(ap_next->q, ap_last->q, Z(j4p));
+                walk_1(cur_level, vi);
+            }
+            if (mpz_cmp_ui(Z(j4b), 2) <= 0) {
+                mpz_add_ui(Z(j4p), Z(j4p), 2 / mpz_get_ui(Z(j4b)));
+                if (_GMP_is_prob_prime(Z(j4p))) {
+                    mpz_mul(ap_next->q, ap_last->q, Z(j4p));
+                    walk_1(cur_level, vi);
+                }
+            }
+        }
+    }
+    cur_level->vlevel[vi] = vlevel;
+    return k + 1;   /* all done */
+}
+
 typedef uint (*t_strategy)(t_level *cur_level);
-#define NUM_STRATEGIES 4
+#define NUM_STRATEGIES 5
 t_strategy strategies[NUM_STRATEGIES] = {
-    &best_v0, &best_v1, &best_v2, &best_v3
+    &best_v0, &best_v1, &best_v2, &best_v3, &best_v4
 };
 /* Find the best entry to progress, using the selected strategy
  * If there is no best entry, returns k.
@@ -3766,6 +3864,18 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
          * to zmax^{1/2(x-1)}.
          */
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
+#if defined(TYPE_o)
+    } else if (strategy == STRATEGY_6X && nextt == 2) {
+        /* v_i = q_i p^{x-1} r => q_i p^{x-1} = 8ab such that br = a +/- 1,
+         * so for large p we have r >= (p^{x-1} - 1)/q_i so
+         * v_i > 8 p^{x-1} (p^{x-1} - 1), and we can therefore constrain
+         * p to be less than 1 + root(zmax / 8, 2(x-1))
+         */
+        mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
+        mpz_fdiv_q_2exp(Z(lp_x), Z(lp_x), 3);
+        mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
+        mpz_add_ui(Z(lp_x), Z(lp_x), 1);
+#endif
     } else {
         /* divide through by the minimum contribution that could supply the
          * remaining tau */
@@ -4168,7 +4278,11 @@ void recurse(e_is jump_continue) {
             if (cur_level->next_best)
                 goto walk_now;
             uint vi = best_v(cur_level);
-            if (vi == k) {
+            if (vi >= k) {
+                /* signal that best_v() already handled it */
+                if (vi > k)
+                    goto derecurse;
+
                 /* failure result is stable if last allocation was unforced */
                 if (!prev_level->is_forced)
                     cur_level->next_best = 1;
