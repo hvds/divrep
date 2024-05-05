@@ -2611,9 +2611,9 @@ void walk_1(t_level *cur_level, uint vi) {
             continue;
         t_value *vjp = &value[vj];
         uint vjl = cur_level->vlevel[vj];
-        t_allocation *ajp = vjl ? &vjp->alloc[vjl - 1] : NULL;
+        t_allocation *ajp = &vjp->alloc[vjl - 1];
         mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
-        if (ajp) {
+        if (vjl > 1) {
             /* FIXME: replace this with a single initial check of
              * v_0 == rq mod aq, then use divexact */
             mpz_fdiv_qr(Z(w1_j), Z(w1_r), Z(w1_j), ajp->q);
@@ -2623,7 +2623,7 @@ void walk_1(t_level *cur_level, uint vi) {
             if (mpz_cmp(Z(w1_r), Z(zone)) != 0)
                 return;
         }
-        t[vj] = ajp ? ajp->t : n;
+        t[vj] = ajp->t;
         if (t[vj] == 1) {
             if (mpz_cmp_ui(Z(w1_j), 1) != 0)
                 return;
