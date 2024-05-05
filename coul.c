@@ -2620,7 +2620,7 @@ void walk_1(t_level *cur_level, uint vi) {
             if (mpz_sgn(Z(w1_r)) != 0)
                 return;
             mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
-            if (mpz_cmp(Z(w1_r), Z(zone)) != 0)
+            if (mpz_cmp_ui(Z(w1_r), 1) != 0)
                 return;
         }
         t[vj] = ajp->t;
@@ -2727,7 +2727,7 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             if (mpz_sgn(Z(w1_r)) != 0)
                 goto reject_this_one;
             mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
-            if (mpz_cmp(Z(w1_r), Z(zone)) != 0)
+            if (mpz_cmp_ui(Z(w1_r), 1) != 0)
                 goto reject_this_one;
             mpz_set(wv_o[vj], Z(w1_j));
         }
