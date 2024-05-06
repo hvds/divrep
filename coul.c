@@ -3363,6 +3363,8 @@ void prep_midp(t_level *cur_level) {
             uint x = dp->div[di];
             if ((x & (x - 1)) == 0)
                 break;
+            if (maxp[x - 1] == 0)
+                continue;
             /* find range of p for allocating p^e at v_i */
             mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
             mintau(prev_level, Z(wv_cand), t / x);
