@@ -1250,9 +1250,25 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
                         /* v_i != 2^1 (mod 2^3) is fine for test 2^1 */
                         /* v_i != 3^2 (mod 3^3) is fine for test 3^2 */
                         continue;
-                    } else
-                        /* v_i == 2^2 (mod 2^3) is fine for test 2^2 */
+                    } else {
+                        /* v_i == 2^2 (mod 2^3) is fine for test 2^2,
+                         * but there may be a secondary that fails */
+                        for (uint vj = 0; vj < k; ++vj) {
+                            if (vi == vj)
+                                continue;
+                            uint off = (vi > vj) ? vi - vj : vj - vi;
+                            uint pej = simple_valuation(TYPE_OFFSET(off), p);
+                            if (pej == 0)
+                                continue;
+                            mpz_add_ui(Z(tfp_v), mfp->val, TYPE_OFFSET(vj));
+                            uint vej = mpz_sgn(Z(tfp_v))
+                                    ? mpz_valuation(Z(tfp_v), p) : me;
+                            /* the secondary would fail */
+                            if (vej > pej)
+                                return TFP_BAD;
+                        }
                         continue;
+                    }
                 } else { /* ve > pe */
                     if (mfp->negate)
                         /* v_i != 2^2 (mod 2^3) is fine for test 2^1 */
