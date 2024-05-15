@@ -112,6 +112,30 @@ sub fix_pell {
 }
 
 #
+# For certain individual cases we have proven limits that we cannot easily
+# derive generically here. Avoid wasting time attempting to discover those
+# unless the user asks to ignore exceptions (-ix).
+#
+sub check_exceptions {
+    my($self) = @_;
+    my($n, $f) = ($self->n, $self->f);
+    if ($f > 3 && ($n % 4) == 2 && ($n % 3) != 0) {
+        # Lengthy proof from Eugene Zhilitsky shows that M(2pq) <= 3
+        # for p, q >= 3 prime.
+        my @nf = factor_exp($n / 2);
+        my $primes = 0;
+        $primes += $_->[1] for @nf;
+        if ($primes <= 2) {
+            printf <<OUT, $n, 3, $self->c->elapsed;
+403 Error: f(%s) > %s known impossible by exception (%.2fs)
+OUT
+            exit 1;
+        }
+    }
+    return;
+}
+
+#
 # suppress the possibility that the k'th target is v (mod m) for target > max
 #
 sub suppress_k {
