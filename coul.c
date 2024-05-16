@@ -223,6 +223,13 @@ int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
 uint cur_batch_level = 0;   /* for disp_batch */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
+/* by default, we call walk_v() as soon as we have 2 values fixed to
+ * be squares rather than waiting for a full batch allocation; however
+ * this can stop us noticing that there are no valid batches. Running
+ * with '-jp' tells us to wait until we have a full batch before doing
+ * a Pell walk.
+ */
+bool defer_pell = 0;
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 uint prev_strategy;     /* for special-case strategy override */
@@ -1446,7 +1453,7 @@ void prep_forcep(void) {
             }
             if (seen_best)
                 break;
-            report("406 Error: no valid arrangement of powers for p=%u", p);
+            report("406 Error: no valid arrangement of powers for p=%u\n", p);
             fail_silent();
         }
         if (have_unforced_tail) {
@@ -2411,6 +2418,15 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 for (uint ii = 0; ii < inv_count; ++ii) {
                     t_mod *ip = &inv[ii];
                     if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
+                        goto next_pell;
+                }
+
+                /* note: we may have had more than 2 squares */
+                for (uint i = 2; i < nqc; ++i) {
+                    uint vi = need_square[i];
+                    mpz_mul(Z(wv_cand), wv_qq[vi], Z(wv_ati));
+                    mpz_add(Z(wv_cand), Z(wv_cand), wv_o[vi]);
+                    if (!is_taux(Z(wv_cand), t[vi], 1))
                         goto next_pell;
                 }
 
@@ -3527,7 +3543,7 @@ bool apply_batch(
 
     if (terminal < k) {
         bool valid = 1;
-        if (!seen_valid && mpz_sgn(zmin)) {
+        if (mpz_sgn(zmin)) {
             vp = &value[terminal];
             uint vlevel = cur_level->vlevel[terminal];
             mpz_sub_ui(Z(temp), vp->alloc[vlevel - 1].q, terminal);
@@ -3535,8 +3551,9 @@ bool apply_batch(
                 valid = 0;
         }
         if (valid) {
-            seen_valid = 1;
             walk_1(cur_level, terminal);
+            if (seen_best)
+                seen_valid = 1;
         }
         /* nothing more to do */
         return 0;
@@ -3570,7 +3587,7 @@ bool apply_batch(
             }
         }
     }
-    if (cur_level->have_square > 1) {
+    if (!defer_pell && cur_level->have_square > 1) {
         seen_valid = 1;
         walk_v(cur_level, Z(zero));
         return 0;
@@ -3605,6 +3622,11 @@ bool process_batch(t_level *cur_level) {
         walk_midp(cur_level, 0);
         if (midp_only)
             return 0;
+    }
+    if (cur_level->have_square > 1) {
+        seen_valid = 1;
+        walk_v(cur_level, Z(zero));
+        return 0;
     }
     return 1;
 }
@@ -4557,10 +4579,14 @@ int main(int argc, char **argv, char **envp) {
         } else if (arg[1] == 'v')
             vt100 = 1;
         else if (arg[1] == 'j') {
-            strategy = strtoul(&arg[2], NULL, 10);
-            if (strategy >= NUM_STRATEGIES)
-                fail("Invalid strategy %u", strategy);
-            strategy_set = 1;
+            if (arg[2] == 'p')
+                defer_pell = 1;
+            else {
+                strategy = strtoul(&arg[2], NULL, 10);
+                if (strategy >= NUM_STRATEGIES)
+                    fail("Invalid strategy %u", strategy);
+                strategy_set = 1;
+            }
         } else if (arg[1] == 'y') {
             if (arg[2] != typename())
                 fail("Invalid type option '%s'", arg);
