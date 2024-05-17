@@ -75,6 +75,7 @@ typedef struct s_allocation {
     uint x;
     uint t;
     mpz_t q;
+    mpz_t lim;
 } t_allocation;
 typedef struct s_value {
     t_allocation *alloc;    /* size maxfact */

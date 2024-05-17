@@ -80,7 +80,7 @@ typedef enum {
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
-    j4a, j4b, j4m, j4p, j4q,    /* best_v4() */
+    j4a, j4b, j4m, j4p, j4q,    /* best_6x() */
 
     MAX_ZSTASH
 } t_zstash;
@@ -203,6 +203,7 @@ ulong antigain2 = 0;
 ulong *minp = NULL, *maxp = NULL, *midp = NULL;
 char *sminp = NULL, *smaxp = NULL, *smidp = NULL;
 char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
+bool highpow = 0;   /* allocate even p^{2^x-1} (based on roughness) */
 ulong limp_cap = 0;
 bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
 /* where to walk for -W (midp) */
@@ -244,8 +245,8 @@ bool defer_pell = 0;
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 uint prev_strategy;     /* for special-case strategy override */
-/* best_v4() special-case strategy (TYPE_o only) */
-#define STRATEGY_6X 4
+/* best_6x() special-case strategy (TYPE_o only) */
+#define STRATEGY_6X 5
 
 uint check = 0;         /* modulus to check up to */
 uint check_prime = 0;   /* skip moduli divisible by prime greater than this */
@@ -689,8 +690,10 @@ void init_levels(void) {
 void free_value(void) {
     for (int i = 0; i < k; ++i) {
         t_value *v = &value[i];
-        for (int j = 0; j <= maxfact; ++j)
+        for (int j = 0; j <= maxfact; ++j) {
             mpz_clear(v->alloc[j].q);
+            mpz_clear(v->alloc[j].lim);
+        }
         free(v->alloc);
     }
     free(value);
@@ -701,8 +704,10 @@ void init_value(void) {
     for (int i = 0; i < k; ++i) {
         t_value *v = &value[i];
         v->alloc = (t_allocation *)malloc((maxfact + 1) * sizeof(t_allocation));
-        for (uint j = 0; j <= maxfact; ++j)
+        for (uint j = 0; j <= maxfact; ++j) {
             mpz_init(v->alloc[j].q);
+            mpz_init(v->alloc[j].lim);
+        }
         t_allocation *ap = &v->alloc[0];
         ap->p = 0;
         ap->x = 0;
@@ -1179,7 +1184,7 @@ void prep_primes(void) {
      * usually be less.
      * In mintau() we may need maxfact primes beyond what may have been
      * allocated in k-1 places. */
-    nsprimes = maxodd * k + forcedp + (maxfact - maxodd);
+    nsprimes = (highpow ? maxfact : maxodd) * k + forcedp + (maxfact - maxodd);
     sprimes = (uint *)malloc(nsprimes * sizeof(uint));
     uint p = 1;
     for (uint i = 0; i < nsprimes; ++i) {
@@ -1533,7 +1538,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
             mpz_ui_pow_ui(Z(temp), p, e);
             for (uint di = 0; di < dp->alldiv; ++di) {
                 uint dm = dp->div[di] - 1;
-                if (ispow2(dm + 1))
+                if (highpow ? dm == 0 : ispow2(dm + 1))
                     break;
                 mpz_root(Z(wv_cand), Z(temp), dm);
                 if (mpz_fits_ulong_p(Z(wv_cand)))
@@ -1545,7 +1550,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
             ulong p = ulston(sp);
             for (uint di = 0; di < dp->alldiv; ++di) {
                 uint dm = dp->div[di] - 1;
-                if (ispow2(dm + 1))
+                if (highpow ? dm == 0 : ispow2(dm + 1))
                     break;
                 (*mp)[dm] = p;
             }
@@ -1583,7 +1588,7 @@ void disp_px(char *name, ulong *mp) {
     t_divisors *dp = &divisors[n];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint dm = dp->div[di] - 1;
-        if (ispow2(dm + 1))
+        if (highpow ? dm == 0 : ispow2(dm + 1))
             break;
         if (di)
             report("; ");
@@ -1716,7 +1721,7 @@ void init_post(void) {
      * |{ p: p < k or p | n }| for TYPE_a.
      * So pick something conservative enough for all cases.
      */
-    maxlevel = 1 + 1 + k * maxodd + k
+    maxlevel = 1 + 1 + k * (highpow ? maxfact : maxodd) + k
 #if defined(TYPE_a)
             + nf.count
 #endif
@@ -1726,7 +1731,7 @@ void init_post(void) {
      * distinct odd primes. Otherwise, strategy 0 always gives the same
      * results, and is a bit faster. */
     if (!strategy_set)
-        strategy = (nf.count > 2) ? 1 : 0;
+        strategy = (nf.count > (highpow ? 1 : 2)) ? 1 : 0;
 
     init_rootmod(maxlevel);
     prep_fact();
@@ -2997,6 +3002,14 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
     cur->t = prev->t / x;
     mpz_mul(cur->q, prev->q, px);
 
+    if (highpow && ispow2(cur->t)) {
+        mpz_add_ui(cur->lim, zmax, TYPE_OFFSET(vi));
+        if (cur->t > 1) {
+            mpz_fdiv_q(cur->lim, cur->lim, cur->q);
+            mpz_root(cur->lim, cur->lim, divisors[cur->t].sumpm);
+        }
+    }
+
     /* is this newly a square? */
     if ((cur->t > 1) && (cur->t & 1) && !(prev->t & 1))
         if (!alloc_square(cur_level, vi))
@@ -3398,13 +3411,13 @@ void prep_midp(t_level *cur_level) {
         uint vil = cur_level->vlevel[vi];
         t_allocation *ap = &vp->alloc[vil - 1];
         uint t = ap->t;
-        if (ispow2(t))
+        if (highpow ? t == 1 : ispow2(t))
             continue;
         t_divisors *dp = &divisors[t];
         /* try all divisors until we reach the powers of 2 */
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
-            if (ispow2(x))
+            if (highpow ? x == 1 : ispow2(x))
                 break;
             if (maxp[x - 1] == 0)
                 continue;
@@ -3661,7 +3674,7 @@ uint best_v0(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= 2)
+        if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
         if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
@@ -3698,7 +3711,7 @@ uint best_v1(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= 2)
+        if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
         if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
@@ -3737,7 +3750,7 @@ uint best_v2(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= 2)
+        if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
         if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
@@ -3772,7 +3785,7 @@ uint best_v3(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= 2)
+        if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
         if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
@@ -3807,10 +3820,70 @@ uint best_v3(t_level *cur_level) {
     return ti ? vi : k;
 }
 
+/* Choose that v_i with the highest prime dividing t_i still to fulfil,
+ * or on equality with the highest t_i, or on equality with the highest
+ * q_i. If all qualifying t_i are a power of 2, instead choose the one
+ * with the smallest range.
+ * If there is no best entry, returns k.
+ */
+uint best_v4(t_level *cur_level) {
+    uint vi, ti = 0, hi;
+    ulong mini;
+    mpz_t *qi, *limi;
+
+    assume(k > 0);
+    for (uint vj = 0; vj < k; ++vj) {
+        t_value *vpj = &value[vj];
+        uint vjl = cur_level->vlevel[vj];
+        t_allocation *apj = &vpj->alloc[vjl - 1];
+        uint tj = apj->t;
+        mpz_t *qj = &apj->q;
+        mpz_t *limj = &apj->lim;
+        ulong minj;
+
+        /* skip if no odd prime factor */
+        if (divisors[tj].high <= (highpow ? 1 : 2))
+            continue;
+        /* skip prime powers when capped */
+        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+            continue;
+        uint hj = divisors[tj].high;
+        if (ti) {
+            if (hj < hi)
+                continue;
+            if (hj == hi) {
+                if (hi > 2) {
+                    if (tj < ti || (tj == ti && mpz_cmp(*qj, *qi) <= 0))
+                        continue;
+                } else {
+                    minj = ispow2(apj->x) ? apj->p : maxforce[vi];
+                    if (mini > minj)
+                        mpz_sub_ui(Z(temp), *limi, mini - minj);
+                    else
+                        mpz_add_ui(Z(temp), *limi, minj - mini);
+                    if (mpz_cmp(Z(temp), *limj) <= 0)
+                        continue;
+                }
+            }
+        } else if (hj == 2) {
+            minj = ispow2(apj->x) ? apj->p : maxforce[vi];
+        }
+        vi = vj;
+        ti = tj;
+        qi = qj;
+        hi = divisors[ti].high;
+        if (hi == 2) {
+            limi = limj;
+            mini = minj;
+        }
+    }
+    return ti ? vi : k;
+}
+
 /* STRATEGY_6X: if we have ...2^{3+} . 2x^2..., the former is of the
  * form 2(x-1)(x+1), which is very restrictive.
  */
-uint best_v4(t_level *cur_level) {
+uint best_6x(t_level *cur_level) {
     /* check if we still hold */
     t_level *prev_level = &levels[ cur_level->level - 1 ];
     if (!prev_level->have_square || sq0 < 2) {
@@ -3889,9 +3962,9 @@ uint best_v4(t_level *cur_level) {
 }
 
 typedef uint (*t_strategy)(t_level *cur_level);
-#define NUM_STRATEGIES 5
+#define NUM_STRATEGIES 6
 t_strategy strategies[NUM_STRATEGIES] = {
-    &best_v0, &best_v1, &best_v2, &best_v3, &best_v4
+    &best_v0, &best_v1, &best_v2, &best_v3, &best_v4, &best_6x
 };
 /* Find the best entry to progress, using the selected strategy
  * If there is no best entry, returns k.
@@ -3908,7 +3981,17 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
     mpz_div(Z(lp_x), Z(lp_x), ap->q);
 
-    if (x == nextt && divisors[x].high == x) {
+    if (ispow2(x)) {
+        /* This implies highpow = true.
+         * We will allocate p^{x - 1} leaving nextt = 2^b, knowing that
+         * we are not divisible by any smaller p. So the contributions
+         * of remaining primes will be at least p^{x - 1} . p^{b},
+         * and the limit will be zmax ^ {1 / (x - 1 + b)}.
+         * Usefully, divisors[nextt].highdiv gives b.
+         */
+        uint root = x - 1 + divisors[nextt].highdiv;
+        mpz_root(Z(lp_x), Z(lp_x), root);
+    } else if (x == nextt && divisors[x].high == x) {
         /* We are allocating p^{x-1} with x prime, leaving x as the
          * remaining tau; so this and the remaining allocation will
          * be of the form p^{x-1}.q^{x-1}, and we can set the limit
@@ -3982,16 +4065,24 @@ e_pux prep_unforced_x(
             && (n % ap->p)
 #endif
         ) ? ap->x : 0;
-        if (x == prevx)
-            p = ap->p;      /* skip smaller p, we already did the reverse */
-        else if (x <= prevx && divisors[x].high == divisors[prevx].high)
-            return PUX_SKIP_THIS_X; /* we already did the reverse */
-        else if (x > nextt && divisors[x].high == divisors[nextt].high)
-            /* skip this x, we already did any possible continuation in
-             * reverse. */
-            return PUX_SKIP_THIS_X;
-        else
-            p = maxforce[vi];
+        if (ispow2(x)) {
+            /* powers of 2: increasing p, not decreasing powers */
+            if (prevx && ispow2(prevx))
+                p = ap->p;  /* skip smaller p */
+            else
+                p = maxforce[vi];
+        } else {
+            if (x == prevx)
+                p = ap->p;      /* skip smaller p, we already did the reverse */
+            else if (x <= prevx && divisors[x].high == divisors[prevx].high)
+                return PUX_SKIP_THIS_X; /* we already did the reverse */
+            else if (x > nextt && divisors[x].high == divisors[nextt].high)
+                /* skip this x, we already did any possible continuation in
+                 * reverse. */
+                return PUX_SKIP_THIS_X;
+            else
+                p = maxforce[vi];
+        }
     } /* else we're continuing from known p */
 
     /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > zmax + i */
@@ -4197,7 +4288,7 @@ e_is insert_stack(void) {
         uint vil = cur_level->vlevel[vi];
         uint ti = vp->alloc[vil - 1].t;
         t_divisors *dp = &divisors[ti];
-        if (dp->highdiv == 0)
+        if (dp->high <= (highpow ? 1 : 2))
             fail("best_v() returned %u, but nothing to do there", vi);
 
         uint di;
@@ -4352,7 +4443,7 @@ void recurse(e_is jump_continue) {
             uint vil = cur_level->vlevel[vi];
             uint ti = vp->alloc[vil - 1].t;
             t_divisors *dp = &divisors[ti];
-            if (dp->highdiv == 0)
+            if (dp->high <= (highpow ? 1 : 2))
                 fail("best_v() returned %u, but nothing to do there", vi);
             cur_level->vi = vi;
             cur_level->ti = ti;
@@ -4597,6 +4688,8 @@ int main(int argc, char **argv, char **envp) {
                 if (strategy >= NUM_STRATEGIES)
                     fail("Invalid strategy %u", strategy);
                 strategy_set = 1;
+                if (strategy == 4)
+                    highpow = 1;
             }
         } else if (arg[1] == 'y') {
             if (arg[2] != typename())
