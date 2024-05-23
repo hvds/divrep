@@ -274,7 +274,8 @@ sub trial {
     # that's consistent with outstanding tau().
     for my $t2 (0 .. $#trial) {
         for my $n2 (@f) {
-            my($p, $x) = trial($n2, $t2) or next;
+            my($p, $x) = trial($n2, $t2);
+            next unless $p;
             $x = 1;
             $n /= $p;
             ++$x, $n /= $p while ($n % $p) == 0;
