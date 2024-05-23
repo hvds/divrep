@@ -49,6 +49,17 @@ static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
     return (mpz_t *)z;
 }
 
+/* We assume x != 0 */
+#ifdef __GNUC__
+    static inline bool ispow2(ulong x) {
+        return __builtin_popcountl(x) == 1;
+    }
+#else
+    static inline bool ispow2(ulong x) {
+        return (x & (x - 1)) == 0;
+    }
+#endif
+
 /* stash of mpz_t, initialized once at start */
 typedef enum {
     zero, zone,                 /* constants */
@@ -1295,7 +1306,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
         return TFP_GOOD;
     }
 
-    if (x & (x - 1))
+    if (!ispow2(x))
         seen_odd = 1;
 
     uint ei = x - 1;
@@ -1309,7 +1320,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
             return TFP_BAD;
         fpb->x[vj] = ej + 1;
         seen_any = 1;
-        if (ej & (ej + 1))
+        if (!ispow2(ej + 1))
             seen_odd = 1;
         if (ej < ei)
             continue;
@@ -1327,7 +1338,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
         if (ej == 0)
             continue;
         seen_any = 1;
-        if (ej & (ej + 1))
+        if (!ispow2(ej + 1))
             seen_odd = 1;
         if (ej > ei) {
             /* p^e_i + p^e_j will have valuation e_i */
@@ -1522,7 +1533,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
             mpz_ui_pow_ui(Z(temp), p, e);
             for (uint di = 0; di < dp->alldiv; ++di) {
                 uint dm = dp->div[di] - 1;
-                if ((dm & (dm + 1)) == 0)
+                if (ispow2(dm + 1))
                     break;
                 mpz_root(Z(wv_cand), Z(temp), dm);
                 if (mpz_fits_ulong_p(Z(wv_cand)))
@@ -1534,7 +1545,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
             ulong p = ulston(sp);
             for (uint di = 0; di < dp->alldiv; ++di) {
                 uint dm = dp->div[di] - 1;
-                if ((dm & (dm + 1)) == 0)
+                if (ispow2(dm + 1))
                     break;
                 (*mp)[dm] = p;
             }
@@ -1572,7 +1583,7 @@ void disp_px(char *name, ulong *mp) {
     t_divisors *dp = &divisors[n];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint dm = dp->div[di] - 1;
-        if ((dm & (dm + 1)) == 0)
+        if (ispow2(dm + 1))
             break;
         if (di)
             report("; ");
@@ -3387,13 +3398,13 @@ void prep_midp(t_level *cur_level) {
         uint vil = cur_level->vlevel[vi];
         t_allocation *ap = &vp->alloc[vil - 1];
         uint t = ap->t;
-        if ((t & (t - 1)) == 0)
+        if (ispow2(t))
             continue;
         t_divisors *dp = &divisors[t];
         /* try all divisors until we reach the powers of 2 */
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
-            if ((x & (x - 1)) == 0)
+            if (ispow2(x))
                 break;
             if (maxp[x - 1] == 0)
                 continue;
