@@ -52,7 +52,7 @@ typedef struct s_level {
     uint have_square;   /* number of v_i residues forced square so far */
     uint nextpi;    /* index of least prime not yet allocated */
     ulong maxp;     /* highest prime allocated so far */
-    uint *vlevel;   /* number of elements allocated to each values[vi]
+    uint *vlevel;   /* number of elements allocated to each values[vi] */
     /* (optional) union */
         uint bi;    /* batch index, if forced */
     /* .. with */
