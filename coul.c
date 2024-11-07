@@ -3856,7 +3856,7 @@ uint best_v4(t_level *cur_level) {
                     if (tj < ti || (tj == ti && mpz_cmp(*qj, *qi) <= 0))
                         continue;
                 } else {
-                    minj = ispow2(apj->x) ? apj->p : maxforce[vi];
+                    minj = ispow2(apj->x) ? apj->p : maxforce[vj];
                     if (mini > minj)
                         mpz_sub_ui(Z(temp), *limi, mini - minj);
                     else
@@ -3866,7 +3866,7 @@ uint best_v4(t_level *cur_level) {
                 }
             }
         } else if (hj == 2) {
-            minj = ispow2(apj->x) ? apj->p : maxforce[vi];
+            minj = ispow2(apj->x) ? apj->p : maxforce[vj];
         }
         vi = vj;
         ti = tj;
