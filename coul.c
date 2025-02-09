@@ -963,7 +963,7 @@ void parse_305(char *s) {
             s = &s[to_end];
         }
     }
-    if (s[0] == 0 || s[0] == '\n')
+    if (s[0] == 0 || s[0] == '\n' || (s[0] == ' ' && s[1] == 0))
         dtime = 0;
     else {
         int off = 0;
