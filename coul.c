@@ -1143,7 +1143,7 @@ void prep_fact(void) {
             if (i % j)
                 continue;
             dp->div[dp->alldiv++] = j;
-            if ((j % dp->high) == 0)
+            if (dp->high > 1 && (j % dp->high) == 0)
                 ++dp->highdiv;
         }
         qsort(dp->div, dp->alldiv, sizeof(uint), &cmp_high);
@@ -4104,6 +4104,7 @@ e_pux prep_unforced_x(
         return PUX_SKIP_THIS_X;
     }
 
+    /* apply gain heuristics to decide whether to walk or recurse */
     mpz_add_ui(Z(r_walk), zmax, vi);
 #ifdef LARGE_MIN
     mpz_sub(Z(r_walk), Z(r_walk), zmin);
