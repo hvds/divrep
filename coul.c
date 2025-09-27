@@ -284,7 +284,7 @@ mpz_t px;       /* p^x */
 
 #define DIAG 1
 #define LOG 600
-double diag_delay = DIAG, log_delay = LOG, diagt, logt;
+double diag_delay = DIAG, log_delay = LOG, death_delay = 0, diagt, logt;
 ulong countr, countw, countwi;
 #define MAX_DEC_ULONG 20
 #define MAX_DEC_POWER 5
@@ -590,6 +590,12 @@ void diag_any(t_level *cur_level, bool need_disp) {
             keep_diag();
         else
             need_diag = 0;
+        if (death_delay)
+            if (seconds(t1 - t0) >= death_delay) {
+                keep_diag();
+                report("301 Timeout after %.2fs\n", seconds(t1));
+                fail_silent();
+            }
     }
 
     if (rfp && need_log) {
@@ -4597,6 +4603,8 @@ int main(int argc, char **argv, char **envp) {
             diag_delay = strtoul(&arg[3], NULL, 10);
         else if (strncmp("-Lf", arg, 3) == 0)
             log_delay = strtoul(&arg[3], NULL, 10);
+        else if (strncmp("-Ld", arg, 3) == 0)
+            death_delay = strtoul(&arg[3], NULL, 10);
         else if (arg[1] == 'r') {
             rpath = (char *)malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
