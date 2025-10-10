@@ -1,0 +1,159 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+no warnings qw{recursion};
+use Math::GMP;
+use Math::Prime::Util qw{
+    factor_exp divisors prime_iterator
+};
+use List::Util qw{ sum0 };
+
+=head1 filter - find candidate tau() that could improve upper bound for A6558(n)
+
+=cut
+
+use lib 'lib';
+use H::Diag qw{ diag keep_diag };
+
+sub MBI { return Math::GMP->new(@_) }
+my $zero = MBI(0);
+my $zone = MBI(1);
+
+my($debug) = (0) x 1;
+
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    ++$debug, next if $arg eq '-d';
+    die "Unknown option '$arg'\n";
+}
+
+$| = 1;
+my($v) = @ARGV;
+my($max, @cand);
+if (my $in = {
+     8 => [ '1043710445721', 6720 ], # a2182(95)
+     9 => [ '2197379769820', 7680 ], # 99
+    10 => [ '2642166652554075', 32256 ], # 130
+    11 => [ '17707503256664346', 46080 ], # 137
+    12 => [ '3842083249515874843', 129024 ], # 162
+    13 => [ '114257716302413978844', 248832 ], # 178
+    14 => [ '10488836243243570851682971', 1966080 ], # 231
+    15 => [ '93658832199925686375530538464', 8847360 ], # 279
+    16 => [ '219373938292736386675713685910028954848', 297271296 ], # 401
+    17 => [ '151069787264088725813927316335593259178847', 849346560 ], # 439
+    18 => [ '483417290466547919966198285087691589283015644', 2831155200 ], # 486
+    19 => [ '5908388043825578351730345292813071711296723319324', 11626610688 ], # 543
+    20 => [ '17668887847524548413038893976018715843277693308027547', 38050725888 ], # 596
+}->{$v}) {
+    $max = MBI($in->[0]);
+    @cand = map MBI(12) * $_, 1 .. $in->[1] / 12;
+} else {
+    die "No input data for v = $v\n";
+}
+if ($v < 8) {
+    die "Assumptions in this code require v=$v >= 8\n";
+}
+
+$0 = "filter($v)";
+my $t0 = scalar times();
+my $tdiag = $t0 + 1;
+my $hit = 0;
+
+my(%nf, %highp, %mint);
+
+printf <<OUT, $v, 0 + @cand, $cand[-1], times() - $t0;
+v=%d, pass 0: %d candidates to %d (%.2fs)
+OUT
+for my $pass (1 .. $v) {
+    @cand = grep {
+        my $n = $_;
+        my $tn = tau($n);
+        if (times() >= $tdiag) {
+            $tdiag = times() + 1;
+            diag("$pass $n");
+        }
+        my $result = find_bucket($pass, $n);
+        $result ? 1 : 0;
+    } @cand;
+    diag('');
+    printf <<OUT, $v, $pass, 0 + @cand, $cand[-1], times() - $t0;
+v=%d, pass %d: %d candidates to %d (%.2fs)
+OUT
+    if ($pass < $v && @cand > 30) {
+        print join(' ', @cand[0..9]), " ... ", join(' ', @cand[-10..-1]), "\n";
+    } else {
+        print join(' ', @cand), "\n";
+    }
+    %mint = () if $pass == 1;
+}
+exit 0;
+
+#
+# Return TRUE if there is some way to assign v = \prod p_i^e_i such that
+# v < max^pass and the e_i can be split into pass subsets each of which
+# give \prod{e_i+1} = n, after allowing for duplicate primes.
+#
+sub find_bucket {
+    my($pass, $n) = @_;
+    my $val = $max ** $pass;
+    my $tau = $n ** $pass;
+    my $nf = [ factor_exp($tau) ];
+    my @p = map MBI($_), nprimes(1 + sum0 map $_->[1], @$nf);
+    for my $p (@p) {
+        my $pd = int(($pass - 1) / $p) or last;
+        my $pow = 1;
+        while ($pd) {
+            my $pd2 = int($pd / $p);
+            my $epow = $pow + 1;
+            for (1 .. $pd - $pd2) {
+                --$epow while $tau % $epow;
+                $tau /= $epow;
+                $val /= $p ** $epow;
+            }
+            $pd = $pd2;
+            ++$pow;
+        }
+    }
+    return mintau($tau, 0, \@p) <= $val ? 1 : 0;
+}
+
+sub mintau {
+    my($tau, $pi, $pa) = @_;
+    return 1 if $tau == 1;
+    my $p = $pa->[$pi++] // die "no primes";
+    return $p if $tau == 2;
+    return $mint{"$tau-$pi"} //= do {
+        my $highp = $highp{$tau} //= highp($tau);
+        my $best;
+        for my $d (divisors($tau)) {
+            next if $d < $highp;
+            my $val = $p ** ($d - 1);
+            last if $best && $val > $best;
+            $val *= mintau($tau / $d, $pi, $pa);
+            $best = $val if !$best || $best > $val;
+        }
+        $best;
+    };
+}
+
+sub highp {
+    my($n) = @_;
+    die "highp(1) not defined\n" if $n == 1;
+    my $nf = $nf{$n} //= [ factor_exp($n) ];
+    return $nf->[-1][0];
+}
+
+sub nprimes {
+    my($count) = @_;
+    my $it = prime_iterator;
+    return map MBI($it->()), 1 .. $count;
+}
+
+sub tau {
+    my($n) = @_;
+    my $nf = $nf{$n} //= [ factor_exp($n) ];
+    my $k = 1;
+    $k *= $_->[1] + 1 for @$nf;
+    return $k;
+}
