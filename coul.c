@@ -262,6 +262,7 @@ bool debugf = 0;    /* show prepped sub-batches */
 bool debugt = 0;    /* show target_t() */
 bool debugv = 0;    /* show modular constraints */
 bool debugV = 0;    /* show more modular constraints */
+bool debugm = 0;    /* track and show mintau results */
 bool log_full = 0;  /* show prefinal result for harness */
 
 ulong randseed = 1; /* for ECM, etc */
@@ -1166,6 +1167,10 @@ void prep_mintau(void) {
     return;
 }
 
+void track_mintau(t_level *prev, mpz_t mint, uint t) {
+    gmp_fprintf(stderr, "mint: %u %u %Zu\n", t, prev->nextpi, mint);
+}
+
 void prep_maxforce(void) {
     maxforce = (uint *)malloc(k * sizeof(uint));
 #if defined(TYPE_o)
@@ -1192,6 +1197,8 @@ void prep_primes(void) {
      * allocated in k-1 places. */
     nsprimes = (highpow ? maxfact : maxodd) * k + forcedp + (maxfact - maxodd);
     sprimes = (uint *)malloc(nsprimes * sizeof(uint));
+    if (debugm)
+        fprintf(stderr, "nsprimes %u\n", nsprimes);
     uint p = 1;
     for (uint i = 0; i < nsprimes; ++i) {
         p = next_prime(p);
@@ -1475,7 +1482,10 @@ void prep_forcep(void) {
             }
             if (seen_best)
                 break;
-            report("406 Error: no valid arrangement of powers for p=%u\n", p);
+            report(
+                "406 Error: no valid arrangement of powers for p=%u (%.2fs)\n",
+                p, seconds(utime())
+            );
             fail_silent();
         }
         if (have_unforced_tail) {
@@ -3398,6 +3408,8 @@ void mintau(t_level *prev_level, mpz_t mint, uint t) {
         mpz_ui_pow_ui(mint, p, divisors[t].sumpm);
         break;
     }
+    if (debugm)
+        track_mintau(prev_level, mint, t);
 }
 
 /* order by maxp descending */
@@ -4681,6 +4693,8 @@ int main(int argc, char **argv, char **envp) {
                 debugV = 1;
                 debugv = 1;
                 break;
+              case 'm':
+                debugm = 1;
               case 'l':
                 log_full = 1;
                 break;
