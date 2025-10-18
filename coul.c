@@ -426,7 +426,9 @@ void prep_show_v(t_level *cur_level) {
     uint mid_vi;
     if (in_midp)
         mid_vi = cur_level->vi;
-    offset += sprintf(&diag_buf[offset], "b%u: ", batch_alloc - 1);
+    offset += (batch_alloc)
+        ? sprintf(&diag_buf[offset], "b%u: ", batch_alloc - 1)
+        : sprintf(&diag_buf[offset], "b*: ");
     for (uint vi = 0; vi < k; ++vi) {
         uint vlevel = cur_level->vlevel[vi]
                 - ((in_midp && vi == mid_vi) ? 1 : 0);
