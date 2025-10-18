@@ -170,9 +170,12 @@ static inline void reset_vlevel(t_level *cur_level) {
     memcpy(cur_level->vlevel, prev_level->vlevel, k * sizeof(uint));
 }
 
-/* list of some small primes, at least enough for one per allocation  */
+/* list of some small primes, at least enough for one per allocation,
+ * and a reverse lookup */
 uint *sprimes = NULL;
+uint *ptoi = NULL;
 uint nsprimes;
+uint lastprime;
 
 /* set to utime at start of run, minus last timestamp of recovery file */
 double t0 = 0;
@@ -282,6 +285,32 @@ uint maxfact;   /* count of prime factors dividing n, with multiplicity */
 uint maxodd;    /* as above for odd prime factors */
 uint *maxforce = NULL;  /* max prime to force at v_i */
 mpz_t px;       /* p^x */
+
+/* If .valid, this mintau is .v as long as the index of the next available
+ * prime is >= .from
+ */
+typedef struct s_mint_capped {
+    mpz_t v;
+    uint from;
+    bool valid;
+} t_mint_capped;
+struct s_mint;
+typedef struct s_mint {
+    size_t capped_size;
+    size_t branch_size;
+    t_mint_capped *capped;
+    struct s_mint **branch;
+} t_mint;
+typedef struct s_mint_state {
+    uint *pfreev;       /* bit vector of available primes */
+    ushort *pfreei;     /* index of free primes */
+    ushort pfreenext;   /* where to start looking for next free prime */
+    ushort pfreedepth;  /* number of free primes found */
+    ushort maxdepth;    /* limit to what may be needed */
+} t_mint_state;
+size_t pfree_vecsize;
+t_mint **mint_base;
+t_mint_state mint_state;
 
 #define DIAG 1
 #define LOG 600
@@ -725,6 +754,117 @@ void init_value(void) {
     }
 }
 
+t_mint *new_mint(void) {
+    t_mint *mp = calloc(1, sizeof(t_mint));
+    return mp;
+}
+
+/* TODO: optimize resizing strategy */
+static inline void resize_branch(t_mint *base, uint need) {
+    size_t size = need + 1;
+    base->branch = realloc(base->branch, size * sizeof(t_mint *));
+    for (uint i = base->branch_size; i < size; ++i)
+        base->branch[i] = NULL;
+    base->branch_size = size;
+}
+static inline void resize_capped(t_mint *base, uint need) {
+    size_t size = need + 1;
+    base->capped = realloc(base->capped, size * sizeof(t_mint_capped));
+    for (uint i = base->capped_size; i < size; ++i)
+        base->capped[i].valid = 0;
+    base->capped_size = size;
+}
+
+t_mint *mint_branch(t_mint *base, uint pdiff, bool create) {
+    t_mint *branch;
+    if (base->branch_size <= pdiff) {
+        if (!create)
+            return (t_mint *)NULL;
+        resize_branch(base, pdiff);
+    }
+    branch = base->branch[pdiff];
+    if (branch == NULL) {
+        if (!create)
+            return (t_mint *)NULL;
+        branch = new_mint();
+        base->branch[pdiff] = branch;
+    }
+    return branch;
+}
+
+t_mint_capped *mint_capped(t_mint *base, uint pdiff, bool create) {
+    t_mint_capped *capped;
+    if (base->capped_size <= pdiff) {
+        if (!create)
+            return (t_mint_capped *)NULL;
+        resize_capped(base, pdiff);
+    }
+    return &base->capped[pdiff];
+}
+
+void prep_mintau(void) {
+    uint maxtau = n / divisors[n].high;
+    t_divisors *dp = &divisors[maxtau];
+    mint_base = calloc(maxtau + 1, sizeof(t_mint *));
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint f = dp->div[di];
+        if (f == 1)
+            continue;
+        mint_base[f] = new_mint();
+    }
+
+    ushort maxdepth = dp->sumpm;
+    pfree_vecsize = (nsprimes + 31) >> 5;
+    t_mint_state *s = &mint_state;
+    s->pfreev = calloc(pfree_vecsize, sizeof(uint));
+    s->pfreei = calloc(maxdepth, sizeof(ushort));
+}
+
+void free_mint(t_mint *mtp) {
+    for (uint i = 0; i < mtp->capped_size; ++i) {
+        t_mint_capped *capped = &mtp->capped[i];
+        if (capped->valid)
+            mpz_clear(capped->v);
+    }
+    free(mtp->capped);
+    for (uint i = 0; i < mtp->branch_size; ++i) {
+        t_mint *branch = mtp->branch[i];
+        if (branch)
+            free_mint(branch);
+    }
+    free(mtp->branch);
+    free(mtp);
+}
+
+void done_mintau(void) {
+    t_mint_state *s = &mint_state;
+    free(s->pfreev);
+    free(s->pfreei);
+
+    uint maxtau = n / divisors[n].high;
+    t_divisors *dp = &divisors[maxtau];
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint f = dp->div[di];
+        if (f == 1)
+            continue;
+        t_mint *mtp = mint_base[f];
+        if (mtp)
+            free_mint(mtp);
+    }
+    free(mint_base);
+}
+
+void track_mintau(mpz_t mint, uint t, uint depth0) {
+    t_mint_state *s = &mint_state;
+    gmp_fprintf(stderr, "mintau(%u) = %Zu [", t, mint);
+    for (uint i = depth0; i < s->pfreedepth; ++i) {
+        if (i > depth0)
+            gmp_fprintf(stderr, " ");
+        gmp_fprintf(stderr, "%u", sprimes[s->pfreei[i]]);
+    }
+    gmp_fprintf(stderr, "]\n");
+}
+
 void done(void) {
     /* update window title on completion */
     if (vt100)
@@ -751,11 +891,13 @@ void done(void) {
     free_value();
     free_levels();
     free(sprimes);
+    free(ptoi);
     if (forcep)
         for (int i = 0; i < forcedp; ++i)
             free(forcep[i].batch);
     free(forcep);
     free(maxforce);
+    done_mintau();
     if (divisors)
         for (int i = 0; i <= target_lcm; ++i)
             free(divisors[i].div);
@@ -1165,14 +1307,6 @@ void prep_fact(void) {
     free_fact(&f);
 }
 
-void prep_mintau(void) {
-    return;
-}
-
-void track_mintau(t_level *prev, mpz_t mint, uint t) {
-    gmp_fprintf(stderr, "mint: %u %u %Zu\n", t, prev->nextpi, mint);
-}
-
 void prep_maxforce(void) {
     maxforce = (uint *)malloc(k * sizeof(uint));
 #if defined(TYPE_o)
@@ -1198,7 +1332,7 @@ void prep_primes(void) {
      * In mintau() we may need maxfact primes beyond what may have been
      * allocated in k-1 places. */
     nsprimes = (highpow ? maxfact : maxodd) * k + forcedp + (maxfact - maxodd);
-    sprimes = (uint *)malloc(nsprimes * sizeof(uint));
+    sprimes = malloc(nsprimes * sizeof(uint));
     if (debugm)
         fprintf(stderr, "nsprimes %u\n", nsprimes);
     uint p = 1;
@@ -1206,6 +1340,10 @@ void prep_primes(void) {
         p = next_prime(p);
         sprimes[i] = p;
     }
+    lastprime = p;
+    ptoi = calloc(lastprime + 1, sizeof(uint));
+    for (uint i = 0; i < nsprimes; ++i)
+        ptoi[sprimes[i]] = i;
 }
 
 uint mpz_valuation(mpz_t z, uint n) {
@@ -3157,14 +3295,143 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
-/* floor(log_p{q}) */
-static inline uint lpq(uint p, uint q) {
-    uint l = 0;
-    while (q >= p) {
-        q /= p;
-        ++l;
+static inline void mint_init_state(uint t, uint targ_level) {
+    ushort maxdepth = divisors[t].sumpm;
+    t_mint_state *s = &mint_state;
+    s->pfreenext = 0;
+    s->pfreedepth = 0;
+    s->maxdepth = maxdepth;
+
+    /* now prep pv to bit vector of available primes */
+    /* TODO: maintain this in levels[], just copy it out */
+    uint *pv = s->pfreev;
+    memset(pv, 0xff, pfree_vecsize * sizeof(uint));
+    for (uint i = 1; i <= targ_level; ++i) {
+        uint p = levels[i].p;
+        if (p <= lastprime) {
+            uint pi = ptoi[p];
+            pv[pi >> 5] &= ~(1U << (pi & 0x1f));
+        }
     }
-    return l;
+}
+
+static inline void state_extend(signed short i) {
+    t_mint_state *s = &mint_state;
+    assert(i < s->maxdepth);
+    uint *pv = s->pfreev;
+    ushort next = s->pfreenext;
+    ushort depth = s->pfreedepth;
+    while (depth <= i) {
+        assert(next < nsprimes);
+        uint v = pv[next >> 5] & ~((1 << (next & 0x1f)) - 1);
+        int ffs = __builtin_ffs((int)v);
+        if (ffs) {
+            next = (next & ~0x1f) + ffs;
+            s->pfreei[depth] = next - 1;
+            ++depth;
+        } else {
+            next = (next & ~0x1f) + 0x20;
+        }
+    }
+    s->pfreenext = next;
+    s->pfreedepth = depth;
+}
+static inline signed short state_pfi(signed short i) {
+    t_mint_state *s = &mint_state;
+    assert(i >= 0);
+    if (i >= s->maxdepth)
+        return (signed short)-1;
+    if (i >= s->pfreedepth)
+        state_extend(i);
+    return s->pfreei[i];
+}
+
+/* Calculate the minimum contribution from unused primes satisfying
+ * the given tau.
+ *
+ * If h(n) is the highest prime dividing n, this may be called for
+ * any t: t | n/h(n).
+ */
+void mintau_r(ushort depth0, mpz_t mint, uint t) {
+    if (t == 1) {
+        mpz_set_ui(mint, 1);
+        return;
+    }
+
+    t_divisors *dp = &divisors[t];
+    t_mint_state *s = &mint_state;
+    ushort maxdepth = depth0 - 1 + dp->sumpm;
+    if (maxdepth > s->maxdepth)
+        maxdepth = s->maxdepth;
+
+    /* check if we already know this mintau */
+    {
+        t_mint *mtp = mint_base[t];
+        for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
+            ushort off = state_pfi(depth)
+                    - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
+            t_mint_capped *capped = mint_capped(mtp, off, 0);
+            if (capped && capped->valid && (
+                depth == maxdepth || state_pfi(depth + 1) >= capped->from
+            )) {
+                mpz_set(mint, capped->v);
+                goto mintau_done;
+            }
+            mtp = mint_branch(mtp, off, 0);
+        }
+    }
+
+    /* calculate this mintau */
+    ulong p = (ulong)sprimes[state_pfi(depth0)];
+    bool have_best = 0;
+    /* FIXME: have a long-lived array of these mpz_t, indexed by depth0 */
+    mpz_t mint_px, mint_best;
+    mpz_init(mint_px);
+    mpz_init(mint_best);
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint d = dp->div[di];
+        if (d < dp->high)
+            continue;
+        mpz_ui_pow_ui(mint_px, p, (ulong)d - 1);
+        if (have_best && mpz_cmp(mint_best, mint_px) <= 0)
+            continue;
+        mintau_r(depth0 + 1, mint, t / d);
+        mpz_mul(mint, mint, mint_px);
+        if (!have_best || mpz_cmp(mint_best, mint) > 0) {
+            mpz_set(mint_best, mint);
+            have_best = 1;
+        }
+    }
+    if (debugm)
+        track_mintau(mint_best, t, depth0);
+
+    /* work out where to cache the result */
+    {
+        t_mint *mtp = mint_base[t];
+        for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
+            ushort off = state_pfi(depth)
+                    - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
+            signed short next = (depth < maxdepth) ? state_pfi(depth + 1) : -1;
+            if (next < 0
+                || !mpz_divisible_ui_p(mint_best, (ulong)sprimes[next])
+            ) {
+                t_mint_capped *capped = mint_capped(mtp, off, 1);
+                if (!capped->valid) {
+                    mpz_init_set(capped->v, mint_best);
+                    capped->valid = 1;
+                }
+                capped->from = (next < 0) ? 0 : next;
+                break;
+            }
+            mtp = mint_branch(mtp, off, 1);
+        }
+    }
+
+    mpz_set(mint, mint_best);
+    mpz_clear(mint_px);
+    mpz_clear(mint_best);
+  mintau_done:
+    ;
 }
 
 /* Calculate the minimum contribution from unused primes satisfying
@@ -3173,245 +3440,16 @@ static inline uint lpq(uint p, uint q) {
  * If h(n) is the highest prime dividing n, this may be called for
  * any t: t | n/h(n).
  *
- * We have specific cases for each composite tau we can encounter at least
- * up to n=100, and fall back to a default for other cases which is precise
- * for prime tau but conservative for composite tau.
+ * We only initialize the state structure once, any recursive calls
+ * share it via the depth0 parameter.
  */
-void mintau(t_level *prev_level, mpz_t mint, uint t) {
-    uint pi = prev_level->nextpi;
-    uint p = sprimes[pi];
-    switch(t) {
-      case 1:
+void mintau(t_level *cur_level, mpz_t mint, uint t) {
+    if (t == 1) {
         mpz_set_ui(mint, 1);
-        break;
-      case 2:
-        mpz_set_ui(mint, p);
-        break;
-      case 4: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 2) {
-            mpz_set_ui(mint, p);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 3);
-        }
-        break;
-      }
-      case 6: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 3) {
-            mpz_ui_pow_ui(mint, p, 2);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 5);
-        }
-        break;
-      }
-      case 8: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        if (lpq(p, r) < 2) {
-            mpz_set_ui(mint, p);
-            mpz_mul_ui(mint, mint, q);
-            mpz_mul_ui(mint, mint, r);
-        } else if (lpq(p, q) < 4) {
-            mpz_ui_pow_ui(mint, p, 3);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 7);
-        }
-        break;
-      }
-      case 9: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 3) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-        } else {
-            mpz_ui_pow_ui(mint, p, 8);
-        }
-        break;
-      }
-      case 10: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 5) {
-            mpz_ui_pow_ui(mint, p, 4);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 9);
-        }
-        break;
-      }
-      case 12: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        uint pq = lpq(p, q);
-        if (p > r / q && lpq(p, r) < 3) {
-            mpz_set_ui(mint, p * p);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-            mpz_mul_ui(mint, mint, p);
-        } else if (pq < 6) {
-            mpz_ui_pow_ui(mint, p, 5);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 11);
-        }
-        break;
-      }
-      case 14: {
-        uint q = sprimes[find_nextpi(pi)];
-        if (lpq(p, q) < 7) {
-            mpz_ui_pow_ui(mint, p, 6);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 13);
-        }
-        break;
-      }
-      case 16: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint ri = find_nextpi(qi);
-        uint r = sprimes[ri];
-        uint s = sprimes[find_nextpi(ri)];
-        uint pq = lpq(p, q);
-        if (lpq(p, s) < 2) {
-            mpz_set_ui(mint, p * s);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (lpq(q, r) < 2 && lpq(p, r) < 4) {
-            mpz_ui_pow_ui(mint, p, 3);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-        } else if (pq < 8) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 15);
-        }
-        break;
-      }
-      case 18: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        uint pq = lpq(p, q);
-        if (lpq(p, q * r) < 6) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-            mpz_mul_ui(mint, mint, r);
-        } else if (pq < 3) {
-            mpz_ui_pow_ui(mint, p, 5);
-            mpz_mul_ui(mint, mint, q * q);
-        } else if (pq < 9) {
-            mpz_ui_pow_ui(mint, p, 8);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 17);
-        }
-        break;
-      }
-      case 20: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint r = sprimes[find_nextpi(qi)];
-        /* A: p^4.q.r, B: p^4.q^3, C: p^9.q, D: p^19 */
-        if (lpq(q, r) < 2 && lpq(p, r) < 5) {
-            mpz_ui_pow_ui(mint, p, 4);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (lpq(p, q * q) < 5) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-            mpz_mul_ui(mint, mint, p);
-        } else if (lpq(p, q) < 10) {
-            mpz_ui_pow_ui(mint, p, 9);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 19);
-        }
-        break;
-      }
-      case 24: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint ri = find_nextpi(qi);
-        uint r = sprimes[ri];
-        uint s = sprimes[find_nextpi(ri)];
-        /* A: p^2.q.r.d, B: p^3.q^2.r, C: p^5.q.r, D: p^5.q^3, E: p^7.q^2,
-         * F: p^11.q, G: p^23 */
-        uint pq = lpq(p, q);
-        bool rp2q = (r / q < p * p);
-        if (s < p * q && lpq(p, s) < 3) {
-            mpz_set_ui(mint, p * p);
-            mpz_mul_ui(mint, mint, q * r);
-            mpz_mul_ui(mint, mint, s);
-        } else if (lpq(p, q) < 2 && rp2q) {
-            mpz_ui_pow_ui(mint, p * q, 2);
-            mpz_mul_ui(mint, mint, p * r);
-        } else if (rp2q && lpq(q, r) < 2 && lpq(p, r) < 6) {
-            mpz_ui_pow_ui(mint, p, 5);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 2) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-            mpz_mul_ui(mint, mint, p * p);
-        } else if (pq < 4) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q * q);
-        } else if (pq < 12) {
-            mpz_ui_pow_ui(mint, p, 11);
-            mpz_mul_ui(mint, mint, q);
-        } else {
-            mpz_ui_pow_ui(mint, p, 23);
-        }
-        break;
-      }
-      case 32: {
-        uint qi = find_nextpi(pi);
-        uint q = sprimes[qi];
-        uint ri = find_nextpi(qi);
-        uint r = sprimes[ri];
-        uint si = find_nextpi(ri);
-        uint s = sprimes[si];
-        uint u = sprimes[find_nextpi(si)];
-        uint pq = lpq(p, q);
-        uint pr = lpq(p, r);
-        if (p * p > u) {
-            mpz_set_ui(mint, p * s);
-            mpz_mul_ui(mint, mint, q * r);
-            mpz_mul_ui(mint, mint, u);
-        } else if (q * q > s && lpq(p, s) < 4) {
-            mpz_ui_pow_ui(mint, p, 3);
-            mpz_mul_ui(mint, mint, q * r);
-            mpz_mul_ui(mint, mint, s);
-        } else if (pq < 2 && pr < 4) {
-            mpz_ui_pow_ui(mint, p * q, 3);
-            mpz_mul_ui(mint, mint, r);
-        } else if (q * q > r && pr < 8) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q * r);
-        } else if (pq < 4) {
-            mpz_ui_pow_ui(mint, p, 7);
-            mpz_mul_ui(mint, mint, q * q);
-            mpz_mul_ui(mint, mint, q);
-        } else if (pq < 16) {
-            mpz_ui_pow_ui(mint, p, 15);
-            mpz_mul_ui(mint, mint, q); 
-        } else {
-            mpz_ui_pow_ui(mint, p, 31);
-        }
-        break;
-      }
-      default:
-        /* quick version: given the minimum prime p that can be used, we
-         * calculate p^k where k = sum{p_i - 1} over the primes dividing
-         * t _with multiplicity_.
-         */
-        mpz_ui_pow_ui(mint, p, divisors[t].sumpm);
-        break;
+        return;
     }
-    if (debugm)
-        track_mintau(prev_level, mint, t);
+    mint_init_state(t, cur_level->level);
+    mintau_r(0, mint, t);
 }
 
 /* order by maxp descending */
