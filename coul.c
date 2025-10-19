@@ -88,7 +88,8 @@ mpz_t *zstash;
 static inline mpz_t *ZP(t_zstash e) { return &zstash[e]; }
 #define Z(e) *ZP(e)
 /* additional arrays of mpz_t initialized once at start */
-mpz_t *wv_o = NULL, *wv_qq = NULL;  /* wv_o[k], wv_qq[k] */
+mpz_t *wv_o, *wv_qq;        /* size [k] */
+mpz_t *mint_best, *mint_px; /* size [sumpm(n / high(n))] */
 /* for failure diagnostics */
 mpz_t *g_q0;
 uint g_ati;
@@ -818,6 +819,13 @@ void prep_mintau(void) {
     t_mint_state *s = &mint_state;
     s->pfreev = calloc(pfree_vecsize, sizeof(uint));
     s->pfreei = calloc(maxdepth, sizeof(ushort));
+
+    mint_best = malloc(maxdepth * sizeof(mpz_t));
+    mint_px = malloc(maxdepth * sizeof(mpz_t));
+    for (uint i = 0; i < maxdepth; ++i) {
+        mpz_init(mint_best[i]);
+        mpz_init(mint_px[i]);
+    }
 }
 
 void free_mint(t_mint *mtp) {
@@ -852,6 +860,14 @@ void done_mintau(void) {
             free_mint(mtp);
     }
     free(mint_base);
+
+    ushort maxdepth = dp->sumpm;
+    for (uint i = 0; i < maxdepth; ++i) {
+        mpz_clear(mint_best[i]);
+        mpz_clear(mint_px[i]);
+    }
+    free(mint_best);
+    free(mint_px);
 }
 
 void track_mintau(mpz_t mint, uint t, uint depth0) {
@@ -3384,26 +3400,24 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
     /* calculate this mintau */
     ulong p = (ulong)sprimes[state_pfi(depth0)];
     bool have_best = 0;
-    /* FIXME: have a long-lived array of these mpz_t, indexed by depth0 */
-    mpz_t mint_px, mint_best;
-    mpz_init(mint_px);
-    mpz_init(mint_best);
+    mpz_t *mpx = &mint_px[depth0];  /* array protects against recursive calls */
+    mpz_t *mbest = &mint_best[depth0];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint d = dp->div[di];
         if (d < dp->high)
             continue;
-        mpz_ui_pow_ui(mint_px, p, (ulong)d - 1);
-        if (have_best && mpz_cmp(mint_best, mint_px) <= 0)
+        mpz_ui_pow_ui(*mpx, p, (ulong)d - 1);
+        if (have_best && mpz_cmp(*mbest, *mpx) <= 0)
             continue;
         mintau_r(depth0 + 1, mint, t / d);
-        mpz_mul(mint, mint, mint_px);
-        if (!have_best || mpz_cmp(mint_best, mint) > 0) {
-            mpz_set(mint_best, mint);
+        mpz_mul(mint, mint, *mpx);
+        if (!have_best || mpz_cmp(*mbest, mint) > 0) {
+            mpz_set(*mbest, mint);
             have_best = 1;
         }
     }
     if (debugm)
-        track_mintau(mint_best, t, depth0);
+        track_mintau(*mbest, t, depth0);
 
     /* work out where to cache the result */
     {
@@ -3413,11 +3427,11 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
                     - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
             signed short next = (depth < maxdepth) ? state_pfi(depth + 1) : -1;
             if (next < 0
-                || !mpz_divisible_ui_p(mint_best, (ulong)sprimes[next])
+                || !mpz_divisible_ui_p(*mbest, (ulong)sprimes[next])
             ) {
                 t_mint_capped *capped = mint_capped(mtp, off, 1);
                 if (!capped->valid) {
-                    mpz_init_set(capped->v, mint_best);
+                    mpz_init_set(capped->v, *mbest);
                     capped->valid = 1;
                 }
                 capped->from = (next < 0) ? 0 : next;
@@ -3427,9 +3441,7 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
         }
     }
 
-    mpz_set(mint, mint_best);
-    mpz_clear(mint_px);
-    mpz_clear(mint_best);
+    mpz_set(mint, *mbest);
   mintau_done:
     ;
 }
