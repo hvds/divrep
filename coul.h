@@ -53,6 +53,7 @@ typedef struct s_level {
     uint nextpi;    /* index of least prime not yet allocated */
     ulong maxp;     /* highest prime allocated so far */
     uint *vlevel;   /* number of elements allocated to each values[vi] */
+    uint *pfreev;   /* bit vector of available primes */
     /* (optional) union */
         uint bi;    /* batch index, if forced */
     /* .. with */

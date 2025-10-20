@@ -694,6 +694,7 @@ void free_levels(void) {
     for (uint i = 0; i < maxlevel; ++i) {
         t_level *l = &levels[i];
         free(l->vlevel);
+        free(l->pfreev);
         mpz_clear(l->aq);
         mpz_clear(l->rq);
         prime_iterator_destroy(&l->piter);
@@ -707,6 +708,7 @@ void init_levels(void) {
         t_level *l = &levels[i];
         l->level = i;
         l->vlevel = calloc(k, sizeof(uint));
+        l->pfreev = malloc(pfree_vecsize * sizeof(uint));
         mpz_init(l->aq);
         mpz_init(l->rq);
 #if 0
@@ -721,6 +723,7 @@ void init_levels(void) {
     levels[0].next_best = 0;
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
+    memset(levels[0].pfreev, 0xff, pfree_vecsize * sizeof(uint));
     for (uint j = 0; j < k; ++j)
         levels[0].vlevel[j] = 1;
     level = 1;
@@ -817,7 +820,6 @@ void prep_mintau(void) {
     ushort maxdepth = dp->sumpm;
     pfree_vecsize = (nsprimes + 31) >> 5;
     t_mint_state *s = &mint_state;
-    s->pfreev = calloc(pfree_vecsize, sizeof(uint));
     s->pfreei = calloc(maxdepth, sizeof(ushort));
 
     mint_best = malloc(maxdepth * sizeof(mpz_t));
@@ -846,7 +848,6 @@ void free_mint(t_mint *mtp) {
 
 void done_mintau(void) {
     t_mint_state *s = &mint_state;
-    free(s->pfreev);
     free(s->pfreei);
 
     uint maxtau = n / divisors[n].high;
@@ -1842,6 +1843,7 @@ void prep_presquare(void) {
         cur->nextpi = prev->nextpi;
         cur->maxp = prev->maxp;
         memcpy(cur->vlevel, prev->vlevel, k * sizeof(uint));
+        memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
         mpz_set(cur->rq, prev->rq);
         cur->is_forced = 2;     /* special value for dummy entry */
@@ -2181,17 +2183,19 @@ bool divmod(mpz_t result, mpz_t a, mpz_t b, mpz_t m) {
 /* This allocation uses what was the next unused prime, to find the
  * index of the new next unused prime.
  */
-uint find_nextpi(uint pi) {
-    while (1) {
-        ++pi;
-        uint p = sprimes[pi];
-        for (uint i = 1; i < level; ++i)
-            if (levels[i].p == p)
-                goto NEXT_PI;
-        return pi;
-      NEXT_PI:
-        ;
+uint find_nextpi(t_level *cur, uint pi) {
+    uint *pv = cur->pfreev;
+    uint off = pi >> 5;
+    uint bit = pi & 0x1f;
+    while (off < pfree_vecsize) {
+        uint v = pv[off] & ~((1 << bit) - 1);
+        int ffs = __builtin_ffs((int)v);
+        if (ffs)
+            return (off << 5) + ffs - 1;
+        ++off;
+        bit = 0;
     }
+    fail("panic: find_nextpi() fell off end of bit vector");
 }
 
 uint taum_fail(char *legend, mpz_t target, uint count, t_tm *tm) {
@@ -3190,6 +3194,15 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
     return 1;
 }
 
+void apply_pfreev(t_level *prev_level, t_level *cur_level, ulong p) {
+    uint *pfreev = cur_level->pfreev;
+    memcpy(pfreev, prev_level->pfreev, pfree_vecsize * sizeof(uint));
+    if (p == 0 || p > lastprime)
+        return;
+    uint pi = ptoi[p];
+    pfreev[pi >> 5] &= ~(1 << (pi & 0x1f));
+}
+
 /* Update level structure for the allocation of p^{x-1} to v_{vi}.
  * Does not update level.rq, level.aq: see update_chinese() for that.
  */
@@ -3199,8 +3212,9 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     cur->x = x;
     cur->have_square = prev->have_square;
     cur->nextpi = prev->nextpi;
+    apply_pfreev(prev, cur, p);
     if (p == sprimes[cur->nextpi])
-        cur->nextpi = find_nextpi(cur->nextpi);
+        cur->nextpi = find_nextpi(cur, cur->nextpi);
     cur->maxp = (p > prev->maxp) ? p : prev->maxp;
 }
 
@@ -3304,45 +3318,36 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
-static inline void mint_init_state(uint t, uint targ_level) {
+static inline void mint_init_state(uint t, t_level *cur_level) {
     ushort maxdepth = divisors[t].sumpm;
     t_mint_state *s = &mint_state;
+    s->pfreev = cur_level->pfreev;
     s->pfreenext = 0;
     s->pfreedepth = 0;
     s->maxdepth = maxdepth;
-
-    /* now prep pv to bit vector of available primes */
-    /* TODO: maintain this in levels[], just copy it out */
-    uint *pv = s->pfreev;
-    memset(pv, 0xff, pfree_vecsize * sizeof(uint));
-    for (uint i = 1; i <= targ_level; ++i) {
-        uint p = levels[i].p;
-        if (p <= lastprime) {
-            uint pi = ptoi[p];
-            pv[pi >> 5] &= ~(1U << (pi & 0x1f));
-        }
-    }
 }
 
 static inline void state_extend(signed short i) {
     t_mint_state *s = &mint_state;
     assert(i < s->maxdepth);
     uint *pv = s->pfreev;
-    ushort next = s->pfreenext;
-    ushort depth = s->pfreedepth;
+    uint next = s->pfreenext;
+    uint nextoff = next >> 5;
+    uint nextbit = next & 0x1f;
+    uint depth = s->pfreedepth;
     while (depth <= i) {
-        assert(next < nsprimes);
-        uint v = pv[next >> 5] & ~((1 << (next & 0x1f)) - 1);
-        int ffs = __builtin_ffs((int)v);
-        if (ffs) {
-            next = (next & ~0x1f) + ffs;
-            s->pfreei[depth] = next - 1;
+        assert(nextoff < pfree_vecsize);
+        uint v = pv[nextoff] & ~((1 << nextbit) - 1);
+        nextbit = __builtin_ffs((int)v);
+        if (nextbit) {
+            s->pfreei[depth] = (nextoff << 5) + (nextbit - 1);
             ++depth;
         } else {
-            next = (next & ~0x1f) + 0x20;
+            ++nextoff;
+            nextbit = 0;
         }
     }
-    s->pfreenext = next;
+    s->pfreenext = (nextoff << 5) + nextbit;
     s->pfreedepth = depth;
 }
 static inline signed short state_pfi(signed short i) {
@@ -3453,7 +3458,7 @@ void mintau(t_level *cur_level, mpz_t mint, uint t) {
         mpz_set_ui(mint, 1);
         return;
     }
-    mint_init_state(t, cur_level->level);
+    mint_init_state(t, cur_level);
     mintau_r(0, mint, t);
 }
 
