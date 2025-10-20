@@ -3208,15 +3208,8 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
  * Also sets level.rq, level.aq and residues.
  */
 void apply_null(t_level *prev, t_level *cur, ulong p) {
-    cur->vi = 0;
-    cur->p = p;
-    cur->x = 1;
-    cur->have_square = prev->have_square;
+    apply_level(prev, cur, 0, p, 1);
     cur->have_min = prev->have_min;
-    cur->nextpi = prev->nextpi;
-    if (p == sprimes[cur->nextpi])
-        cur->nextpi = find_nextpi(cur->nextpi);
-    cur->maxp = (p > prev->maxp) ? p : prev->maxp;
     if (p == 2 && mpz_odd_p(prev->aq)) {
         if (mpz_odd_p(prev->rq))
             mpz_set(cur->rq, prev->rq);
