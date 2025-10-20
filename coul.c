@@ -4081,6 +4081,8 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     } else {
         /* divide through by the minimum contribution that could supply the
          * remaining tau */
+        /* TODO: if x.high <= nextt.high, we can find a more restrictive
+         * lp_x than mintau() alone provides */
         if (nextt > 1) {
             t_level *prev_level = &levels[cur_level->level - 1];
             mintau(prev_level, Z(lp_mint), nextt);
