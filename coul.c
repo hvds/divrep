@@ -304,10 +304,9 @@ typedef struct s_mint {
 } t_mint;
 typedef struct s_mint_state {
     uint *pfreev;       /* bit vector of available primes */
-    ushort *pfreei;     /* index of free primes */
+    ushort *pfreei;     /* list of free prime indices */
     ushort pfreenext;   /* where to start looking for next free prime */
     ushort pfreedepth;  /* number of free primes found */
-    ushort maxdepth;    /* limit to what may be needed */
 } t_mint_state;
 size_t pfree_vecsize;
 t_mint **mint_base;
@@ -3318,18 +3317,15 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
-static inline void mint_init_state(uint t, t_level *cur_level) {
-    ushort maxdepth = divisors[t].sumpm;
+static inline void mint_init_state(t_level *cur_level) {
     t_mint_state *s = &mint_state;
     s->pfreev = cur_level->pfreev;
     s->pfreenext = 0;
     s->pfreedepth = 0;
-    s->maxdepth = maxdepth;
 }
 
 static inline void state_extend(signed short i) {
     t_mint_state *s = &mint_state;
-    assert(i < s->maxdepth);
     uint *pv = s->pfreev;
     uint next = s->pfreenext;
     uint nextoff = next >> 5;
@@ -3353,8 +3349,6 @@ static inline void state_extend(signed short i) {
 static inline signed short state_pfi(signed short i) {
     t_mint_state *s = &mint_state;
     assert(i >= 0);
-    if (i >= s->maxdepth)
-        return (signed short)-1;
     if (i >= s->pfreedepth)
         state_extend(i);
     return s->pfreei[i];
@@ -3375,8 +3369,6 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
     t_divisors *dp = &divisors[t];
     t_mint_state *s = &mint_state;
     ushort maxdepth = depth0 - 1 + dp->sumpm;
-    if (maxdepth > s->maxdepth)
-        maxdepth = s->maxdepth;
 
     /* check if we already know this mintau */
     {
@@ -3401,6 +3393,10 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
     mpz_t *mpx = &mint_px[depth0];  /* array protects against recursive calls */
     mpz_t *mbest = &mint_best[depth0];
     for (uint di = 0; di < dp->alldiv; ++di) {
+        /* TODO: have a variant .div[] starting from .high in ascending order,
+         * so that the 'd < dp->high' check is not needed, and the 'have_best
+         * && best <= mpx' can lead to 'break' instead of 'continue'.
+         */
         uint d = dp->div[di];
         if (d < dp->high)
             continue;
@@ -3458,7 +3454,7 @@ void mintau(t_level *cur_level, mpz_t mint, uint t) {
         mpz_set_ui(mint, 1);
         return;
     }
-    mint_init_state(t, cur_level);
+    mint_init_state(cur_level);
     mintau_r(0, mint, t);
 }
 
