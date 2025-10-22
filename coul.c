@@ -73,7 +73,7 @@ typedef enum {
     wv_startr, wv_endr, wv_qqr, wv_qqnext, wv_r, wv_rx, wv_temp,
     wv_x, wv_y, wv_x2, wv_y2,
     w1_v, w1_j, w1_r,           /* walk_1 */
-    lp_x, lp_mint,              /* limit_p */
+    lp_x, lp_mint, lp_mint2,    /* limit_p */
     r_walk,                     /* recurse */
 
     sdm_p, sdm_r,               /* small_divmod (TODO) */
@@ -310,6 +310,9 @@ typedef struct s_mint_state {
 } t_mint_state;
 size_t pfree_vecsize;
 t_mint **mint_base;
+uint *restricted;
+uint restricted_count;
+t_mint ***mint_base_restricted;
 t_mint_state mint_state;
 
 #define DIAG 1
@@ -805,17 +808,42 @@ t_mint_capped *mint_capped(t_mint *base, uint pdiff, bool create) {
     return &base->capped[pdiff];
 }
 
-void prep_mintau(void) {
+void mint_init_base(t_mint ***p) {
     uint maxtau = n / divisors[n].high;
     t_divisors *dp = &divisors[maxtau];
-    mint_base = calloc(maxtau + 1, sizeof(t_mint *));
+    *p = calloc(maxtau + 1, sizeof(t_mint *));
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint f = dp->div[di];
         if (f == 1)
             continue;
-        mint_base[f] = new_mint();
+        (*p)[f] = new_mint();
+    }
+}
+
+void prep_mintau(void) {
+    mint_init_base(&mint_base);
+
+    restricted_count = 0;
+    restricted = NULL;
+    t_divisors *dp = &divisors[n];
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint d = dp->div[di];
+        uint h = divisors[d].high;
+        if (h <= 2)
+            break;
+        if ((n / d) % h)
+            continue;
+        restricted = realloc(restricted, (restricted_count + 1) * sizeof(uint));
+        restricted[restricted_count++] = d;
+    }
+    if (restricted_count) {
+        mint_base_restricted = malloc(restricted_count * sizeof(t_mint **));
+        for (uint i = 0; i < restricted_count; ++i)
+            mint_init_base(&mint_base_restricted[i]);
     }
 
+    uint maxtau = n / divisors[n].high;
+    dp = &divisors[maxtau];
     ushort maxdepth = dp->sumpm;
     pfree_vecsize = (nsprimes + 31) >> 5;
     t_mint_state *s = &mint_state;
@@ -845,22 +873,34 @@ void free_mint(t_mint *mtp) {
     free(mtp);
 }
 
-void done_mintau(void) {
-    t_mint_state *s = &mint_state;
-    free(s->pfreei);
-
+void mint_free_base(t_mint ***p) {
     uint maxtau = n / divisors[n].high;
     t_divisors *dp = &divisors[maxtau];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint f = dp->div[di];
         if (f == 1)
             continue;
-        t_mint *mtp = mint_base[f];
+        t_mint *mtp = (*p)[f];
         if (mtp)
             free_mint(mtp);
     }
-    free(mint_base);
+    free(*p);
+}
 
+void done_mintau(void) {
+    t_mint_state *s = &mint_state;
+    free(s->pfreei);
+
+    mint_free_base(&mint_base);
+    if (restricted_count) {
+        free(restricted);
+        for (uint i = 0; i < restricted_count; ++i)
+            mint_free_base(&mint_base_restricted[i]);
+        free(mint_base_restricted);
+    }
+
+    uint maxtau = n / divisors[n].high;
+    t_divisors *dp = &divisors[maxtau];
     ushort maxdepth = dp->sumpm;
     for (uint i = 0; i < maxdepth; ++i) {
         mpz_clear(mint_best[i]);
@@ -3354,11 +3394,55 @@ static inline signed short state_pfi(signed short i) {
     return s->pfreei[i];
 }
 
+static inline bool mintau_check_known(
+    t_mint *mtp, mpz_t mint, uint depth0, uint maxdepth
+) {
+    t_mint_state *s = &mint_state;
+    for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
+        ushort off = state_pfi(depth)
+                - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
+        t_mint_capped *capped = mint_capped(mtp, off, 0);
+        if (capped && capped->valid && (
+            depth == maxdepth || state_pfi(depth + 1) >= capped->from
+        )) {
+            mpz_set(mint, capped->v);
+            return 1;
+        }
+        mtp = mint_branch(mtp, off, 0);
+    }
+    return 0;
+}
+
+static inline void mintau_cache_result(
+    t_mint *mtp, mpz_t *mbest, uint depth0, uint maxdepth
+) {
+    t_mint_state *s = &mint_state;
+    for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
+        ushort off = state_pfi(depth)
+                - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
+        signed short next = (depth < maxdepth) ? state_pfi(depth + 1) : -1;
+        if (next < 0
+            || !mpz_divisible_ui_p(*mbest, (ulong)sprimes[next])
+        ) {
+            t_mint_capped *capped = mint_capped(mtp, off, 1);
+            if (!capped->valid) {
+                mpz_init_set(capped->v, *mbest);
+                capped->valid = 1;
+            }
+            capped->from = (next < 0) ? 0 : next;
+            break;
+        }
+        mtp = mint_branch(mtp, off, 1);
+    }
+}
+
 /* Calculate the minimum contribution from unused primes satisfying
  * the given tau.
  *
  * If h(n) is the highest prime dividing n, this may be called for
  * any t: t | n/h(n).
+ *
+ * Sets mint to the result - there is always a valid value.
  */
 void mintau_r(ushort depth0, mpz_t mint, uint t) {
     if (t == 1) {
@@ -3371,21 +3455,8 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
     ushort maxdepth = depth0 - 1 + dp->sumpm;
 
     /* check if we already know this mintau */
-    {
-        t_mint *mtp = mint_base[t];
-        for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
-            ushort off = state_pfi(depth)
-                    - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
-            t_mint_capped *capped = mint_capped(mtp, off, 0);
-            if (capped && capped->valid && (
-                depth == maxdepth || state_pfi(depth + 1) >= capped->from
-            )) {
-                mpz_set(mint, capped->v);
-                goto mintau_done;
-            }
-            mtp = mint_branch(mtp, off, 0);
-        }
-    }
+    if (mintau_check_known(mint_base[t], mint, depth0, maxdepth))
+        goto mintau_done;
 
     /* calculate this mintau */
     ulong p = (ulong)sprimes[state_pfi(depth0)];
@@ -3414,27 +3485,7 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
         track_mintau(*mbest, t, depth0);
 
     /* work out where to cache the result */
-    {
-        t_mint *mtp = mint_base[t];
-        for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
-            ushort off = state_pfi(depth)
-                    - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
-            signed short next = (depth < maxdepth) ? state_pfi(depth + 1) : -1;
-            if (next < 0
-                || !mpz_divisible_ui_p(*mbest, (ulong)sprimes[next])
-            ) {
-                t_mint_capped *capped = mint_capped(mtp, off, 1);
-                if (!capped->valid) {
-                    mpz_init_set(capped->v, *mbest);
-                    capped->valid = 1;
-                }
-                capped->from = (next < 0) ? 0 : next;
-                break;
-            }
-            mtp = mint_branch(mtp, off, 1);
-        }
-    }
-
+    mintau_cache_result(mint_base[t], mbest, depth0, maxdepth);
     mpz_set(mint, *mbest);
   mintau_done:
     ;
@@ -3446,6 +3497,8 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
  * If h(n) is the highest prime dividing n, this may be called for
  * any t: t | n/h(n).
  *
+ * Sets mint to the result - there is always a valid value.
+ *
  * We only initialize the state structure once, any recursive calls
  * share it via the depth0 parameter.
  */
@@ -3456,6 +3509,94 @@ void mintau(t_level *cur_level, mpz_t mint, uint t) {
     }
     mint_init_state(cur_level);
     mintau_r(0, mint, t);
+}
+
+/* Calculate the minimum contribution from unused primes satisfying
+ * the given tau, while avoiding powers p^x: h(x) == h(r), x <= r.
+ *
+ * If h(n) is the highest prime dividing n, this may be called for
+ * any t: t | n/h(n).
+ *
+ * Sets mint to the result, or to zero if no valid value.
+ */
+void mintau_restricted_r(ushort depth0, mpz_t mint, uint t, uint r, uint ri) {
+    if (t == 1) {
+        mpz_set_ui(mint, 1);
+        return;
+    }
+    if (t % divisors[r].high)
+        return mintau_r(depth0, mint, t);
+
+    t_divisors *dp = &divisors[t];
+    t_mint_state *s = &mint_state;
+    ushort maxdepth = depth0 - 1 + dp->sumpm;
+
+    /* check if we already know this mintau */
+    if (mintau_check_known(mint_base_restricted[ri][t], mint, depth0, maxdepth))
+        goto mintau_done;
+
+    /* calculate this mintau */
+    ulong p = (ulong)sprimes[state_pfi(depth0)];
+    bool have_best = 0;
+    mpz_t *mpx = &mint_px[depth0];  /* array protects against recursive calls */
+    mpz_t *mbest = &mint_best[depth0];
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        /* see also TODO in mintau_r() */
+        uint d = dp->div[di];
+        if (d < dp->high)
+            continue;
+        if (d <= r && divisors[d].high == divisors[r].high)
+            continue;
+        mpz_ui_pow_ui(*mpx, p, (ulong)d - 1);
+        if (have_best && mpz_cmp(*mbest, *mpx) <= 0)
+            continue;
+        mintau_restricted_r(depth0 + 1, mint, t / d, r, ri);
+        if (mpz_sgn(mint) == 0)
+            continue;
+        mpz_mul(mint, mint, *mpx);
+        if (!have_best || mpz_cmp(*mbest, mint) > 0) {
+            mpz_set(*mbest, mint);
+            have_best = 1;
+        }
+    }
+    if (!have_best)
+        mpz_set_ui(*mbest, 0);
+    if (debugm)
+        track_mintau(*mbest, t, depth0);
+
+    /* work out where to cache the result */
+    mintau_cache_result(mint_base_restricted[ri][t], mbest, depth0, maxdepth);
+    mpz_set(mint, *mbest);
+  mintau_done:
+    ;
+}
+
+/* Calculate the minimum contribution from unused primes satisfying
+ * the given tau, while avoiding powers p^x: h(x) == h(r), x <= r.
+ *
+ * If h(n) is the highest prime dividing n, this may be called for
+ * any t: t | n/h(n).
+ *
+ * Sets mint to the result, or to zero if no valid value.
+ *
+ * We only initialize the state structure once, any recursive calls
+ * share it via the depth0 parameter.
+ */
+void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
+    if (t == 1) {
+        mpz_set_ui(mint, 1);
+        return;
+    }
+    uint ri = restricted_count;
+    for (uint i = 0; i < restricted_count; ++i) {
+        if (restricted[i] != r)
+            continue;
+        ri = i;
+        break;
+    }
+    assert(ri < restricted_count);
+    mint_init_state(cur_level);
+    mintau_restricted_r(0, mint, t, r, ri);
 }
 
 /* order by maxp descending */
@@ -4074,11 +4215,40 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
         mpz_add_ui(Z(lp_x), Z(lp_x), 1);
 #endif
+    } else if (restricted_count && divisors[x].high == divisors[nextt].high) {
+        /* Let h = x.high, x = ha, then the power of the next allocation can
+         * be ha (in which case it must use a higher prime than this one),
+         * or hb: b > a.
+         */
+        t_level *prev_level = &levels[cur_level->level - 1];
+        /* this is mintau using hb: b > a */
+        mintau_restricted(prev_level, Z(lp_mint), nextt, x);
+        bool have_value = 0;
+        if (mpz_sgn(Z(lp_mint))) {
+            have_value = 1;
+            mpz_div(Z(lp_mint), Z(lp_x), Z(lp_mint));
+        }
+        uint itert = nextt, iter = 1;
+        while ((itert % x) == 0) {
+            ++iter;
+            itert /= x;
+            mintau_restricted(prev_level, Z(lp_mint2), itert, x);
+            if (mpz_sgn(Z(lp_mint2))) {
+                mpz_div(Z(lp_mint2), Z(lp_x), Z(lp_mint2));
+                mpz_root(Z(lp_mint2), Z(lp_mint2), iter);
+                if (!have_value || mpz_cmp(Z(lp_mint), Z(lp_mint2)) < 0) {
+                    mpz_set(Z(lp_mint), Z(lp_mint2));
+                    have_value = 1;
+                }
+            }
+        }
+        if (have_value)
+            mpz_root(Z(lp_x), Z(lp_mint), x - 1);
+        else
+            mpz_set_ui(Z(lp_x), 0);
     } else {
         /* divide through by the minimum contribution that could supply the
          * remaining tau */
-        /* TODO: if x.high <= nextt.high, we can find a more restrictive
-         * lp_x than mintau() alone provides */
         if (nextt > 1) {
             t_level *prev_level = &levels[cur_level->level - 1];
             mintau(prev_level, Z(lp_mint), nextt);
