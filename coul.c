@@ -237,7 +237,7 @@ bool opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
-uint cur_batch_level = 0;   /* for disp_batch */
+uint cur_batch_level = 0;   /* for disp_batch, best_fixed */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 /* by default, we call walk_v() as soon as we have 2 values fixed to
  * be squares rather than waiting for a full batch allocation; however
@@ -249,6 +249,8 @@ bool defer_pell = 0;
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 uint prev_strategy;     /* for special-case strategy override */
+uint fixed_level = 0;   /* number of values specified for -js */
+uint *fixed_v = NULL;   /* values specified for -js */
 
 typedef uint (*t_strategy)(t_level *cur_level);
 uint best_v0(t_level *cur_level);
@@ -258,11 +260,14 @@ uint best_v3(t_level *cur_level);
 uint best_v4(t_level *cur_level);
 /* best_6x() special-case strategy (TYPE_o only) */
 uint best_6x(t_level *cur_level);
+/* best_fixed() special-case strategy (-js) */
+uint best_fixed(t_level *cur_level);
 #define STRATEGY_6X 5
-#define NUM_STRATEGIES 6
+#define STRATEGY_FIXED 6
+#define NUM_STRATEGIES 7
 t_strategy strategies[NUM_STRATEGIES] = {
     &best_v0, &best_v1, &best_v2, &best_v3, &best_v4,
-    &best_6x
+    &best_6x, &best_fixed
 };
 
 uint check = 0;         /* modulus to check up to */
@@ -957,6 +962,7 @@ void done(void) {
     free(midp);
     free(midpp);
     free(sqg);
+    free(fixed_v);
     free_value();
     free_levels();
     free(sprimes);
@@ -2011,8 +2017,17 @@ void report_init(FILE *fp, char *prog) {
     fprintf(fp, "001 %spc%cul(%u %u)",
             (start_seen ? "recover " : ""), typename(), n, k);
 
-    if (strategy)
-        fprintf(fp, " -j%u", strategy);
+    if (strategy) {
+        if (strategy == STRATEGY_FIXED) {
+            fprintf(fp, "-js");
+            for (uint i = 0; i < fixed_level; ++i) {
+                if (i)
+                    fprintf(fp, ",");
+                fprintf(fp, "%u", fixed_v[i]);
+            }
+        } else
+            fprintf(fp, " -j%u", strategy);
+    }
     if (opt_print)
         fprintf(fp, " -o");
     if (limp_cap)
@@ -4179,6 +4194,40 @@ uint best_6x(t_level *cur_level) {
     return k + 1;   /* all done */
 }
 
+void set_fixed_strategy(char *s) {
+    fixed_level = 0;
+    char *e;
+    while (*s) {
+        ulong vi = strtoul(s, &e, 10);
+        if (s == e)
+            break;
+        s = e;
+        uint i = fixed_level++;
+        fixed_v = realloc(fixed_v, fixed_level * sizeof(uint));
+        fixed_v[i] = vi;
+        if (*s == ',')
+            ++s;
+    }
+    strategy = STRATEGY_FIXED;
+    strategy_set = 1;
+    highpow = 1;    /* in case this asks us to set powers of 2^x */
+}
+
+/* STRATEGY_FIXED: user-specified order, with minor sanity checks
+ */
+uint best_fixed(t_level *cur_level) {
+    uint effective_level = cur_level->level - (cur_batch_level + 1);
+    if (effective_level >= fixed_level)
+        return k;
+    uint vi = fixed_v[effective_level];
+    t_value *vp = &value[vi];
+    uint vlevel = cur_level->vlevel[vi];
+    t_allocation *ap_last = &vp->alloc[vlevel - 1];
+    if (ap_last->t == 1)
+        return k;
+    return vi;
+}
+
 /* Find the best entry to progress, using the selected strategy
  * If there is no best entry, returns k.
  */
@@ -4932,7 +4981,9 @@ int main(int argc, char **argv, char **envp) {
         else if (arg[1] == 'j') {
             if (arg[2] == 'p')
                 defer_pell = 1;
-            else {
+            else if (arg[2] == 's') {
+                set_fixed_strategy(&arg[3]);
+            } else {
                 strategy = strtoul(&arg[2], NULL, 10);
                 if (strategy >= NUM_STRATEGIES)
                     fail("Invalid strategy %u", strategy);
