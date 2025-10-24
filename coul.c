@@ -249,8 +249,21 @@ bool defer_pell = 0;
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 uint prev_strategy;     /* for special-case strategy override */
+
+typedef uint (*t_strategy)(t_level *cur_level);
+uint best_v0(t_level *cur_level);
+uint best_v1(t_level *cur_level);
+uint best_v2(t_level *cur_level);
+uint best_v3(t_level *cur_level);
+uint best_v4(t_level *cur_level);
 /* best_6x() special-case strategy (TYPE_o only) */
+uint best_6x(t_level *cur_level);
 #define STRATEGY_6X 5
+#define NUM_STRATEGIES 6
+t_strategy strategies[NUM_STRATEGIES] = {
+    &best_v0, &best_v1, &best_v2, &best_v3, &best_v4,
+    &best_6x
+};
 
 uint check = 0;         /* modulus to check up to */
 uint check_prime = 0;   /* skip moduli divisible by prime greater than this */
@@ -4166,11 +4179,6 @@ uint best_6x(t_level *cur_level) {
     return k + 1;   /* all done */
 }
 
-typedef uint (*t_strategy)(t_level *cur_level);
-#define NUM_STRATEGIES 6
-t_strategy strategies[NUM_STRATEGIES] = {
-    &best_v0, &best_v1, &best_v2, &best_v3, &best_v4, &best_6x
-};
 /* Find the best entry to progress, using the selected strategy
  * If there is no best entry, returns k.
  */
