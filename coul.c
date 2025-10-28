@@ -358,6 +358,9 @@ typedef struct s_modfix {
 } t_modfix;
 t_modfix *modfix = NULL;
 uint modfix_count = 0;
+/* have_modfix = 1 means that a global modular constraint on v_0 has been
+ * stored in levels[0].rq/aq.
+ */
 bool have_modfix = 0;
 
 typedef struct s_sizedstr {
@@ -1934,6 +1937,9 @@ void init_post(void) {
             if (fp) {
                 recover(fp);
                 fclose(fp);
+                /* if we have recovered, ignore any init_pattern */
+                free(init_pattern);
+                init_pattern = NULL;
             }
         }
 
@@ -4643,7 +4649,8 @@ e_is insert_stack(void) {
     if (init_pattern) {
         for (uint l = 1; l < level; ++l)
             levels[l].is_forced = 1;
-        fail("fix the FIXME for chinese() combine first");
+        if (check || modfix)
+            fail("fix the FIXME for chinese() combine first");
         final_level = level;
     }
     if (need_midp && midp_recover.valid) {
@@ -4998,8 +5005,6 @@ int main(int argc, char **argv, char **envp) {
         } else
             fail("unknown option '%s'", arg);
     }
-    if (init_pattern)
-        skip_recover = 1;
     if (i + 2 == argc) {
         n = strtoul(argv[i++], NULL, 10);
         if (n < 1)
