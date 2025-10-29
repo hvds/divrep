@@ -229,11 +229,11 @@ struct {
 uint rough = 0;     /* test roughness if tau >= rough */
 bool opt_print = 0; /* print candidates instead of fully testing them */
 uint opt_flake = 0; /* test less before printing candidates */
-/* If opt_alloc is true and opt_batch < 0, just show the forced-prime
- * allocation; if opt_alloc is true and opt_batch >= 0, just process
+/* If opt_alloc is non-zero and opt_batch < 0, just show the forced-prime
+ * allocation; if opt_alloc is non-zero and opt_batch >= 0, just process
  * the specified batch_alloc.
  */
-bool opt_alloc = 0;
+uint opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
@@ -509,6 +509,52 @@ void prep_show_v(t_level *cur_level) {
     diag_buf[offset] = 0;
 }
 
+void diag_csv_head(void) {
+    printf("Batch id");
+    for (uint i = 0; i < k; ++i)
+        printf(",v_%u", i);
+    t_divisors *dp = &divisors[n];
+    printf(",LCM");
+    for (uint i = 0; i < dp->alldiv; ++i)
+        printf(",t %u", dp->div[i]);
+    printf("\n");
+}
+
+void diag_csv(t_level *cur_level) {
+    t_divisors *dp = &divisors[n];
+    uint tc[dp->alldiv];
+    memset(&tc[0], 0, dp->alldiv * sizeof(uint));
+    mpz_set_ui(Z(temp), 1);
+    printf("%u", batch_alloc);
+    for (uint vi = 0; vi < k; ++vi) {
+        t_value *vp = &value[vi];
+        uint vlevel = cur_level->vlevel[vi];
+        printf(",");
+        for (uint ai = 1; ai < vlevel; ++ai) {
+            t_allocation *ap = &vp->alloc[ai];
+            if (ai > 1)
+                printf(".");
+            printf("%lu", ap->p);
+            if (ap->x > 2)
+                printf("^%u", ap->x - 1);
+        }
+        if (vlevel <= 1)
+            printf("1");
+        t_allocation *ap = &vp->alloc[vlevel - 1];
+        mpz_lcm(Z(temp), Z(temp), ap->q);
+        uint t = ap->t;
+        for (uint di = 0; di < dp->alldiv; ++di)
+            if (t == dp->div[di]) {
+                ++tc[di];
+                break;
+            }
+    }
+    gmp_printf(",%Zu", Z(temp));
+    for (uint di = 0; di < dp->alldiv; ++di)
+        printf(",%u", tc[di]);
+    printf("\n");
+}
+
 void report(char *format, ...) {
     keep_diag();
     va_list ap;
@@ -618,12 +664,16 @@ void disp_batch(void) {
     assert(level >= cur_batch_level);
 
     t_level *lp = &levels[cur_batch_level];
-    prep_show_v(lp);        /* into diag_buf */
-    if (lp->have_square) {
-        uint l = strlen(diag_buf);
-        sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
+    if (opt_alloc & 2) {
+        diag_csv(lp);
+    } else {
+        prep_show_v(lp);        /* into diag_buf */
+        if (lp->have_square) {
+            uint l = strlen(diag_buf);
+            sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
+        }
+        report("203 %s\n", diag_buf);
     }
-    report("203 %s\n", diag_buf);
 }
 
 void diag_any(t_level *cur_level, bool need_disp) {
@@ -1139,6 +1189,8 @@ void parse_305(char *s) {
         while (1) {
             pp.p = strtoul(s, &s, 10);
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
+            if (pp.p == 1 || pp.e == 0)
+                continue;
             add_fact(&rstack[i], pp);
             if (s[0] != '.')
                 break;
@@ -2197,7 +2249,7 @@ void set_batch(char *s) {
         opt_batch_min = strtoul(s, NULL, 10);
         opt_batch_max = opt_batch_min;
     }
-    opt_alloc = 1;
+    opt_alloc |= 1;
 }
 
 void done_modfix(void) {
@@ -3805,6 +3857,11 @@ bool apply_batch(
     }
 
     if (terminal < k) {
+        /* we have a value fully allocated, so test it unless we are
+         * in a mode only to report batches.
+         */
+        if (opt_alloc & 4)
+            return 1;
         bool valid = 1;
         if (mpz_sgn(zmin)) {
             vp = &value[terminal];
@@ -3850,7 +3907,7 @@ bool apply_batch(
             }
         }
     }
-    if (!defer_pell && cur_level->have_square > 1) {
+    if (!defer_pell && !(opt_alloc & 4) && cur_level->have_square > 1) {
         seen_valid = 1;
         walk_v(cur_level, Z(zero));
         return 0;
@@ -3871,7 +3928,8 @@ bool process_batch(t_level *cur_level) {
         disp_batch();
     if (opt_alloc) {
         /* check if this is a batch we want to process */
-        if (opt_batch_min >= 0
+        if ((opt_alloc & 4) == 0
+            && opt_batch_min >= 0
             && batch_id >= opt_batch_min
             && batch_id <= opt_batch_max
         )
@@ -4918,9 +4976,12 @@ int main(int argc, char **argv, char **envp) {
             randseed = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'h')
             rough = strtoul(&arg[2], NULL, 10);
-        else if (arg[1] == 'a')
-            opt_alloc = 1;
-        else if (arg[1] == 'b')
+        else if (arg[1] == 'a') {
+            if (arg[2])
+                opt_alloc = strtoul(&arg[2], NULL, 10);
+            else
+                opt_alloc = 1;
+        } else if (arg[1] == 'b')
             set_batch(&arg[2]);
         else if (arg[1] == 'o') {
             opt_print = 1;
@@ -5018,8 +5079,12 @@ int main(int argc, char **argv, char **envp) {
         fail("require force_all <= k");
 
     init_post();
-    report_init(stdout, argv[0]);
-    if (rfp) report_init(rfp, argv[0]);
+    if (opt_alloc & 2)
+        diag_csv_head();
+    else {
+        report_init(stdout, argv[0]);
+        if (rfp) report_init(rfp, argv[0]);
+    }
 
     if (check || modfix) {
         uint *tt = calloc(k, sizeof(uint));
@@ -5079,26 +5144,28 @@ int main(int argc, char **argv, char **envp) {
     recurse(jump);
     keep_diag();
 
-    double tz = utime();
-    report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)",
-            typename(), n, k, countr, countw, countwi, seconds(tz));
+    if ((opt_alloc & 2) == 0) {
+        double tz = utime();
+        report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)",
+                typename(), n, k, countr, countw, countwi, seconds(tz));
 #ifdef TRACK_STATS
-    report(" [");
-    for (uint i = 0; i < k; ++i) {
-        if (i)
-            report(" ");
-        report("%lu", count_bad[i]);
-    }
-    report("]\n");
+        report(" [");
+        for (uint i = 0; i < k; ++i) {
+            if (i)
+                report(" ");
+            report("%lu", count_bad[i]);
+        }
+        report("]\n");
 #else
-    report("\n");
+        report("\n");
 #endif
-    if (!seen_valid && !seen_best)
-        report("406 Error: no valid arrangement of powers\n");
-    else if (log_full)
-        report_prefinal(tz);
-    if (seen_best)
-        report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, best, seconds(tz));
+        if (!seen_valid && !seen_best)
+            report("406 Error: no valid arrangement of powers\n");
+        else if (log_full)
+            report_prefinal(tz);
+        if (seen_best)
+            report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, best, seconds(tz));
+    }
     done();
     return 0;
 }
