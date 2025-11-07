@@ -7,10 +7,12 @@
 
 /* import static UV isqrt(UV n) */
 #define FUNC_isqrt 1
-#include "utility.h"
-
+#ifdef HAVE_MISC_UI_H
+#   include "misc_ui.h"
+#else
+#   include "utility.h"
+#endif
 #include "prime_iterator.h"
-
 
 /* Add this to a number and you'll ensure you're on a wheel location */
 static const unsigned char distancewheel30[30] = {
@@ -356,6 +358,13 @@ void prime_iterator_global_shutdown(void) {
     small_primes = NULL;
 }
 
+void prime_iterator_init(prime_iterator *iter) {
+    iter->p = 2;
+    iter->segment_start = 0;
+    iter->segment_bytes = 0;
+    iter->segment_mem = 0;
+}
+
 void prime_iterator_destroy(prime_iterator *iter) {
     if (iter->segment_mem != 0)
         free(iter->segment_mem);
@@ -632,4 +641,24 @@ UV* sieve_to_n(UV n, UV* count) {
     if (count)
         *count = pi;
     return primes;
+}
+
+unsigned long* sieve_to_n_ui(unsigned long n, unsigned long* count) {
+    UV nprimesuv, *parruv;
+    unsigned long i, *parr;
+
+    if (sizeof(unsigned long int) == sizeof(UV))
+        return (unsigned long*) sieve_to_n(n, (UV*)count);
+
+    /* If UV is smaller than n then we have a problem. */
+    if (n > (unsigned long) UV_MAX)
+        croak("UV is smaller than unsigned long, too many primes");
+
+    parruv = sieve_to_n(n, &nprimesuv);
+    *count = nprimesuv;
+    New(0, parr, nprimesuv, unsigned long);
+    for (i = 0; i < *count; i++)
+        parr[i] = parruv[i];
+    free(parruv);
+    return parr;
 }

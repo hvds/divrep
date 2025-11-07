@@ -1,10 +1,12 @@
 MPUGMP = /src/perl/Math-Prime-Util-GMP
 # 2021-09-05
-MPUGMP_VER = db88b861fe
+#MPUGMP_VER = db88b861fe
 # 2023-05-15
 #MPUGMP_VER = cbf87f5e18
 # 2023-07-09
 #MPUGMP_VER = 2389dcbc44
+# 2025-07-11
+MPUGMP_VER = a2907ae3b7
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
     coulvec.h
@@ -16,6 +18,8 @@ endif
 CC_OPT = -O6 -fgcse-sm -fgcse-las -fgcse-after-reload -fivopts -ftracer -funroll-loops -fvariable-expansion-in-unroller -freorder-blocks-and-partition -funswitch-loops ${CC_EXTRA_OPT}
 dpcoul dpcaul dpcrul dsq12: CC_OPT = -O0
 
+DEFINES := -DSTANDALONE
+
 CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/pbrent63.c ${MPUGMP}/isaac.c ${MPUGMP}/tinyqs.c ${MPUGMP}/squfof126.c ${MPUGMP}/simpqs.c ${MPUGMP}/primality.c ${MPUGMP}/utility.c ${MPUGMP}/gmp_main.c ${MPUGMP}/bls75.c ${MPUGMP}/real.c ${MPUGMP}/ecpp.c
 HFACTOR = ${MPUGMP}/factor.h
 ifeq ($(MPUGMP_VER), cbf87f5e18)
@@ -24,8 +28,11 @@ endif
 ifeq ($(MPUGMP_VER), 2389dcbc44)
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c
 endif
-
-DEFINES := -DSTANDALONE
+ifeq ($(MPUGMP_VER), a2907ae3b7)
+    DEFINES += -DHAVE_MISC_UI_H
+    HFACTOR += ${MPUGMP}/misc_ui.h ${MPUGMP}/poly.h
+    CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c
+endif
 
 # temporary, avoid messing up
 DEFINES += -DLARGE_MIN -DTRACK_STATS
