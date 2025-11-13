@@ -1,12 +1,13 @@
-MPUGMP = /src/perl/Math-Prime-Util-GMP
-# 2021-09-05
-#MPUGMP_VER = db88b861fe
-# 2023-05-15
-#MPUGMP_VER = cbf87f5e18
-# 2023-07-09
-#MPUGMP_VER = 2389dcbc44
-# 2025-07-11
-MPUGMP_VER = a2907ae3b7
+# Path to the Math-Prime-Util-GMP repository
+MPUGMP ?= /src/perl/Math-Prime-Util-GMP
+# SHA of the Math-Prime-Util-GMP repository. It needs to be one of the known
+# values, or the Makefile needs updating:
+#   2389dcbc44 (danaj master, branch point of hvds fork)
+#       == b363d69b10 (hvds fork, simpqs-full branch)
+#   db88b861fe (danaj master 2021-09-05)
+#   cbf87f5e18 (danaj master 2023-05-15)
+#   a2907ae3b7 (danaj master 2025-07-11)
+MPUGMP_VER ?= 2389dcbc44
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
     coulvec.h
