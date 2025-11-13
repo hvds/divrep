@@ -1,0 +1,108 @@
+name: Build Windows 7 Release
+
+on:
+  workflow_dispatch:  # Allows manual triggering from Actions tab
+
+jobs:
+  build-windows7:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout divrep repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Get full history for SHA
+    
+    - name: Set up MSYS2 with MinGW64 (MSVCRT)
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: MINGW64  # Uses MSVCRT, compatible with Windows 7
+        update: true
+        install: >-
+          mingw-w64-x86_64-gcc
+          mingw-w64-x86_64-gmp
+          make
+          git
+          binutils
+    
+    - name: Clone Math-Prime-Util-GMP
+      shell: msys2 {0}
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        git clone https://github.com/hvds/Math-Prime-Util-GMP.git
+        cd Math-Prime-Util-GMP
+        git checkout simpqs-full
+    
+    - name: Build pcoul
+      shell: msys2 {0}
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        MPUGMP=Math-Prime-Util-GMP MPUGMP_VER=2389dcbc44 make pcoul
+
+    - name: Strip executable
+      shell: msys2 {0}
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        strip pcoul.exe
+    
+    - name: Get short SHA
+      id: vars
+      shell: msys2 {0}
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        git config --global --add safe.directory "$(pwd)"
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+        echo "Captured SHA: $SHORT_SHA"
+    
+    - name: Package executable with dependencies
+      shell: msys2 {0}
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        mkdir -p release
+        cp pcoul.exe release/
+        # Copy MinGW runtime DLLs
+        cp /mingw64/bin/libgmp-10.dll release/
+        cp /mingw64/bin/libgcc_s_seh-1.dll release/
+        cp /mingw64/bin/libwinpthread-1.dll release/
+        cd release
+        7z a ../pcoul-windows7-${{ steps.vars.outputs.short_sha }}.zip *
+    
+    # Option 1: Upload as workflow artifact (downloadable for 90 days)
+    # Set to 'false' to disable
+    - name: Upload artifact
+      if: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: pcoul-windows7-${{ steps.vars.outputs.short_sha }}
+        path: pcoul-windows7-${{ steps.vars.outputs.short_sha }}.zip
+        retention-days: 90
+    
+    # Option 2: Create or update draft release
+    # Set to 'true' to enable
+    - name: Create or update draft release
+      if: false
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: latest-windows7
+        name: "Windows 7 Build (latest)"
+        draft: true
+        prerelease: false
+        files: pcoul-windows7-${{ steps.vars.outputs.short_sha }}.zip
+        body: |
+          Automated Windows 7-compatible build of pcoul
+          
+          Built from commit: ${{ github.sha }}
+          Short SHA: ${{ steps.vars.outputs.short_sha }}
+          
+          This archive contains:
+          - pcoul.exe (compatible with Windows 7, 8, 10, 11)
+          - libgmp-10.dll
+          - libgcc_s_seh-1.dll
+          - libwinpthread-1.dll
+          
+          Extract all files to the same directory before running pcoul.exe.
+          
+          Built with MinGW-w64 using MSVCRT runtime for maximum compatibility.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
