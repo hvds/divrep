@@ -1,0 +1,101 @@
+name: Build Windows 7 Release
+
+on:
+  workflow_dispatch:  # Allows manual triggering from Actions tab
+
+jobs:
+  build-windows7:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout divrep repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Get full history for SHA
+
+    - name: Set up Cygwin
+      uses: cygwin/cygwin-install-action@master
+      with:
+        packages: gcc-core,libgmp-devel,make,git,binutils
+        site: http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2024/01/30/231215
+        check-installer-sig: false
+        check-sig: false
+
+    - name: Clone Math-Prime-Util-GMP
+      shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
+      run: |
+        cd /cygdrive/c/cygwin/home
+        git clone https://github.com/hvds/Math-Prime-Util-GMP.git
+        cd Math-Prime-Util-GMP
+        git checkout simpqs-full
+
+    - name: Build pcoul
+      shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        MPUGMP=/cygdrive/c/cygwin/home/Math-Prime-Util-GMP MPUGMP_VER=2389dcbc44 make pcoul
+
+    - name: Strip executable
+      shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        strip pcoul.exe
+
+    - name: Get short SHA
+      id: vars
+      shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        git config --global --add safe.directory "$(pwd)"
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+        echo "Captured SHA: $SHORT_SHA"
+
+    - name: Package executable with dependencies
+      shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        mkdir -p release
+        cp pcoul.exe release/
+        cp /cygdrive/c/cygwin/bin/cygwin1.dll release/
+        cp /cygdrive/c/cygwin/bin/cyggmp-10.dll release/
+        cp /cygdrive/c/cygwin/bin/cyggcc_s-seh-1.dll release/
+        cd release
+        7z a ../pcoul-windows7-${{ steps.vars.outputs.short_sha }}.zip *
+
+    # Option 1: Upload as workflow artifact (downloadable for 90 days)
+    # Set to 'false' to disable
+    - name: Upload artifact
+      if: true
+      uses: actions/upload-artifact@v4
+      with:
+        name: pcoul-windows7-${{ steps.vars.outputs.short_sha }}
+        path: pcoul-windows7-${{ steps.vars.outputs.short_sha }}.zip
+        retention-days: 90
+
+    # Option 2: Create or update draft release
+    # Set to 'true' to enable
+    - name: Create or update draft release
+      if: false
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: latest-windows
+        name: "Windows Build (Windows 7)"
+        draft: true
+        prerelease: false
+        files: pcoul-windows7-${{ steps.vars.outputs.short_sha }}.zip
+        body: |
+          Automated Windows 7 build of pcoul
+
+          Built from commit: ${{ github.sha }}
+          Short SHA: ${{ steps.vars.outputs.short_sha }}
+
+          This archive contains:
+          - pcoul.exe
+          - cygwin1.dll
+          - cyggmp-10.dll
+          - cyggcc_s-seh-1.dll
+
+          Extract all files to the same directory before running pcoul.exe.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
