@@ -1,0 +1,85 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+
+use lib 'lib';
+use Type;
+use Seq::Db;
+
+sub MBI { return Math::GMP->new(@_) }
+my $zero = MBI(0);
+
+my $typename = 'o';
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    ($typename = $arg || shift(@ARGV)), next if $arg =~ s{^-y}{};
+    die "Unknown option '$arg'\n";
+}
+$| = 1;
+my $type = Type->new($typename);
+my $db = Seq::Db->new($type, 0);
+
+while (<>) {
+    chomp;
+    next if /^#\s*(?=[^L\s])/;
+    if (/^#/) {
+        my($n, $gn, $range) = m{
+            ^\# \s+ L\((\d+)\) \s+ (?:
+                = \s+ (\d+)
+            |
+                in \s+ range \s+ (\d+\.\.\d+)
+            )$}x
+                or do { warn "parse fail: $_\n"; next };
+        my $true = $n * 2;
+        my $g = $db->resultset('TauG')->find({ n => $true })
+                or do { warn "no TauG entry for n=$true\n"; next };
+        my $agn = $g->maxg;
+        my $known = ($g->complete) ? $agn : knowng($g);
+        if ($known == $agn) {
+            next if defined($gn) && $gn == $agn;
+            warn "-$_\n+# L($n) = $agn\n";
+            next;
+        }
+        my $arange = "$known..$agn";
+        next if defined($range) && $range eq $arange;
+        warn "-$_\n+# L($n) in range $arange\n";
+        next;
+    }
+    my($n, $k, $sign, $v, $tail, $unknown) = m{
+        ^T\( (\d+),(\d+) \) \s+ (?:
+            (?: (<=) \s+ )? (\d+) (.*)
+        |
+            (unknown)
+        )$
+    }x or do { warn "parse fail: $_\n"; next };
+    $v = MBI($v) if defined $v;
+    my $true = $n * 2;
+    my $g = $db->resultset('TauG')->find({ n => $true });
+    my $f = $db->resultset('TauF')->find({ n => $true, k => $k });
+    my $av = $f ? $f->f : undef;
+    if ($f && $f->complete) {
+        next if defined($v) && $v == $av && !$sign;
+        warn "-$_\n+T($n,$k) $av\n";
+        next;
+    }
+    if ($av) {
+        next if defined($v) && $v == $av && $sign eq '<=';
+        warn "-$_\n+T($n,$k) <= $av\n";
+        next;
+    }
+    next if $unknown;
+    warn "-$_\n+T($n,$k) unknown\n";
+}
+exit 0;
+
+sub knowng {
+    my($g) = @_;
+    my $max = 0;
+    for my $f (@{ $g->fall($db) }) {
+        next if $f->k <= $max;
+        $max = $f->k if $f->f;  # whether or not $f->complete
+    }
+    return $max;
+}
+
