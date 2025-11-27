@@ -1990,7 +1990,6 @@ void init_post(void) {
                 recover(fp);
                 fclose(fp);
                 /* if we have recovered, ignore any init_pattern */
-                free(init_pattern);
                 init_pattern = NULL;
             }
         }
