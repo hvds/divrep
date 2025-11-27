@@ -1990,8 +1990,9 @@ void init_post(void) {
             if (fp) {
                 recover(fp);
                 fclose(fp);
-                /* if we have recovered, ignore any init_pattern */
-                init_pattern = NULL;
+                /* if we have successfully recovered, ignore any init_pattern */
+                if (rstack)
+                    init_pattern = NULL;
             }
         }
 
