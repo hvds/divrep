@@ -5149,7 +5149,7 @@ int main(int argc, char **argv, char **envp) {
     }
     prep_presquare();
 
-    bool jump = IS_DEEPER;
+    e_is jump = IS_DEEPER;
     if (rstack) {
         jump = insert_stack();
         /* FIXME: temporary fix for recovering a single batch run.
