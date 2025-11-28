@@ -4457,7 +4457,7 @@ e_pux prep_unforced_x(
         walk_v(prev_level, Z(zero));
 #endif
         return PUX_ALL_DONE;
-    } else if (limp < p + 1)
+    } else if (limp < p)
         return PUX_SKIP_THIS_X; /* nothing to do here */
     if (nextt == 1) {
         cur_level->have_min = prev_level->have_min;
