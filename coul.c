@@ -798,6 +798,7 @@ void init_levels(void) {
     levels[0].next_best = 0;
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
+    levels[0].is_forced = 2;    /* special value for dummy entry */
     memset(levels[0].pfreev, 0xff, pfree_vecsize * sizeof(uint));
     for (uint j = 0; j < k; ++j)
         levels[0].vlevel[j] = 1;
@@ -4517,7 +4518,7 @@ e_pux prep_unforced_x(
 #ifdef SQONLY
         if (prev_level->have_square)
             walk_v(prev_level, Z(zero));
-        else if (cur_level->level > 1 && !prev_level->is_forced)
+        else if (!prev_level->is_forced)
             level_setp(prev_level, prev_level->limp);
 #else
         walk_v(prev_level, Z(zero));
@@ -4782,7 +4783,7 @@ void recurse(e_is jump_continue) {
 
         /* recurse deeper */
         fi = level - final_level - 1;
-        if (fi < forcedp && (fi == 0 || prev_level->is_forced)) {
+        if (fi < forcedp && prev_level->is_forced) {
             fp = &forcep[fi];
             if (fp->count == 0)
                 goto unforced;
@@ -4810,7 +4811,7 @@ void recurse(e_is jump_continue) {
 #ifdef SQONLY
                 if (prev_level->have_square)
                     walk_v(prev_level, Z(zero));
-                else if (level > final_level + 1 && !prev_level->is_forced)
+                else if (!prev_level->is_forced)
                     level_setp(prev_level, prev_level->limp);
 #else
                 walk_v(prev_level, Z(zero));
