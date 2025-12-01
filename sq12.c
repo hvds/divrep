@@ -151,7 +151,7 @@ void init_time(void) {
 
 void init(void) {
     _GMP_init();
-    zstash = (mpz_t *)malloc(MAX_ZSTASH * sizeof(mpz_t));
+    zstash = malloc(MAX_ZSTASH * sizeof(mpz_t));
     for (t_zstash i = 0; i < MAX_ZSTASH; ++i)
         mpz_init(Z(i));
     init_diag();
@@ -297,7 +297,7 @@ int main(int argc, char **argv, char **envp) {
     while (i < argc && argv[i][0] == '-') {
         char *arg = argv[i++];
         if (arg[1] == 'r') {
-            rpath = (char *)malloc(strlen(&arg[2]) + 1);
+            rpath = malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
         } else
             fail("unknown option '%s'", arg);

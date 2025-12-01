@@ -56,7 +56,7 @@ void resize_zarray(t_zarray *zap, uint size) {
     if (size > zap->alloc) {
         if (size < zap->alloc + 16)
             size = zap->alloc + 16;
-        zap->za = (mpz_t *)realloc(zap->za, size * sizeof(mpz_t));
+        zap->za = realloc(zap->za, size * sizeof(mpz_t));
         for (uint i = zap->alloc; i < size; ++i)
             mpz_init(zap->za[i]);
         zap->alloc = size;
@@ -75,7 +75,7 @@ void resize_interleave(uint size) {
     if (size > gpc) {
         if (size < gpc + 16)
             size = gpc + 16;
-        gp = (t_interleave *)realloc(gp, size * sizeof(t_interleave));
+        gp = realloc(gp, size * sizeof(t_interleave));
         for (uint i = gpc; i < size; ++i) {
             t_interleave *gpi = &gp[i];
             memset(gpi, 0, sizeof(t_interleave));
@@ -115,7 +115,7 @@ void done_pell(void) {
 }
 
 void init_pell(void) {
-    pell_stash = (mpz_t *)malloc(E_PELLSTASH_MAX * sizeof(mpz_t));
+    pell_stash = malloc(E_PELLSTASH_MAX * sizeof(mpz_t));
     for (e_pellstash e = 0; e < E_PELLSTASH_MAX; ++e)
         mpz_init(Z(e));
     resize_interleave(16);

@@ -57,7 +57,7 @@ void resize_results(t_results *rp, uint size) {
     if (rp->size < size) {
         if (size < rp->size + 16)
             size = rp->size + 16;
-        rp->r = (mpz_t *)realloc(rp->r, size * sizeof(mpz_t));
+        rp->r = realloc(rp->r, size * sizeof(mpz_t));
         for (uint i = rp->size; i < size; ++i)
             mpz_init(rp->r[i]);
         rp->size = size;
@@ -81,7 +81,7 @@ void resize_nf(uint size) {
     if (size > rm_nf_size) {
         if (size < rm_nf_size + 16)
             size = rm_nf_size + 16;
-        rm_nf = (t_lpow *)realloc(rm_nf, size * sizeof(t_lpow));
+        rm_nf = realloc(rm_nf, size * sizeof(t_lpow));
         rm_nf_size = size;
     }
 }
@@ -90,7 +90,7 @@ void resize_kf(uint size) {
     if (size > rm_kf_size) {
         if (size < rm_kf_size + 16)
             size = rm_kf_size + 16;
-        rm_kf = (t_ppow *)realloc(rm_kf, size * sizeof(t_ppow));
+        rm_kf = realloc(rm_kf, size * sizeof(t_ppow));
         rm_kf_size = size;
     }
 }
@@ -111,7 +111,7 @@ void _swapz_r(e_results e) {
 
 void init_rootmod(uint levels) {
     ra_size = levels + E_RESULTS_MAX;
-    ra = (t_results *)calloc(ra_size, sizeof(t_results));
+    ra = calloc(ra_size, sizeof(t_results));
     resize_results(&ra[rm_base], 16);
     for (e_rmstash e = 0; e < E_RMSTASH_MAX; ++e)
         mpz_init(Z(e));

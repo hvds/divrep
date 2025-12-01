@@ -777,7 +777,7 @@ void free_levels(void) {
 }
 
 void init_levels(void) {
-    levels = (t_level *)calloc(maxlevel + 1, sizeof(t_level));
+    levels = calloc(maxlevel + 1, sizeof(t_level));
     for (uint i = 0; i < maxlevel; ++i) {
         t_level *l = &levels[i];
         l->level = i;
@@ -816,10 +816,10 @@ void free_value(void) {
 }
 
 void init_value(void) {
-    value = (t_value *)malloc(k * sizeof(t_value));
+    value = malloc(k * sizeof(t_value));
     for (int i = 0; i < k; ++i) {
         t_value *v = &value[i];
-        v->alloc = (t_allocation *)malloc((maxfact + 1) * sizeof(t_allocation));
+        v->alloc = malloc((maxfact + 1) * sizeof(t_allocation));
         for (uint j = 0; j <= maxfact; ++j) {
             mpz_init(v->alloc[j].q);
             mpz_init(v->alloc[j].lim);
@@ -1149,7 +1149,7 @@ void init_pre(void) {
     mpz_init_set_ui(zmax, 0);
     init_fact(&nf);
     mpz_init(px);
-    zstash = (mpz_t *)malloc(MAX_ZSTASH * sizeof(mpz_t));
+    zstash = malloc(MAX_ZSTASH * sizeof(mpz_t));
     for (t_zstash i = 0; i < MAX_ZSTASH; ++i)
         mpz_init(Z(i));
     mpz_set_ui(Z(zero), 0);
@@ -1166,7 +1166,7 @@ void parse_305(char *s) {
     t_ppow pp;
     bool is_W = 0;
 
-    rstack = (t_fact *)malloc(k * sizeof(t_fact));
+    rstack = malloc(k * sizeof(t_fact));
     for (int i = 0; i < k; ++i)
         init_fact(&rstack[i]);
 
@@ -1407,7 +1407,7 @@ void prep_target(void) {
 void prep_fact(void) {
     t_fact f;
 
-    divisors = (t_divisors *)calloc(target_lcm + 1, sizeof(t_divisors));
+    divisors = calloc(target_lcm + 1, sizeof(t_divisors));
     init_fact(&f);
     for (uint i = 1; i <= target_lcm; ++i) {
         if (target_lcm % i)
@@ -1420,7 +1420,7 @@ void prep_fact(void) {
         dp->sumpm = dp->high - 1;
         dp->sumpm += divisors[i / dp->high].sumpm;
         uint nd = 0;
-        dp->div = (uint *)malloc(td * sizeof(uint));
+        dp->div = malloc(td * sizeof(uint));
         for (uint j = 1; j <= i; ++j) {
             if (i % j)
                 continue;
@@ -1439,7 +1439,7 @@ void prep_fact(void) {
 }
 
 void prep_maxforce(void) {
-    maxforce = (uint *)malloc(k * sizeof(uint));
+    maxforce = malloc(k * sizeof(uint));
 #if defined(TYPE_o)
     if ((n & 3) != 0) {
         for (int i = 0; i < k; ++i)
@@ -1705,13 +1705,13 @@ void prep_forcep(void) {
         }
     }
 
-    forcep = (t_forcep *)malloc(forcedp * sizeof(t_forcep));
+    forcep = malloc(forcedp * sizeof(t_forcep));
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
         p = pi[fpi];
         t_forcep *fp = &forcep[fpi];
         fp->p = p;
         fp->count = 0;
-        fp->batch = (t_forcebatch *)malloc(maxbatch * size_forcebatch());
+        fp->batch = malloc(maxbatch * size_forcebatch());
         t_forcebatch *fbp = forcebatch_p(fp, 0);
 
         bool keep_single = (p <= force_all) ? 1 : 0;
@@ -1763,8 +1763,7 @@ void prep_forcep(void) {
             fpb_init(fbp, 1, 0);
             fbp = forcebatch_p(fp, ++fp->count);
         }
-        fp->batch = (t_forcebatch *)realloc(fp->batch,
-                fp->count * size_forcebatch());
+        fp->batch = realloc(fp->batch, fp->count * size_forcebatch());
     }
 }
 
@@ -2036,7 +2035,7 @@ void init_post(void) {
     prep_primes();  /* needs forcedp */
     prep_mintau();
     prep_mp();  /* maxp[], minp[], midp[] */
-    sqg = (uint *)malloc(maxfact * sizeof(uint));
+    sqg = malloc(maxfact * sizeof(uint));
 
     uint maxmidpp = 0;
     for (uint i = 0; i < k; ++i)
@@ -2060,13 +2059,13 @@ void init_post(void) {
     countw = 0;
     countwi = 0;
 
-    wv_o = (mpz_t *)malloc(k * sizeof(mpz_t));
-    wv_qq = (mpz_t *)malloc(k * sizeof(mpz_t));
+    wv_o = malloc(k * sizeof(mpz_t));
+    wv_qq = malloc(k * sizeof(mpz_t));
     for (uint i = 0; i < k; ++i) {
         mpz_init(wv_o[i]);
         mpz_init(wv_qq[i]);
     }
-    diag_buf = (char *)malloc(DIAG_BUFSIZE);
+    diag_buf = malloc(DIAG_BUFSIZE);
     init_diag();    /* ignore result: worst case we lose ^Z handling */
 
     if (gain2 == 0 && antigain2 == 0) {
@@ -4964,7 +4963,7 @@ int main(int argc, char **argv, char **envp) {
         else if (strncmp("-Ld", arg, 3) == 0)
             death_delay = strtoul(&arg[3], NULL, 10);
         else if (arg[1] == 'r') {
-            rpath = (char *)malloc(strlen(&arg[2]) + 1);
+            rpath = malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
         } else if (arg[1] == 'R')
             skip_recover = 1;

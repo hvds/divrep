@@ -10,7 +10,7 @@ int _mpz_comparator(const void *va, const void *vb) {
 void init_fact(t_fact *f) {
     f->count = 0;
     f->size = 16;
-    f->ppow = (t_ppow *)malloc(f->size * sizeof(t_ppow));
+    f->ppow = malloc(f->size * sizeof(t_ppow));
 }
 void free_fact(t_fact *f) {
     free(f->ppow);
@@ -19,7 +19,7 @@ void add_fact(t_fact *f, t_ppow pp) {
     uint count = f->count++;
     if (f->count > f->size) {
         uint size = f->size * 2;
-        f->ppow = (t_ppow *)realloc(f->ppow, size * sizeof(t_ppow));
+        f->ppow = realloc(f->ppow, size * sizeof(t_ppow));
         f->size = size;
     }
     f->ppow[count] = pp;
@@ -38,7 +38,7 @@ void reverse_fact(t_fact *f) {
 void init_zfact(t_zfact *f) {
     f->count = 0;
     f->size = 16;
-    f->ppow = (t_zpow *)malloc(f->size * sizeof(t_zpow));
+    f->ppow = malloc(f->size * sizeof(t_zpow));
     for (int i = 0; i < f->size; ++i)
         mpz_init(f->ppow[i].p);
 }
@@ -51,7 +51,7 @@ void add_zfact(t_zfact *f, t_zpow pp) {
     uint count = f->count++;
     if (f->count > f->size) {
         uint size = f->size * 2;
-        f->ppow = (t_zpow *)realloc(f->ppow, size * sizeof(t_zpow));
+        f->ppow = realloc(f->ppow, size * sizeof(t_zpow));
         for (int i = f->count; i < size; ++i)
             mpz_init(f->ppow[i].p);
         f->size = size;

@@ -190,7 +190,7 @@ void done_tau(void) {
 
 void alloc_taum(uint size) {
     if (size > taum_alloc) {
-        taum = (t_tm *)realloc(taum, size * sizeof(t_tm));
+        taum = realloc(taum, size * sizeof(t_tm));
         for (uint i = taum_alloc; i < size; ++i)
             mpz_init(taum[i].n);
         taum_alloc = size;
@@ -908,7 +908,7 @@ void init_tmfbl(uint flake) {
     if (flake && tmfb_maxb > flake)
         tmfb_lim = tmfb_lim & NO_FLAKE;
 
-    tmfbl = (ulong *)malloc((tmfb_maxb + 1) * sizeof(ulong));
+    tmfbl = malloc((tmfb_maxb + 1) * sizeof(ulong));
     uint i = 0;
     for (uint j = 0; j <= TMFB_MAX - 2; ++j) {
         uint lim = tmfb[j].maxlen;
