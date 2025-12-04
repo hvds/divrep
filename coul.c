@@ -4618,23 +4618,19 @@ e_is insert_stack(void) {
         t_level *prev_level = &levels[level - 1];
         t_level *cur_level = &levels[level];
         reset_vlevel(cur_level);
-        cur_level->is_forced = 1;
-        cur_level->bi = bi;
-        cur_batch_level = level;
-
-        if (maxx == 0) {
-            apply_null(prev_level, cur_level, p);
-            goto inserted_batch;
-        }
-
         /* progress is shown just before we apply, so on recovery it is
          * legitimate for the last one to fail */
-        --rstack[mini].count;
-        if (!apply_single(prev_level, cur_level, mini, p, maxx)) {
+        if (apply_batch(prev_level, cur_level, fpi, bi))
+            ++level;
+        else
             jump = IS_NEXT;
-            goto insert_check;
-        }
+        cur_batch_level = level;    /* from process_batch */
 
+        /* remove from stack */
+        if (maxx == 0)
+            goto inserted_batch;
+
+        --rstack[mini].count;
         for (uint j = 1; j <= mini; ++j) {
             uint vj = mini - j;
             uint e = relative_valuation(j, p, maxx - 1);
@@ -4645,9 +4641,6 @@ e_is insert_stack(void) {
             if (!rsp || rsp->p != p || rsp->e != e)
                 fail("missing secondary %u^%u at %u", p, e, vj);
             --rs->count;
-
-            if (!apply_secondary(prev_level, cur_level, vj, p, e + 1))
-                fail("could not apply_secondary(%u, %lu, %u)", vj, p, e + 1);
         }
         for (uint j = 1; mini + j < k; ++j) {
             uint vj = mini + j;
@@ -4659,12 +4652,8 @@ e_is insert_stack(void) {
             if (!rsp || rsp->p != p || rsp->e != e)
                 fail("missing secondary %u^%u at %u", p, e, vj);
             --rs->count;
-
-            if (!apply_secondary(prev_level, cur_level, vj, p, e + 1))
-                fail("could not apply_secondary(%u, %lu, %u)", vj, p, e + 1);
         }
       inserted_batch:
-        cur_level->fp_need &= ~(1 << fpi);
         ++level;
     }
     /* now insert the rest */
