@@ -1040,10 +1040,11 @@ void done(void) {
         mpz_clear(rwalk_from);
         mpz_clear(rwalk_to);
     }
-    if (rstack)
+    if (rstack) {
         for (int i = 0; i < k; ++i)
             free_fact(&rstack[i]);
-    free(rstack);
+        free(rstack);
+    }
     if (rfp)
         fclose(rfp);
     free(rpath);
@@ -1163,14 +1164,15 @@ void init_pre(void) {
 /* Parse a "305" log line for initialization.
  * Input string should point after the initial "305 ".
  */
-void parse_305(char *s) {
+void parse_305(char *s, t_fact **stackp) {
     double dtime;
     t_ppow pp;
     bool is_W = 0;
 
-    rstack = malloc(k * sizeof(t_fact));
+    t_fact *stack = malloc(k * sizeof(t_fact));
+    *stackp = stack;
     for (int i = 0; i < k; ++i)
-        init_fact(&rstack[i]);
+        init_fact(&stack[i]);
 
     if (s[0] == 'b') {
         int off = 0;
@@ -1194,13 +1196,13 @@ void parse_305(char *s) {
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
             if (pp.p == 1 || pp.e == 0)
                 continue;
-            add_fact(&rstack[i], pp);
+            add_fact(&stack[i], pp);
             if (s[0] != '.')
                 break;
             ++s;
         }
         /* reverse them, so we can pop as we allocate */
-        reverse_fact(&rstack[i]);
+        reverse_fact(&stack[i]);
     }
     if (strncmp(s, " W(", 3) == 0) {
         s += 3;
@@ -1335,7 +1337,7 @@ void recover(FILE *fp) {
     if (improve_max && seen_best && mpz_cmp(best, zmax) < 0)
         mpz_set(zmax, best);
     if (last305)
-        parse_305(last305 + 4);
+        parse_305(last305 + 4, &rstack);
     free(curbuf);
     free(last305);
 }
@@ -2003,7 +2005,7 @@ void init_post(void) {
         setlinebuf(rfp);
     }
     if (init_pattern)
-        parse_305(init_pattern);
+        parse_305(init_pattern, &rstack);
 #ifdef HAVE_SETPROCTITLE
     setproctitle("-D(%u %u)", n, k);
 #endif
