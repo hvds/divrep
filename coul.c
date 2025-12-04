@@ -1503,6 +1503,14 @@ static inline t_forcebatch *forcebatch_p(t_forcep *fp, uint i) {
     );
 }
 
+static inline bool is_tail(t_forcebatch *bp) {
+    return (bp->x[bp->primary] == 0) ? 1 : 0;
+}
+
+static inline bool has_tail(t_forcep *fp) {
+    return is_tail(forcebatch_p(fp, fp->count - 1));
+}
+
 static inline void fpb_init(t_forcebatch *fpb, uint vi, uint x) {
     fpb->primary = vi;
     memset(&fpb->x[0], 0, k * sizeof(uint));
@@ -4589,7 +4597,7 @@ e_is insert_stack(void) {
         if (maxx == 0) {
             bi = fp->count - 1;
             t_forcebatch *bp = forcebatch_p(fp, bi);
-            if (bp->x[bp->primary] != 0)
+            if (!is_tail(bp))
                 goto insert_check;
 #if defined(TYPE_a)
             if (bp->primary == 0) {
@@ -4607,8 +4615,7 @@ e_is insert_stack(void) {
                 break;
         }
         if (bi >= fp->count) {
-            t_forcebatch *bp = forcebatch_p(fp, fp->count - 1);
-            if (bp->x[bp->primary] != 0)
+            if (!has_tail(fp))
                 fail("no batch found for %u^{%u-1} at v_%u", p, maxx, mini);
             /* this prime unforced, so any remaining ones are too */
             break;
