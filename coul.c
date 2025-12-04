@@ -799,6 +799,9 @@ void init_levels(void) {
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
     levels[0].is_forced = 2;    /* special value for dummy entry */
+    if (forcedp + 1 > 8 * sizeof(levels[0].fp_need))
+        fail("FIXME: too many forced primes");
+    levels[0].fp_need = (1 << forcedp) - 1;
     memset(levels[0].pfreev, 0xff, pfree_vecsize * sizeof(uint));
     for (uint j = 0; j < k; ++j)
         levels[0].vlevel[j] = 1;
@@ -1959,6 +1962,7 @@ void prep_presquare(void) {
         cur->have_min = prev->have_min;
         cur->nextpi = prev->nextpi;
         cur->maxp = prev->maxp;
+        cur->fp_need = prev->fp_need;
         memcpy(cur->vlevel, prev->vlevel, k * sizeof(uint));
         memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
@@ -2328,6 +2332,11 @@ uint find_nextpi(t_level *cur, uint pi) {
         bit = 0;
     }
     fail("panic: find_nextpi() fell off end of bit vector");
+}
+
+/* Find index of next unused forced prime */
+static inline uint next_fpi(t_level *prev) {
+    return __builtin_ffs((signed int)prev->fp_need) - 1;
 }
 
 uint taum_fail(char *legend, mpz_t target, uint count, t_tm *tm) {
@@ -3359,6 +3368,7 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     cur->x = x;
     cur->have_square = prev->have_square;
     cur->nextpi = prev->nextpi;
+    cur->fp_need = prev->fp_need;
     apply_pfreev(prev, cur, p);
     if (p == sprimes[cur->nextpi])
         cur->nextpi = find_nextpi(cur, cur->nextpi);
@@ -3845,8 +3855,9 @@ uint relative_valuation(uint i, ulong p, uint e) {
 }
 
 bool apply_batch(
-    t_level *prev_level, t_level *cur_level, t_forcep *fp, uint bi
+    t_level *prev_level, t_level *cur_level, uint fpi, uint bi
 ) {
+    t_forcep *fp = &forcep[fpi];
     assert(fp->count > bi);
     t_value *vp;
     cur_level->is_forced = 1;
@@ -3857,6 +3868,7 @@ bool apply_batch(
 
     if (bp->x[vi] == 0) {
         apply_null(prev_level, cur_level, fp->p);
+        cur_level->fp_need &= ~(1 << fpi);
         return 1;
     }
     cur_level->have_min = prev_level->have_min;
@@ -3877,6 +3889,7 @@ bool apply_batch(
         if (vp->alloc[ cur_level->vlevel[vj] - 1 ].t == 1)
             terminal = vj;
     }
+    cur_level->fp_need &= ~(1 << fpi);
 
     if (terminal < k) {
         /* we have a value fully allocated, so test it unless we are
@@ -4647,6 +4660,7 @@ e_is insert_stack(void) {
                 fail("could not apply_secondary(%u, %lu, %u)", vj, p, e + 1);
         }
       inserted_batch:
+        cur_level->fp_need &= ~(1 << fpi);
         ++level;
     }
     /* now insert the rest */
@@ -4744,7 +4758,7 @@ e_is insert_stack(void) {
 /* we emulate recursive calls via the levels[] array */
 void recurse(e_is jump_continue) {
     ulong p;
-    uint x, fi, bi;
+    uint x, bi;
     t_level *prev_level = &levels[level - 1];
     t_level *cur_level = &levels[level];
     reset_vlevel(cur_level);
@@ -4784,9 +4798,8 @@ void recurse(e_is jump_continue) {
         cur_level = &levels[level];
 
         /* recurse deeper */
-        fi = level - final_level - 1;
-        if (fi < forcedp && prev_level->is_forced) {
-            fp = &forcep[fi];
+        if (prev_level->fp_need && prev_level->is_forced) {
+            fp = &forcep[next_fpi(prev_level)];
             if (fp->count == 0)
                 goto unforced;
             bi = 0;
@@ -4857,21 +4870,18 @@ void recurse(e_is jump_continue) {
             break;
         prev_level = &levels[level - 1];
         cur_level = &levels[level];
-        if (cur_level->is_forced) {
-            /* unapply the batch */
-            reset_vlevel(cur_level);
-        } else
+        if (cur_level->is_forced)
+            reset_vlevel(cur_level);    /* unapply the batch */
+        else
             --cur_level->vlevel[cur_level->vi];
         /* goto continue_recurse; */
       continue_recurse:
         if (cur_level->is_forced) {
-            fi = level - final_level - 1;
-            fp = &forcep[fi];
+            fp = &forcep[next_fpi(prev_level)];
             bi = cur_level->bi + 1;
           continue_forced:
-            if (bi >= fp->count) {
+            if (bi >= fp->count)
                 goto derecurse;
-            }
             t_forcebatch *bp = forcebatch_p(fp, bi);
             if (bp->x[bp->primary] == 0
 #if defined(TYPE_a)
@@ -4891,8 +4901,12 @@ void recurse(e_is jump_continue) {
                     goto unforced;
                 goto derecurse;
             }
-            if (apply_batch(prev_level, cur_level, fp, bi)
-                && (level != final_level + forcedp || process_batch(cur_level))
+            /* If apply succeeds, continue if the batch is still partial,
+             * or if it is complete and we are ok to process it. Note that
+             * process_batch directly invokes walk_midp() under -W.
+             */
+            if (apply_batch(prev_level, cur_level, next_fpi(prev_level), bi)
+                && (cur_level->fp_need || process_batch(cur_level))
             ) {
                 if (need_work)
                     diag_plain(cur_level);
@@ -5137,6 +5151,8 @@ int main(int argc, char **argv, char **envp) {
         cvec_mult(cx0, &levels[0].rq, &levels[0].aq);
         if (mpz_cmp_ui(levels[0].aq, 1) > 0) {
             have_modfix = 1;
+            /* this abuse of final_level is safe, since it happens before
+             * insert_stack() */
             if (levels[final_level].have_square)
                 fail("FIXME: don't know how to propagate efffects of -c and"
                         " -m over pre-fixed square");

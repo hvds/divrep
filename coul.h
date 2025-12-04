@@ -56,6 +56,7 @@ typedef struct s_level {
     uint *pfreev;   /* bit vector of available primes */
     /* (optional) union */
         uint bi;    /* batch index, if forced */
+        uint fp_need;   /* bitvector of forcedp still to apply */
     /* .. with */
         uint di;    /* divisor index, if unforced */
         uint ti;    /* target tau for v_i */
