@@ -4424,7 +4424,6 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
 
 typedef enum {
     PUX_NOTHING_TO_DO = 0,
-    PUX_ALL_DONE,
     PUX_SKIP_THIS_X,
     PUX_DO_THIS_X
 } e_pux;
@@ -4487,7 +4486,7 @@ e_pux prep_unforced_x(
 #else
         walk_v(prev_level, Z(zero));
 #endif
-        return PUX_ALL_DONE;
+        return PUX_NOTHING_TO_DO;
     } else if (limp < p)
         return PUX_SKIP_THIS_X; /* nothing to do here */
     if (nextt == 1) {
@@ -4538,7 +4537,7 @@ e_pux prep_unforced_x(
 #else
         walk_v(prev_level, Z(zero));
 #endif
-        return PUX_ALL_DONE;
+        return PUX_NOTHING_TO_DO;
     }
   force_unforced:
     level_setp(cur_level, p);
@@ -4549,11 +4548,16 @@ e_pux prep_unforced_x(
     return PUX_DO_THIS_X;
 }
 
+/* e_is indicates where we should pick up when we enter recurse() */
 typedef enum {
+    /* Current level is good, try to recurse deeper.
+     * There may also be a partial walk to complete first.
+     */
     IS_DEEPER = 0,
-    IS_NEXTX,
-    IS_NEXT,
-    IS_MIDP
+    IS_FINISH,  /* Everything is done */
+    IS_NEXTX,   /* Current power is done, try the next power */
+    IS_NEXT,    /* Current prime is done, try the next prime */
+    IS_MIDP     /* Finish a partial midp walk before continuing */
 } e_is;
 /* On recovery, set up the recursion stack to the point we had reached.
  * Returns IS_DEEPER if we should continue by recursing deeper from this
@@ -4699,7 +4703,6 @@ e_is insert_stack(void) {
         e_pux pux = prep_unforced_x(prev_level, cur_level,
                 p, init_pattern ? 1 : 0);
         switch (pux) {
-          case PUX_NOTHING_TO_DO:
           case PUX_SKIP_THIS_X:
             if (ti == x) {
                 /* legitimate skip after walk_1_set */
@@ -4707,7 +4710,7 @@ e_is insert_stack(void) {
                 goto insert_check;
             }
             fail("prep_nextt %u for %lu^%u at %u\n", pux, p, x, vi);
-          case PUX_ALL_DONE:
+          case PUX_NOTHING_TO_DO:
             /* we have now acted on this */
             jump = IS_NEXT;
             goto insert_check;
@@ -4852,7 +4855,6 @@ void recurse(e_is jump_continue) {
                 goto derecurse;
             switch (prep_unforced_x(prev_level, cur_level, 0, 0)) {
                 case PUX_NOTHING_TO_DO:
-                case PUX_ALL_DONE:
                     goto derecurse;
                 case PUX_SKIP_THIS_X:
                     goto continue_unforced_x;
@@ -4927,7 +4929,6 @@ void recurse(e_is jump_continue) {
                 )) {
                   case PUX_NOTHING_TO_DO:
                   case PUX_SKIP_THIS_X:
-                  case PUX_ALL_DONE:
                     goto continue_unforced_x;
                 }
             /* note: only valid to use from just below here */
@@ -5181,7 +5182,8 @@ int main(int argc, char **argv, char **envp) {
                 ++batch_alloc;
         }
     }
-    recurse(jump);
+    if (jump != IS_FINISH)
+        recurse(jump);
     keep_diag();
 
     if ((opt_alloc & 2) == 0) {
