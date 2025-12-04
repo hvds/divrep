@@ -13,6 +13,7 @@
 #endif
 #include <signal.h>
 #include <time.h>
+#include <ctype.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -297,6 +298,7 @@ FILE *rfp = NULL;   /* file handle to log file */
 bool start_seen = 0;    /* true if log file has been written to before */
 bool skip_recover = 0;  /* true if we should not attempt recovery */
 t_fact *rstack = NULL;  /* point reached in recovery log file */
+t_fact *istack = NULL;  /* point requested by -I */
 bool have_rwalk = 0;    /* true if recovery is mid-walk */
 mpz_t rwalk_from;
 mpz_t rwalk_to;
@@ -1048,6 +1050,11 @@ void done(void) {
             free_fact(&rstack[i]);
         free(rstack);
     }
+    if (istack) {
+        for (int i = 0; i < k; ++i)
+            free_fact(&istack[i]);
+        free(istack);
+    }
     if (rfp)
         fclose(rfp);
     free(rpath);
@@ -1237,7 +1244,12 @@ void parse_305(char *s, t_fact **stackp) {
         s += 2;
         if (strncmp("t=1", s, 3) == 0)
             s += 3; /* ignore */
-        else {
+        else if (s[0] == 'P') {
+            /* "P\d+" is a Pell walk, ignore for now */
+            ++s;
+            while (isdigit(*s))
+                ++s;
+        } else {
             int from_start, from_end, to_start, to_end;
             have_rwalk = 1;
             if (EOF == sscanf(s, "%n%*[0-9]%n / %n%*[0-9]%n ",
@@ -2005,9 +2017,6 @@ void init_post(void) {
             if (fp) {
                 recover(fp);
                 fclose(fp);
-                /* if we have successfully recovered, ignore any init_pattern */
-                if (rstack)
-                    init_pattern = NULL;
             }
         }
 
@@ -2017,7 +2026,7 @@ void init_post(void) {
         setlinebuf(rfp);
     }
     if (init_pattern)
-        parse_305(init_pattern, &rstack);
+        parse_305(init_pattern, &istack);
 #ifdef HAVE_SETPROCTITLE
     setproctitle("-D(%u %u)", n, k);
 #endif
@@ -4556,6 +4565,36 @@ e_pux prep_unforced_x(
     return PUX_DO_THIS_X;
 }
 
+/* Remove the specified p^e at vi in stack s (where it will be the last
+ * factor at that position). Remove it also from the stack s2 if provided
+ * (where it may be at any position).
+ * It is a fatal error if p^e is not specified in any provided stack.
+ */
+void stack_remove(t_fact *s, t_fact *s2, uint vi, ulong p, uint e) {
+    t_fact *rs = &s[vi];
+    t_ppow *rsp = rs->count ? &rs->ppow[rs->count - 1] : NULL;
+    if (!rsp || rsp->p != p || rsp->e != e)
+        fail("Missing %lu^%u at %u in stack", p, e, vi);
+    --rs->count;
+    if (s2) {
+        t_fact *rs2 = &s2[vi];
+        for (uint i = 0; i < rs2->count; ++i) {
+            t_ppow *rsp2 = &rs2->ppow[i];
+            if (rsp2->p != p)
+                continue;
+            if (rsp2->e != e)
+                fail("Expected %lu^%u at %u in recovery, but found %lu^%u",
+                        p, e, vi, p, rsp2->e);
+            if (i + 1 < rs2->count)
+                memmove(rsp2, &rs2->ppow[i + 1],
+                        sizeof(t_ppow) * (rs2->count - i - 1));
+            --rs2->count;
+            return;
+        }
+        fail("Expected %lu^%u at %u in recovery, but none found", p, e, vi);
+    }
+}
+
 /* e_is indicates where we should pick up when we enter recurse() */
 typedef enum {
     /* Current level is good, try to recurse deeper.
@@ -4567,61 +4606,76 @@ typedef enum {
     IS_NEXT,    /* Current prime is done, try the next prime */
     IS_MIDP     /* Finish a partial midp walk before continuing */
 } e_is;
-/* On recovery, set up the recursion stack to the point we had reached.
- * Returns IS_DEEPER if we should continue by recursing deeper from this
- * point; returns IS_NEXTX if we should continue by advancing the power
- * applied at the current position; returns IS_NEXT if we should continue
- * by advancing the current level; and returns IS_MIDP if we should continue
- * via walk_midp().
- */
-e_is insert_stack(void) {
-    e_is jump = IS_DEEPER;
 
-    /* first insert forced primes */
-    for (uint fpi = 0; fpi < forcedp; ++fpi) {
-        t_forcep *fp = &forcep[fpi];
-        uint p = fp->p;
-        uint maxx = 0, mini;
-        for (uint vi = 0; vi < k; ++vi) {
-            t_fact *rs = &rstack[vi];
-            if (rs->count && rs->ppow[rs->count - 1].p == p) {
+/* Given an init or recovery stack, check for the specified forced prime
+ * and any related batch, and apply it removing the corresponding factors
+ * from the stack.
+ * Returns true if we are ok to continue, or false if we reached the end
+ * of the stack.
+ * May update *jump to IS_NEXT if we fail to apply a found element.
+ */
+bool insert_forced(
+    t_fact *stack, t_fact *stack2, uint fpi, e_is *jump, bool init
+) {
+    t_forcep *fp = &forcep[fpi];
+    t_forcebatch *bp;
+    uint p = fp->p;
+    uint maxx = 0, mini;
+    bool more = 0;
+    /* find highest power of this prime */
+    for (uint vi = 0; vi < k; ++vi) {
+        t_fact *rs = &stack[vi];
+        if (rs->count) {
+            if (rs->ppow[rs->count - 1].p == p) {
                 uint x = rs->ppow[rs->count - 1].e + 1;
                 if (maxx < x) {
                     maxx = x;
                     mini = vi;
                 }
-            }
+                if (rs->count > 1)
+                    more = 1;
+            } else
+                more = 1;
         }
-        /* find the batch */
-        uint bi;
-        if (maxx == 0) {
-            bi = fp->count - 1;
-            t_forcebatch *bp = forcebatch_p(fp, bi);
-            if (!is_tail(bp))
-                goto insert_check;
+    }
+    /* find the batch */
+    uint bi;
+    if (maxx == 0) {
+        /* do not apply tail for prime missing in init pattern */
+        if (init)
+            return more ? 1 : 0;
+        bi = fp->count - 1;
+        bp = forcebatch_p(fp, bi);
+        if (more && has_tail(fp))
+            goto have_batch;
 #if defined(TYPE_a)
-            if (bp->primary == 0) {
-                mini = 0;
-                goto have_batch;
-            }
+        if (bp->primary == 0) {
+            mini = 0;
+            goto have_batch;
+        }
 #endif
-            /* this prime unforced, so any remaining ones are too */
-            break;
-        }
+        /* either the previous forced prime was the last thing that is
+         * specified, or this forced prime is invalidly missing */
+        return 0;
+    }
 
-        for (bi = 0; bi < fp->count; ++bi) {
-            t_forcebatch *bp = forcebatch_p(fp, bi);
-            if (bp->primary == mini && bp->x[bp->primary] == maxx)
-                break;
-        }
-        if (bi >= fp->count) {
-            if (!has_tail(fp))
-                fail("no batch found for %u^{%u-1} at v_%u", p, maxx, mini);
-            /* this prime unforced, so any remaining ones are too */
+    for (bi = 0; bi < fp->count; ++bi) {
+        bp = forcebatch_p(fp, bi);
+        if (bp->primary == mini && bp->x[bp->primary] == maxx)
             break;
-        }
+    }
+    if (bi >= fp->count) {
+        if (!has_tail(fp))
+            fail("no batch found for %u^{%u-1} at v_%u", p, maxx, mini);
+        /* the power present doesn't match a batch, so it must be a floating
+         * prime on the tail */
+        bi = fp->count - 1;
+        bp = forcebatch_p(fp, bi);
+        maxx = 0;
+    }
 
-      have_batch: ;
+  have_batch: ;
+    if (!init || !is_tail(bp)) {
         t_level *prev_level = &levels[level - 1];
         t_level *cur_level = &levels[level];
         reset_vlevel(cur_level);
@@ -4630,122 +4684,164 @@ e_is insert_stack(void) {
         if (apply_batch(prev_level, cur_level, fpi, bi))
             ++level;
         else
-            jump = IS_NEXT;
+            *jump = IS_NEXT;
         cur_batch_level = level;    /* from process_batch */
+    }
 
-        /* remove from stack */
-        if (maxx == 0)
-            goto inserted_batch;
-
-        --rstack[mini].count;
+    /* remove from stack */
+    if (maxx) {
+        stack_remove(stack, stack2, mini, p, maxx - 1);
         for (uint j = 1; j <= mini; ++j) {
             uint vj = mini - j;
             uint e = relative_valuation(j, p, maxx - 1);
-            if (e == 0)
-                continue;
-            t_fact *rs = &rstack[vj];
-            t_ppow *rsp = rs->count ? &rs->ppow[rs->count - 1] : NULL;
-            if (!rsp || rsp->p != p || rsp->e != e)
-                fail("missing secondary %u^%u at %u", p, e, vj);
-            --rs->count;
+            if (e)
+                stack_remove(stack, stack2, vj, p, e);
         }
         for (uint j = 1; mini + j < k; ++j) {
             uint vj = mini + j;
             uint e = relative_valuation(j, p, maxx - 1);
-            if (e == 0)
-                continue;
-            t_fact *rs = &rstack[vj];
-            t_ppow *rsp = rs->count ? &rs->ppow[rs->count - 1] : NULL;
-            if (!rsp || rsp->p != p || rsp->e != e)
-                fail("missing secondary %u^%u at %u", p, e, vj);
-            --rs->count;
+            if (e)
+                stack_remove(stack, stack2, vj, p, e);
         }
-      inserted_batch:
-        ++level;
     }
-    /* now insert the rest */
-    while (1) {
-        t_level *prev_level = &levels[level - 1];
-        t_level *cur_level = &levels[level];
-        reset_vlevel(cur_level);
-        uint vi = best_v(cur_level);
-        if (vi == k)
-            break;
-        t_fact *rs = &rstack[vi];
-        if (rs->count == 0)
-            break;
-        --rs->count;
+    return 1;
+}
 
-        ulong p = rs->ppow[rs->count].p;
-        uint x = rs->ppow[rs->count].e + 1;
-        t_value *vp = &value[vi];
-        uint vil = cur_level->vlevel[vi];
-        uint ti = vp->alloc[vil - 1].t;
-        t_divisors *dp = &divisors[ti];
-        if (dp->high <= (highpow ? 1 : 2))
-            fail("best_v() returned %u, but nothing to do there", vi);
+/* Given an init or recovery stack, check for a floating prime to insert
+ * at the specified position, and apply it removing the corresponding factor
+ * from the stack.
+ * Returns true if we are ok to continue, or false if no further inserts
+ * should be done.
+ * May update *jump if we fail to apply a found element to the appropriate
+ * selection of IS_NEXTX or IS_NEXT.
+ */
+static inline bool insert_float(
+    t_fact *stack, t_fact *stack2, uint vi, e_is *jump, bool init
+) {
+    t_fact *rs = &stack[vi];
+    if (rs->count == 0)
+        return 0;
+    t_ppow *rsp = &rs->ppow[rs->count - 1];
+    ulong p = rsp->p;
+    uint x = rsp->e + 1;
+    stack_remove(stack, stack2, vi, p, x - 1);
 
-        uint di;
-        for (di = 0; di <= dp->highdiv; ++di) {
-            if (di == dp->highdiv)
-                fail("x=%u is not a highdiv of t=%u\n", x, ti);
-            if (dp->div[di] == x)
+    t_level *prev_level = &levels[level - 1];
+    t_level *cur_level = &levels[level];
+    reset_vlevel(cur_level);
+
+    t_value *vp = &value[vi];
+    uint vil = cur_level->vlevel[vi];
+    uint ti = vp->alloc[vil - 1].t;
+    t_divisors *dp = &divisors[ti];
+    if (!init && dp->high <= (highpow ? 1 : 2))
+        fail("tried to insert %lu^%u at %u, but nothing to do there",
+                p, x, vi);
+
+    uint di;
+    uint high = init ? dp->alldiv : dp->highdiv;
+    for (di = 0; di <= high; ++di) {
+        if (di == high)
+            fail("x=%u is not a highdiv of t=%u\n", x, ti);
+        if (dp->div[di] == x)
+            break;
+    }
+    cur_level->vi = vi;
+    cur_level->ti = ti;
+    cur_level->di = di;
+
+    e_pux pux = prep_unforced_x(prev_level, cur_level, p, init);
+    switch (pux) {
+      case PUX_SKIP_THIS_X:
+        if (ti == x) {
+            /* legitimate skip after walk_1_set */
+            *jump = IS_NEXTX;
+            return 0;
+        }
+        fail("prep_nextt %u for %lu^%u at %u\n", pux, p, x, vi);
+      case PUX_NOTHING_TO_DO:
+        /* we have now acted on this */
+        *jump = IS_NEXT;
+        return 0;
+    }
+
+    level_setp(cur_level, p);
+    /* progress is shown just before we apply, so on recovery it is
+     * legitimate for the last one to fail */
+    if (!apply_single(prev_level, cur_level, vi, p, x)) {
+        --cur_level->vlevel[cur_level->vi];
+        *jump = IS_NEXT;
+        return 0;
+    }
+    ++level;
+    return 1;
+}
+
+/* On recovery, set up the recursion stack to the point we had reached.
+ * Returns IS_DEEPER if we should continue by recursing deeper from this
+ * point; returns IS_NEXTX if we should continue by advancing the power
+ * applied at the current position; returns IS_NEXT if we should continue
+ * by advancing the current level; and returns IS_MIDP if we should continue
+ * via walk_midp(). If the entire run is already complete, returns IS_FINISH.
+ */
+e_is insert_stack(void) {
+    e_is jump = IS_DEEPER;
+
+    if (istack) {
+        /* insert any init forced primes */
+        for (uint fpi = 0; fpi < forcedp; ++fpi)
+            insert_forced(istack, rstack, fpi, &jump, 1);
+
+        /* insert anything else */
+        for (uint vi = 0; vi < k; ++vi) {
+            t_fact *rs = &istack[vi];
+            while (rs->count) {
+                if (insert_float(istack, rstack, vi, &jump, 1))
+                    continue;
+                /* failure should mean that there is nothing more to do */
+                if (jump == IS_DEEPER)
+                    fail("panic: init_pattern complete, but going deeper");
+                return IS_FINISH;
+            }
+        }
+
+        for (uint l = final_level + 1; l < level; ++l)
+            levels[l].is_forced = 1;
+        /* do not recurse back into elements set by init_pattern */
+        final_level = level - 1;
+    }
+
+    if (rstack) {
+        /* insert recovery forced primes */
+        for (uint fpi = 0; fpi < forcedp; ++fpi) {
+            /* skip if already inserted via init pattern */
+            if ((levels[level - 1].fp_need & (1 << fpi)) == 0)
+                continue;
+            if (!insert_forced(rstack, NULL, fpi, &jump, 0))
+                goto insert_check;
+        }
+
+        /* insert the rest, in strategy-allocated order */
+        while (1) {
+            uint vi = best_v(&levels[level - 1]);
+            if (vi >= k)
+                break;
+            if (!insert_float(rstack, NULL, vi, &jump, 0))
                 break;
         }
-        cur_level->vi = vi;
-        cur_level->ti = ti;
-        cur_level->di = di;
 
-        e_pux pux = prep_unforced_x(prev_level, cur_level,
-                p, init_pattern ? 1 : 0);
-        switch (pux) {
-          case PUX_SKIP_THIS_X:
-            if (ti == x) {
-                /* legitimate skip after walk_1_set */
-                jump = IS_NEXTX;
-                goto insert_check;
-            }
-            fail("prep_nextt %u for %lu^%u at %u\n", pux, p, x, vi);
-          case PUX_NOTHING_TO_DO:
-            /* we have now acted on this */
-            jump = IS_NEXT;
-            goto insert_check;
-        }
-
-        level_setp(cur_level, p);
-        /* progress is shown just before we apply, so on recovery it is
-         * legitimate for the last one to fail */
-        if (!apply_single(prev_level, cur_level, vi, p, x)) {
-            --cur_level->vlevel[cur_level->vi];
-            jump = IS_NEXT;
-            goto insert_check;
-        }
-        ++level;
-    }
-  insert_check:
-    /* check we found them all */
-    for (uint vi = 0; vi < k; ++vi) {
-        t_fact *rs = &rstack[vi];
-        uint c = rs->count;
-        while (c) {
-            t_ppow pp = rs->ppow[--c];
-            if (!init_pattern)
+      insert_check:
+        /* check we have them all */
+        for (uint vi = 0; vi < k; ++vi) {
+            t_fact *rs = &rstack[vi];
+            uint c = rs->count;
+            while (c) {
+                t_ppow pp = rs->ppow[--c];
                 fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
-            t_level *prev_level = &levels[level - 1];
-            t_level *cur_level = &levels[level];
-            reset_vlevel(cur_level);
-            if (!apply_single(prev_level, cur_level, vi, pp.p, pp.e + 1))
-                fail("error injecting %lu^%u at v_%u", pp.p, pp.e, vi);
-            ++level;
+            }
         }
     }
-    if (init_pattern) {
-        for (uint l = 1; l < level; ++l)
-            levels[l].is_forced = 1;
-        if (check || modfix)
-            fail("fix the FIXME for chinese() combine first");
-        final_level = level;
-    }
+
     if (need_midp && midp_recover.valid) {
         if (jump != IS_DEEPER)
             fail("data mismatch");
@@ -4790,6 +4886,10 @@ void recurse(e_is jump_continue) {
         walk_v(prev_level, rwalk_from);
         goto derecurse;
     }
+    /* if we just completed a batch, must have a chance to trigger midp */
+    if (need_midp && prev_level->is_forced && !prev_level->fp_need
+            && !process_batch(prev_level))
+        goto derecurse;
 
     while (1) {
         ++countr;
@@ -4880,25 +4980,6 @@ void recurse(e_is jump_continue) {
           continue_forced:
             if (bi >= fp->count)
                 goto derecurse;
-            t_forcebatch *bp = forcebatch_p(fp, bi);
-            if (bp->x[bp->primary] == 0
-#if defined(TYPE_a)
-                && bp->primary != 0
-#endif
-            ) {
-                /* tail batch: continue with this prime unforced */
-                /* TODO: this may miss mandatory force on higher fixedp.
-                 * We cannot simply do a null apply() and step to the next,
-                 * because that would suppress allocation of this prime in
-                 * the unforced positions.
-                 * For now we disallow the broken case in prep_forcep().
-                 */
-                cur_level->is_forced = 0;
-                reset_vlevel(cur_level);
-                if (process_batch(prev_level))
-                    goto unforced;
-                goto derecurse;
-            }
             /* If apply succeeds, continue if the batch is still partial,
              * or if it is complete and we are ok to process it. Note that
              * process_batch directly invokes walk_midp() under -W.
@@ -5146,19 +5227,8 @@ int main(int argc, char **argv, char **envp) {
         free(tt);
 
         cvec_mult(cx0, &levels[0].rq, &levels[0].aq);
-        if (mpz_cmp_ui(levels[0].aq, 1) > 0) {
+        if (mpz_cmp_ui(levels[0].aq, 1) > 0)
             have_modfix = 1;
-            /* this abuse of final_level is safe, since it happens before
-             * insert_stack() */
-            if (levels[final_level].have_square)
-                fail("FIXME: don't know how to propagate efffects of -c and"
-                        " -m over pre-fixed square");
-            /* FIXME: we should be doing a chinese() combine here */
-            for (uint i = 1; i <= final_level; ++i) {
-                mpz_set(levels[i].aq, levels[0].aq);
-                mpz_set(levels[i].rq, levels[0].rq);
-            }
-        }
         done_modfix();
         if (!check)
             check = 1;
@@ -5166,12 +5236,12 @@ int main(int argc, char **argv, char **envp) {
     prep_presquare();
 
     e_is jump = IS_DEEPER;
-    if (rstack) {
+    if (rstack || istack) {
         jump = insert_stack();
         /* FIXME: temporary fix for recovering a single batch run.
          * It won't do the right thing for a range of batches.
          */
-        if (batch_alloc == 0) {
+        if (rstack && batch_alloc == 0) {
             if (opt_batch_min >= 0)
                 batch_alloc = opt_batch_min + 1;
             else
