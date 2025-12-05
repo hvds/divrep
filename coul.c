@@ -74,6 +74,7 @@ typedef enum {
     wv_startr, wv_endr, wv_qqr, wv_qqnext, wv_r, wv_rx, wv_temp,
     wv_x, wv_y, wv_x2, wv_y2,
     w1_v, w1_j, w1_r,           /* walk_1 */
+    w1_m, w1_mr,
     lp_x, lp_mint, lp_mint2,    /* limit_p */
     r_walk,                     /* recurse */
 
@@ -3025,6 +3026,13 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             plow = pmin - 1;
     }
 
+    mpz_divexact(Z(w1_m), cur_level->aq, aip->q);
+    bool need_mod = (mpz_cmp_ui(Z(w1_m), 1) == 0) ? 0 : 1;
+    if (need_mod) {
+        mpz_add_ui(Z(w1_mr), cur_level->rq, TYPE_OFFSET(vi));
+        mpz_fdiv_r(Z(w1_mr), Z(w1_mr), Z(w1_m));
+    }
+
     uint t[k];
     uint need_prime[k];
     uint need_other[k];
@@ -3067,6 +3075,11 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             --cur_level->vlevel[vi];
         }
         mpz_ui_pow_ui(Z(w1_v), p, x - 1);
+        if (need_mod) {
+            mpz_fdiv_r(Z(temp), Z(w1_v), Z(w1_m));
+            if (mpz_cmp(Z(temp), Z(w1_mr)) != 0)
+                continue;
+        }
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
         ++countw;
