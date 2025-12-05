@@ -774,7 +774,7 @@ bool cvec_mult(t_context *cx, mpz_t *mod_mult, mpz_t *mult) {
     return mpz_cmp_ui(cx->mult, 1);
 }
 
-/* Returns TRUE if v is suppressed by any known constraint, else FALSE.
+/* Returns FALSE if v is suppressed by any known constraint, else TRUE.
  */
 bool cvec_testv(t_context *cx, mpz_t v) {
     for (uint i = 0; i < cx->sc_count; ++i) {
