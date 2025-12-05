@@ -1,7 +1,8 @@
 name: Build Windows Release
 
 on:
-  workflow_dispatch:  # Allows manual triggering from Actions tab
+  push
+  # workflow_dispatch:  # Allows manual triggering from Actions tab
 
 jobs:
   build-windows:
@@ -61,9 +62,8 @@ jobs:
         7z a ../pcoul-windows-${{ steps.vars.outputs.short_sha }}.zip *
 
     # Option 1: Upload as workflow artifact (downloadable for 90 days)
-    # Set to 'false' to disable
     - name: Upload artifact
-      if: true
+      if: github.ref != 'refs/heads/master'
       uses: actions/upload-artifact@v4
       with:
         name: pcoul-windows-${{ steps.vars.outputs.short_sha }}
@@ -71,9 +71,8 @@ jobs:
         retention-days: 90
 
     # Option 2: Create or update draft release
-    # Set to 'true' to enable
     - name: Create or update draft release
-      if: false
+      if: github.ref == 'refs/heads/master'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: latest-windows

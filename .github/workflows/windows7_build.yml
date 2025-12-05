@@ -1,7 +1,8 @@
 name: Build Windows 7 Release
 
 on:
-  workflow_dispatch:  # Allows manual triggering from Actions tab
+  push
+  # workflow_dispatch:  # Allows manual triggering from Actions tab
 
 jobs:
   build-windows7:
@@ -17,6 +18,8 @@ jobs:
       uses: cygwin/cygwin-install-action@master
       with:
         packages: gcc-core,libgmp-devel,make,git,binutils
+        # https://www.cygwin.com/install.html "How can I install the last
+        # Cygwin version for an old, unsupported Windows version?" Windows 7
         site: http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2024/01/30/231215
         check-installer-sig: false
         check-sig: false
@@ -64,9 +67,8 @@ jobs:
         7z a ../pcoul-windows7-${{ steps.vars.outputs.short_sha }}.zip *
 
     # Option 1: Upload as workflow artifact (downloadable for 90 days)
-    # Set to 'false' to disable
     - name: Upload artifact
-      if: true
+      if: github.ref != 'refs/heads/master'
       uses: actions/upload-artifact@v4
       with:
         name: pcoul-windows7-${{ steps.vars.outputs.short_sha }}
@@ -74,9 +76,8 @@ jobs:
         retention-days: 90
 
     # Option 2: Create or update draft release
-    # Set to 'true' to enable
     - name: Create or update draft release
-      if: false
+      if: github.ref == 'refs/heads/master'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: latest-windows
