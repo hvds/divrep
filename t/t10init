@@ -1,0 +1,351 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+
+use Test::More;
+use File::Temp ();
+use lib 'lib';
+use Type;
+our $type;
+
+# for now
+local $ENV{DEBUG} = 1;
+
+if (1) {
+    # Test cases for -I without recovery
+    local $type = Type->new('o');
+
+    my $args65 = [qw{ -x1e20 6 5 }];
+    my $args63 = [qw{ -x1e20 6 3 }];
+    my $args124 = [qw{ -x1e20 -f3 -jp 12 4 }];
+    my $args124b = [qw{ -x1e20 -f2 -jp 12 4 }];
+
+    expect_log(q{fail if not enough elements},
+            502, '2 . 2^2 .', $args65);
+    expect_log(q{fail if too many elements},
+            511, '2 . 2^2 .', $args63);
+    # CHECKME: should we detect this elsewhere for more specific error?
+    expect_log(q{fail if power does not divide},
+            521, '. 2 . 2^3 .', $args65);
+    expect_log(q{fail if inconsistent (fixed) powers},
+            521, '. 2 . 2 .', $args65);
+    # CHECKME: should we detect this earlier?
+    expect_log(q{fail if not a quadratic root},
+            406, '. 2 5 2^2 .', $args65);
+    # CHECKME: should we detect this earlier?
+    expect_log(q{fail if inconsistent (floating) powers},
+            406, '. 11^2 . 11^2 .', $args65);
+
+    my $result65 = '10093613546512321';
+    my $result124 = '19940';
+    expect_result(q{simple find f(6,5)},
+            $result65, '', $args65);
+    expect_result(q{constraint on 2 for f(6,5)},
+            $result65, '. 2 . 2^2 .', $args65);
+    expect_result(q{constraint on 3 for f(6,5)},
+            $result65, '. . 3^2 . .', $args65);
+    # -f2 ignored for n % 3 != 0
+    expect_result(q{constraint on unfixed 3 for f(12,4)},
+            $result124, '. 3 . .', $args124b);
+    expect_result(q{constraint on float for f(6,5)},
+            $result65, '. . . . 5^2', $args65);
+    expect_result(q{constraint on 2+float for f(6,5)},
+            $result65, '. 2 . 2^2 5^2', $args65);
+    expect_result(q{constraint on 3+float for f(6,5)},
+            $result65, '. . 3^2 . 5^2', $args65);
+
+    my $result124b = 999649;
+    expect_result(q{constraint on sub-high float for f(12,4)},
+        $result124b, '. . . 83', $args124);
+    expect_result(q{constraint on 2 + sub-high for f(12,4)},
+        $result124b, '. 2 . 2^2.83', $args124);
+    expect_result(q{constraint on 3 + sub-high for f(12,4)},
+        $result124b, '. . 3 83', $args124);
+
+    count_batch(q{batches without constraint},
+            56, '', $args124);
+    count_batch(q{batches with empty constraint},
+            56, '. . . .', $args124);
+    count_batch(q{batches with constraint on 2},
+            6, '. 2^2 . 2', $args124);
+    count_batch(q{batches with constraint on 3},
+            8, '. 3^2 . .', $args124);
+    count_batch(q{batches with unfixed constraint on 3},
+            8, '. 3^2 . .', $args124b);
+    # float takes out batches with t=4 or t=6 accounted for, and some
+    # quadratic root violations
+    count_batch(q{batches with floating constraint},
+            21, '. . 5 .', $args124);
+    count_batch(q{batches in combination 2+float},
+            4, '. 2^2 5 2', $args124);
+    count_batch(q{batches in combination 3+float},
+            4, '. 3^2 5 .', $args124);
+
+    {
+        my $args124W = [qw{ -x1e12 -f3 -W100 -dW1 -Ls0 12 4 }];
+        my $expect = q{b0: 2^2.3 . 2 3 W(316223,3,2)};
+        for (
+            [q{start midp on init partial}, '2^2 . 2 .'],
+            [q{start midp on init full}, '2^2.3 . 2 3']
+        ) {
+            my($legend, $init) = @$_;
+            my $lines = run_test($type, [ qq{-I"$init"}, @$args124W], 1);
+            # on batch completion, we hit process_batch() and therefore midp
+            # before any diag, so we never show '2^2.3 . 2 3' alone
+            my $gotlines = $lines->{''};
+            if (!$gotlines || @$gotlines != 1 || $gotlines->[0] ne $expect) {
+                fail($legend);
+                diag_lines($lines);
+                diag($_) for @{ $gotlines // [] };
+            } else {
+                pass($legend);
+            }
+        }
+    }
+}
+
+if (1) {
+    # Test cases for recovery without -I
+    local $type = Type->new('o');
+
+    my $args65 = [qw{ -x1e20 -f3 6 5 }];
+    my $args65W = [qw{ -x1e20 -f3 -W1000 6 5 }];
+    expect_recover(q{recover empty}, $args65,
+        [],
+        'b*: . 2 . 2^2 .',
+    );
+    expect_recover(q{recover start}, $args65,
+        ['305 b*: . 2 . 2^2 .'],
+        'b*: . 2 3^2 2^2 .',
+    );
+    expect_recover(q{recover CRLF}, $args65,
+        ["305 b*: . 2 . 2^2 .\r"],
+        'b*: . 2 3^2 2^2 .',
+    );
+    expect_recover(q{recover process_batch}, $args65,
+        ['305 b*: . 2 3^2 2^2 .'],
+        'b0: . 2 3^2 2^2 5^2',
+    );
+    expect_recover(q{recover walk}, $args65,
+        ['305 b0: . 2 3^2 2^2 5^2: 31 / 55555555555555554'],
+        'b0: . 2 3^2 2^2 5^2: 31 / 55555555555555554',
+    );
+    expect_recover(q{recover candidate}, $args65,
+        ['202 Candidate 10093613546512321 (0.00s)',
+         '305 b0: . 2 3^2 2^2 5^2: 31 / 55555555555555554'],
+        'b0: . 2 3^2 2^2 5^2: 31 / 5607563081395',
+    );
+    expect_recover(q{recover midp}, $args65W,
+        ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0)'],
+        'b0: . 2 3^2 2^2 5^2 W(9929,3,0)',
+    );
+    # FIXME: we discard partial midp walk (it actually gets parsed as rwalk)
+    expect_recover(q{recover midp walk}, $args65W,
+        ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263'],
+        'b0: . 2 3^2 2^2 5^2 W(9929,3,0)',
+    );
+}
+
+if (1) {
+    # Test cases for recovery with -I
+    local $type = Type->new('o');
+
+    my $args65 = [qw{ -x1e20 6 5 }];
+    my $args124 = [qw{ -x1e10 -f3 12 4 }];
+    my $args124W = [qw{ -x1e10 -f3 -W1000 12 4 }];
+    expect_recover(q{recover empty -I empty},
+        [q{-I". . . . ."}, @$args65],
+        [],
+        'b*: . 2 . 2^2 .',
+    );
+    expect_recover(q{recover nonempty -I empty},
+        [q{-I". . . . ."}, @$args65],
+        ['305 b*: . 2 3^2 2^2 .'],
+        'b0: . 2 3^2 2^2 5^2',
+    );
+    expect_recover(q{recover empty -I constrain 2},
+        [q{-I". 2 . 2^2 ."}, @$args65],
+        [],
+        'b*: . 2 3^2 2^2 .',
+    );
+    expect_recover(q{recover process_batch -I constrain 2},
+        [q{-I". 2 . 2^2 ."}, @$args65],
+        ['305 b*: . 2 3^2 2^2 .'],
+        'b0: . 2 3^2 2^2 5^2',
+    );
+    expect_recover(q{recover start -I constrain 3},
+        [q{-I"3 . . 3"}, @$args124],
+        ['305 b*: 3 . . 3'],
+        'b0: 3.2^2 . 2 3',
+    );
+    expect_recover(q{recover recurse -I constrain 3},
+        [q{-I"3 . . 3"}, @$args124],
+        ['305 b0: 3.2^2 . 2 3'],
+        'b0: 3.2^2 5^2 2 3',
+    );
+    expect_recover(q{recover start walk -I constrain 3},
+        [q{-I"3 . . 3"}, @$args124],
+        ['305 b0: 3.2^2 5^2 2.11^2 3.7^2'],
+        'b0: 3.2^2 5^2 2.11^2 3.7^2: 0 / 2810',
+    );
+    expect_recover(q{recover walk -I constrain 3},
+        [q{-I"3 . . 3"}, @$args124],
+        ['305 b0: 3.2^2 5^2 2.11^2 3.7^2: 3 / 2810'],
+        'b0: 3.2^2 5^2 2.11^2 3.7^2: 3 / 2810',
+    );
+    expect_recover(q{recover start -I constrain float},
+        [q{-I". . . 5^2"}, @$args124],
+        ['305 b*: . . . 5^2'],
+        'b*: 2^2 . 2 5^2',
+    );
+    expect_recover(q{recover batch -I constrain float},
+        [q{-I". . . 5^2"}, @$args124],
+        ['305 b*: 2^2 . 2 5^2'],
+        'b0: 2^2.3 . 2 5^2.3',
+    );
+    expect_recover(q{recover recurse -I constrain float},
+        [q{-I". . . 5^2"}, @$args124],
+        ['305 b0: 2^2.3 . 2 5^2.3'],
+        'b0: 2^2.3 7^2 2 5^2.3',
+    );
+    expect_recover(q{recover start walk -I constrain float},
+        [q{-I". . . 5^2"}, @$args124],
+        ['305 b0: 2^2.3 7^2 2.11^2 5^2.3'],
+        'b0: 2^2.3 7^2 2.11^2 5^2.3: 0 / 2810',
+    );
+    expect_recover(q{recover walk -I constrain float},
+        [q{-I". . . 5^2"}, @$args124],
+        ['305 b0: 2^2.3 7^2 2.11^2 5^2.3: 22 / 2810'],
+        'b0: 2^2.3 7^2 2.11^2 5^2.3: 22 / 2810',
+    );
+    expect_recover(q{recover start -I constrain 3+float},
+        [q{-I"3 . . 3.5^2"}, @$args124],
+        ['305 b*: 3 . . 3.5^2'],
+        'b0: 3.2^2 . 2 3.5^2',
+    );
+    expect_recover(q{recover recurse -I constrain 3+float},
+        [q{-I"3 . . 3.5^2"}, @$args124],
+        ['305 b0: 3.2^2 . 2 3.5^2'],
+        'b0: 3.2^2 7^2 2 3.5^2',
+    );
+    expect_recover(q{recover start walk -I constrain 3+float},
+        [q{-I"3 . . 3.5^2"}, @$args124],
+        ['305 b0: 3.2^2 7^2 2.11^2 3.5^2'],
+        'b0: 3.2^2 7^2 2.11^2 3.5^2: 0 / 2810',
+    );
+    expect_recover(q{recover walk -I constrain 3+float},
+        [q{-I"3 . . 3.5^2"}, @$args124],
+        ['305 b0: 3.2^2 7^2 2.11^2 3.5^2: 22 / 2810'],
+        'b0: 3.2^2 7^2 2.11^2 3.5^2: 22 / 2810',
+    );
+    expect_recover(q{recover midp constrain 3+float},
+        [q{-I"3 . . 3.5^2"}, @$args124W],
+        ['305 b0: 3.2^2 . 2 3.5^2 W(26681,3,2)'],
+        'b0: 3.2^2 . 2 3.5^2 W(26681,3,2)'
+    );
+    expect_recover(q{recover midp walk constrain 3+float},
+        [q{-I"3 . . 3.5^2"}, @$args124W],
+        ['305 b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 2'],
+        'b0: 3.2^2 . 2 3.5^2 W(2633,3,2)'
+    );
+}
+
+done_testing();
+exit 0;
+
+sub temp_log {
+    my($content) = @_;
+    my $fh = File::Temp->new;
+    my $path = $fh->filename;
+    print $fh "$_\n" for @$content;
+    $fh->close;
+    return $fh;
+}
+
+sub expect_recover {
+    my($legend, $args, $content, $expect) = @_;
+    my $fh = temp_log($content);
+    my $path = $fh->filename;
+    my $lines = run_test($type, [ '-dW1', "-r$path", @$args ], 1)
+            // return;
+    my $gotlines = $lines->{''};
+    if (!$gotlines) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    if ($gotlines->[-1] eq $expect) {
+        pass($legend);
+    } else {
+        fail($legend);
+        diag_lines($lines);
+        diag($_) for @$gotlines;
+    }
+    return;
+}
+
+sub count_batch {
+    my($legend, $count, $I, $args) = @_;
+    my $fargs = length($I) ? qq{-I"$I"} : undef;
+    my $lines = run_test($type, [ '-a', grep defined, $fargs, @$args ])
+            // return;
+    my $got = @{ $lines->{203} // [] };
+    is($got, $count, $legend) or diag_lines($lines);
+    return;
+}
+
+sub expect_result {
+    my($legend, $expect, $I, $args) = @_;
+    my $fargs = length($I) ? qq{-I"$I"} : undef;
+    my $lines = run_test($type, [ grep defined, $fargs, @$args ])
+            // return;
+    my $gotlines = $lines->{200};
+    if (!$gotlines) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    my $line = $gotlines->[-1];
+    my($got) = ($line =~ / = (\d+)/) or do {
+        fail($legend);
+        diag($line);
+        return;
+    };
+    is($got, $expect, $legend);
+    return;
+}
+
+sub expect_log {
+    my($legend, $code, $I, $args) = @_;
+    my $fargs = length($I) ? qq{-I"$I"} : undef;
+    my $lines = run_test($type, [ grep defined, $fargs, @$args ])
+            // return;
+    ok($lines->{$code}, $legend) or diag_lines($lines);
+    return;
+}
+
+sub diag_lines {
+    my($lines) = @_;
+    diag("saw log lines: @{[ join ', ', sort keys %$lines ]}");
+    return;
+}
+
+sub run_test {
+    my($type, $args, $loose) = @_;
+    my $prog = $type->prog('cul');
+    if ($ENV{DEBUG}) {
+        $prog =~ s/pc/dpc/
+                or die "Could not munge program name '$prog'";
+    }
+    my %lines;
+    open my $PIPE, "$prog @$args |"
+            or die "Could not open '$prog @$args'";
+    while (<$PIPE>) {
+        chomp;
+        /^(\d+)/ ? push(@{ $lines{$1} }, $_)
+            : $loose ? push(@{ $lines{''} }, $_)
+            : diag($_);
+    }
+    close $PIPE;
+    return \%lines;
+}
