@@ -1186,15 +1186,24 @@ void parse_305(char *s, t_fact **stackp) {
 
     if (s[0] == 'b') {
         int off = 0;
-        if (EOF == sscanf(s, "b%u: %n", &batch_alloc, &off))
-            fail("error parsing 305 line '%s'", s);
+        sscanf(s, "b%u: %n", &batch_alloc, &off);
+        if (off == 0) {
+            batch_alloc = -1;
+            sscanf(s, "b*: %n", &off);
+            if (off == 0)
+                fail("error parsing 305 line '%s'", s);
+        }
         s += off;
         ++batch_alloc;  /* we always point to the next batch */
     }
         
     for (int i = 0; i < k; ++i) {
         if (i) {
-            assert(s[0] == ' ');
+            if (s[0] != ' ') {
+                if (s[0] == 0)
+                    fail("Unexpected end of init or recovery pattern");
+                fail("Unexpected character in init or recovery pattern");
+            }
             ++s;
         }
         if (s[0] == '.') {
@@ -1231,16 +1240,19 @@ void parse_305(char *s, t_fact **stackp) {
             midp_recover.x = 3;
 #endif
         } else {
-            assert(s[0] == ',');
+            if (s[0] != ',')
+                fail("unexpected character in W(...) recovery");
             ++s;
             midp_recover.vi = strtoul(s, &s, 10);
         }
-        assert(s[0] == ')');
+        if (s[0] != ')')
+            fail("unexpected character in W(...) recovery");
         ++s;
         midp_recover.valid = 1;
     }
     if (s[0] == ':') {
-        assert(s[1] == ' ');
+        if (s[1] != ' ')
+            fail("unexpected character at end of recvoery pattern");
         s += 2;
         if (strncmp("t=1", s, 3) == 0)
             s += 3; /* ignore */
@@ -1250,10 +1262,11 @@ void parse_305(char *s, t_fact **stackp) {
             while (isdigit(*s))
                 ++s;
         } else {
-            int from_start, from_end, to_start, to_end;
+            int from_start, from_end, to_start, to_end = 0;
             have_rwalk = 1;
-            if (EOF == sscanf(s, "%n%*[0-9]%n / %n%*[0-9]%n ",
-                    &from_start, &from_end, &to_start, &to_end))
+            sscanf(s, "%n%*[0-9]%n / %n%*[0-9]%n ",
+                    &from_start, &from_end, &to_start, &to_end);
+            if (to_end == 0)
                 fail("could not parse 305 from/to: '%s'", s);
             s[from_end] = 0;
             mpz_init_set_str(rwalk_from, &s[from_start], 10);
@@ -1264,33 +1277,42 @@ void parse_305(char *s, t_fact **stackp) {
             s = &s[to_end];
         }
     }
-    if (s[0] == 0 || s[0] == '\n' || (s[0] == ' ' && s[1] == 0))
-        dtime = 0;
-    else {
+    while (s[0] == ' ')
+        ++s;
+    if (s[0] == '(') {
         int off = 0;
-        if (EOF == sscanf(s, " (%lfs)%n", &dtime, &off))
-            fail("could not parse 305 time: '%s'", s);
-#ifdef TRACK_STATS
+        sscanf(s, "(%lfs)%n", &dtime, &off);
+        if (off == 0)
+            fail("could not parse recovery time: '%s'", s);
         s += off;
-        if (EOF != sscanf(s, " [")) {
-            s += 2;
-            for (uint i = 0; i < k; ++i) {
-                if (i) {
-                    if (s[0] == ' ')
-                        ++s;
-                    else
-                        fail("could not parse 305 time: '%s'", s);
-                }
-                if (EOF == sscanf(s, "%lu%n", &count_bad[i], &off))
-                    fail("could not parse 305 time: '%s'", s);
-                s += off;
+    } else
+        dtime = 0;
+    while (s[0] == ' ')
+        ++s;
+#ifdef TRACK_STATS
+    if (s[0] == '[') {
+        ++s;
+        for (uint i = 0; i < k; ++i) {
+            if (i) {
+                if (s[0] != ' ')
+                    fail("could not parse recovery stats: '%s'", s);
+                ++s;
             }
-            if (s[0] != ']')
-                fail("could not parse 305 time: '%s'", s);
-            ++s;
+            int off = 0;
+            sscanf(s, "%lu%n", &count_bad[i], &off);
+            if (off == 0)
+                fail("could not parse recovery stats: '%s'", s);
+            s += off;
         }
-#endif
+        if (s[0] != ']')
+            fail("could not parse recovery stats: '%s'", s);
+        ++s;
     }
+#endif
+    while (s[0] == ' ')
+        ++s;
+    if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
+        fail("unexpected text at end of init/recovery pattern: %s", s);
     if (is_W && !need_midp)
         fail("recovery expected -W option");
     t0 -= dtime;
@@ -1328,10 +1350,11 @@ void recover(FILE *fp) {
             len305 = len;
             len = lt;
         } else if (strncmp("202 ", curbuf, 4) == 0) {
-            int start, end;
+            int start, end, off = 0;
             mpz_t cand;
-            if (EOF == sscanf(curbuf, "202 Candidate %n%*[0-9]%n (%*[0-9.]s)\n",
-                    &start, &end))
+            sscanf(curbuf, "202 Candidate %n%*[0-9]%n (%*[0-9.]s)%n",
+                    &start, &end, &off);
+            if (off == 0)
                 fail("error parsing 202 line '%s'", curbuf);
             curbuf[end] = 0;
             mpz_init_set_str(cand, &curbuf[start], 10);
@@ -5236,18 +5259,8 @@ int main(int argc, char **argv, char **envp) {
     prep_presquare();
 
     e_is jump = IS_DEEPER;
-    if (rstack || istack) {
+    if (rstack || istack)
         jump = insert_stack();
-        /* FIXME: temporary fix for recovering a single batch run.
-         * It won't do the right thing for a range of batches.
-         */
-        if (rstack && batch_alloc == 0) {
-            if (opt_batch_min >= 0)
-                batch_alloc = opt_batch_min + 1;
-            else
-                ++batch_alloc;
-        }
-    }
     if (jump != IS_FINISH)
         recurse(jump);
     keep_diag();
