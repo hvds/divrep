@@ -1,6 +1,4 @@
 TODO (high priority):
-- calculate even more accurate mintau()
-  - and beyond oul for suppressed factors
 - fix linear search in pell.c:contfrac()
 - 'coul -p20 -x1e80 66 5' spends all its time finding allrootmod()
   results, almost all of which are immediately greater than endr
@@ -13,14 +11,11 @@ TODO (high priority):
 
 CHECKME:
 - inject failures can clash with walk_1() successes
-- can best_v do better by picking the most constrained?
 
 TODO (lower priority):
 - on recover, parse 001 line to check consistency of critical options
 - reimplement small_divmod()
 - reimplement next_prime()
 - cater for end value > 2^64 in walk_v, if needed
-- add support for -o
-  - build it over parallel is_tau() checks, so it can be configurable
 - prep the simple_valuation() checks for apply_batch()
 - for unforced primes, do constant apply_alloc() work in advance
