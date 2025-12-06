@@ -1082,8 +1082,8 @@ void fail_silent(void) {
 void fail(char *format, ...) {
     va_list ap;
     va_start(ap, format);
-    gmp_vfprintf(stderr, format, ap);
-    fprintf(stderr, "\n");
+    gmp_vprintf(format, ap);
+    printf("\n");
     va_end(ap);
     /* we accept leaks on fatal error, but should close the log file */
     if (rfp)
@@ -1191,7 +1191,7 @@ void parse_305(char *s, t_fact **stackp) {
             batch_alloc = -1;
             sscanf(s, "b*: %n", &off);
             if (off == 0)
-                fail("error parsing 305 line '%s'", s);
+                fail("501 error parsing 305 line '%s'", s);
         }
         s += off;
         ++batch_alloc;  /* we always point to the next batch */
@@ -1201,8 +1201,8 @@ void parse_305(char *s, t_fact **stackp) {
         if (i) {
             if (s[0] != ' ') {
                 if (s[0] == 0)
-                    fail("Unexpected end of init or recovery pattern");
-                fail("Unexpected character in init or recovery pattern");
+                    fail("502 Unexpected end of init or recovery pattern");
+                fail("503 Unexpected character in init or recovery pattern");
             }
             ++s;
         }
@@ -1233,7 +1233,7 @@ void parse_305(char *s, t_fact **stackp) {
         if (s[0] == ')') {
 #if 1
             /* new version uses different order, cannot reliably recover */
-            fail("cannot recover from old-style 'W(...)' entry");
+            fail("504 cannot recover from old-style 'W(...)' entry");
 #else
             /* old version had x fixed to 3 */
             midp_recover.vi = midp_recover.x;
@@ -1241,18 +1241,18 @@ void parse_305(char *s, t_fact **stackp) {
 #endif
         } else {
             if (s[0] != ',')
-                fail("unexpected character in W(...) recovery");
+                fail("505 unexpected character in W(...) recovery");
             ++s;
             midp_recover.vi = strtoul(s, &s, 10);
         }
         if (s[0] != ')')
-            fail("unexpected character in W(...) recovery");
+            fail("505 unexpected character in W(...) recovery");
         ++s;
         midp_recover.valid = 1;
     }
     if (s[0] == ':') {
         if (s[1] != ' ')
-            fail("unexpected character at end of recvoery pattern");
+            fail("506 unexpected character at end of recvoery pattern");
         s += 2;
         if (strncmp("t=1", s, 3) == 0)
             s += 3; /* ignore */
@@ -1267,7 +1267,7 @@ void parse_305(char *s, t_fact **stackp) {
             sscanf(s, "%n%*[0-9]%n / %n%*[0-9]%n ",
                     &from_start, &from_end, &to_start, &to_end);
             if (to_end == 0)
-                fail("could not parse 305 from/to: '%s'", s);
+                fail("507 could not parse 305 from/to: '%s'", s);
             s[from_end] = 0;
             mpz_init_set_str(rwalk_from, &s[from_start], 10);
             s[to_end] = 0;
@@ -1283,7 +1283,7 @@ void parse_305(char *s, t_fact **stackp) {
         int off = 0;
         sscanf(s, "(%lfs)%n", &dtime, &off);
         if (off == 0)
-            fail("could not parse recovery time: '%s'", s);
+            fail("508 could not parse recovery time: '%s'", s);
         s += off;
     } else
         dtime = 0;
@@ -1295,26 +1295,26 @@ void parse_305(char *s, t_fact **stackp) {
         for (uint i = 0; i < k; ++i) {
             if (i) {
                 if (s[0] != ' ')
-                    fail("could not parse recovery stats: '%s'", s);
+                    fail("509 could not parse recovery stats: '%s'", s);
                 ++s;
             }
             int off = 0;
             sscanf(s, "%lu%n", &count_bad[i], &off);
             if (off == 0)
-                fail("could not parse recovery stats: '%s'", s);
+                fail("509 could not parse recovery stats: '%s'", s);
             s += off;
         }
         if (s[0] != ']')
-            fail("could not parse recovery stats: '%s'", s);
+            fail("509 could not parse recovery stats: '%s'", s);
         ++s;
     }
 #endif
     while (s[0] == ' ')
         ++s;
     if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
-        fail("unexpected text at end of init/recovery pattern: %s", s);
+        fail("511 unexpected text at end of init/recovery pattern: %s", s);
     if (is_W && !need_midp)
-        fail("recovery expected -W option");
+        fail("512 recovery expected -W option");
     t0 -= dtime;
 }
 
@@ -4689,7 +4689,7 @@ bool insert_forced(
     }
     if (bi >= fp->count) {
         if (!has_tail(fp))
-            fail("no batch found for %u^{%u-1} at v_%u", p, maxx, mini);
+            fail("521 no batch found for %u^{%u-1} at v_%u", p, maxx, mini);
         /* the power present doesn't match a batch, so it must be a floating
          * prime on the tail */
         bi = fp->count - 1;
@@ -4765,7 +4765,7 @@ static inline bool insert_float(
     uint high = init ? dp->alldiv : dp->highdiv;
     for (di = 0; di <= high; ++di) {
         if (di == high)
-            fail("x=%u is not a highdiv of t=%u\n", x, ti);
+            fail("522 x=%u is not a highdiv of t=%u\n", x, ti);
         if (dp->div[di] == x)
             break;
     }
