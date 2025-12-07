@@ -280,6 +280,7 @@ uint check_chunk = 0;   /* combine moduli into chunks of this size */
 
 bool debugw = 0;    /* diag and keep every case seen (excluding walk) */
 bool debugW = 0;    /* diag and keep every case seen (including walk) */
+uint debugw_count = 0;  /* debugw/W only for the first n iterations */
 bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
 bool debugB = 0;    /* show every batch id */
@@ -696,9 +697,17 @@ void diag_any(t_level *cur_level, bool need_disp) {
     if (need_diag) {
         if (need_disp)
             diag("%s%s", diag_buf, aux_buf);
-        if (debugw)
+        if (debugw) {
             keep_diag();
-        else
+            if (debugw_count) {
+                --debugw_count;
+                if (debugw_count == 0) {
+                    debugw = 0;
+                    debugW = 0;
+                    need_diag = 0;
+                }
+            }
+        } else
             need_diag = 0;
         if (death_delay)
             if (seconds(t1 - t0) >= death_delay) {
@@ -2091,8 +2100,10 @@ void init_post(void) {
     midpp = malloc(sizeof(t_midpp) * maxmidpp);
 
     if (debugw) {
-        diag_delay = 0;
-        need_work = need_diag = 1;
+        if (!debugw_count)
+            diag_delay = 0;
+        need_work = 1;
+        need_diag = 1;
     }
     diagt = diag_delay;
     if (rfp)
@@ -5147,10 +5158,12 @@ int main(int argc, char **argv, char **envp) {
               }
               case 'w':
                 debugw = 1;
+                debugw_count = strtoul(&arg[3], NULL, 10);
                 break;
               case 'W':
                 debugw = 1;
                 debugW = 1;
+                debugw_count = strtoul(&arg[3], NULL, 10);
                 break;
               case 'b':
                 debugb = 1;
