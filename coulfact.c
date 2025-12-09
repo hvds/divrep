@@ -27,7 +27,7 @@ void add_fact(t_fact *f, t_ppow pp) {
 void reverse_fact(t_fact *f) {
     t_ppow pp;
     uint c = f->count;
-    for (uint i = 0; i + i < c - 1; ++i) {
+    for (uint i = 0; i + i + 1 < c; ++i) {
         uint j = c - i - 1;
         pp = f->ppow[i];
         f->ppow[i] = f->ppow[j];
