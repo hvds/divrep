@@ -59,6 +59,8 @@ if (1) {
         $result124b, '. . . 83', $args124);
     expect_result(q{constraint on 2 + sub-high for f(12,4)},
         $result124b, '. 2 . 2^2.83', $args124);
+    expect_result(q{allow products in -I},
+        $result124b, '1 2 1 332', $args124);
     expect_result(q{constraint on 3 + sub-high for f(12,4)},
         $result124b, '. . 3 83', $args124);
 

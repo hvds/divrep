@@ -1223,8 +1223,11 @@ void parse_305(char *s, t_fact **stackp) {
             pp.p = strtoul(s, &s, 10);
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
             if (pp.p == 1 || pp.e == 0)
-                continue;
-            add_fact(&stack[i], pp);
+                ;
+            else if (pp.e == 1)
+                simple_fact(pp.p, &stack[i]);
+            else
+                add_fact(&stack[i], pp);
             if (s[0] != '.')
                 break;
             ++s;
