@@ -3002,7 +3002,10 @@ void walk_1(t_level *cur_level, uint vi) {
 }
 
 /* test a set of cases where v_i will have all divisors accounted for */
-void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
+void walk_1_set(
+    t_level *prev_level, t_level *cur_level,
+    uint vi, ulong plow, ulong phigh, uint x
+) {
 #ifdef SQONLY
     if (!cur_level->have_square)
         return;
@@ -3026,10 +3029,10 @@ void walk_1_set(t_level *cur_level, uint vi, ulong plow, ulong phigh, uint x) {
             plow = pmin - 1;
     }
 
-    mpz_divexact(Z(w1_m), cur_level->aq, aip->q);
+    mpz_divexact(Z(w1_m), prev_level->aq, aip->q);
     bool need_mod = (mpz_cmp_ui(Z(w1_m), 1) == 0) ? 0 : 1;
     if (need_mod) {
-        mpz_add_ui(Z(w1_mr), cur_level->rq, TYPE_OFFSET(vi));
+        mpz_add_ui(Z(w1_mr), prev_level->rq, TYPE_OFFSET(vi));
         mpz_fdiv_r(Z(w1_mr), Z(w1_mr), Z(w1_m));
     }
 
@@ -4472,7 +4475,7 @@ e_pux prep_unforced_x(
         return PUX_SKIP_THIS_X; /* nothing to do here */
     if (nextt == 1) {
         cur_level->have_min = prev_level->have_min;
-        walk_1_set(cur_level, vi, p, limp, x);
+        walk_1_set(prev_level, cur_level, vi, p, limp, x);
         return PUX_SKIP_THIS_X;
     }
 
