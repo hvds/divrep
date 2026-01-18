@@ -145,6 +145,7 @@ t_forcep *forcep = NULL;
 uint forcedp;
 uint force_all = 0;
 uint unforce_all = 0;
+bool restrict_forced = 0;
 
 /* When allocation forces the residue of some v_i to be square, we want
  * to calculate the roots mod every allocation (before and after this one),
@@ -1791,6 +1792,8 @@ void prep_forcep(void) {
                 uint fx = d->div[di];
                 if (fx == 1)
                     continue;
+                if (restrict_forced && maxp[fx - 1] < p)
+                    continue;
                 uint status = test_forcep(fbp, p, vi, fx);
                 if (status == TFP_BAD)
                     continue;
@@ -2089,12 +2092,12 @@ void init_post(void) {
     init_rootmod(maxlevel);
     prep_fact();
     prep_maxforce();
+    prep_mp();  /* maxp[], minp[], midp[] */
     prep_forcep();
     if (debugf)
         disp_forcep();
     prep_primes();  /* needs forcedp */
     prep_mintau();
-    prep_mp();  /* maxp[], minp[], midp[] */
     sqg = malloc(maxfact * sizeof(uint));
 
     uint maxmidpp = 0;
@@ -5117,9 +5120,12 @@ int main(int argc, char **argv, char **envp) {
             skip_recover = 1;
         else if (arg[1] == 'I')
             init_pattern = &arg[2];
-        else if (arg[1] == 'f')
-            force_all = strtoul(&arg[2], NULL, 10);
-        else if (arg[1] == 'F') {
+        else if (arg[1] == 'f') {
+            if (arg[2] == 'r')
+                restrict_forced = 1;
+            else
+                force_all = strtoul(&arg[2], NULL, 10);
+        } else if (arg[1] == 'F') {
             unforce_all = strtoul(&arg[2], NULL, 10);
             if (unforce_all == 0)
                 unforce_all = 1;
