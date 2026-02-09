@@ -3426,7 +3426,7 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     apply_pfreev(prev, cur, p);
     if (p == sprimes[cur->nextpi])
         cur->nextpi = find_nextpi(cur, cur->nextpi);
-    cur->maxp = (p > prev->maxp) ? p : prev->maxp;
+    cur->maxp = (x > 1 && p > prev->maxp) ? p : prev->maxp;
 }
 
 /* Apply a notional level of p^0 at v_0.
@@ -5052,7 +5052,7 @@ void recurse(e_is jump_continue) {
                 goto continue_unforced_x;
             if (p <= prev_level->maxp)
                 for (uint li = 1; li < level; ++li)
-                    if (p == levels[li].p)
+                    if (p == levels[li].p && levels[li].x > 1)
                         goto redo_unforced;
             /* note: this returns 0 if t=1 */
             if (!apply_single(prev_level, cur_level, cur_level->vi, p, cur_level->x)) {
