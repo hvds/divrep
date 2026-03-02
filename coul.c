@@ -1334,7 +1334,7 @@ void parse_305(char *s, t_fact **stackp) {
 void recover(FILE *fp) {
     char *last305 = NULL;
     char *curbuf = NULL;
-    size_t len = 120, len305 = 0, len202 = 0;
+    size_t len = 120, len305 = 0;
 
     while (1) {
         ssize_t nread = getline(&curbuf, &len, fp);
