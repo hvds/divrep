@@ -2154,8 +2154,11 @@ void report_init(FILE *fp, char *prog) {
         } else
             fprintf(fp, " -j%u", strategy);
     }
-    if (opt_print)
+    if (opt_print) {
         fprintf(fp, " -o");
+        if (opt_flake)
+            fprintf(fp, "%u", opt_flake);
+    }
     if (limp_cap)
         fprintf(fp, " -P%lu", limp_cap);
     if (sminp || smaxp) {
