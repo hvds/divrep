@@ -773,7 +773,7 @@ bool candidate(mpz_t c) {
         ++seen_best;
     }
     if (improve_max && mpz_cmp(c, zmax) <= 0)
-        mpz_set(zmax, c);
+        mpz_sub_ui(zmax, c, 1);
     return improve_max;
 }
 
