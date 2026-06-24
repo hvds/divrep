@@ -898,9 +898,8 @@ t_mint_capped *mint_capped(t_mint *base, uint pdiff, bool create) {
 }
 
 void mint_init_base(t_mint ***p) {
-    uint maxtau = n / divisors[n].high;
-    t_divisors *dp = &divisors[maxtau];
-    *p = calloc(maxtau + 1, sizeof(t_mint *));
+    t_divisors *dp = &divisors[n];
+    *p = calloc(n + 1, sizeof(t_mint *));
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint f = dp->div[di];
         if (f == 1)
