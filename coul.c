@@ -3104,7 +3104,9 @@ void walk_1_set(
     mpz_divexact(Z(w1_m), prev_level->aq, aip->q);
     bool need_mod = (mpz_cmp_ui(Z(w1_m), 1) == 0) ? 0 : 1;
     if (need_mod) {
+        /* we need p == (rq + TYPE_OFFSET(vi)) / aip->q (mod aq / aip->q) */
         mpz_add_ui(Z(w1_mr), prev_level->rq, TYPE_OFFSET(vi));
+        mpz_divexact(Z(w1_mr), Z(w1_mr), aip->q);
         mpz_fdiv_r(Z(w1_mr), Z(w1_mr), Z(w1_m));
     }
 
