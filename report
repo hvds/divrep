@@ -105,7 +105,8 @@ sub report_g {
         if ($g->depend && !$g->complete) {
             $g->update_depends($db);
         }
-        next if $g->checked == 0 && !$g->complete;
+        my $knowng = knowng($g);
+        next if $g->checked == 0 && !$g->complete && $knowng == 0;
         next if $opt_composite && (
 #            $g->prime || $g->complete || $g->depend
             $g->complete || $g->depend
@@ -136,13 +137,16 @@ sub report_g {
         } elsif ($g->depend) {
             printf "g(%s) = g(%s)\n", $g->n, $g->depend_n;
         } else {
-            my $ming = $g->ming;
-            my $knowng = knowng($g);
-            $ming = "$ming/$knowng" if $ming < $knowng;
-            my $bisected = ($knowng < $g->maxg)
-                    ? sprintf(" b%s", $g->bisected // 0) : '';
-            printf "g(%s) in [%s .. %s%s], checked to %s\n",
-                    $g->n, $ming, $g->maxg, $bisected // 0, $g->checked;
+            my $range = $g->ming;
+            $range = "$range/$knowng" if $range < $knowng;
+            my $maxg = $g->maxg;
+            if ($knowng < $maxg) {
+                $range = "$range .. $maxg";
+                my $bisected = $g->bisected // 0;
+                $range = "$range b$bisected" if $bisected;
+            }
+            printf "g(%s) in [%s], checked to %s\n",
+                    $g->n, $range, $g->checked;
         }
     }
     return;
