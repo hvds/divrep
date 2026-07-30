@@ -345,8 +345,10 @@ double diag_delay = DIAG, log_delay = LOG, death_delay = 0, diagt, logt;
 ulong countr, countw, countwi;
 #define MAX_DEC_ULONG 20
 #define MAX_DEC_POWER 5
-#define DIAG_BUFSIZE (6 + MAX_DEC_ULONG + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1) + 1)
+#define MAX_EXPANDED 5
+#define DIAG_BUFSIZE (6 + MAX_DEC_ULONG + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1 + MAX_EXPANDED) + 1)
 char *diag_buf = NULL;
+bool need_expanded_diag = 0;
 uint aux_buf_size = 0;
 char *aux_buf = NULL;
 
@@ -504,6 +506,15 @@ void prep_show_v(t_level *cur_level) {
                 offset += sprintf(&diag_buf[offset], "%lu", ap->p);
                 if (ap->x > 2)
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
+                if (need_expanded_diag) {
+                    for (uint li = 0; li < level; ++li) {
+                        t_level *lpi = &levels[li];
+                        if (lpi->vi != vi || lpi->p != ap->p)
+                            continue;
+                        offset += sprintf(&diag_buf[offset], "(%u)", li);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -719,8 +730,9 @@ void diag_any(t_level *cur_level, bool need_disp) {
     }
 
     if (rfp && need_log) {
+        char *code = (need_expanded_diag) ? "315" : "305";
 #ifdef TRACK_STATS
-        fprintf(rfp, "305 %s%s (%.2fs) [", diag_buf, aux_buf, seconds(t1));
+        fprintf(rfp, "%s %s%s (%.2fs) [", code, diag_buf, aux_buf, seconds(t1));
         for (uint i = 0; i < k; ++i) {
             if (i)
                 fprintf(rfp, " ");
@@ -728,10 +740,11 @@ void diag_any(t_level *cur_level, bool need_disp) {
         }
         fprintf(rfp, "]\n");
 #else
-        fprintf(rfp, "305 %s%s (%.2fs)\n", diag_buf, aux_buf, seconds(t1));
+        fprintf(rfp, "%s %s%s (%.2fs)\n", code, diag_buf, aux_buf, seconds(t1));
 #endif
         logt = t1 + log_delay;
         need_log = 0;
+        need_expanded_diag = 0;
     }
     if (!debugw)
         need_work = 0;
@@ -757,6 +770,33 @@ void diag_walk_pell(t_level *cur_level, uint pc) {
     diag_any(cur_level, !(debugw && !debugW && pc));
 }
 
+void updated_zmax(void) {
+    /* if we are allocating p^{2^m-1}, changing zmax affects calculation
+     * of best_v(). Next progress diag needs to be in expanded form so
+     * that recovery can sync correctly, and existing cached limits must
+     * be recalculated.
+     */
+    if (highpow) {
+        need_expanded_diag = 1;
+        for (uint li = final_level + 1; li < level; ++li) {
+            t_level *lp = &levels[li];
+            if (lp->p == 0)
+                continue;
+            uint vi = lp->vi;
+            t_value *v = &value[vi];
+            uint vlevel = lp->vlevel[vi];
+            t_allocation *ap = &v->alloc[vlevel - 1];
+            if (ispow2(ap->t)) {
+                mpz_add_ui(ap->lim, zmax, TYPE_OFFSET(vi));
+                if (ap->t > 1) {
+                    mpz_fdiv_q(ap->lim, ap->lim, ap->q);
+                    mpz_root(ap->lim, ap->lim, divisors[ap->t].sumpm);
+                }
+            }
+        }
+    }
+}
+
 /* Record a found candidate; returns FALSE if we should continue testing
  * larger candidates with the current set of allocations.
  */
@@ -772,8 +812,10 @@ bool candidate(mpz_t c) {
         mpz_set(best, c);
         ++seen_best;
     }
-    if (improve_max && mpz_cmp(c, zmax) <= 0)
+    if (improve_max && mpz_cmp(c, zmax) <= 0) {
         mpz_sub_ui(zmax, c, 1);
+        updated_zmax();
+    }
     return improve_max;
 }
 
