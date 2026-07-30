@@ -295,12 +295,18 @@ bool log_full = 0;  /* show prefinal result for harness */
 ulong randseed = 1; /* for ECM, etc */
 bool vt100 = 0;     /* update window title with VT100 escape sequences */
 
+typedef struct s_recover {
+    uint force;
+    uint *forced;
+    t_fact *f;
+} t_recover;
+
 char *rpath = NULL; /* path to log file */
 FILE *rfp = NULL;   /* file handle to log file */
 bool start_seen = 0;    /* true if log file has been written to before */
 bool skip_recover = 0;  /* true if we should not attempt recovery */
-t_fact *rstack = NULL;  /* point reached in recovery log file */
-t_fact *istack = NULL;  /* point requested by -I */
+t_recover *rstack = NULL;  /* point reached in recovery log file */
+t_recover *istack = NULL;  /* point requested by -I */
 bool have_rwalk = 0;    /* true if recovery is mid-walk */
 mpz_t rwalk_from;
 mpz_t rwalk_to;
@@ -1051,6 +1057,24 @@ void track_mintau(mpz_t mint, uint t, uint depth0) {
     gmp_fprintf(stderr, "]\n");
 }
 
+t_recover *new_stack(void) {
+    t_recover *stack = malloc(sizeof(t_recover));
+    stack->f = malloc(k * sizeof(t_fact));
+    for (uint i = 0; i < k; ++i)
+        init_fact(&stack->f[i]);
+    stack->forced = calloc(k * maxfact, sizeof(uint));
+    stack->force = 0;
+    return stack;
+}
+
+void free_stack(t_recover *stack) {
+    for (uint vi = 0; vi < k; ++vi)
+        free_fact(&stack->f[vi]);
+    free(stack->f);
+    free(stack->forced);
+    free(stack);
+}
+
 void done(void) {
     /* update window title on completion */
     if (vt100)
@@ -1096,16 +1120,10 @@ void done(void) {
         mpz_clear(rwalk_from);
         mpz_clear(rwalk_to);
     }
-    if (rstack) {
-        for (int i = 0; i < k; ++i)
-            free_fact(&rstack[i]);
-        free(rstack);
-    }
-    if (istack) {
-        for (int i = 0; i < k; ++i)
-            free_fact(&istack[i]);
-        free(istack);
-    }
+    if (rstack)
+        free_stack(rstack);
+    if (istack)
+        free_stack(istack);
     if (rfp)
         fclose(rfp);
     free(rpath);
@@ -1222,18 +1240,49 @@ void init_pre(void) {
     midp_recover.valid = 0;
 }
 
+/* Given a forced recovery stack parsed from a 315 and a standard one parsed
+ * from a 305, apply necessary force to the standard one.
+ * Forced is passed in, standard is in rstack[].
+ */
+void resolve_expanded(t_recover *fp) {
+    t_recover *sp = rstack;
+    uint fprev = 0;
+    uint flast[k], slast[k];
+    for (uint vi = 0; vi < k; ++vi) {
+        flast[vi] = fp->f[vi].count;
+        slast[vi] = sp->f[vi].count;
+    }
+    for (uint fi = 0; fi < fp->force; ++fi) {
+        uint vi = fp->forced[fi];
+        if (vi == 0)
+            fail("panic: gap in expanded list of forced allocations");
+        sp->forced[sp->force++] = vi;
+        --vi;
+        uint fj = flast[vi]--;
+        uint sj = slast[vi]--;
+        if (fj == 0 || sj == 0)
+            break;
+        --fj;
+        --sj;
+        if (fp->f[vi].ppow[fj].p != sp->f[vi].ppow[sj].p)
+            break;
+        if (fp->f[vi].ppow[fj].e != sp->f[vi].ppow[sj].e)
+            break;
+        /* p^e matches in forced and standard, so continue forcing */
+    }
+}
+
 /* Parse a "305" log line for initialization.
  * Input string should point after the initial "305 ".
+ * If 'expanded' is true, expects a "315" expanded line instead.
  */
-void parse_305(char *s, t_fact **stackp) {
+void parse_305(char *s, t_recover **stackp, bool expanded) {
     double dtime;
     t_ppow pp;
     bool is_W = 0;
 
-    t_fact *stack = malloc(k * sizeof(t_fact));
+    t_recover *stack = new_stack();
     *stackp = stack;
-    for (int i = 0; i < k; ++i)
-        init_fact(&stack[i]);
 
     if (s[0] == 'b') {
         int off = 0;
@@ -1267,15 +1316,34 @@ void parse_305(char *s, t_fact **stackp) {
             if (pp.p == 1 || pp.e == 0)
                 ;
             else if (pp.e == 1)
-                simple_fact(pp.p, &stack[i]);
+                simple_fact(pp.p, &stack->f[i]);
             else
-                add_fact(&stack[i], pp);
+                add_fact(&stack->f[i], pp);
+            if (expanded && s[0] == '(') {
+                uint off = strtoul(&s[1], &s, 10);
+                stack->forced[off] = i + 1;
+                if (stack->force <= off)
+                    stack->force = off + 1;
+                if (s[0] != ')')
+                    fail("513 Missing ')' in expanded recovery pattern");
+                ++s;
+            }
             if (s[0] != '.')
                 break;
             ++s;
         }
         /* reverse them, so we can pop as we allocate */
-        reverse_fact(&stack[i]);
+        reverse_fact(&stack->f[i]);
+    }
+    if (expanded) {
+        /* collapse any gaps in the forced list */
+        uint fj = 0;
+        for (uint fi = 0; fi < stack->force; ++fi) {
+            if (stack->forced[fi] == 0)
+                continue;
+            stack->forced[fj++] = stack->forced[fi];
+        }
+        stack->force = fj;
     }
     if (strncmp(s, " W(", 3) == 0) {
         s += 3;
@@ -1374,8 +1442,9 @@ void parse_305(char *s, t_fact **stackp) {
 
 void recover(FILE *fp) {
     char *last305 = NULL;
+    char *last315 = NULL;
     char *curbuf = NULL;
-    size_t len = 120, len305 = 0;
+    size_t len = 120, len305 = 0, len315 = 0;
 
     while (1) {
         ssize_t nread = getline(&curbuf, &len, fp);
@@ -1403,6 +1472,21 @@ void recover(FILE *fp) {
             size_t lt = len305;
             len305 = len;
             len = lt;
+        } else if (strncmp("315 ", curbuf, 4) == 0) {
+            char *t = last315;
+            last315 = curbuf;
+            curbuf = t;
+            size_t lt = len315;
+            len315 = len;
+            len = lt;
+            /* We want to keep only the last 305 diag that appears _after_
+             * the last 315 expanded diag.
+             */
+            if (last305) {
+                free(last305);
+                last305 = NULL;
+                len305 = 0;
+            }
         } else if (strncmp("202 ", curbuf, 4) == 0) {
             int start, end, off = 0;
             mpz_t cand;
@@ -1428,10 +1512,22 @@ void recover(FILE *fp) {
     }
     if (improve_max && seen_best && mpz_cmp(best, zmax) < 0)
         mpz_set(zmax, best);
-    if (last305)
-        parse_305(last305 + 4, &rstack);
+    if (last305 || last315) {
+        if (!last315)
+            parse_305(last305 + 4, &rstack, 0);
+        else if (!last305)
+            parse_305(last315 + 4, &rstack, 1);
+        else {
+            t_recover *expanded;
+            parse_305(last315 + 4, &expanded, 1);
+            parse_305(last305 + 4, &rstack, 0);
+            resolve_expanded(expanded);
+            free_stack(expanded);
+        }
+    }
     free(curbuf);
     free(last305);
+    free(last315);
 }
 
 int cmp_high(const void *va, const void *vb) {
@@ -2089,6 +2185,8 @@ void init_post(void) {
         clear_randstate();
         init_randstate(randseed);
     }
+    simple_fact(n, &nf);
+    prep_target();
     if (rpath) {
         printf("path %s\n", rpath);
         if (!skip_recover) {
@@ -2105,12 +2203,10 @@ void init_post(void) {
         setlinebuf(rfp);
     }
     if (init_pattern)
-        parse_305(init_pattern, &istack);
+        parse_305(init_pattern, &istack, 0);
 #ifdef HAVE_SETPROCTITLE
     setproctitle("-D(%u %u)", n, k);
 #endif
-    simple_fact(n, &nf);
-    prep_target();
     /* level[0] is special, level[1] is special if any target_t is odd;
      * then we can have forcedp batch allocations and maxodd * k normal
      * allocations; however we don't know forcedp yet, only that it will
@@ -4876,13 +4972,13 @@ e_is insert_stack(void) {
     if (istack) {
         /* insert any init forced primes */
         for (uint fpi = 0; fpi < forcedp; ++fpi)
-            insert_forced(istack, rstack, fpi, &jump, 1);
+            insert_forced(istack->f, rstack->f, fpi, &jump, 1);
 
         /* insert anything else */
         for (uint vi = 0; vi < k; ++vi) {
-            t_fact *rs = &istack[vi];
+            t_fact *rs = &istack->f[vi];
             while (rs->count) {
-                if (insert_float(istack, rstack, vi, &jump, 1))
+                if (insert_float(istack->f, rstack->f, vi, &jump, 1))
                     continue;
                 /* failure should mean that there is nothing more to do */
                 if (jump == IS_DEEPER)
@@ -4903,8 +4999,17 @@ e_is insert_stack(void) {
             /* skip if already inserted via init pattern */
             if ((levels[level - 1].fp_need & (1 << fpi)) == 0)
                 continue;
-            if (!insert_forced(rstack, NULL, fpi, &jump, 0))
+            if (!insert_forced(rstack->f, NULL, fpi, &jump, 0))
                 goto insert_check;
+        }
+
+        /* insert any additional forced-order allocations */
+        for (uint vf = forcedp; vf < rstack->force; ++vf) {
+            uint vi = rstack->forced[vf];
+            if (vi-- == 0)
+                continue;
+            if (!insert_float(rstack->f, NULL, vi, &jump, 0))
+                break;
         }
 
         /* insert the rest, in strategy-allocated order */
@@ -4912,14 +5017,14 @@ e_is insert_stack(void) {
             uint vi = best_v(&levels[level - 1]);
             if (vi >= k)
                 break;
-            if (!insert_float(rstack, NULL, vi, &jump, 0))
+            if (!insert_float(rstack->f, NULL, vi, &jump, 0))
                 break;
         }
 
       insert_check:
         /* check we have them all */
         for (uint vi = 0; vi < k; ++vi) {
-            t_fact *rs = &rstack[vi];
+            t_fact *rs = &rstack->f[vi];
             uint c = rs->count;
             while (c) {
                 t_ppow pp = rs->ppow[--c];
