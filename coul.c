@@ -307,6 +307,7 @@ bool start_seen = 0;    /* true if log file has been written to before */
 bool skip_recover = 0;  /* true if we should not attempt recovery */
 t_recover *rstack = NULL;  /* point reached in recovery log file */
 t_recover *istack = NULL;  /* point requested by -I */
+char *pend202 = NULL;   /* recovery candidate under highpow after last 3[01]5 */
 bool have_rwalk = 0;    /* true if recovery is mid-walk */
 mpz_t rwalk_from;
 mpz_t rwalk_to;
@@ -1445,11 +1446,27 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
     t0 -= dtime;
 }
 
+void apply_202(char *s) {
+    int start, end, off = 0;
+    mpz_t cand;
+    sscanf(s, "202 Candidate %n%*[0-9]%n (%*[0-9.]s)%n",
+            &start, &end, &off);
+    if (off == 0)
+        fail("error parsing 202 line '%s'", s);
+    s[end] = 0;
+    mpz_init_set_str(cand, &s[start], 10);
+    if (!seen_best || mpz_cmp(best, cand) >= 0)
+        mpz_set(best, cand);
+    seen_best = 1;
+    mpz_clear(cand);
+}
+
 void recover(FILE *fp) {
     char *last305 = NULL;
     char *last315 = NULL;
+    char *last202 = NULL;
     char *curbuf = NULL;
-    size_t len = 120, len305 = 0, len315 = 0;
+    size_t len = 120, len305 = 0, len315 = 0, len202 = 0;
 
     while (1) {
         ssize_t nread = getline(&curbuf, &len, fp);
@@ -1477,6 +1494,12 @@ void recover(FILE *fp) {
             size_t lt = len305;
             len305 = len;
             len = lt;
+            if (last202) {
+                apply_202(last202);
+                free(last202);
+                last202 = NULL;
+                len202 = 0;
+            }
         } else if (strncmp("315 ", curbuf, 4) == 0) {
             char *t = last315;
             last315 = curbuf;
@@ -1492,19 +1515,22 @@ void recover(FILE *fp) {
                 last305 = NULL;
                 len305 = 0;
             }
+            if (last202) {
+                apply_202(last202);
+                free(last202);
+                last202 = NULL;
+                len202 = 0;
+            }
         } else if (strncmp("202 ", curbuf, 4) == 0) {
-            int start, end, off = 0;
-            mpz_t cand;
-            sscanf(curbuf, "202 Candidate %n%*[0-9]%n (%*[0-9.]s)%n",
-                    &start, &end, &off);
-            if (off == 0)
-                fail("error parsing 202 line '%s'", curbuf);
-            curbuf[end] = 0;
-            mpz_init_set_str(cand, &curbuf[start], 10);
-            if (!seen_best || mpz_cmp(best, cand) >= 0)
-                mpz_set(best, cand);
-            seen_best = 1;
-            mpz_clear(cand);
+            if (highpow) {
+                char *t = last202;
+                last202 = curbuf;
+                curbuf = t;
+                size_t lt = len202;
+                len202 = len;
+                len = lt;
+            } else
+                apply_202(curbuf);
         } else if (strncmp("001 ", curbuf, 4) == 0) {
             /* TODO: parse and check for consistent options */
             start_seen = 1;
@@ -1515,8 +1541,10 @@ void recover(FILE *fp) {
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
-    if (improve_max && seen_best && mpz_cmp(best, zmax) < 0)
+    if (improve_max && seen_best && mpz_cmp(best, zmax) < 0) {
         mpz_set(zmax, best);
+        updated_zmax();
+    }
     if (last305 || last315) {
         if (!last315)
             parse_305(last305 + 4, &rstack, 0);
@@ -1530,6 +1558,8 @@ void recover(FILE *fp) {
             free_stack(expanded);
         }
     }
+    if (last202)
+        pend202 = last202;
     free(curbuf);
     free(last305);
     free(last315);
@@ -5439,6 +5469,11 @@ int main(int argc, char **argv, char **envp) {
     e_is jump = IS_DEEPER;
     if (rstack || istack)
         jump = insert_stack();
+    if (pend202) {
+        apply_202(pend202);
+        free(pend202);
+        updated_zmax();
+    }
     if (jump != IS_FINISH)
         recurse(jump);
     keep_diag();
