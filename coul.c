@@ -488,7 +488,7 @@ void update_window(t_level *cur_level) {
     fflush(stdout);
 }
 
-void prep_show_v(t_level *cur_level) {
+void prep_show_v(t_level *cur_level, bool expanded) {
     uint offset = 0;
     uint mid_vi;
     if (in_midp)
@@ -512,7 +512,7 @@ void prep_show_v(t_level *cur_level) {
                 offset += sprintf(&diag_buf[offset], "%lu", ap->p);
                 if (ap->x > 2)
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
-                if (need_expanded_diag) {
+                if (expanded) {
                     for (uint li = 0; li < level; ++li) {
                         t_level *lpi = &levels[li];
                         if (lpi->vi != vi || lpi->p != ap->p)
@@ -690,7 +690,7 @@ void disp_batch(void) {
     if (opt_alloc & 2) {
         diag_csv(lp);
     } else {
-        prep_show_v(lp);        /* into diag_buf */
+        prep_show_v(lp, 0);        /* into diag_buf */
         if (lp->have_square) {
             uint l = strlen(diag_buf);
             sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
@@ -711,7 +711,7 @@ void diag_any(t_level *cur_level, bool need_disp) {
         disp_batch();
     }
 
-    prep_show_v(cur_level);     /* into diag_buf */
+    prep_show_v(cur_level, 0);     /* into diag_buf */
     if (need_diag) {
         if (need_disp)
             diag("%s%s", diag_buf, aux_buf);
@@ -736,7 +736,11 @@ void diag_any(t_level *cur_level, bool need_disp) {
     }
 
     if (rfp && need_log) {
-        char *code = (need_expanded_diag) ? "315" : "305";
+        char *code = "305";
+        if (need_expanded_diag) {
+            prep_show_v(cur_level, 1);
+            code = "315";
+        }
 #ifdef TRACK_STATS
         fprintf(rfp, "%s %s%s (%.2fs) [", code, diag_buf, aux_buf, seconds(t1));
         for (uint i = 0; i < k; ++i) {
@@ -783,7 +787,8 @@ void updated_zmax(void) {
      * be recalculated.
      */
     if (highpow) {
-        need_expanded_diag = 1;
+        if (rfp)
+            need_expanded_diag = 1;
         for (uint li = final_level + 1; li < level; ++li) {
             t_level *lp = &levels[li];
             if (lp->p == 0)
