@@ -5194,7 +5194,8 @@ void recurse(e_is jump_continue) {
         goto derecurse;
     }
     /* if we just completed a batch, must have a chance to trigger midp */
-    if (need_midp && prev_level->is_forced && !prev_level->fp_need
+    if (need_midp && jump_continue != IS_MIDP
+            && prev_level->is_forced && !prev_level->fp_need
             && !process_batch(prev_level))
         goto derecurse;
 
