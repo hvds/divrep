@@ -4699,7 +4699,7 @@ e_pux prep_unforced_x(
         } else {
             if (x == prevx)
                 p = ap->p;      /* skip smaller p, we already did the reverse */
-            else if (x <= prevx && divisors[x].high == divisors[prevx].high)
+            else if (x < prevx && divisors[x].high == divisors[prevx].high)
                 return PUX_SKIP_THIS_X; /* we already did the reverse */
             else if (x > nextt && divisors[x].high == divisors[nextt].high)
                 /* skip this x, we already did any possible continuation in
