@@ -91,7 +91,7 @@ exit 0;
 
 #
 # Return TRUE if there is some way to assign v = \prod p_i^e_i such that
-# v < max^pass and the e_i can be split into pass subsets each of which
+# v < max^pass and the e_i can be split into $pass subsets each of which
 # give \prod{e_i+1} = n, after allowing for duplicate primes.
 #
 sub find_bucket {
