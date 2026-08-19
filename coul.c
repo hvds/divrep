@@ -3315,15 +3315,6 @@ void walk_1_set(
                 if (p == levels[li].p)
                     goto reject_this_one;
 #endif
-        if (need_work) {
-            /* temporarily make this prime power visible to diag code */
-            t_allocation *a2ip = &vip->alloc[vil];
-            a2ip->p = p;
-            a2ip->x = x;
-            ++cur_level->vlevel[vi];
-            diag_plain(cur_level);
-            --cur_level->vlevel[vi];
-        }
         mpz_ui_pow_ui(Z(w1_v), p, x - 1);
         if (need_mod) {
             mpz_fdiv_r(Z(temp), Z(w1_v), Z(w1_m));
@@ -3335,6 +3326,15 @@ void walk_1_set(
         ++countw;
         if (check && !cvec_testv(cx0, Z(w1_v)))
             continue;
+        if (need_work) {
+            /* temporarily make this prime power visible to diag code */
+            t_allocation *a2ip = &vip->alloc[vil];
+            a2ip->p = p;
+            a2ip->x = x;
+            ++cur_level->vlevel[vi];
+            diag_plain(cur_level);
+            --cur_level->vlevel[vi];
+        }
 
         for (uint vj = 0; vj < k; ++vj) {
             t_value *vjp = &value[vj];
