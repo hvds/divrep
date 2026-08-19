@@ -4730,7 +4730,7 @@ e_pux prep_unforced_x(
     }
 
     /* apply gain heuristics to decide whether to walk or recurse */
-    mpz_add_ui(Z(r_walk), zmax, vi);
+    mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
 #ifdef LARGE_MIN
     mpz_sub(Z(r_walk), Z(r_walk), zmin);
 #endif
