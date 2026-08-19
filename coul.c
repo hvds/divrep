@@ -4658,6 +4658,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
 
 typedef enum {
     PUX_NOTHING_TO_DO = 0,
+    PUX_FLIP_PQSQ,
     PUX_SKIP_THIS_X,
     PUX_DO_THIS_X
 } e_pux;
@@ -4721,8 +4722,23 @@ e_pux prep_unforced_x(
         walk_v(prev_level, Z(zero));
 #endif
         return PUX_NOTHING_TO_DO;
-    } else if (limp < p)
+    } else if (limp < p) {
+        if (nextt == 2 && prev_level->vi == vi) {
+            uint prevx = (ap->p > maxforce[vi]
+#ifdef TYPE_a
+                && (n % ap->p)
+#endif
+            ) ? ap->x : 0;
+            /* if tau at the previous level is 2p^2 and its current prime is
+             * already too high to split as (p, p, 2) then we can not only
+             * skip this x (== p) but also profitably invert the process for
+             * the remainder, splitting as (2p, p) rather than (p, 2p).
+             */
+            if (x == prevx)
+                return PUX_FLIP_PQSQ;
+        }
         return PUX_SKIP_THIS_X; /* nothing to do here */
+    }
     if (nextt == 1) {
         cur_level->have_min = prev_level->have_min;
         walk_1_set(prev_level, cur_level, vi, p, limp, x);
@@ -4969,6 +4985,7 @@ static inline bool insert_float(
 
     e_pux pux = prep_unforced_x(prev_level, cur_level, p, init);
     switch (pux) {
+      case PUX_FLIP_PQSQ:
       case PUX_SKIP_THIS_X:
         if (ti == x) {
             /* legitimate skip after walk_1_set */
@@ -5076,6 +5093,69 @@ e_is insert_stack(void) {
     return jump;
 }
 
+/* We have an allocation of eg p^z leaving t = 2z, and p is high enough
+ * that there are no partitions (z, z, 2) left to try so all remaining
+ * candidates have a (z, 2z) partition.
+ * We leave the entry for p^z in the level stack but deallocate it, and
+ * instead manually run partitions (2z, z) - this should be more efficient
+ * than running a much higher number of (z, 2z) partitions, espectially
+ * since each p^{2z} allocation fixes a square.
+ * TODO: annotate diags to allow recovery, and support that
+ */
+void run_flip_pqsq(uint vi) {
+    t_level *anc_level = &levels[level - 2];
+    t_level *prev_level = &levels[level - 1];
+    t_level *cur_level = &levels[level];
+    t_level *next_level = &levels[level + 1];
+    ulong oldp = prev_level->p;
+    uint xs = prev_level->x;
+    uint xl = xs << 1;
+    prev_level->x = 0;      /* temp suppress in progress display */
+    prev_level->limp = 0;   /* ensure prev will know it is complete on return */
+    --prev_level->vlevel[vi];   /* temp deallocate */
+
+    reset_vlevel(cur_level);
+    t_value *vp = &value[vi];
+    uint vil = cur_level->vlevel[vi];
+    t_allocation *ap = &vp->alloc[vil - 1];
+
+    cur_level->x = xl;
+    mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
+    mpz_fdiv_q(Z(r_walk), Z(r_walk), ap->q);
+    mpz_root(Z(r_walk), Z(r_walk), xl - 1);
+    if (!mpz_fits_ulong_p(Z(r_walk)))
+        fail("Tried to flip with target > max_ulong^%u", xl - 1);
+    cur_level->limp = mpz_get_ui(Z(r_walk));
+
+    level_setp(cur_level, maxforce[vi]);
+    while (1) {
+      redo_flip: ;
+        ulong p = prime_iterator_next(&cur_level->piter);
+        if (p > cur_level->limp)
+            break;
+        if (p <= anc_level->maxp)
+            for (uint li = 1; li < level; ++li)
+                if (p == levels[li].p && levels[li].x > 1)
+                    goto redo_flip;
+        reset_vlevel(cur_level);
+        /* failure most likely means it does not leave a valid square */
+        if (!apply_single(anc_level, cur_level, vi, p, xl))
+            continue;
+        ap = &vp->alloc[cur_level->vlevel[vi] - 1];
+        mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
+        mpz_fdiv_q(Z(temp), Z(temp), ap->q);
+        mpz_root(Z(temp), Z(temp), xs - 1);
+        if (!mpz_fits_ulong_p(Z(temp)))
+            fail("Tried to flip with target > max_ulong^%u", xs - 1);
+        ulong phigh = mpz_get_ui(Z(temp));
+        next_level->have_min = cur_level->have_min;
+        reset_vlevel(next_level);
+        walk_1_set(cur_level, next_level, vi, oldp, phigh, xs);
+    }
+    prev_level->x = xs;
+    ++prev_level->vlevel[vi];
+}
+
 /* we emulate recursive calls via the levels[] array */
 void recurse(e_is jump_continue) {
     ulong p;
@@ -5176,12 +5256,15 @@ void recurse(e_is jump_continue) {
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
             switch (prep_unforced_x(prev_level, cur_level, 0, 0)) {
-                case PUX_NOTHING_TO_DO:
-                    goto derecurse;
-                case PUX_SKIP_THIS_X:
-                    goto continue_unforced_x;
-                case PUX_DO_THIS_X:
-                    ;
+              case PUX_NOTHING_TO_DO:
+                goto derecurse;
+              case PUX_FLIP_PQSQ:
+                run_flip_pqsq(cur_level->vi);
+                goto derecurse;
+              case PUX_SKIP_THIS_X:
+                goto continue_unforced_x;
+              case PUX_DO_THIS_X:
+                ;
             }
             goto continue_unforced;
         }
@@ -5231,6 +5314,7 @@ void recurse(e_is jump_continue) {
                     prev_level, cur_level, cur_level->p, 0
                 )) {
                   case PUX_NOTHING_TO_DO:
+                  case PUX_FLIP_PQSQ:
                   case PUX_SKIP_THIS_X:
                     goto continue_unforced_x;
                 }
