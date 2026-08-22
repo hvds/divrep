@@ -696,7 +696,7 @@ void disp_batch(void) {
             uint l = strlen(diag_buf);
             sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
         }
-        report("203 %s\n", diag_buf);
+        report("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
     }
 }
 
