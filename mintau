@@ -1,0 +1,230 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+
+=head1 test caching algorithm to find mintau
+
+Given (t, P), we want to find mintau(t, P), the least n such that tau(n) = t
+and n is coprime with each prime p in P.
+
+Givens:
+1) There is a global T set at startup. If p is the highest prime dividing
+T, then we only need to support values of t: t | T/p.
+
+2) There is a global nprimes calculated at startup: we will not need more
+than the first nprimes primes to calculate any mintau(t, P) we will need.
+
+Constraints:
+1) We should do no more work than needed to calculate mintau(t, P).
+2) We should cache enough to avoid duplicating any work.
+3) We should cope with T up to 1e9 and highly composite.
+4) We should cope with |P| and nprimes of the order of 200.
+
+=cut
+
+use Math::GMP;
+use Math::Prime::Util qw{
+    factor_exp divisors prime_iterator
+};
+sub MBI { return Math::GMP->new(@_) }
+my $zero = MBI(0);
+my $zone = MBI(1);
+use lib 'lib';
+use H::Diag qw{ diag keep_diag };
+no warnings qw{ redefine };
+local *diag = sub { H::Diag::diag(@_); keep_diag() };
+
+my($t, $k) = map MBI($_), @ARGV;
+my $tlim = $t / highp($t);
+diag("Init tlim = $tlim");
+my $nsprimes = max_factor($t) * $k;
+diag("Init nsprimes = $nsprimes");
+my @primes = do {
+    my $it = prime_iterator;
+    map MBI($it->()), 1 .. $nsprimes;
+};
+
+while (1) {
+    local $| = 1;
+    print "> ";
+    my $in = <STDIN> // do { print "exit\n"; last };
+    chomp $in;
+    if ($in eq 'p') {
+        use DDP; p all_mintau();
+        next;
+    }
+    my($ta, $pp) = parse_in($in);
+    if ($tlim % $ta) {
+        print "** invalid tau $ta given global $t\n";
+    } else {
+        my $v = mintau($ta, $pp);
+        print "mintau($ta, { @{[ _pp($pp) ]} }) = $v\n";
+    }
+}
+exit 0;
+
+{
+    my %mintau;
+    sub all_mintau { \%mintau }
+    sub mintau {
+        my($t, $pp) = @_;
+        return $zone if $t == $zone;
+        my $maxf = max_factor($t);
+        my $pi = -1;
+        my(@pa, @pd, @mra);
+        my $next_pa = sub {
+            my $depth = @pa;
+            $pa[$depth] = $pi = next_avail($pp, $pi);
+            $pd[$depth] = ($depth)
+                ? ($pa[$depth] - $pa[$depth - 1] - 1)
+                : $pa[$depth];
+            return $pi;
+        };
+        my $pai = sub {
+            my $depth = $_[0];
+            return -1 if $depth >= $maxf;
+            return $pa[$depth] // $next_pa->();
+        };
+        my $pdi = sub {
+            my $depth = $_[0];
+            return -1 if $depth < 0;
+            return $pd[$depth] // do { $next_pa->(); $pd[$depth] };
+        };
+        {
+            # check if we already know this mintau
+            for my $depth (0 .. $maxf - 1) {
+                my $oprev = $pdi->($depth - 1);
+                my $pthis = $pai->($depth);
+                my $othis = $pdi->($depth);
+                my $pnext = $pai->($depth + 1);
+                my $mr = $mra[$depth] = ($depth)
+                    ? ($mra[$depth - 1]->{float}[$oprev] // last)
+                    : ($mintau{$t} //= {});
+                my $fixed = $mr->{fixed}[$othis];
+                return $fixed->[0] if $fixed && $pnext >= $fixed->[1];
+            }
+        }
+        my $best;
+        {
+            # calculate this mintau
+            my $p = $primes[ $pai->(0) ];
+            local $pp->{$p} = 1;
+            for my $d (@{ high_divisors($t) }) {
+                my $px = $p ** ($d - 1);
+                last if defined($best) && $px > $best;
+                my $this = $px * mintau($t / $d, $pp);
+                $best = $this if !defined($best) || $best > $this;
+            }
+        }
+        {
+            # work out where to cache the result
+            for my $depth (0 .. $maxf - 1) {
+                my $oprev = $pdi->($depth - 1);
+                my $pthis = $pai->($depth);
+                my $othis = $pdi->($depth);
+                my $pnext = $pai->($depth + 1);
+                my $mr = $mra[$depth] //= ($depth)
+                    ? ($mra[$depth - 1]->{float}[$oprev] //= {})
+                    : ($mintau{$t} //= {});
+                next if $pnext >= 0 && ($best % $primes[$pnext]) == 0;
+                my $fixed = [ $best, $pnext ];
+                $mr->{fixed}[$othis] = $fixed;
+                return $best;
+            }
+        }
+        die "panic";
+    }
+}
+
+sub _pp {
+    my($pp) = @_;
+    return join ' ', sort { $a <=> $b } keys %$pp;
+}
+
+sub parse_in {
+    my($line) = @_;
+    chomp $line;
+    my($t, @p) = map MBI($_), split ' ', $line;
+    return +($t, { map +($_ => 1), @p });
+}
+
+sub next_avail {
+    my($pp, $pi) = @_;
+    for my $pj ($pi + 1 .. $#primes) {
+        return $pj unless $pp->{ $primes[$pj] };
+    }
+    die "Too many primes used at $pi of { @{[ _pp($pp) ]} }\n";
+}
+
+{
+    my %high_div;
+    sub high_divisors {
+        my($n) = @_;
+        return $high_div{$n} //= do {
+            my $highp = highp($n);
+            [ grep $_ >= $highp, divisors($n) ];
+        };
+    }
+}
+
+{
+    my %highp;
+    sub highp {
+        my($n) = @_;
+        return $highp{$n} //= do {
+            die "highp(1) not defined\n" if $n == 1;
+            my $nf = nf($n);
+            $nf->[-1][0];
+        };
+    }
+}
+
+{
+    my %nf;
+    sub nf {
+        my($n) = @_;
+        return $nf{$n} //= [ factor_exp($n) ];
+    }
+}
+
+{
+    my %tau;
+    sub tau {
+        my($n) = @_;
+        return $tau{$n} //= do {
+            my $t = $zone;
+            $t *= $_->[1] for @{ nf($n) };
+            $t;
+        };
+    }
+}
+
+{
+    my %max_factor;
+    sub max_factor {
+        my($n) = @_;
+        return $max_factor{$n} //= do {
+            my $s = $zero;
+            $s += $_->[1] for @{ nf($n) };
+            $s;
+        };
+    }
+}
+
+__END__
+
+t=1 => 1
+t=P => p^{P-1}
+t=4 => (p^2 < q) ? p^3 : pq
+  [ 6, -8 ], [ 15, 21, -27 ], [ 35, 55, 65, 85, 95, 115, -125 ] ...
+t=6 => (p^3 < q) ? p^5 : p^2q
+  [ 12, 20, 28, -32 ], [ 45, 63, 99, 117, 153, 171, 207, -243 ] ...
+t=8 => (p^2 < r) ? (p^4 < q) : p^7 : p^3q : pqr
+  [ [ -24 ], [ -40 ], [ -56 ], [ -88 ], [ -104 ], -128 ],
+  [ [ 105, -135 ], [ -189 ], [ -297 ], ... [ -2133 ], -2187 ],
+  [ [ 385, 455, 595, 665, 805, -875 ], [ 715, 935, 1045, 1265, -1375 ],
+    [ ... ], -78125 ], ...
+t=9 => (p^3 < q) ? p^8 : p^2q^2
+t=10 => (p^5 < q) ? p^9 : p^4q
+t=12 => (p^6 < q) ? p^11 : (p^2 < q, p^3 < r) ? p^5q : (pq < r) ? p^3q^2 : p^2qr
+  [ [ 60, -72 ], [ 84, -160 ]
