@@ -3603,7 +3603,8 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     cur->have_square = prev->have_square;
     cur->nextpi = prev->nextpi;
     cur->fp_need = prev->fp_need;
-    apply_pfreev(prev, cur, p);
+    /* init cur->pfreev, with new prime now unavailable if used */
+    apply_pfreev(prev, cur, (x > 1) ? p : 0);
     if (p == sprimes[cur->nextpi])
         cur->nextpi = find_nextpi(cur, cur->nextpi);
     cur->maxp = (x > 1 && p > prev->maxp) ? p : prev->maxp;
@@ -4561,7 +4562,7 @@ uint best_fixed(t_level *cur_level) {
     return vi;
 }
 
-/* Find the best entry to progress, using the selected strategy
+/* Find the best entry to progress, using the selected strategy.
  * If there is no best entry, returns k.
  */
 uint best_v(t_level *cur_level) {
