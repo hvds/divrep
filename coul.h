@@ -35,8 +35,8 @@ extern t_divisors *divisors;
 
 /* Each level of "recursion" allocates one prime power p^{x-1} with x | n
  * to one value v_i. It may be "forced", in which case it is part of a
- * batch of simultaneous allocations of the same p to different i (and
- * in which case derecursion should unwind the whole batch), or "unforced",
+ * group of simultaneous allocations of the same p to different i (and
+ * in which case derecursion should unwind the whole group), or "unforced",
  * in which case no other v_j will be divisible by p.
  */
 typedef struct s_level {
