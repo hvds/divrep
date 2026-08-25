@@ -1,0 +1,406 @@
+#!/usr/bin/perl
+# calibrate.pl - find a good (strategy, force_all, gain) setting for a
+# pcoul run of given (n, k, v_max), by racing candidate settings under
+# growing time budgets rather than ever doing a full v_max run more
+# than once (right at the end, to confirm).
+#
+# See pcoul-calibration-design.md for the overall approach. This
+# script is just the driver loop over (f, j) around Calibrate::Search;
+# all the actual searching/racing logic lives there.
+
+use strict;
+use warnings;
+use lib 'lib';
+use Getopt::Long;
+use POSIX qw(ceil floor);
+use List::Util qw(min max);
+use Time::HiRes qw(time);
+
+use Calibrate;
+use Calibrate::Search;
+
+# ---------------------------------------------------------------------
+# Options
+# ---------------------------------------------------------------------
+
+my %o = (
+    pcoul          => './pcoul',
+    jobs           => 1,
+    n_coarse       => 7,
+    max_den_coarse => 60,
+    refine_iters   => 14,
+    budget_start   => 2,
+    budget_growth  => 4,
+    budget_max     => 300,
+    rep_per_group  => 1,
+    search_top_frac => 0.10,
+    search_min_n    => 10,
+    cache          => undef,   # set below once n/k are known, unless --no-cache
+    no_cache       => 0,
+);
+
+GetOptions(\%o,
+    'pcoul=s', 'n=i', 'k=i', 'xmax=s', 'jobs=i',
+    'fmin=i', 'fmax=i', 'all_f',
+    'strategies=s',
+    'gain_lo=f', 'gain_hi=f',
+    'n_coarse=i', 'max_den_coarse=i', 'refine_iters=i',
+    'budget_start=f', 'budget_growth=f', 'budget_max=f',
+    'modulus=s@',
+    'cache=s', 'no_cache',
+    'rep_per_group=i', 'search_top_frac=f', 'search_min_n=i',
+    'help',
+) or die "bad options - see --help\n";
+
+if ($o{help} || !defined $o{n} || !defined $o{k} || !defined $o{xmax}) {
+    print <<'USAGE';
+Usage: calibrate.pl --n=N --k=K --xmax=V [options]
+
+Required:
+  --n=N              divisor count target (pcoul's n)
+  --k=K              run length (pcoul's k)
+  --xmax=V           v_max to search up to
+
+Common options:
+  --pcoul=PATH       path to the pcoul binary (default ./pcoul)
+  --jobs=J           parallel pcoul processes (default 1)
+  --fmin=F --fmax=F  force_all range to try (default floor(k/2)..k)
+  --all_f            try every integer f in range, not just primes+1
+                      (default: primes-only, since composite f produces
+                      the same batches as the largest prime <= f)
+  --strategies=LIST  comma-separated -j values to try
+                      (default 0,2, plus 4 if n is divisible by 32 -
+                      j1/j3 rarely win and are opt-in)
+  --gain_lo=G --gain_hi=G
+                      coarse-scan bracket for gain (default sqrt(n)..n/2)
+  --modulus=M        modular constraint, e.g. --modulus=9=5 (repeatable)
+  --cache=PATH       cache file to reuse/persist batch timings
+                      (default pcoul-calib-cache-N-K.tsv; --no_cache to disable)
+  --rep_per_group=N  representative batches sampled per shape group
+                      (default 1; the search cost scales with this,
+                      so raise it only if you suspect same-shape
+                      batches aren't behaving alike for this n,k)
+  --search_top_frac=F  fraction of shape-groups searched for gain,
+                      chosen by predicted restrictiveness (lowest
+                      LCM of fixed prime powers = predicted slowest -
+                      see Calibrate::Search::priority_batches; this is
+                      the main lever for keeping the SEARCH phase
+                      cheap - the full batch set is still used for the
+                      final confirmation run regardless) (default 0.10)
+  --search_min_n=N   floor on how many batches the search phase
+                      always covers, regardless of search_top_frac,
+                      so small batch sets still get reasonable
+                      coverage (default 10)
+
+Search tuning (defaults are reasonable starting points, not tuned):
+  --n_coarse=N        coarse-scan points per (f,j) (default 7)
+  --max_den_coarse=D  denominator cap on coarse-scan rationals (default 60)
+  --refine_iters=N    max mediant-refinement steps (default 14)
+  --budget_start=S --budget_growth=G --budget_max=M
+                      per-batch deadline schedule: S, S*G, S*G^2, ...
+                      up to M seconds (defaults 2, x4, up to 300)
+USAGE
+    exit($o{help} ? 0 : 1);
+}
+
+my($n, $k, $xmax) = @o{qw(n k xmax)};
+
+# In practice v_max is almost always either a round power of 10 (no
+# known solution yet) or exactly the best known solution. In the
+# latter case, calibration would immediately trip the "solution found"
+# abort path on the trivial rediscovery of that same known value -
+# not useful. Subtract 1 unconditionally: v_max is always large enough
+# in realistic use that this makes no detectable difference to
+# calibration results, and it's a no-op (still finds the same known
+# solution one below itself, which is fine) when v_max was a bound
+# rather than a tight solution. xmax may exceed native integer range,
+# so decrement it as a string via Math::BigInt rather than natively.
+{
+    require Math::BigInt;
+    my $bx = Math::BigInt->new($xmax);
+    $bx->bsub(1);
+    $xmax = $bx->bstr;
+}
+
+my $fmin = $o{fmin} // floor($k / 2);
+my $fmax = $o{fmax} // $k;
+
+# -f's batch set only changes at prime values (plus f=1); a composite
+# f produces the same batches as the largest prime <= f, so trying
+# every integer in [fmin, fmax] just reruns the same work under a
+# different label - restrict to primes (+1) unless the user overrides.
+sub _is_prime {
+    my($x) = @_;
+    return 0 if $x < 2;
+    for (my $p = 2; $p * $p <= $x; $p++) {
+        return 0 if $x % $p == 0;
+    }
+    return 1;
+}
+my @f_candidates;
+if ($o{all_f}) {
+    @f_candidates = ($fmin .. $fmax);
+} else {
+    @f_candidates = grep { $_ == 1 || _is_prime($_) } ($fmin .. $fmax);
+    @f_candidates = ($fmin) unless @f_candidates;  # always try at least one
+}
+
+my @strategies;
+if (defined $o{strategies}) {
+    @strategies = split /,/, $o{strategies};
+} else {
+    # j0/j2/j4 are the strategies that usually differ meaningfully;
+    # j1/j3 rarely win and are often indistinguishable from another
+    # strategy, so they're opt-in via --strategies rather than default.
+    @strategies = (0, 2);
+    push @strategies, 4 if $n % 32 == 0;
+}
+
+my $gain_lo = $o{gain_lo} // sqrt($n);
+my $gain_hi = $o{gain_hi} // ($n / 2);
+if ($gain_hi <= $gain_lo) {
+    ($gain_lo, $gain_hi) = (1, max($gain_lo, $gain_hi) * 4);
+}
+
+my @budget_schedule;
+{
+    my $d = $o{budget_start};
+    while ($d < $o{budget_max}) {
+        push @budget_schedule, $d;
+        $d *= $o{budget_growth};
+    }
+    push @budget_schedule, $o{budget_max};
+}
+
+unless ($o{no_cache}) {
+    my $cache_path = $o{cache} // "pcoul-calib-cache-$n-$k.tsv";
+    Calibrate::Search::load_cache($cache_path);
+    Calibrate::Search::open_cache_for_append($cache_path);
+    print STDERR "using cache: $cache_path\n";
+}
+
+print STDERR "n=$n k=$k xmax=$xmax"
+    . " (decremented by 1 from the supplied v_max,"
+    . " to avoid trivially rediscovering a known solution)\n";
+print STDERR "f range: $fmin..$fmax\n";
+print STDERR "strategies: @strategies\n";
+printf STDERR "gain bracket: %.4g .. %.4g\n", $gain_lo, $gain_hi;
+printf STDERR "budget schedule: %s\n",
+    join(', ', map { sprintf '%.1fs', $_ } @budget_schedule);
+print STDERR "\n";
+
+# ---------------------------------------------------------------------
+# Main loop: for each f, list its batches once, reduce to shape
+# representatives, then keep only the top fraction of those by
+# predicted restrictiveness (Calibrate::Search::priority_batches) -
+# the batches with the smallest LCM of fixed prime powers, which the
+# validated M-scaling law (M ~ 1/LCM) says dominate total run time.
+# Only these get searched for gain; this is the main lever for
+# keeping the SEARCH phase cheap relative to the run it's calibrating
+# for.
+#
+# Only ONE full-batch confirmation run is done at the very end, for
+# the single overall best (f, j, g) found - not one per f - so total
+# cost is roughly (cheap priority-restricted search) + (one real
+# run), rather than one real run per candidate setting.
+#
+# Stop immediately, anywhere, if a real solution turns up (per the
+# agreed policy - that's strictly better news than a calibration
+# result, and the search space changes once it's known).
+# ---------------------------------------------------------------------
+
+my @results;  # { f, j, g, total (extrapolated), all_resolved, batches }
+my $t_search_start = time();
+
+for my $f (@f_candidates) {
+    print STDERR "=== f=$f: listing batches ===\n";
+    my $bl = Calibrate::list_batches(
+        n => $n, k => $k, force_all => $f, xmax => $xmax,
+        modulus => $o{modulus}, pcoul => $o{pcoul},
+    );
+    my $reps = Calibrate::Search::priority_batches(
+        $bl->{batches}, per_group => $o{rep_per_group},
+        top_frac => $o{search_top_frac}, min_n => $o{search_min_n},
+    );
+    my $rep_weight = 0; $rep_weight += $_->{weight} for @$reps;
+    printf STDERR
+        "  %d batches -> searching %d (representing %d, %.1f%%"
+        . " by count) chosen by predicted restrictiveness\n",
+        scalar(@{ $bl->{batches} }), scalar(@$reps), $rep_weight,
+        100 * $rep_weight / scalar(@{ $bl->{batches} });
+
+    for my $j (@strategies) {
+        print STDERR
+            "--- f=$f j=$j: searching gain (against representatives) ---\n";
+        my $result = Calibrate::Search::search_gain(
+            n => $n, k => $k, f => $f, j => $j,
+            batches         => $reps,
+            xmax            => $xmax,
+            modulus         => $o{modulus},
+            pcoul           => $o{pcoul},
+            jobs            => $o{jobs},
+            gain_lo         => $gain_lo,
+            gain_hi         => $gain_hi,
+            n_coarse        => $o{n_coarse},
+            max_den_coarse  => $o{max_den_coarse},
+            refine_iters    => $o{refine_iters},
+            budget_schedule => \@budget_schedule,
+        );
+
+        if ($Calibrate::Search::ABORT) {
+            report_abort_and_exit($Calibrate::Search::ABORT);
+        }
+
+        my($p, $q) = @{ $result->{best} };
+
+        # $result->{total} is only the raw sum over the searched
+        # priority subset - extrapolate to the full batch set via the
+        # validated log(LCM)-vs-elapsed relationship (see
+        # Calibrate::Search::estimate_full_total) so "est.total" in
+        # the final report is actually comparable to "confirmed
+        # total", not a systematic under-count.
+        my $est = Calibrate::Search::estimate_full_total(
+            n => $n, k => $k, f => $f, j => $j,
+            gp => $p, gq => $q,
+            all_batches => $bl->{batches}, searched => $reps,
+        );
+
+        printf STDERR
+            "  best g=%d/%d (%.4f) searched_subset_total=%.2fs"
+            . " est_full_total=%.2fs%s%s\n",
+            $p, $q, $p / $q, $result->{total}, $est->{total},
+            ($result->{all_resolved} ? ''
+                : ' (still censored - increase budget_max'
+                . ' for a firmer number)'),
+            ($est->{fitted} ? '' : ' (extrapolation: unfitted, crude)');
+
+        push @results, {
+            f => $f, j => $j, g => [$p, $q],
+            search_total => $result->{total}, total => $est->{total},
+            est_fitted => $est->{fitted},
+            all_resolved => $result->{all_resolved},
+            batches => $bl->{batches},
+        };
+    }
+}
+
+my($best) = sort { $a->{total} <=> $b->{total} } @results;
+my $t_search_end = time();
+print STDERR "\n=== confirming overall best (f=$best->{f}"
+    . " j=$best->{j}) against the full batch set ===\n";
+my $t_confirm_start = time();
+my $confirm = Calibrate::Search::evaluate_candidate(
+    n => $n, k => $k, f => $best->{f}, j => $best->{j},
+    gp => $best->{g}[0], gq => $best->{g}[1],
+    batches  => $best->{batches},
+    deadline => $o{budget_max},
+    xmax     => $xmax, modulus => $o{modulus},
+    pcoul    => $o{pcoul}, jobs => $o{jobs},
+);
+if ($Calibrate::Search::ABORT) {
+    report_abort_and_exit($Calibrate::Search::ABORT);
+}
+my $t_confirm_end = time();
+$best->{confirmed_total}    = $confirm->{total};
+$best->{confirmed_resolved} = $confirm->{all_resolved};
+printf STDERR "  confirmed total=%.2fs%s\n", $confirm->{total},
+    ($confirm->{all_resolved} ? ''
+        : ' (still censored at budget_max - true cost may be higher)');
+
+my $search_wall  = $t_search_end  - $t_search_start;
+my $confirm_wall = $t_confirm_end - $t_confirm_start;
+my $total_wall   = $search_wall + $confirm_wall;
+printf STDERR "\nwall-clock: search=%.1fs confirm=%.1fs total=%.1fs\n",
+    $search_wall, $confirm_wall, $total_wall;
+# Divide by confirm->{total} (the summed true batch cost, i.e. what a
+# normal single-process pcoul run actually takes), not confirm_wall
+# (this harness's own parallel wall-clock for the confirmation step,
+# which --jobs can make much smaller and would give a misleadingly
+# good ratio unrelated to the real question of "how much does
+# calibration cost relative to just running pcoul normally").
+if ($confirm->{all_resolved} && $confirm->{total} > 0) {
+    printf STDERR
+        "total calibration wall-clock as a multiple of"
+        . " the confirmed single-run cost: %.2fx\n",
+        $total_wall / $confirm->{total};
+} else {
+    print STDERR
+        "(can't report the multiple - confirmation"
+        . " didn't fully resolve within budget_max)\n";
+}
+
+report_final(\@results, $best);
+exit 0;
+
+# ---------------------------------------------------------------------
+
+sub report_abort_and_exit {
+    my($abort) = @_;
+    print STDERR "\n";
+    print "="x70, "\n";
+    print "SOLUTION FOUND DURING CALIBRATION - stopping immediately.\n";
+    print "="x70, "\n";
+    printf "  v = %s\n", $abort->{v};
+    printf "  found with: n=%s k=%s f=%s j=%s g=%s/%s, batch %s\n",
+        @{$abort}{qw(n k f j gp gq batch)};
+    print "\n";
+    print "This is better news than a calibration result: a real answer\n";
+    print "for f($n, $k) <= $xmax already exists. If you want a tighter\n";
+    print "v_max, rerun calibration with --xmax=$abort->{v} (or one less);\n";
+    print "otherwise this v is already a valid solution to report.\n";
+    exit 0;
+}
+
+sub report_final {
+    my($results, $best) = @_;
+    return unless @$results;
+
+    print "\n";
+    print "="x70, "\n";
+    print "CALIBRATION RESULTS for n=$n k=$k xmax=$xmax\n";
+    print "="x70, "\n\n";
+
+    printf "%-4s %-4s %-18s %-12s %-14s %s\n",
+        'f', 'j', '-g flag', 'gain(float)', 'est.total(s)', 'status';
+    for my $r (sort { $a->{total} <=> $b->{total} } @$results) {
+        my($p, $q) = @{ $r->{g} };
+        # gain = p/q, but pcoul's "-g<a>:<b>" means gain = b/a, so the
+        # flag order is q:p, not p:q - matches "Suggested invocation"
+        # below, which already computed it correctly.
+        printf "%-4s %-4s %-18s %-12.4f %-14.2f %s%s\n",
+            $r->{f}, $r->{j}, "$q:$p", $p / $q, $r->{total},
+            $r->{all_resolved} ? 'resolved' : 'CENSORED (raise budget_max)',
+            $r->{est_fitted} ? '' : ' (crude est.)';
+    }
+    print "(est.total is extrapolated to the full batch set from the\n";
+    print " top batches searched by predicted restrictiveness, via\n";
+    print " Calibrate::Search::estimate_full_total - not a full-batch\n";
+    print " measurement; 'crude est.' rows had too little data to fit\n";
+    print " the log(LCM)-vs-elapsed relationship and fell back to a\n";
+    print " flat per-batch average instead.)\n";
+
+    my($p, $q) = @{ $best->{g} };
+    print "\n";
+    print "-"x70, "\n";
+    printf "BEST: f=%s j=%s gain=%s:%s (%.4f)\n",
+        $best->{f}, $best->{j}, $q, $p, $p / $q;
+    printf "  searched-subset total (raw):        %.2fs\n",
+        $best->{search_total};
+    printf "  est. full-batch total (extrapolated): %.2fs%s\n",
+        $best->{total}, ($best->{est_fitted} ? '' : ' (crude est.)');
+    printf "  confirmed total (full batch set):  %.2fs%s\n",
+        $best->{confirmed_total},
+        ($best->{confirmed_resolved} ? ''
+            : ' - still censored at budget_max, treat as an upper bound');
+    print "-"x70, "\n\n";
+
+    printf "Suggested invocation:\n  %s -f%s -j%s -g%s:%s -x%s %s %s\n\n",
+        $o{pcoul}, $best->{f}, $best->{j}, $q, $p, $xmax, $n, $k;
+
+    unless ($best->{confirmed_resolved}) {
+        print "Note: the confirmation run never fully resolved within\n";
+        print "budget_max=$o{budget_max}s per batch. Its true total cost may\n";
+        print "be higher than shown. Rerun with a larger --budget_max to\n";
+        print "confirm before trusting this result for a real run.\n\n";
+    }
+}
