@@ -4751,16 +4751,22 @@ e_pux prep_unforced_x(
 #ifdef LARGE_MIN
     mpz_sub(Z(r_walk), Z(r_walk), zmin);
 #endif
-    mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
     if (prev_level->have_square) {
         if (prev_level->have_square == 1) {
-            /* if we fix a square, expect to actually walk only the g'th
-             * roots of rq mod aq */
+            /* Let rc be the number of residues. If we fix a square, we will
+             * test rc of each a_q / q_i window up to (zmax / q_i)^{1/g};
+             * that's a lot of operations, but it does not obviously simplify.
+             */
             uint sql = cur_level->vlevel[sq0];
             uint g = sqg[sql - 1];
+            t_value *vp = &value[sq0];
+            t_allocation *ap = &vp->alloc[sql - 1];
+            mpz_fdiv_q(Z(r_walk), Z(r_walk), ap->q);
             mpz_root(Z(r_walk), Z(r_walk), g);
+            mpz_mul(Z(r_walk), Z(r_walk), ap->q);
             mpz_mul_ui(Z(r_walk), Z(r_walk),
                     res_array(prev_level->level)->count);
+            mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
         } else {
             /* if we fix multiple squares, we'll solve a Pell equation;
              * treat that as effectively free */
@@ -4771,6 +4777,7 @@ e_pux prep_unforced_x(
         if (antigain2 > 1)
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain2);
     } else {
+        mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
         if (gain > 1)
             mpz_mul_ui(Z(r_walk), Z(r_walk), gain);
         if (antigain > 1)
