@@ -5024,14 +5024,17 @@ e_is insert_stack(void) {
 
     if (istack) {
         /* insert any init forced primes */
-        for (uint fpi = 0; fpi < forcedp; ++fpi)
-            insert_forced(istack->f, rstack->f, fpi, &jump, 1);
+        for (uint fpi = 0; fpi < forcedp; ++fpi) {
+            t_fact *rf = (rstack) ? rstack->f : NULL;
+            insert_forced(istack->f, rf, fpi, &jump, 1);
+        }
 
         /* insert anything else */
         for (uint vi = 0; vi < k; ++vi) {
             t_fact *rs = &istack->f[vi];
             while (rs->count) {
-                if (insert_float(istack->f, rstack->f, vi, &jump, 1))
+                t_fact *rf = (rstack) ? rstack->f : NULL;
+                if (insert_float(istack->f, rf, vi, &jump, 1))
                     continue;
                 /* failure should mean that there is nothing more to do */
                 if (jump == IS_DEEPER)
