@@ -169,7 +169,8 @@ ulong simple_invert(ulong d, ulong m) {
  * such that elements of r1 and r2 are kth roots of some a (mod n1) and
  * (mod n2) respectively, updates rm_base to be a new list of the kth
  * roots of a mod (n1 * n2).
- * CHECKME: is this implementing CRT? why is it not calling chinese()?
+ * The hand-rolled CRT here can be faster than chinese() by taking
+ * advantage of the required coprimality.
  */
 void _allrootmod_cprod(e_results e2, mpz_t n1, mpz_t n2) {
     t_results *r = &ra[rm_base];
