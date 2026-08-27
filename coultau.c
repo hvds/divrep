@@ -473,7 +473,7 @@ fs_retry:
             goto found_factor;
 #endif
 
-        /* Our method of last resort: ECM with high bmax and many curves*/
+        /* our method of last resort: ECM with high bmax and many curves */
         if (fs->log)
             gmp_printf("starting large ECM on %Zd\n", fs->n);
         B1 *= 8;
@@ -490,12 +490,9 @@ fs_retry:
             }
         }
 
-        /* FIXME: What to do with composites we can't factor?
-         * Push them as "C#####" ? For now, just push them as if we factored.
-         */
-        if (fs->log)
-            gmp_printf("gave up on %Zd\n", fs->n);
-        goto found_factor;
+        /* Last resort failed and we have no interface to signal that,
+         * so give up with a fatal error. */
+        fail("factor_one(%Zd) gave up without finding a factor\n", fs->n);
     }
 found_factor:
     if (!ct_prime(fs->f)) {
