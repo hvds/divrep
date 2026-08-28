@@ -45,7 +45,6 @@ typedef enum {
     earmpp_t, earmpp_t1, earmpp_t2, earmpp_g,
     armp_a, armp_t,
     tsp_A, tsp_B, tsp_T, tsp_y, tsp_z,
-    si_d, si_m,
 
     E_RMSTASH_MAX
 } e_rmstash;
@@ -154,15 +153,6 @@ uint valuation(mpz_t result, mpz_t base, ulong p) {
         mpz_divexact_ui(result, result, p);
     }
     return e;
-}
-
-/* FIXME: write this without GMP */
-ulong simple_invert(ulong d, ulong m) {
-    mpz_set_ui(Z(si_d), d);
-    mpz_set_ui(Z(si_m), m);
-    if (mpz_invert(Z(si_d), Z(si_d), Z(si_m)))
-        return mpz_get_ui(Z(si_d));
-    return 0;
 }
 
 /* Given coprime n1, n2 and results arrays r1 (constant rm_base) and r2,

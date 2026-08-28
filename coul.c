@@ -79,7 +79,6 @@ typedef enum {
     lp_x, lp_mint, lp_mint2,    /* limit_p */
     r_walk,                     /* recurse */
 
-    sdm_p, sdm_r,               /* small_divmod (TODO) */
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
@@ -2522,19 +2521,6 @@ void set_modfix(char *s) {
     ston(mfp->mod, s);
     ston(mfp->val, t);
     mfp->negate = negate;
-}
-
-/* Return p if no inverse exists.
- * TODO: mod to ulong, use the fast 64-bit mulmod from MPU-mulmod.h.
- */
-ulong small_divmod(mpz_t za, mpz_t zb, ulong p) {
-    mpz_set_ui(Z(sdm_p), p);
-    mpz_mod_ui(Z(sdm_r), zb, p);
-    if (!mpz_invert(Z(sdm_r), Z(sdm_r), Z(sdm_p)))
-        return p;
-    mpz_mul(Z(sdm_r), Z(sdm_r), za);
-    mpz_mod_ui(Z(sdm_r), Z(sdm_r), p);
-    return mpz_get_ui(Z(sdm_r));
 }
 
 /* Return FALSE if no inverse exists, else sets result = (a / b) mod m.

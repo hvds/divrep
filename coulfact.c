@@ -128,3 +128,60 @@ ulong simple_gcd(ulong a, ulong b) {
         return b;
     return simple_gcd(b % a, a);
 }
+
+/* 64x64->64 modular multiply. __uint128_t is a GCC/clang extension
+ * (widely available on 64-bit targets); portable fallback avoids
+ * overflow via repeated doubling for other compilers.
+ */
+#ifdef __GNUC__
+static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
+    return (ulong)(((__uint128_t)a * (__uint128_t)b) % m);
+}
+#else
+static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
+    ulong result = 0;
+    a %= m;
+    while (b) {
+        if (b & 1)
+            result = (result + a) % m;
+        a = (a + a) % m;
+        b >>= 1;
+    }
+    return result;
+}
+#endif
+
+/* Returns the inverse of d mod m, or 0 if no inverse exists. We expect
+ * to call this only with prime m, but do not enforce that.
+ */
+ulong simple_invert(ulong d, ulong m) {
+    long t = 0;
+    long newt = 1;
+    long r = (long)m;
+    long newr = (long)(d % m);
+    while (newr != 0) {
+        long q = r / newr;
+        long tmp = t - q * newt;
+        t = newt;
+        newt = tmp;
+        tmp = r - q * newr;
+        r = newr;
+        newr = tmp;
+    }
+    if (r > 1)
+        return 0;
+    if (t < 0)
+        t += (long)m;
+    return (ulong)t;
+}
+
+/* Returns (za / zb) mod p, or p if no inverse exists.
+ */
+ulong small_divmod(mpz_t za, mpz_t zb, ulong p) {
+    ulong zb_r = mpz_fdiv_ui(zb, p);
+    ulong inv = simple_invert(zb_r, p);
+    if (inv == 0)
+        return p;
+    ulong za_r = mpz_fdiv_ui(za, p);
+    return mulmod_u64(inv, za_r, p);
+}
