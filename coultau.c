@@ -645,6 +645,25 @@ bool tau_prime_prep(uint i) {
     return 1;
 }
 
+/* We'll use trial division the whole way if the minimum number of factors
+ * is at least test_rough-1, but only if we can fully test n that way: no
+ * point doing the work if we end up falling through to full factorization.
+ * TODO: it is not reasonable to ask the user to specify the roughness
+ * test, come up with an adaptive way to do this automatically.
+ */
+static inline UV rough_assisted_tlim(UV default_lim, mpz_t n, uint t) {
+    uint roughness = divisors[t].sumpm;
+    if (roughness < test_rough - 1)
+        return default_lim;
+    mpz_root(tmp_lim, n, roughness);
+    if (mpz_sizeinbase(tmp_lim, 2) >= 8 * sizeof(UV) / 2)
+        return default_lim;
+    UV lim = mpz_get_ui(tmp_lim);
+    lim = lim * lim;
+    /* need room to double it */
+    return (lim > (UV_MAX >> 1)) ? default_lim : lim;
+}
+
 /* Given taum[i].{n, t, vi, e}, does initial fast tests that may rule
  * out the possibility that tau(n^e) == t, and prepares for slower tests.
  * Returns 0 if initial tests rule it out, else 1.
@@ -694,22 +713,10 @@ bool tau_multi_prep(uint i) {
     UV p;
     UV sp = 2;
     UV tlim = (nbits > 80) ? 4001 * 4001 : 16001 * 16001;
-    if (test_rough && t >= test_rough) {
-        uint roughness = divisors[t].sumpm;
-        if (roughness >= test_rough - 1) {
-            mpz_root(tmp_lim, tm->n, roughness);
-            if (mpz_fits_uint_p(tmp_lim)) {
-                ulong lim = mpz_get_ui(tmp_lim);
-                tlim = lim * lim;
-            }
-            /* else what? */
-        }
-    }
-
-    /* FIXME: 2 * tlim can overflow */
+    if (test_rough)
+        tlim = rough_assisted_tlim(tlim, tm->n, t);
     UV un = mpz_cmp_ui(tm->n, 2 * tlim) >= 0
         ? 2 * tlim
-        /* FIXME: tm->n may not fit in UV */
         : mpz_get_ui(tm->n);
     UV lim = (tlim < un) ? tlim : un;
     PRIME_ITERATOR(iter);
@@ -747,15 +754,8 @@ bool tau_multi_prep(uint i) {
                 return 0;
             }
             ep = 0;
-            if (test_rough && t >= test_rough) {
-                uint roughness = divisors[t].sumpm;
-                mpz_root(tmp_lim, tm->n, roughness);
-                if (mpz_fits_uint_p(tmp_lim)) {
-                    ulong lim = mpz_get_ui(tmp_lim);
-                    tlim = lim * lim;
-                }
-                /* else what? */
-            }
+            if (test_rough)
+                tlim = rough_assisted_tlim(tlim, tm->n, t);
             un = mpz_cmp_ui(tm->n, 2 * tlim) > 0
                 ? 2 * tlim
                 : mpz_get_ui(tm->n);
