@@ -134,6 +134,34 @@ with `perl t/t10init` directly if that path doesn't exist locally.
   need that behaviour, extend a function's interface to support it
   explicitly, don't retrofit a silent workaround.
 
+### Forced primes, batches, and the "tail" (forcep/forcebatch)
+
+- **`t_forcep`/`t_forcebatch`** (built by the function around coul.c:1900,
+  historically unnamed in comments - search for `forcep = malloc`): for
+  each prime `p <= k`, the set of ways `p` could be allocated across
+  positions is precomputed into a list of "batches" (`fp->batch[0..count)`).
+  `-a`/`-b` index into this list (see "Batches" above).
+- Each batch has a `primary` position and a `x[]` array of per-position
+  exponents-plus-one. `test_forcep()` classifies each candidate
+  (vi, fx) as `TFP_BAD` (impossible), `TFP_SINGLE` (only one valid
+  allocation exists for this prime at this position - so it doesn't need
+  its own explorable batch), or `TFP_GOOD` (kept as a real batch).
+- **The tail**: when at least one `TFP_SINGLE` case is *not* being kept
+  as its own batch (`keep_single` false) and at least one other batch
+  for this prime already exists, a synthetic final batch is appended via
+  `fpb_init(fbp, 1, 0)` - i.e. `primary=1`, all `x[]` zero. `is_tail()`
+  tests exactly this (`bp->x[bp->primary] == 0`). Applying this batch
+  (`apply_batch()` -> `apply_null()`) represents "this prime's
+  allocation from here on is not itself forced/tracked as a batch";
+  it does NOT mean the prime is unavailable.
+- **`keep_single`** is true (suppressing the tail for that prime) when
+  `p <= force_all` (the `-f` CLI option), or - specifically for
+  `TYPE_o` - whenever `n & 3` is nonzero (i.e. `n` is *not* divisible
+  by 4). So for `TYPE_o`, a tail (and therefore any exposure to the
+  apply_null bug below) is only possible at all when **n is divisible
+  by 4**, and is suppressed entirely by passing `-f` with a value
+  `>= k` (which is exactly what "cul" runs do - see project notes).
+
 ### Known sharp edges (durable, still true as of the last check)
 
 - **Math-Prime-Util-GMP pin is stale.** Catching up to a current
