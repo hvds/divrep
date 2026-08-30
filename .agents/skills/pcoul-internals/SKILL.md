@@ -23,10 +23,27 @@ runs.
 ### Build
 
     git clone <this repo>
-    git clone https://github.com/danaj/Math-Prime-Util-GMP mpu-gmp
-    cd mpu-gmp && git checkout <pinned commit - see Makefile default>
+    git clone https://github.com/hvds/Math-Prime-Util-GMP mpu-gmp
+    cd mpu-gmp && git checkout simpqs-full   # commit b363d69b10
     apt-get install libgmp-dev   # or platform equivalent
-    make MPUGMP=/path/to/mpu-gmp MPUGMP_VER=<commit> pcoul
+    make MPUGMP=/path/to/mpu-gmp MPUGMP_VER=2389dcbc44 pcoul
+
+Confirmed working end-to-end with exactly this recipe (built `dpcoul`,
+ran a known test case from `t/t10init`, got the expected `f(6,3) =
+242`). Two things that aren't obvious from the Makefile alone:
+- **`danaj/Math-Prime-Util-GMP`'s current `master` does NOT contain the
+  pinned commit** (`2389dcbc44` and friends) - that history only
+  exists on **`hvds`'s own fork**, branch `simpqs-full`, whose tip
+  (`b363d69b10`) is the Makefile-comment-documented equivalent of
+  `2389dcbc44`. Cloning danaj's repo as the skill previously suggested
+  will fail to find the commit at all.
+- `MPUGMP_VER` must be passed explicitly (matching one of the
+  Makefile's recognised strings, e.g. `2389dcbc44`) even when checking
+  out the fork's hash directly - the Makefile keys its extra-source-file
+  logic (`lucas_seq.c`/`rootmod.c`/`random_prime.c` etc.) off this
+  string, not off what's actually checked out, so a mismatch produces
+  confusing linker errors (`undefined reference to lucas_seq` etc.)
+  even though compilation itself succeeds cleanly.
 
 The MPUGMP dependency is pinned to a specific commit because there was
 no official Math::Prime::Util / Math::Prime::Util::GMP release for several
@@ -110,6 +127,34 @@ with `perl t/t10init` directly if that path doesn't exist locally.
   `have_square>=2` (Pell). To reach one directly, construct an explicit
   `-I` pattern instead (see example below).
 
+### CLI flags (n/k are positional, and come AFTER all `-` options)
+
+Traced directly from `main()`'s arg-parsing loop, since several are
+easy to confuse by mnemonic alone:
+
+- `-x<max>` / `-x<min>:<max>` (`set_minmax()`): the search bound - bare
+  `-x<v>` means "search 0..v". This is the one to set to a specific
+  claimed value when re-confirming a result.
+- `-f<n>` (`force_all`): forces every prime `<= n` to be tracked as its
+  own explorable batch (see "the tail" below) rather than allowing a
+  synthetic catch-all tail batch for singleton cases.
+- `-p<min>:<max>` (`set_cap()`, sets `sminp`/`smaxp`): restricts the
+  *range of primes* considered - a genuinely partial search, not a
+  full one, regardless of what range it's given.
+- `-m<mod>=<val>` / `-m<mod>!<val>` (`set_modfix()`): restricts to
+  (or excludes) a residue class - also a partial search.
+- `-P<n>` (`limp_cap`, capital - unrelated to `-p` despite the similar
+  letter): caps the internal `limit_p()` estimate, a performance knob.
+- `-o` (`opt_print`): print candidates instead of fully testing them -
+  also unrelated to `-p` despite the mnemonic overlap.
+- `-a`/`-b`: batch selection (see "Batches" above).
+- `-I`: recovery/injection pattern (see "recovery patterns" above).
+
+`report_init()` echoes whichever of these were actually in effect back
+onto the log's `001` line (e.g. `-p<min>:<max>`, each `-m` entry, `-f`
+if nonzero) - that line is the ground-truth record of what a given run
+actually used, more reliable than reconstructing it from other sources.
+
 ### Design principles (violate these only with a clear reason)
 
 - **No malloc/free in hot paths.** Considerable effort goes into
@@ -157,10 +202,9 @@ with `perl t/t10init` directly if that path doesn't exist locally.
 - **`keep_single`** is true (suppressing the tail for that prime) when
   `p <= force_all` (the `-f` CLI option), or - specifically for
   `TYPE_o` - whenever `n & 3` is nonzero (i.e. `n` is *not* divisible
-  by 4). So for `TYPE_o`, a tail (and therefore any exposure to the
-  apply_null bug below) is only possible at all when **n is divisible
-  by 4**, and is suppressed entirely by passing `-f` with a value
-  `>= k` (which is exactly what "cul" runs do - see project notes).
+  by 4). So for `TYPE_o`, a tail can exist at all only when **n is
+  divisible by 4**, and is suppressed entirely by passing `-f` with a
+  value `>= k`.
 
 ### Known sharp edges (durable, still true as of the last check)
 
