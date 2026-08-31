@@ -1,0 +1,156 @@
+#!/opt/maths/bin/perl
+use strict;
+use warnings;
+
+use Math::GMP;
+use lib 'lib';
+use Type;
+use Seq::Db;
+
+=head1 ful - drive a full pcoul-type run through to completion
+
+Given the same options as one of the pcoul-family programs (pcoul,
+pcaul, pcrul), this does whatever is still needed of:
+
+  - create the Seq::Run entry and logfile (as "./oul -I" would)
+  - run the search itself, if not already complete
+  - inject "211" factorization lines into the log, if not already done
+  - mark the Seq::Run entry complete (and partial, if -p or -m used)
+
+It only parses out the handful of options it needs (-y, -r, and
+whether -p/-m appear); everything else is passed through to the
+search program unchanged.
+
+=cut
+
+$| = 1;
+
+my @args = @ARGV;
+
+my($typename) = map { /^-y(.+)/ } @args;
+die "$0: mandatory -y<type> option not found\n"
+        unless defined $typename;
+
+my $partial = grep { /^-p/ || /^-m/ } @args;
+
+die "ful: expected '<n> <k>' as the final two arguments\n"
+        unless @args >= 2 && $args[-2] =~ /^\d+$/ && $args[-1] =~ /^\d+$/;
+my($n, $k) = @args[-2, -1];
+
+my $type = Type->new($typename);
+$type->bind_owner('upperlim');
+my $db = Seq::Db->new($type, 0);
+
+# If no -r<path> was given, create a new Seq::Run to use.
+my($rpath) = map { /^-r(.+)/ } @args;
+my $r;
+if (defined $rpath) {
+    my($rn, $rk, $rid) = $rpath =~ m{ (?:^|/) (\d+).(\d+)-(\d+) $ }
+            or die "Can't parse rpath '$rpath'";
+    die "Args mismatch (n=$n k=$k) for rpath '$rpath'"
+            unless $n == $rn && $k == $rk;
+    $r = run_obj($rid);
+} else {
+    $r = prep_run($n, $k, $partial);
+    $rpath = $r->logpath($type);
+    unshift @args, "-r$rpath";
+}
+
+# What has this run already achieved, according to its logfile?
+my($value, $has211) = scan_log($rpath);
+
+unless (defined $value) {
+    my $prog = $type->prog('cul');
+    system($prog, @args) == 0
+            or die "ful: '$prog @args' failed: $?\n";
+    ($value, $has211) = scan_log($rpath);
+    die "ful: $prog finished but logged neither success nor failure in $rpath\n"
+            unless defined $value;
+}
+
+unless ($has211) {
+    my $hopt = ("@args" =~ /(?:^| )-h(\d+)/) ? " -h$1" : '';
+    my @lines = grep /^211 /, `./inject -y$typename -n -q$hopt $n $k $value`;
+    die "ful: './inject' failed\n" if $?;
+    die "ful: './inject' produced no 211 lines\n" unless @lines;
+    insert_before_200($rpath, \@lines);
+}
+
+$r->finalize($db);
+print "ful: run @{[ $r->runid ]} (n=$n k=$k) finalized as ",
+        ($partial ? 'partial' : 'full'), "\n";
+exit 0;
+
+# Read the logfile (if it exists) and report:
+#   - the value from its "200 f(n, k) = value (...)" line, if any
+#   - whether it already has any "211 Sequence ..." lines
+# Dies if the log records failure ("500 f(n, k) > value (...)": search
+# exhausted with no result within bound), since there's nothing more we
+# can automatically do about that.
+sub scan_log {
+    my($path) = @_;
+    return (undef, 0) unless -e $path;
+    open my $fh, '<', $path or die "$0: can't open $path: $!\n";
+    my($value, $has211, $done);
+    while (<$fh>) {
+        $value = $1 if /^200 f\(\d+,\s*\d+\)\s*=\s*(\d+)/;
+        $done = 1 if /^367 /;
+        $has211 = 1 if /^211 /;
+    }
+    die "ful: $path completed without result\n"
+            if $done && !$value;
+    return ($value, $has211);
+}
+
+# Splice a set of "211" lines into the logfile, immediately before its
+# (single, final) "200" line.
+sub insert_before_200 {
+    my($path, $lines) = @_;
+    open my $fh, '<', $path or die "$0: can't open $path: $!\n";
+    my @log = <$fh>;
+    close $fh;
+    my($at) = grep { $log[$_] =~ /^200 / } 0 .. $#log
+            or die "$0: no 200 line found in $path\n";
+    splice(@log, $at, 0, @$lines);
+    open my $wfh, '>', "$path.tmp" or die "$0: can't write $path.tmp: $!\n";
+    print $wfh @log;
+    close $wfh;
+    rename("$path.tmp", $path) or die "$0: can't replace $path: $!\n";
+    return;
+}
+
+sub prep_run {
+    my($n, $k, $partial) = @_;
+    my $g = g();
+    my $f = Seq::TauF->forceFor($g, $db, $k);
+    my $zero = Math::GMP->new(0);
+    my $r = Seq::Run->gen($f, $db, {
+        optn => $zero,
+        optx => $zero,
+        optc => 0,
+        optm => $f->optm,
+        priority => 0,
+    });
+    $r->partial(1) if $partial;
+    $r->running(1);
+    $r->update;
+    my $path = $r->logpath($type);
+    print "path $path\n";
+    return $r;
+}
+
+{
+    my $g;
+    sub g {
+        return $g //= do {
+            Seq::TauG->genTo($db, $n);
+            $db->resultset('TauG')->find({ n => $n })
+                    // die "cannot find TauG entry for n=$n";
+        };
+    }
+}
+
+sub run_obj {
+    my($rid) = @_;
+    return $db->resultset("Run")->find({ runid => $rid });
+}
