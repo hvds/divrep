@@ -45,7 +45,7 @@ my $db = Seq::Db->new($type, 0);
 my($rpath) = map { /^-r(.+)/ } @args;
 my $r;
 if (defined $rpath) {
-    my($rn, $rk, $rid) = $rpath =~ m{ (?:^|/) (\d+).(\d+)-(\d+) $ }
+    my($rn, $rk, $rid) = $rpath =~ m{ (?:^|/) (\d+).(\d+)-(\d+) $ }x
             or die "Can't parse rpath '$rpath'";
     die "Args mismatch (n=$n k=$k) for rpath '$rpath'"
             unless $n == $rn && $k == $rk;
@@ -69,8 +69,7 @@ unless (defined $value) {
 }
 
 unless ($has211) {
-    my $hopt = ("@args" =~ /(?:^| )-h(\d+)/) ? " -h$1" : '';
-    my @lines = grep /^211 /, `./inject -y$typename -n -q$hopt $n $k $value`;
+    my @lines = grep /^211 /, `./inject -y$typename -n -q $n $k $value`;
     die "ful: './inject' failed\n" if $?;
     die "ful: './inject' produced no 211 lines\n" unless @lines;
     insert_before_200($rpath, \@lines);
