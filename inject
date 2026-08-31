@@ -17,6 +17,7 @@ my $typename = 'o';
 my %supported = map +($_ => 1), qw{ t a r o };
 my $dryrun = 0;
 my $full = 0;
+my $dodiag = 1;
 my $hlim = 16000;   # same as default trial_factor limit for factor_exp
 my $Hlim = 16000;   # same as default trial_factor limit for factor_exp
 while (@ARGV && $ARGV[0] =~ /^-/) {
@@ -26,6 +27,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     ($Hlim = $arg || shift(@ARGV)), next if $arg =~ s{^-l}{};
     $dryrun = 1, next if $arg eq '-n';
     $full = 1, next if $arg eq '-f';
+    $dodiag = 0, next if $arg eq '-q';
     die "Unknown option '$arg'\n";
 }
 $| = 1;
@@ -308,6 +310,7 @@ sub roughness {
 {
     my $s; BEGIN { $s = '' }
     sub diag {
+        return unless $dodiag;
         print "\x08 \x08" x length($s);
         print $s = join '', @_;
         return;
