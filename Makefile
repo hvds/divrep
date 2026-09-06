@@ -1,7 +1,9 @@
 # Path to the Math-Prime-Util-GMP repository
 MPUGMP ?= /src/perl/Math-Prime-Util-GMP
-# SHA of the Math-Prime-Util-GMP repository. It needs to be one of the known
-# values, or the Makefile needs updating:
+
+# Checkpoint SHA of the Math-Prime-Util-GMP repository, used to determine
+# which files should exist. It needs to be one of the known values, or the
+# Makefile needs updating:
 #   2389dcbc44 (danaj master, branch point of hvds fork)
 #       == b363d69b10 (hvds fork, simpqs-full branch)
 #   db88b861fe (danaj master 2021-09-05)
@@ -19,6 +21,7 @@ endif
 CC_OPT = -O6 -fgcse-sm -fgcse-las -fgcse-after-reload -fivopts -ftracer -funroll-loops -fvariable-expansion-in-unroller -freorder-blocks-and-partition -funswitch-loops ${CC_EXTRA_OPT}
 dpcoul dpcaul dpcrul dsq12: CC_OPT = -O0
 
+# Tell MPUGMP code that we're not building the perl module.
 DEFINES := -DSTANDALONE
 
 CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/pbrent63.c ${MPUGMP}/isaac.c ${MPUGMP}/tinyqs.c ${MPUGMP}/squfof126.c ${MPUGMP}/simpqs.c ${MPUGMP}/primality.c ${MPUGMP}/utility.c ${MPUGMP}/gmp_main.c ${MPUGMP}/bls75.c ${MPUGMP}/real.c ${MPUGMP}/ecpp.c
@@ -35,34 +38,46 @@ ifeq ($(MPUGMP_VER), a2907ae3b7)
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c
 endif
 
-# temporary, avoid messing up
+# TODO: decide whether to remove optionality on these, we haven't built
+# without them for a long time.
 DEFINES += -DLARGE_MIN -DTRACK_STATS
 
 pcoul dpcoul: DEFINES += -DTYPE_o
 pcaul dpcaul: DEFINES += -DTYPE_a
 pcrul dpcrul: DEFINES += -DTYPE_r
 
+# Nonstandard binary, checks square cases only. Was used to rerun partial
+# searches after finding bugs in the squares-handling code.
 ifdef SQONLY
     DEFINES += -DSQONLY
 endif
+# Optional optimization, appears to cost more than it saves.
 ifdef CHECK_OVERFLOW
     DEFINES += -DCHECK_OVERFLOW
 endif
+# Produces factorization debugging output to stdout.
 ifdef VERBOSE
     DEFINES += -DVERBOSE
 endif
+# Optional optimization when lower bound for search is a significant
+# proportion of the upper bound.
 ifdef LARGE_MIN
     DEFINES += -DLARGE_MIN
 endif
+# Spend even longer trying to factorize large numbers (> 10^100) with ECM.
 ifdef TRY_HARDER
     DEFINES += -DTRY_HARDER
 endif
+# Track how often we confirm at least m of the k values we're searching for.
 ifdef TRACK_STATS
     DEFINES += -DTRACK_STATS
 endif
+# Write every v_0 being tested in walk_v() to the log file.
 ifdef DEBUG_ALL
     DEFINES += -DDEBUG_ALL
 endif
+# Compile for native architecture.
+# TODO: invert this to 'PORTABLE', and have the workflows set that.
 ifdef NATIVE
     CC_OPT += -march=native
 endif
