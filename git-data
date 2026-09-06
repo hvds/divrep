@@ -1,0 +1,58 @@
+#!/usr/bin/env perl
+# No maths content, no reexec needed.
+use strict;
+use warnings;
+
+my $git = '/usr/bin/git';
+
+# We are called with the path to the MPU::GMP repository, and a list of the
+# local and MPU dependencies for a build target.
+# Output a string showing variable declarations for DIVREP_CHANGE, DIVREP_BASE,
+# DIVREP_DIRTY, MPU_CHANGE, MPU_BASE and MPU_DIRTY, reflecting the aggregate
+# status of the listed files: the last divrep or MPU::GMP commit for which
+# any of the relevant files changed; the merge-base of that commit and the
+# master branch; and 1 if there are uncommitted changes among those files,
+# or 0 of there are none.
+
+my($mpu, @deps) = @ARGV;
+$mpu =~ s{/*$}{/};  # ensure trailing slash
+my $lenmpu = length $mpu;
+
+my(@divrep, @mpu);
+for (@deps) {
+    if (substr($_, 0, $lenmpu) eq $mpu) {
+        push @mpu, substr $_, $lenmpu;
+    } elsif (!m{^/}) {
+        push @divrep, $_;
+    } else {
+        die "absolute path '$_' not in MPU repo '$mpu'";
+    }
+}
+
+git_data('DIVREP', '', \@divrep);
+git_data('MPU', $mpu, \@mpu);
+exit 0;
+
+sub git_data {
+    my($prefix, $path, $deps) = @_;
+    return '' unless @$deps;
+    my $cmd = $path ? "$git -C $path" : "$git";
+
+    my($change, $base, $dirty);
+    chomp($change = `$cmd log -1 --format="%h" -- @$deps 2>/dev/null`);
+    if (!length $change) {
+        ($base, $dirty) = ('', 1);
+    } else {
+        chomp($base = `$cmd rev-parse --short \$(
+            $cmd merge-base $change master 2>/dev/null
+        ) 2>/dev/null`);
+        $dirty = (
+            length(`$cmd status --porcelain -- @$deps 2>/dev/null`)
+            || do { `$cmd ls-files --error-unmatch -- @$deps 2>/dev/null`; $? }
+        ) ? 1 : 0;
+    }
+    printf qq{-D%s_CHANGE="\\"%s\\""\n}, $prefix, $change;
+    printf qq{-D%s_BASE="\\"%s\\""\n}, $prefix, $base;
+    printf qq{-D%s_DIRTY=%s\n}, $prefix, $dirty;
+}
+

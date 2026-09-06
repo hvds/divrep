@@ -85,20 +85,22 @@ endif
 default: pcoul
 all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
 
+%: GIT_DEFINES_$* = $(shell ./git-data ${MPUGMP} $^)
+
 pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
-	gcc -o $@ -g ${CC_OPT} ${DEFINES} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
+	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
-	gcc -o test_pell -g ${CC_OPT} ${DEFINES} test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+	gcc -o test_pell -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
 ftest: Makefile ftest.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
-	gcc -o ftest -g ${CC_OPT} ${DEFINES} ftest.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+	gcc -o ftest -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ftest.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
 speed: Makefile speed.c prime_iterator.c ${HFACTOR} ${MPUGMP}/gmp_main.c
-	gcc -o speed -g ${CC_OPT} ${DEFINES} speed.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+	gcc -o speed -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} speed.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
 sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h prime_iterator.h ${CFACTOR} ${HFACTOR}
-	gcc -o $@ -g ${CC_OPT} ${DEFINES} sq12.c diag.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
+	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 test: pcoul pcaul pcrul
 	t/t10init
