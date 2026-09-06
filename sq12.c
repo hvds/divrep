@@ -159,6 +159,24 @@ void init(void) {
     init_tau(0, 0);
 }
 
+void report_init(FILE *fp, mpz_t lim, ulong pmin, ulong pmax) {
+    gmp_fprintf(fp, "001 sq12 %Zu %lu %lu", lim, pmin, pmax);
+
+    /* git SHA details for divrep and MPU::GMP */
+    fprintf(fp, " sha=%s", DIVREP_CHANGE);
+    if (strcmp(DIVREP_CHANGE, DIVREP_BASE))
+        fprintf(fp, "(%s)", DIVREP_BASE);
+    if (DIVREP_DIRTY)
+        fprintf(fp, "*");
+    fprintf(fp, ";%s", MPU_CHANGE);
+    if (strcmp(MPU_CHANGE, MPU_BASE))
+        fprintf(fp, "(%s)", MPU_BASE);
+    if (MPU_DIRTY)
+        fprintf(fp, "*");
+
+    fprintf(fp, "\n");
+}
+
 void ston(mpz_t targ, char *s) {
     char *t = strchr(s, 'e');
     if (t) {
@@ -315,7 +333,9 @@ int main(int argc, char **argv, char **envp) {
             fail("%s: %s", rpath, strerror(errno));
         setlinebuf(rfp);
     }
-    report("001 sq12 %Zu %lu %lu\n", Z(lim), pmin, pmax);
+    report_init(stdout, Z(lim), pmin, pmax);
+    if (rfp)
+        report_init(rfp, Z(lim), pmin, pmax);
 
     prime_iterator_setprime(&ip, pmax);
     prime_iterator_next(&ip);

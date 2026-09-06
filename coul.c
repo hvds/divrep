@@ -2410,6 +2410,18 @@ void report_init(FILE *fp, char *prog) {
                     mfp->mod, mfp->negate ? '!' : '=', mfp->val);
         }
     }
+    /* git SHA details for divrep and MPU::GMP */
+    fprintf(fp, " sha=%s", DIVREP_CHANGE);
+    if (strcmp(DIVREP_CHANGE, DIVREP_BASE))
+        fprintf(fp, "(%s)", DIVREP_BASE);
+    if (DIVREP_DIRTY)
+        fprintf(fp, "*");
+    fprintf(fp, ";%s", MPU_CHANGE);
+    if (strcmp(MPU_CHANGE, MPU_BASE))
+        fprintf(fp, "(%s)", MPU_BASE);
+    if (MPU_DIRTY)
+        fprintf(fp, "*");
+
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
     fprintf(fp, "\n");
