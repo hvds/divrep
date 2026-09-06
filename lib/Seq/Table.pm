@@ -25,6 +25,9 @@ my %types = (
     float => {
         data_type => 'float',
     },
+    text => {
+        data_type => 'text',
+    },
     modlist => {
         data_type => 'text',
         munge => [

@@ -2,10 +2,12 @@ package Seq::Run;
 use strict;
 use warnings;
 
+use List::Util qw{ max };
+
 use Seq::Run::BisectG;
 use Seq::Run::BisectFP;
 use Seq::Run::ShardTest;
-use List::Util qw{ max };
+use Git;
 
 =head1 NAME
 
@@ -22,7 +24,7 @@ __PACKAGE__->define($TABLE, 'run', [
     'uint n',
     'uint k',
     'uint owner',
-    'flags(complete running optimizing fix_power old partial cul) status',
+    'flags(complete running optimizing fix_power old partial cul mixed) status',
     'bigint optn',
     'bigint optx',
     'uint optc',
@@ -31,6 +33,7 @@ __PACKAGE__->define($TABLE, 'run', [
     'maybe float preptime',
     'maybe float runtime',
     'float priority',
+    'maybe text sha',
 ]);
 __PACKAGE__->belongs_to(
     f => 'Seq::TauF', {
@@ -204,6 +207,18 @@ sub finalize {
     for (@{ $line{309} // [] }) {
         /\((\d+\.\d*)s\)$/ && $self->preptime($1);
     }
+
+    # Extract any git status info from init and recovery lines;
+    # mark as 'mixed' if they're not all the same; record a composite
+    # representation.
+    my(@sha, %sha_seen);
+    for (@{ $line{'001'} // [] }) {
+        my($sha) = m{ sha=(\S+)} or next;
+        push @sha, $sha unless $sha_seen{$sha}++;
+    }
+    $self->mixed(1) if @sha > 1;
+    $self->sha(Git->composite(\@sha));
+
     for (@{ $line{200} // [] }) {
         my($n, $k, $d, $t) = m{
             ^ 200 \s+ f\( (\d+) ,\s+ (\d+) \)
