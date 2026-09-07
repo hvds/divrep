@@ -155,6 +155,7 @@ sub report_g {
 
 sub last_complete {
     my($f) = @_;
+    return $f->last_run if defined $f->last_run;
     return reduce { ($a->runid > $b->runid) ? $a : $b } grep {
         $_->owner == 1 && $_->complete && !$_->partial
     } $f->runs->all;

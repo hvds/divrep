@@ -8,6 +8,7 @@ use List::Util qw{ first min max };
 
 use lib 'lib';
 use Math::xGMP; # bfdiv()
+use Git;
 
 my $zero = Math::GMP->new('0');
 # Assume we don't need to do anything clever to check values to this limit.
@@ -52,10 +53,16 @@ $tauf->define($TABLE, 'tauf', [
     'uint sharded',
     'modlist optm',
     'flags(complete external estimated depend impossible unused cul) status',
+    'maybe uint last_runid',
 ]);
 $tauf->belongs_to(
     g => 'Seq::TauG', {
         'foreign.n' => 'self.n',
+    },
+);
+$tauf->might_have(
+    last_run => 'Seq::Run', {
+        'foreign.runid' => 'self.last_runid',
     },
 );
 $tauf->has_many(
@@ -77,8 +84,25 @@ sub rprio {
 
 sub good {
     my($self, $db, $run, $good, $best) = @_;
-    $self->f($good) if !$self->f || $self->f > $good;
-    $self->complete(1);
+    if (!$self->complete && (!$self->f || $self->f >= $good)) {
+        # upgrading to proven result, record this run regardless of quality
+        $self->f($good);
+        $self->complete(1);
+        $self->last_run($run);
+    } elsif ($self->complete && $self->f == $good) {
+        # A fresh run with the same result is deemed more likely to be correct
+        # and a better guide to runtime, but only if it's a pure build.
+        my $git = Git->new_if_valid($run->sha);
+        $self->last_run($run) if $git->is_pure;
+    } else {
+        warn sprintf 'Whoa there, run-%s claims to be complete, but'
+                . ' disagrees with known result', $run->runid;
+        # Do not propagate until the issue is checked: either we have
+        # a first proof of a result that is higher than a previously
+        # proven upper bound, or the proof gives a different result than
+        # a previous proof of the same thing.
+        return ();
+    }
     $self->update;
     printf "f(%s, %s) = %s\n", $self->n, $self->k, $self->f;
     if ($best > $self->k) {
@@ -89,9 +113,10 @@ sub good {
 }
 
 sub _partial {
-    my($self, $db, $good) = @_;
+    my($self, $db, $good, $run) = @_;
     if (!$self->f || $self->f > $good) {
         $self->f($good);
+        $self->last_run($run);
         $self->update;
         printf "f(%s, %s) <= %s\n", $self->n, $self->k, $self->f;
         return 1;
@@ -104,7 +129,7 @@ sub partial {
     my $g = $self->g;
     for my $k ($db->type->ming + 1 .. $best) {
         my $this = ($k == $self->k) ? $self : Seq::TauF->forceFor($g, $db, $k);
-        $this->_partial($db, $good);
+        $this->_partial($db, $good, $run);
     }
     return $g->partial($db, $best);
 }
@@ -113,6 +138,7 @@ sub ugly {
     my($self, $db, $run) = @_;
     $self->complete(1);
     $self->impossible(1);
+    $self->last_run($run);
     $self->update;
     return $self->g->ugly($db, $self->k);
 }
@@ -397,6 +423,8 @@ sub maybe_shardtest {
             [ map "-m$_", @{ $self->optm } ]);
 }
 
+# Returns the last run specific to this owner (so cannot rely on the
+# stashed last_run).
 sub lastRun {
     my($self, $db) = @_;
     my $owner = $db->type->owner;
