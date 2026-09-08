@@ -19,6 +19,12 @@ jobs:
       with:
         packages: gcc-core,libgmp-devel,make,git,binutils
 
+    - name: Trust the primary repository
+      shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        git config --global --add safe.directory "$(pwd)"
+
     - name: Clone Math-Prime-Util-GMP
       shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
       run: |
@@ -44,7 +50,6 @@ jobs:
       shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
       run: |
         cd "$GITHUB_WORKSPACE"
-        git config --global --add safe.directory "$(pwd)"
         SHORT_SHA=$(git rev-parse --short HEAD)
         echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
         echo "Captured SHA: $SHORT_SHA"
