@@ -76,9 +76,8 @@ endif
 ifdef DEBUG_ALL
     DEFINES += -DDEBUG_ALL
 endif
-# Compile for native architecture.
-# TODO: invert this to 'PORTABLE', and have the workflows set that.
-ifdef NATIVE
+# Compile for native architecture unless portable build requested.
+ifndef PORTABLE
     CC_OPT += -march=native
 endif
 

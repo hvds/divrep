@@ -36,7 +36,7 @@ jobs:
       shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
       run: |
         cd "$GITHUB_WORKSPACE"
-        MPUGMP=/cygdrive/c/cygwin/home/Math-Prime-Util-GMP MPUGMP_VER=2389dcbc44 make pcoul
+        MPUGMP=/cygdrive/c/cygwin/home/Math-Prime-Util-GMP MPUGMP_VER=2389dcbc44 PORTABLE=1 make pcoul
 
     - name: Strip executable
       shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
