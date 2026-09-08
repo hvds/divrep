@@ -9,9 +9,6 @@ use lib 'lib';
 use Type;
 our $type;
 
-# for now
-local $ENV{DEBUG} = 1;
-
 if (1) {
     # Test cases for -I without recovery
     local $type = Type->new('o');
