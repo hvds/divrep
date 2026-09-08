@@ -122,7 +122,7 @@ static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
 static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
     bool r = _GMP_pbrent_factor(n, f, a, rounds);
-    gmp_printf("(%ld) sqf: %Zu [%lu, %lu] %d", cgdiff(&cg_tp0), n, a, rounds, r);
+    gmp_printf("(%ld) brent: %Zu [%lu, %lu] %d", cgdiff(&cg_tp0), n, a, rounds, r);
     if (r)
         gmp_printf(" %Zu", f);
     gmp_printf("\n");
@@ -681,7 +681,8 @@ bool tau_multi_prep(uint i) {
     tm->state = 1;  /* init */
 
 #ifdef VERBOSE
-    gmp_printf("tau_multi_prep t=%u e=%u (%u) %Zu\n", t, e, nbits, tm->n);
+    gmp_printf("tau_multi_prep vi=%u t=%u e=%u (%u) %Zu\n",
+            tm->vi, t, e, nbits, tm->n);
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
 #endif
     if (t == 1) {
