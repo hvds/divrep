@@ -1,0 +1,24 @@
+BEGIN {
+    if ($ENV{REEXEC_LOOP}) {
+        delete $ENV{REEXEC_LOOP};
+    } elsif ($^O =~ /MSWin32/) {
+        warn "Ignoring re-exec under Windows";
+    } else {
+        local $ENV{REEXEC_LOOP} = 1;
+        exec($_, $0, @ARGV);
+        die "Could not exec $_";
+    }
+}
+__END__
+
+Use like:
+  #!/usr/bin/env perl
+  do "./lib/reexec" for grep $_, $ENV{MY_CUSTOM_PATH};
+at the head of a perl program.
+
+Reinvokes this script with the same arguments using the perl provided by
+the custom path (passed in as $_), with best-effort attempts to avoid
+breakage.
+
+Not currently supported under Windows, let me know if you want it: there
+is probably a way to support it.

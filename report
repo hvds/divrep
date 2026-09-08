@@ -1,4 +1,5 @@
-#!/opt/maths/bin/perl
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
 use strict;
 use warnings;
 use Math::GMP;

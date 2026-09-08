@@ -53,9 +53,7 @@ a short-term target.  (see "Known sharp edges" below).
 For the full test suite (`make test`, runs t/t10init): also build the
 -O0 debug binaries (`make dpcoul dpcaul dpcrul`), and ensure
 Math::GMP and Math::Prime::Util perl modules are installed (the test
-harness is Perl, separate from the C search program). The test
-script's shebang (`#!/opt/maths/bin/perl`) is host-specific; invoke
-with `perl t/t10init` directly if that path doesn't exist locally.
+harness is Perl, separate from the C search program).
 
 ### File map
 
