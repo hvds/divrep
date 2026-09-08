@@ -55,6 +55,20 @@ For the full test suite (`make test`, runs t/t10init): also build the
 Math::GMP and Math::Prime::Util perl modules are installed (the test
 harness is Perl, separate from the C search program).
 
+For the Perl DB/harness layer (`ful`, `inject`, `report`, anything
+under `lib/Seq/`), on a fresh Debian/Ubuntu host `apt-get install
+libdbix-class-perl libmath-gmp-perl libmath-prime-util-perl
+libdbd-mysql-perl mariadb-server` covers everything EXCEPT
+`DBIx::Class::BitField` (used by `lib/Seq/Table.pm` for the `status`
+bitfield columns), which has no OS package on Ubuntu 24.04 and isn't
+reachable from a sandboxed/allowlisted network (it's on CPAN/metacpan,
+not GitHub). It's a small, self-contained module (add_columns +
+per-flag accessors, plus `DBIx::Class::ResultSet::BitField` for
+`search_bitfield`); if you need to exercise this code without full
+CPAN access, a minimal local reimplementation covering
+`add_columns`/per-flag accessors/`search_bitfield` is enough to deploy
+the schema and run `Seq::Run::finalize()` etc for testing.
+
 ### File map
 
 - `coul.c` - the main search: CLI parsing, `main()`, the core
@@ -103,7 +117,52 @@ harness is Perl, separate from the C search program).
   the cost of walking (`r_walk`) to decide which is cheaper; this
   decision is evaluated extremely frequently (order 10^12 times over
   the program's lifetime), so correctness AND per-call cost of this
-  estimate both matter a lot.
+  estimate both matter a lot. Forced-prime batch dispatch and
+  unforced/walk processing are cleanly separated: `limit_p()` (which
+  `prep_unforced_x()` consults for this decision) has exactly one call
+  site in the whole file, reached only *after* every forced prime's
+  own batch choice has already been made; `test_forcep()`/the forced-
+  batch construction never calls `limit_p()`/`mintau()` at all - which
+  batches exist for a given prime, and which one gets chosen, is
+  decided purely by static divisor/CRT structure. The "walk" family
+  itself (`walk_v()`, `walk_1()`, `walk_1_set()`) all begin with an
+  identical `#ifdef SQONLY` guard plus a `have_min` early-return (seed
+  `level_setp()` to the min bound and return if `!have_min`) - despite
+  being defined hundreds of lines apart, so any similar extension point
+  needs adding to all three, not just `walk_v()`.
+- **`mintau()`'s memoization is keyed purely by content, not tree
+  position.** Its cache (`mint_base`, a lazily-grown `t_mint` trie
+  indexed by `off` - the *gap* between consecutive available-prime
+  indices) is populated relative to whichever `pfreev` bit-vector is
+  active at call time; `mint_init_state()` resets its own scan state
+  (`pfreenext`/`pfreedepth`) fresh on every call. It has no notion of
+  "the real search tree" at all - it's safe to call with a
+  temporarily/artificially modified `pfreev` (eg with a few extra bits
+  cleared) and get back a fully valid, cacheable/cache-reusable answer
+  for that modified view, not just for whatever the "live" state
+  happens to be.
+- **`is_forced` distinguishes forced-batch from unforced levels.**
+  `cur_level->is_forced` is `1` only for a level populated via
+  `apply_batch()` (a forced-prime batch, tail or not - it's set
+  unconditionally near the top of that function) and `0` for one from
+  `apply_single()` (a genuine unforced candidate) or a freshly-reset
+  level. Useful for telling "still dispatching forced primes" from
+  "already in unforced territory" when inspecting state.
+- **`apply_level()` is the one shared level-transition function** that
+  `apply_null()`, `apply_single()`, and `apply_primary()` all route
+  through. `apply_secondary()` is the exception: it adds *further*
+  constraints (for non-primary positions in the same forced batch) to
+  a `cur_level` a preceding `apply_primary()` call already established
+  in the same `apply_batch()` invocation, rather than creating a new
+  level transition itself.
+- **`prime_iterator_setprime(iter, n)`/`prime_iterator_next(iter)`**:
+  seeding with `n` does NOT test `n` itself - `next()` always returns
+  the first prime *strictly greater* than whatever was last seeded or
+  returned. This drives the main per-prime enumeration (`continue_
+  unforced:` label in the main loop): `level_setp()` seeds the
+  iterator once per `(vi,x)` decision, then `prime_iterator_next()` is
+  called repeatedly (via `goto`/`continue`, not a literal `for` loop)
+  until the returned prime exceeds `cur_level->limp`.
 - **-W / midp**: above a user-set prime threshold, allocations of a
   single large prime are handled via one flat descending sweep
   (`walk_midp()`) rather than normal recursion, since at most one
