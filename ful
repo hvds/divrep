@@ -45,7 +45,7 @@ my $db = Seq::Db->new($type, 0);
 my($rpath) = map { /^-r(.+)/ } @args;
 my $r;
 if (defined $rpath) {
-    my($rn, $rk, $rid) = $rpath =~ m{ (?:^|/) (\d+).(\d+)-(\d+) $ }x
+    my($rn, $rk, $rid) = $rpath =~ m{ (?:^|/) (\d+) \. (\d+) - (\d+) $ }x
             or die "Can't parse rpath '$rpath'";
     die "Args mismatch (n=$n k=$k) for rpath '$rpath'"
             unless $n == $rn && $k == $rk;
