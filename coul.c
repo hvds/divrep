@@ -5173,10 +5173,11 @@ void run_flip_pqsq(uint vi) {
             for (uint li = 1; li < level; ++li)
                 if (p == levels[li].p && levels[li].x > 1)
                     goto redo_flip;
-        reset_vlevel(cur_level);
         /* failure most likely means it does not leave a valid square */
-        if (!apply_single(anc_level, cur_level, vi, p, xl))
+        if (!apply_single(anc_level, cur_level, vi, p, xl)) {
+            --cur_level->vlevel[vi];
             continue;
+        }
         ap = &vp->alloc[cur_level->vlevel[vi] - 1];
         mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
         mpz_fdiv_q(Z(temp), Z(temp), ap->q);
@@ -5187,6 +5188,7 @@ void run_flip_pqsq(uint vi) {
         next_level->have_min = cur_level->have_min;
         reset_vlevel(next_level);
         walk_1_set(cur_level, next_level, vi, oldp, phigh, xs);
+        --cur_level->vlevel[vi];
     }
     prev_level->x = xs;
     ++prev_level->vlevel[vi];
