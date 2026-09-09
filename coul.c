@@ -161,17 +161,11 @@ t_level *levels = NULL;     /* one level per allocated prime */
 uint level = 0;             /* current recursion level */
 uint final_level = 0;       /* level at which to terminate */
 t_value *value = NULL;      /* v_0 .. v_{k-1} */
+uint *cur_vlevel = NULL;    /* Number of allocations (+1) at each value */
 
 static inline void level_setp(t_level *lp, ulong p) {
     lp->p = p;
     prime_iterator_setprime(&lp->piter, p);
-}
-
-/* reset allocations at this level to those at previous level */
-static inline void reset_vlevel(t_level *cur_level) {
-    assert(cur_level->level > 0);
-    t_level *prev_level = &levels[cur_level->level - 1];
-    memcpy(cur_level->vlevel, prev_level->vlevel, k * sizeof(uint));
 }
 
 /* list of some small primes, at least enough for one per allocation,
@@ -497,7 +491,7 @@ void prep_show_v(t_level *cur_level, bool expanded) {
         ? sprintf(&diag_buf[offset], "b%u: ", batch_alloc - 1)
         : sprintf(&diag_buf[offset], "b*: ");
     for (uint vi = 0; vi < k; ++vi) {
-        uint vlevel = cur_level->vlevel[vi]
+        uint vlevel = cur_vlevel[vi]
                 - ((in_midp && vi == mid_vi) ? 1 : 0);
         if (vi)
             diag_buf[offset++] = ' ';
@@ -551,7 +545,7 @@ void diag_csv(t_level *cur_level) {
     printf("%u", batch_alloc);
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
-        uint vlevel = cur_level->vlevel[vi];
+        uint vlevel = cur_vlevel[vi];
         printf(",");
         for (uint ai = 1; ai < vlevel; ++ai) {
             t_allocation *ap = &vp->alloc[ai];
@@ -795,7 +789,7 @@ void updated_zmax(void) {
                 continue;
             uint vi = lp->vi;
             t_value *v = &value[vi];
-            uint vlevel = lp->vlevel[vi];
+            uint vlevel = lp->vi_depth;
             t_allocation *ap = &v->alloc[vlevel - 1];
             if (ispow2(ap->t)) {
                 mpz_add_ui(ap->lim, zmax, TYPE_OFFSET(vi));
@@ -833,21 +827,21 @@ bool candidate(mpz_t c) {
 void free_levels(void) {
     for (uint i = 0; i < maxlevel; ++i) {
         t_level *l = &levels[i];
-        free(l->vlevel);
         free(l->pfreev);
         mpz_clear(l->aq);
         mpz_clear(l->rq);
         prime_iterator_destroy(&l->piter);
     }
     free(levels);
+    free(cur_vlevel);
 }
 
 void init_levels(void) {
     levels = calloc(maxlevel + 1, sizeof(t_level));
+    cur_vlevel = calloc(k, sizeof(uint));
     for (uint i = 0; i < maxlevel; ++i) {
         t_level *l = &levels[i];
         l->level = i;
-        l->vlevel = calloc(k, sizeof(uint));
         l->pfreev = malloc(pfree_vecsize * sizeof(uint));
         mpz_init(l->aq);
         mpz_init(l->rq);
@@ -864,12 +858,13 @@ void init_levels(void) {
     levels[0].nextpi = 0;
     levels[0].maxp = 0;
     levels[0].is_forced = 2;    /* special value for dummy entry */
+    levels[0].vi_depth = 1;
     if (forcedp + 1 > 8 * sizeof(levels[0].fp_need))
         fail("FIXME: too many forced primes");
     levels[0].fp_need = (1 << forcedp) - 1;
     memset(levels[0].pfreev, 0xff, pfree_vecsize * sizeof(uint));
     for (uint j = 0; j < k; ++j)
-        levels[0].vlevel[j] = 1;
+        cur_vlevel[j] = 1;
     level = 1;
 }
 
@@ -2147,7 +2142,7 @@ void prep_mp(void) {
  */
 bool alloc_square(t_level *cur, uint vi) {
     t_value *v = &value[vi];
-    uint vlevel = cur->vlevel[vi];
+    uint vlevel = cur_vlevel[vi];
     t_allocation *ap = &v->alloc[vlevel - 1];
     uint sqi = cur->have_square++;
     uint g = divisors[ap->t].gcddm;
@@ -2192,7 +2187,6 @@ void prep_presquare(void) {
         cur->nextpi = prev->nextpi;
         cur->maxp = prev->maxp;
         cur->fp_need = prev->fp_need;
-        memcpy(cur->vlevel, prev->vlevel, k * sizeof(uint));
         memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
         mpz_set(cur->rq, prev->rq);
@@ -2845,7 +2839,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
-        uint vlevel = cur_level->vlevel[vi];
+        uint vlevel = cur_vlevel[vi];
         q[vi] = &vp->alloc[vlevel - 1].q;
         t[vi] = vp->alloc[vlevel - 1].t;
         mpz_divexact(wv_qq[vi], *aq, *q[vi]);
@@ -3192,7 +3186,7 @@ void walk_1(t_level *cur_level, uint vi) {
     {
         /* calculate v_0 */
         t_value *vip = &value[vi];
-        t_allocation *aip = &vip->alloc[cur_level->vlevel[vi] - 1];
+        t_allocation *aip = &vip->alloc[cur_vlevel[vi] - 1];
         mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
     }
 
@@ -3217,7 +3211,7 @@ void walk_1(t_level *cur_level, uint vi) {
         if (vi == vj)
             continue;
         t_value *vjp = &value[vj];
-        uint vjl = cur_level->vlevel[vj];
+        uint vjl = cur_vlevel[vj];
         t_allocation *ajp = &vjp->alloc[vjl - 1];
         mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
         if (vjl > 1) {
@@ -3264,7 +3258,7 @@ void walk_1_set(
         plow = 2;
 
     t_value *vip = &value[vi];
-    uint vil = cur_level->vlevel[vi];
+    uint vil = cur_vlevel[vi];
     t_allocation *aip = &vip->alloc[vil - 1];
     if (mpz_sgn(zmin) > 0) {
         mpz_add_ui(Z(temp), zmin, TYPE_OFFSET(vi));
@@ -3294,7 +3288,7 @@ void walk_1_set(
         if (vi == vj)
             continue;
         t_value *vjp = &value[vj];
-        uint vjl = cur_level->vlevel[vj];
+        uint vjl = cur_vlevel[vj];
         t_allocation *ajp = &vjp->alloc[vjl - 1];
         t[vj] = ajp->t;
         if (t[vj] == 1)
@@ -3334,14 +3328,14 @@ void walk_1_set(
             t_allocation *a2ip = &vip->alloc[vil];
             a2ip->p = p;
             a2ip->x = x;
-            ++cur_level->vlevel[vi];
+            ++cur_vlevel[vi];
             diag_plain(cur_level);
-            --cur_level->vlevel[vi];
+            --cur_vlevel[vi];
         }
 
         for (uint vj = 0; vj < k; ++vj) {
             t_value *vjp = &value[vj];
-            uint vjl = cur_level->vlevel[vj];
+            uint vjl = cur_vlevel[vj];
             t_allocation *ajp = &vjp->alloc[vjl - 1];
             mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
             mpz_fdiv_qr(Z(w1_j), Z(w1_r), Z(w1_j), ajp->q);
@@ -3383,7 +3377,7 @@ bool update_residues(t_level *old, t_level *new,
         uint vi, ulong p, uint x, mpz_t px, uint retry) {
     uint vj = sq0;
     t_value *vjp = &value[vj];
-    uint jlevel = new->vlevel[vj] - 1;
+    uint jlevel = cur_vlevel[vj] - 1;
     if (x == 0) {
         res_copy(new->level, old->level);
         return 1;
@@ -3558,7 +3552,7 @@ bool update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
 bool apply_allocv(t_level *prev_level, t_level *cur_level,
         uint vi, ulong p, uint x, mpz_t px) {
     t_value *v = &value[vi];
-    uint vlevel = cur_level->vlevel[vi]++;
+    uint vlevel = cur_vlevel[vi]++;
     t_allocation *prev = &v->alloc[vlevel - 1];
     t_allocation *cur = &v->alloc[vlevel];
 
@@ -3617,9 +3611,13 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
  * Also sets level.rq, level.aq and residues.
  */
 void apply_null(t_level *prev, t_level *cur, ulong p) {
-    apply_level(prev, cur, 0, p, 1);
+    uint vi = 0;    /* clarify where we are using this */
+    apply_level(prev, cur, vi, p, 1);
     cur->have_min = prev->have_min;
     if (p == 2 && mpz_odd_p(prev->aq)) {
+        /* A tail value of 2^0 can only occur with k=3, force_all < 2,
+         * and implies v_1 is even so v_0 is odd. We manually calculate
+         * the effective update_chinese(). */
         if (mpz_odd_p(prev->rq))
             mpz_set(cur->rq, prev->rq);
         else
@@ -3630,7 +3628,8 @@ void apply_null(t_level *prev, t_level *cur, ulong p) {
         mpz_set(cur->aq, prev->aq);
     }
     if (prev->have_square)
-        update_residues(prev, cur, 0, p, 0, Z(zone), 0);
+        update_residues(prev, cur, vi, p, 0, Z(zone), 0);
+    cur->vi_depth = cur_vlevel[vi];
 }
 
 /* Allocate a non-fixed (non-batch) prime p^{x-1} to v_{vi}. Returns FALSE
@@ -3642,7 +3641,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     cur->have_min = prev->have_min || (minp[x - 1] && p > minp[x - 1]);
     mpz_ui_pow_ui(px, p, x - 1);
     if (!update_chinese(prev, cur, vi, px)) {
-        ++cur->vlevel[vi];
+        ++cur_vlevel[vi];
         return 0;
     }
 
@@ -3651,7 +3650,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     /* if rq > zmax, no solution <= zmax is possible */
     if (mpz_cmp(cur->rq, zmax) > 0) {
         /* caller expects vlevel to have been incremented on failure */
-        ++cur->vlevel[vi];
+        ++cur_vlevel[vi];
         return 0;
     }
 #endif
@@ -3661,7 +3660,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
         return 0;
 
     t_value *vp = &value[vi];
-    uint t = vp->alloc[ cur->vlevel[vi] - 1 ].t;
+    uint t = vp->alloc[ cur_vlevel[vi] - 1 ].t;
     if (t == 1) {
         walk_1(cur, vi);
         /* nothing more to do */
@@ -3673,6 +3672,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
         if (!update_residues(prev, cur, vi, p, x, px, 0))
             return 0;
     }
+    cur->vi_depth = cur_vlevel[vi];
     return 1;
 }
 
@@ -3700,7 +3700,7 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     /* this is wasted effort if x does not divide v_i.t, but we need it
      * for the alloc_square() calculation */
     if (!update_chinese(prev, cur, vi, px)) {
-        ++cur->vlevel[vi];
+        ++cur_vlevel[vi];
         return 0;
     }
     if (!apply_allocv(prev, cur, vi, p, x, px))
@@ -3710,6 +3710,7 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     if (mpz_cmp(cur->rq, zmax) > 0)
         return 0;
 
+    cur->vi_depth = cur_vlevel[vi];
     return 1;
 }
 
@@ -3969,7 +3970,7 @@ void prep_midp(t_level *cur_level) {
     t_level *prev_level = &levels[cur_level->level - 1];
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
-        uint vil = cur_level->vlevel[vi];
+        uint vil = cur_vlevel[vi];
         t_allocation *ap = &vp->alloc[vil - 1];
         uint t = ap->t;
         if (highpow ? t == 1 : ispow2(t))
@@ -4020,7 +4021,6 @@ void prep_midp(t_level *cur_level) {
  */
 void walk_midp(t_level *prev_level, bool recover) {
     t_level *cur_level = &levels[prev_level->level + 1];
-    reset_vlevel(cur_level);
 
     uint vi, x, mi;
     ulong p;
@@ -4078,7 +4078,7 @@ void walk_midp(t_level *prev_level, bool recover) {
                 walk_v(cur_level, Z(zero));
             }
             /* unallocate */
-            --cur_level->vlevel[vi];
+            --cur_vlevel[vi];
         }
     }
   walk_midp_done:
@@ -4092,6 +4092,21 @@ uint relative_valuation(uint i, ulong p, uint e) {
     return e;
 }
 
+/* Unapply a fully or partially applied batch by decrementing the
+ * relevant vlevels. 'count' should be k for a fully applied batch.
+ */
+static inline void unapply_batch(uint fpi, uint bi, uint count) {
+    t_forcebatch *bp = forcebatch_p(&forcep[fpi], bi);
+    if (bp->x[bp->primary] == 0)
+        return;
+    for (uint vj = 0; vj < count; ++vj)
+        if (bp->x[vj] != 0)
+            --cur_vlevel[vj];
+}
+
+/* Apply this batch and return TRUE if there is work to do for it, else
+ * change nothing and return FALSE.
+ */
 bool apply_batch(
     t_level *prev_level, t_level *cur_level, uint fpi, uint bi
 ) {
@@ -4112,19 +4127,25 @@ bool apply_batch(
     cur_level->have_min = prev_level->have_min;
 
     uint ep = bp->x[vi] - 1;
-    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1))
+    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1)) {
+        --cur_vlevel[vi];
         return 0;
+    }
     vp = &value[vi];
-    if (vp->alloc[ cur_level->vlevel[vi] - 1 ].t == 1)
+    if (vp->alloc[ cur_vlevel[vi] - 1 ].t == 1)
         terminal = vi;
 
     for (uint vj = 0; vj < k; ++vj) {
         if (vi == vj || bp->x[vj] == 0)
             continue;
-        if (!apply_secondary(prev_level, cur_level, vj, fp->p, bp->x[vj]))
+        if (!apply_secondary(prev_level, cur_level, vj, fp->p, bp->x[vj])) {
+            unapply_batch(fpi, bi, vj + 1);
+            if (vi > vj)
+                --cur_vlevel[vi];
             return 0;
+        }
         vp = &value[vj];
-        if (vp->alloc[ cur_level->vlevel[vj] - 1 ].t == 1)
+        if (vp->alloc[ cur_vlevel[vj] - 1 ].t == 1)
             terminal = vj;
     }
     cur_level->fp_need &= ~(1 << fpi);
@@ -4138,7 +4159,7 @@ bool apply_batch(
         bool valid = 1;
         if (mpz_sgn(zmin)) {
             vp = &value[terminal];
-            uint vlevel = cur_level->vlevel[terminal];
+            uint vlevel = cur_vlevel[terminal];
             mpz_sub_ui(Z(temp), vp->alloc[vlevel - 1].q, terminal);
             if (mpz_cmp(Z(temp), zmin) <= 0)
                 valid = 0;
@@ -4149,40 +4170,49 @@ bool apply_batch(
                 seen_valid = 1;
         }
         /* nothing more to do */
+        unapply_batch(fpi, bi, k);
         return 0;
     }
 
     /* did we already have a square? */
     if (prev_level->have_square) {
-        /* need extra care only when a secondary hits the square */
-        /* so not if a) the primary hits it, or b) nothing hits it */
+        /* Need extra care only when a secondary hits the square,
+         * so not if a) the primary hits it, or b) nothing hits it.
+         */
         if (vi == sq0 || bp->x[sq0] == 0) {
             mpz_ui_pow_ui(px, fp->p, ep);
             if (!update_residues(
                 prev_level, cur_level, vi, fp->p, ep + 1, px, 0
-            ))
+            )) {
+                unapply_batch(fpi, bi, k);
                 return 0;
+            }
         } else {
             /* apply the secondary first, then the primary */
             uint eq = bp->x[sq0] - 1;
             mpz_ui_pow_ui(px, fp->p, eq);
             if (!update_residues(
                 prev_level, cur_level, sq0, fp->p, eq + 1, px, 0
-            ))
+            )) {
+                unapply_batch(fpi, bi, k);
                 return 0;
+            }
             uint e2 = ep - eq;
             if (e2 > 0) {
                 mpz_ui_pow_ui(px, fp->p, e2);
                 if (!update_residues(
                     prev_level, cur_level, vi, fp->p, e2 + 1, px, eq
-                ))
+                )) {
+                    unapply_batch(fpi, bi, k);
                     return 0;
+                }
             }
         }
     }
     if (!defer_pell && !(opt_alloc & 4) && cur_level->have_square > 1) {
         seen_valid = 1;
         walk_v(cur_level, Z(zero));
+        unapply_batch(fpi, bi, k);
         return 0;
     }
     return 1;
@@ -4238,7 +4268,7 @@ uint best_v0(t_level *cur_level) {
     assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
-        uint vjl = cur_level->vlevel[vj];
+        uint vjl = cur_vlevel[vj];
         t_allocation *apj = &vpj->alloc[vjl - 1];
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
@@ -4275,7 +4305,7 @@ uint best_v1(t_level *cur_level) {
     assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
-        uint vjl = cur_level->vlevel[vj];
+        uint vjl = cur_vlevel[vj];
         t_allocation *apj = &vpj->alloc[vjl - 1];
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
@@ -4314,7 +4344,7 @@ uint best_v2(t_level *cur_level) {
     assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
-        uint vjl = cur_level->vlevel[vj];
+        uint vjl = cur_vlevel[vj];
         t_allocation *apj = &vpj->alloc[vjl - 1];
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
@@ -4349,7 +4379,7 @@ uint best_v3(t_level *cur_level) {
     assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
-        uint vjl = cur_level->vlevel[vj];
+        uint vjl = cur_vlevel[vj];
         t_allocation *apj = &vpj->alloc[vjl - 1];
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
@@ -4404,7 +4434,7 @@ uint best_v4(t_level *cur_level) {
     assume(k > 0);
     for (uint vj = 0; vj < k; ++vj) {
         t_value *vpj = &value[vj];
-        uint vjl = cur_level->vlevel[vj];
+        uint vjl = cur_vlevel[vj];
         t_allocation *apj = &vpj->alloc[vjl - 1];
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
@@ -4463,7 +4493,7 @@ uint best_6x(t_level *cur_level) {
 
     uint vi = sq0 - 2;
     t_value *vp = &value[vi];
-    uint vlevel = cur_level->vlevel[vi];
+    uint vlevel = cur_vlevel[vi];
     t_allocation *ap_last = &vp->alloc[vlevel - 1];
     if (ap_last->t != 2)
         return vi;  /* allocate some more */
@@ -4473,7 +4503,7 @@ uint best_6x(t_level *cur_level) {
     ap_next->t = 1;
     ap_next->p = 0; /* the real value may well not fit */
     ap_next->x = 2;
-    cur_level->vlevel[vi] = vlevel + 1;
+    cur_vlevel[vi] = vlevel + 1;
     cur_level->have_min = 1;
     /* We will fully fix v_i, so we don't need to roll the prime we
      * allocate into rq/aq by calling update_chinese each time: the
@@ -4549,7 +4579,7 @@ uint best_6x(t_level *cur_level) {
             }
         }
     }
-    cur_level->vlevel[vi] = vlevel;
+    cur_vlevel[vi] = vlevel;
     return k + 1;   /* all done */
 }
 
@@ -4580,7 +4610,7 @@ uint best_fixed(t_level *cur_level) {
         return k;
     uint vi = fixed_v[effective_level];
     t_value *vp = &value[vi];
-    uint vlevel = cur_level->vlevel[vi];
+    uint vlevel = cur_vlevel[vi];
     t_allocation *ap_last = &vp->alloc[vlevel - 1];
     if (ap_last->t == 1)
         return k;
@@ -4597,7 +4627,7 @@ uint best_v(t_level *cur_level) {
 /* return the maximum prime to iterate to */
 ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     t_value *vp = &value[vi];
-    uint vil = cur_level->vlevel[vi];
+    uint vil = cur_vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
     mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
     mpz_div(Z(lp_x), Z(lp_x), ap->q);
@@ -4701,7 +4731,7 @@ e_pux prep_unforced_x(
     uint x = divisors[ti].div[cur_level->di];
     uint vi = cur_level->vi;
     t_value *vp = &value[vi];
-    uint vil = cur_level->vlevel[vi];
+    uint vil = cur_vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
     ulong limp = 0;
     /* if part of an init_pattern, we don't care about the checks,
@@ -4782,7 +4812,7 @@ e_pux prep_unforced_x(
              * test rc of each a_q / q_i window up to (zmax / q_i)^{1/g};
              * that's a lot of operations, but it does not obviously simplify.
              */
-            uint sql = cur_level->vlevel[sq0];
+            uint sql = cur_vlevel[sq0];
             uint g = sqg[sql - 1];
             t_value *vp = &value[sq0];
             t_allocation *ap = &vp->alloc[sql - 1];
@@ -4944,7 +4974,6 @@ bool insert_forced(
     if (!init || !is_tail(bp)) {
         t_level *prev_level = &levels[level - 1];
         t_level *cur_level = &levels[level];
-        reset_vlevel(cur_level);
         /* progress is shown just before we apply, so on recovery it is
          * legitimate for the last one to fail */
         if (apply_batch(prev_level, cur_level, fpi, bi))
@@ -4994,10 +5023,9 @@ static inline bool insert_float(
 
     t_level *prev_level = &levels[level - 1];
     t_level *cur_level = &levels[level];
-    reset_vlevel(cur_level);
 
     t_value *vp = &value[vi];
-    uint vil = cur_level->vlevel[vi];
+    uint vil = cur_vlevel[vi];
     uint ti = vp->alloc[vil - 1].t;
     t_divisors *dp = &divisors[ti];
     if (!init && dp->high <= (highpow ? 1 : 2))
@@ -5036,7 +5064,7 @@ static inline bool insert_float(
     /* progress is shown just before we apply, so on recovery it is
      * legitimate for the last one to fail */
     if (!apply_single(prev_level, cur_level, vi, p, x)) {
-        --cur_level->vlevel[cur_level->vi];
+        --cur_vlevel[cur_level->vi];
         *jump = IS_NEXT;
         return 0;
     }
@@ -5148,11 +5176,10 @@ void run_flip_pqsq(uint vi) {
     uint xl = xs << 1;
     prev_level->x = 0;      /* temp suppress in progress display */
     prev_level->limp = 0;   /* ensure prev will know it is complete on return */
-    --prev_level->vlevel[vi];   /* temp deallocate */
+    --cur_vlevel[vi];       /* temp deallocate */
 
-    reset_vlevel(cur_level);
     t_value *vp = &value[vi];
-    uint vil = cur_level->vlevel[vi];
+    uint vil = cur_vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
 
     cur_level->x = xl;
@@ -5173,12 +5200,14 @@ void run_flip_pqsq(uint vi) {
             for (uint li = 1; li < level; ++li)
                 if (p == levels[li].p && levels[li].x > 1)
                     goto redo_flip;
-        /* failure most likely means it does not leave a valid square */
+        /* Failure most likely means it does not leave a valid square;
+         * we pass the grandparent as prev_level to reflect our notional
+         * deallocation of prev_level. */
         if (!apply_single(anc_level, cur_level, vi, p, xl)) {
-            --cur_level->vlevel[vi];
+            --cur_vlevel[vi];
             continue;
         }
-        ap = &vp->alloc[cur_level->vlevel[vi] - 1];
+        ap = &vp->alloc[cur_vlevel[vi] - 1];
         mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
         mpz_fdiv_q(Z(temp), Z(temp), ap->q);
         mpz_root(Z(temp), Z(temp), xs - 1);
@@ -5186,12 +5215,11 @@ void run_flip_pqsq(uint vi) {
             fail("Tried to flip with target > max_ulong^%u", xs - 1);
         ulong phigh = mpz_get_ui(Z(temp));
         next_level->have_min = cur_level->have_min;
-        reset_vlevel(next_level);
         walk_1_set(cur_level, next_level, vi, oldp, phigh, xs);
-        --cur_level->vlevel[vi];
+        --cur_vlevel[vi];
     }
     prev_level->x = xs;
-    ++prev_level->vlevel[vi];
+    ++cur_vlevel[vi];
 }
 
 /* we emulate recursive calls via the levels[] array */
@@ -5200,7 +5228,6 @@ void recurse(e_is jump_continue) {
     uint x, bi;
     t_level *prev_level = &levels[level - 1];
     t_level *cur_level = &levels[level];
-    reset_vlevel(cur_level);
     t_forcep *fp;
 
     if (jump_continue == IS_NEXT)
@@ -5217,7 +5244,6 @@ void recurse(e_is jump_continue) {
             /* process_batch() returns false in this case */
             if (level - 1 < forcedp)
                 goto derecurse;
-            reset_vlevel(cur_level);
             goto continue_recurse;
         }
         if (level - 1 < forcedp)
@@ -5277,7 +5303,7 @@ void recurse(e_is jump_continue) {
                 goto derecurse;
             }
             t_value *vp = &value[vi];
-            uint vil = cur_level->vlevel[vi];
+            uint vil = cur_vlevel[vi];
             uint ti = vp->alloc[vil - 1].t;
             t_divisors *dp = &divisors[ti];
             if (dp->high <= (highpow ? 1 : 2))
@@ -5316,9 +5342,9 @@ void recurse(e_is jump_continue) {
         prev_level = &levels[level - 1];
         cur_level = &levels[level];
         if (cur_level->is_forced)
-            reset_vlevel(cur_level);    /* unapply the batch */
+            unapply_batch(next_fpi(prev_level), cur_level->bi, k);
         else
-            --cur_level->vlevel[cur_level->vi];
+            --cur_vlevel[cur_level->vi];
         /* goto continue_recurse; */
       continue_recurse:
         if (cur_level->is_forced) {
@@ -5331,17 +5357,15 @@ void recurse(e_is jump_continue) {
              * or if it is complete and we are ok to process it. Note that
              * process_batch directly invokes walk_midp() under -W.
              */
-            if (apply_batch(prev_level, cur_level, next_fpi(prev_level), bi)
-                && (cur_level->fp_need || process_batch(cur_level))
-            ) {
-                if (need_work)
-                    diag_plain(cur_level);
-                ++level;
-                reset_vlevel(&levels[level]);
-                continue;
+            if (apply_batch(prev_level, cur_level, next_fpi(prev_level), bi)) {
+                if (cur_level->fp_need || process_batch(cur_level)) {
+                    if (need_work)
+                        diag_plain(cur_level);
+                    ++level;
+                    continue;
+                }
+                unapply_batch(next_fpi(prev_level), bi, k);
             }
-            /* unapply a possible partial batch */
-            reset_vlevel(cur_level);
             goto continue_recurse;
         }
       continue_unforced:
@@ -5366,17 +5390,18 @@ void recurse(e_is jump_continue) {
                     if (p == levels[li].p && levels[li].x > 1)
                         goto redo_unforced;
             /* note: this returns 0 if t=1 */
-            if (!apply_single(prev_level, cur_level, cur_level->vi, p, cur_level->x)) {
+            if (!apply_single(
+                prev_level, cur_level, cur_level->vi, p, cur_level->x
+            )) {
                 if (need_work)
                     diag_plain(cur_level);
-                --cur_level->vlevel[cur_level->vi];
+                --cur_vlevel[cur_level->vi];
                 /* not redo_unforced, we may have improved zmax */
                 goto continue_unforced;
             }
             if (need_work)
                 diag_plain(cur_level);
             ++level;
-            reset_vlevel(&levels[level]);
             continue;   /* deeper */
         }
     }
