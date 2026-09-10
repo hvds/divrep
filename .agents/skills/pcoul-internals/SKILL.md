@@ -115,8 +115,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   prime, branching further) or "walk" (fix everything else and
   directly iterate candidate values). `prep_unforced_x()` estimates
   the cost of walking (`r_walk`) to decide which is cheaper; this
-  decision is evaluated extremely frequently (order 10^12 times over
-  the program's lifetime), so correctness AND per-call cost of this
+  decision is evaluated extremely frequently (anticipated in the
+  order of 10^12 times over the lifetime of the codebase),
+  so correctness AND per-call cost of this
   estimate both matter a lot. Forced-prime batch dispatch and
   unforced/walk processing are cleanly separated: `limit_p()` (which
   `prep_unforced_x()` consults for this decision) has exactly one call
