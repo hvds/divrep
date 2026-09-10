@@ -3546,13 +3546,14 @@ bool update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
 }
 
 /* Allocate p^{x-1} to v_{vi}. Returns FALSE if it is invalid.
- * Updates value[vi], and checks if this creates a new square.
+ * On success updates value[vi] and cur_vlevel[vi], and checks if this
+ * creates a new square.
  * Does not update existing square residues, see update_residues() for that.
  */
 bool apply_allocv(t_level *prev_level, t_level *cur_level,
         uint vi, ulong p, uint x, mpz_t px) {
     t_value *v = &value[vi];
-    uint vlevel = cur_vlevel[vi]++;
+    uint vlevel = cur_vlevel[vi];
     t_allocation *prev = &v->alloc[vlevel - 1];
     t_allocation *cur = &v->alloc[vlevel];
 
@@ -3560,6 +3561,7 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
     if (prev->t % x)
         return 0;
 
+    ++cur_vlevel[vi];   /* needed before alloc_square() */
     cur->p = p;
     cur->x = x;
     cur->t = prev->t / x;
@@ -3575,8 +3577,10 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
 
     /* is this newly a square? */
     if ((cur->t > 1) && (cur->t & 1) && !(prev->t & 1))
-        if (!alloc_square(cur_level, vi))
+        if (!alloc_square(cur_level, vi)) {
+            --cur_vlevel[vi];
             return 0;
+        }
 
     return 1;
 }
@@ -3640,19 +3644,14 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
     cur->have_min = prev->have_min || (minp[x - 1] && p > minp[x - 1]);
     mpz_ui_pow_ui(px, p, x - 1);
-    if (!update_chinese(prev, cur, vi, px)) {
-        ++cur_vlevel[vi];
+    if (!update_chinese(prev, cur, vi, px))
         return 0;
-    }
 
 /* CHECKME: this appears to cost more than it saves in almost all cases */
 #ifdef CHECK_OVERFLOW
     /* if rq > zmax, no solution <= zmax is possible */
-    if (mpz_cmp(cur->rq, zmax) > 0) {
-        /* caller expects vlevel to have been incremented on failure */
-        ++cur_vlevel[vi];
+    if (mpz_cmp(cur->rq, zmax) > 0)
         return 0;
-    }
 #endif
 
     /* this can fail only by requiring an impossible square */
@@ -3664,13 +3663,16 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     if (t == 1) {
         walk_1(cur, vi);
         /* nothing more to do */
+        --cur_vlevel[vi];
         return 0;
     }
 
     /* did we already have a square? */
     if (prev->have_square) {
-        if (!update_residues(prev, cur, vi, p, x, px, 0))
+        if (!update_residues(prev, cur, vi, p, x, px, 0)) {
+            --cur_vlevel[vi];
             return 0;
+        }
     }
     cur->vi_depth = cur_vlevel[vi];
     return 1;
@@ -3699,16 +3701,16 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     mpz_ui_pow_ui(px, p, x - 1);
     /* this is wasted effort if x does not divide v_i.t, but we need it
      * for the alloc_square() calculation */
-    if (!update_chinese(prev, cur, vi, px)) {
-        ++cur_vlevel[vi];
+    if (!update_chinese(prev, cur, vi, px))
         return 0;
-    }
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
 
     /* check if we overshot */
-    if (mpz_cmp(cur->rq, zmax) > 0)
+    if (mpz_cmp(cur->rq, zmax) > 0) {
+        --cur_vlevel[vi];
         return 0;
+    }
 
     cur->vi_depth = cur_vlevel[vi];
     return 1;
@@ -4076,9 +4078,8 @@ void walk_midp(t_level *prev_level, bool recover) {
                 if (need_work)
                     diag_plain(cur_level);
                 walk_v(cur_level, Z(zero));
+                --cur_vlevel[vi];   /* unallocate */
             }
-            /* unallocate */
-            --cur_vlevel[vi];
         }
     }
   walk_midp_done:
@@ -4127,10 +4128,8 @@ bool apply_batch(
     cur_level->have_min = prev_level->have_min;
 
     uint ep = bp->x[vi] - 1;
-    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1)) {
-        --cur_vlevel[vi];
+    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1))
         return 0;
-    }
     vp = &value[vi];
     if (vp->alloc[ cur_vlevel[vi] - 1 ].t == 1)
         terminal = vi;
@@ -4139,7 +4138,7 @@ bool apply_batch(
         if (vi == vj || bp->x[vj] == 0)
             continue;
         if (!apply_secondary(prev_level, cur_level, vj, fp->p, bp->x[vj])) {
-            unapply_batch(fpi, bi, vj + 1);
+            unapply_batch(fpi, bi, vj);
             if (vi > vj)
                 --cur_vlevel[vi];
             return 0;
@@ -5064,7 +5063,6 @@ static inline bool insert_float(
     /* progress is shown just before we apply, so on recovery it is
      * legitimate for the last one to fail */
     if (!apply_single(prev_level, cur_level, vi, p, x)) {
-        --cur_vlevel[cur_level->vi];
         *jump = IS_NEXT;
         return 0;
     }
@@ -5203,10 +5201,8 @@ void run_flip_pqsq(uint vi) {
         /* Failure most likely means it does not leave a valid square;
          * we pass the grandparent as prev_level to reflect our notional
          * deallocation of prev_level. */
-        if (!apply_single(anc_level, cur_level, vi, p, xl)) {
-            --cur_vlevel[vi];
+        if (!apply_single(anc_level, cur_level, vi, p, xl))
             continue;
-        }
         ap = &vp->alloc[cur_vlevel[vi] - 1];
         mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
         mpz_fdiv_q(Z(temp), Z(temp), ap->q);
@@ -5395,7 +5391,6 @@ void recurse(e_is jump_continue) {
             )) {
                 if (need_work)
                     diag_plain(cur_level);
-                --cur_vlevel[cur_level->vi];
                 /* not redo_unforced, we may have improved zmax */
                 goto continue_unforced;
             }
