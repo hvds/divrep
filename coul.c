@@ -3190,6 +3190,7 @@ void walk_1(t_level *cur_level, uint vi) {
     }
 
     {
+        /* calculate v_0 */
         t_value *vip = &value[vi];
         t_allocation *aip = &vip->alloc[cur_level->vlevel[vi] - 1];
         mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
@@ -3199,6 +3200,13 @@ void walk_1(t_level *cur_level, uint vi) {
         return;
     ++countw;
     if (check && !cvec_testv(cx0, Z(w1_v)))
+        return;
+
+
+    /* Verify v_0 == rq (mod aq) to guarantee all allocations will
+     * divide exactly. */
+    mpz_fdiv_r(Z(w1_r), Z(w1_v), cur_level->aq);
+    if (mpz_cmp(Z(w1_r), cur_level->rq) != 0)
         return;
 
     uint t[k];
@@ -3213,11 +3221,8 @@ void walk_1(t_level *cur_level, uint vi) {
         t_allocation *ajp = &vjp->alloc[vjl - 1];
         mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
         if (vjl > 1) {
-            /* FIXME: replace this with a single initial check of
-             * v_0 == rq mod aq, then use divexact */
-            mpz_fdiv_qr(Z(w1_j), Z(w1_r), Z(w1_j), ajp->q);
-            if (mpz_sgn(Z(w1_r)) != 0)
-                return;
+            mpz_divexact(Z(w1_j), Z(w1_j), ajp->q);
+            /* verify we don't double up on any allocated primes */
             mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
             if (mpz_cmp_ui(Z(w1_r), 1) != 0)
                 return;
@@ -4470,9 +4475,20 @@ uint best_6x(t_level *cur_level) {
     ap_next->x = 2;
     cur_level->vlevel[vi] = vlevel + 1;
     cur_level->have_min = 1;
-    mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
+    /* We will fully fix v_i, so we don't need to roll the prime we
+     * allocate into rq/aq by calling update_chinese each time: the
+     * previous values tell us everything we need to know.
+     */
+    mpz_set(cur_level->aq, prev_level->aq);
+    mpz_set(cur_level->rq, prev_level->rq);
 
-    /* we need prime p: v_0 = 8abp, bp +/- 1 == a */
+    /* We need prime p: v_i = 8abp with a = bp +/- 1.
+     * We find that by iterating 'a' over all combinations of the prime power
+     * allocations (excluding the constant factor 8).
+     */
+    /* take out the constant factor */
+    mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
+    /* find the actual power of 2 allocated */
     uint l2 = 0;
     for (uint i = 1; i < vlevel; ++i) {
         ap = &vp->alloc[i];
@@ -4488,7 +4504,13 @@ uint best_6x(t_level *cur_level) {
         fail("panic: STRATEGY_6X in use but no power of 2 found");
     if (vlevel > sizeof(uint) * 8 - 1)
         fail("FIXME: too many factors for STRATEGY_6X");
-    /* we don't need to check the a = 0 case, since it gives Z(j4a) = 1 */
+    /* Iterate j4a over all combinations of the prime power allocations
+     * via a bit vector of which allocations to include. (We don't need
+     * to check 0 case of the vector, since it gives j4a = 1.)
+     * Maybe TODO: a simple (vlevel - 2)-deep recursion would save
+     * duplicate multiplications here, worth considering when we start
+     * dealing with higher values of n.
+     */
     for (uint a = (1 << vlevel) - 2; a; a -= 2) {
         mpz_set_ui(Z(j4a), 1);
         for (uint i = 1; i < vlevel; ++i) {
@@ -4503,6 +4525,11 @@ uint best_6x(t_level *cur_level) {
             }
         }
         mpz_divexact(Z(j4b), Z(j4q), Z(j4a));
+        /* CHECKME: we want a > b, would it be a saving to compare
+         * against sqrt(q) in the loop instead? Probably yes: since
+         * we need a ~ bp, we could actually compare against something
+         * like sqrt(q p_m) where p_m is the least unallocated prime.
+         */
         if (mpz_cmp(Z(j4a), Z(j4b)) < 0)
             continue;
         mpz_sub_ui(Z(temp), Z(j4a), 1);
