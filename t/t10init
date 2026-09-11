@@ -81,6 +81,25 @@ if (1) {
     count_batch(q{batches in combination 3+float},
             4, '. 3^2 5 .', $args124);
 
+    # process_batch() must run - and so respect -b - for a batch that -I
+    # completes entirely by itself, whether or not -W is also in use: its
+    # batch_id/opt_alloc bookkeeping isn't conditional on need_midp.
+    for my $w (0, 1) {
+        my $legend = qq{-b excludes a complete -I batch (need_midp=$w)};
+        my $args = [ '-a1', '-b1', ($w ? '-W100' : ()),
+              q{-I"2^2.3 . 2 3"}, qw{-x1e12 -f3 12 4} ];
+        if ($w) {
+            expect_recurse_count($legend, 0, $args);
+        } else {
+            TODO: {
+                local $TODO = 'process_batch() is not yet called for a'
+                    . ' batch -I completes by itself unless -W is also'
+                    . ' in use, so -b filtering is skipped for it';
+                expect_recurse_count($legend, 0, $args);
+            }
+        }
+    }
+
     {
         my $args124W = [qw{ -x1e12 -f3 -W100 -dW1 -Ls0 12 4 }];
         my $expect = q{b0: 2^2.3 . 2 3 W(316223,3,2)};
@@ -144,6 +163,139 @@ if (1) {
         ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263'],
         'b0: . 2 3^2 2^2 5^2 W(9929,3,0)',
     );
+    # recovering mid-walk_midp() must not re-trigger process_batch(): that
+    # would show up as a spurious extra '203' (disp_batch) line, and as a
+    # skewed batch number in any further progress lines
+    TODO: {
+        local $TODO = 'IS_MIDP falls through into the "just completed a'
+            . ' batch" stanza, which redoes the whole walk_midp() sweep'
+            . ' and double-increments batch_alloc';
+        expect_no_relines(q{recover midp does not retrigger process_batch},
+            [ '-dB', @$args65W ],
+            ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0)'],
+            203,
+        );
+    }
+}
+
+if (1) {
+    # Recovery under each -j strategy. best_v0..best_v3 read only genuine
+    # committed allocation fields (t/q/x/p), unlike best_v4 (see below), so
+    # there's no cached-staleness class of bug to worry about here - these
+    # are confirmation tests, not TODO-first ones.
+    local $type = Type->new('o');
+    my $args124 = [qw{ -x1e10 -f3 12 4 }];
+
+    for my $j (0, 1, 3) {
+        expect_recover(qq{recover -j$j}, [ "-j$j", @$args124 ],
+            ['305 b0: 2^2.3 5^2 2 3.31^2: 29 / 228'],
+            'b0: 2^2.3 5^2 2 3.31^2: 29 / 17342',
+        );
+    }
+    expect_recover(q{recover -j2}, [ '-j2', @$args124 ],
+        ['305 b0: 2^2.3 . 2 3.43^2: 4 / 133'],
+        'b0: 2^2.3 . 2 3.43^2: 4 / 225346',
+    );
+
+    # STRATEGY_6X is a temporary, automatic override of whatever -j
+    # strategy is in force, triggered by n == 2 (mod 4) with a specific
+    # square structure (see apply_secondary()), and self-reverting once
+    # the structure no longer holds (see best_6x()) - both driven purely
+    # by re-reading live state, not by anything serialized to the log, so
+    # in principle replay should reconstruct it with no special handling.
+    my $args64 = [qw{ -x1e14 6 4 }];
+    expect_recover(q{recover STRATEGY_6X}, $args64,
+        ['305 b0: 2 3^2 2^2 .: 506032523 / 1388888888888'],
+        'b0: 2 3^2 2^2 .: 506032523 / 1388888888888',
+    );
+}
+
+if (1) {
+    # -j4 (and -js, more lightly) use "315" expanded diagnostic lines to
+    # record allocation order, needed because best_v4()'s choices depend
+    # on cached per-allocation limits that go stale when zmax improves
+    # (see updated_zmax()) - recovery must replay in the same order the
+    # interrupted run used, not whatever order fresh best_v4() calls
+    # would choose against the now-different zmax.
+    local $type = Type->new('o');
+    my $args124j4 = [qw{ -j4 -x1e10 -f3 12 4 }];
+
+    expect_recover(q{recover -j4 from expanded line},
+        $args124j4,
+        ['315 b0: 2^2(1).3(2) 5^2(3) 2.13^2 3.7^2(4) (0.00s) [34 2 0 1]'],
+        'b0: 2^2.3 5^2 2.13^2 3.7^2: 0 / 2012',
+    );
+
+    # a candidate found after the last logged 3[01]5 line must be held
+    # (see recover()'s pend202/highpow handling) and only applied via
+    # updated_zmax() *after* insert_stack() has replayed the position -
+    # applying it first would let the now-smaller zmax disagree with the
+    # order recorded when the original run's zmax was still larger.
+    expect_recover(q{recover -j4 trailing candidate after expanded line},
+        $args124j4,
+        ['315 b0: 2^2(1).3(2) 5^2(3) 2.13^2 3.7^2(4) (0.00s) [34 2 0 1]',
+         '202 Candidate 185622924 (0.00s)'],
+        'b0: 2^2.3 5^2 2.13^2 3.7^2: 0 / 2012',
+    );
+
+    # resolve_expanded() cross-checks the last "315"'s recorded order
+    # against a later "305"'s actual factor lists, for whatever changed
+    # between them (e.g. a backtrack past the forced chain entirely, as
+    # here: b0 -> b1). It must fall back to the "305"'s own genuine data
+    # on any mismatch, not silently trust the stale "315" order.
+    expect_recover(q{recover -j4 expanded order superseded by backtrack},
+        $args124j4,
+        ['315 b0: 2^2(1).3(2) 5^2(3) 2.13^2 3.7^2(4) (0.00s) [34 2 0 1]',
+         '305 b1: 2^2 3^2 2.11^2 5^2: 3 / 8 (0.02s) [2661 279 207 4]'],
+        'b1: 2^2 3^2 2.11^2 5^2: 3 / 45912',
+    );
+
+    # -js (STRATEGY_FIXED) also sets highpow and can produce "315" lines,
+    # but its own choice-making (best_fixed(), driven by cur_batch_level
+    # and level, not by any cached zmax-dependent limit) doesn't actually
+    # need them - a plain "305" is enough to confirm recovery works.
+    TODO: {
+        local $TODO = 'insert_stack() feeds best_fixed() an off-by-one'
+            . ' cur_level->level and cur_batch_level (only observable'
+            . ' during recovery replay, never live), so -js recovery'
+            . ' typically fails with "failed to inject ..."';
+        expect_recover(q{recover -js},
+            [ '-js1,3', @{[ qw{ -x1e10 -f3 12 4 } ]} ],
+            ['305 b0: 2^2.3 5^2 2 3.7^2: 94 / 340135'],
+            'b0: 2^2.3 5^2 2 3.7^2: 94 / 340135',
+        );
+    }
+}
+
+if (1) {
+    # run_flip_pqsq() has no diag of its own yet (see its TODO comment in
+    # coul.c) - the only diag call reachable from inside it is
+    # walk_1_set()'s plain diag_plain(), which is indistinguishable from
+    # an ordinary single-position walk. It names anc_level's position
+    # (vi), but shows the *trial* prime power currently being tested
+    # there, not the real allocation - prev_level->x is forced to 0 for
+    # the duration specifically to hide it. Recovery has no way to know
+    # any of this is happening, so it does not fail loudly: it silently
+    # reconstructs a *different* position (v0 becomes 2^2.7^2 below,
+    # continuing normal exploration from where run_flip_pqsq()'s own
+    # outer loop would resume) rather than the 2^2.5^2 actually being
+    # explored when the checkpoint was written - captured live via -dL
+    # on n=36 k=4 -j2 (n divisible by a repeated odd prime is required to
+    # reach this at all; -j2/-js make it easy to hit consecutively).
+    local $type = Type->new('o');
+    my $args364 = [qw{ -j2 -x1e6 36 4 }];
+
+    TODO: {
+        local $TODO = 'run_flip_pqsq() does not yet write enough diag'
+            . ' info to recover through it - see its TODO comment';
+        my $fh = temp_log(
+            ['305 b7: 2^2.5^2 . 2.3^8 . (0.00s) [93 230 7 0]']);
+        my $lines = run_test($type,
+                [ '-dW1', '-r' . $fh->filename, @$args364 ], 1);
+        my $got = $lines && $lines->{''} && $lines->{''}[-1];
+        like($got // '', qr/^b7: 2\^2\.5\^2 /,
+            q{recover mid run_flip_pqsq (v0 preserved)});
+    }
 }
 
 if (1) {
@@ -284,6 +436,16 @@ sub expect_recover {
     return;
 }
 
+sub expect_no_relines {
+    my($legend, $args, $content, $code) = @_;
+    my $fh = temp_log($content);
+    my $path = $fh->filename;
+    my $lines = run_test($type, [ "-r$path", @$args ], 1)
+            // return;
+    ok(!$lines->{$code}, $legend) or diag_lines($lines);
+    return;
+}
+
 sub count_batch {
     my($legend, $count, $I, $args) = @_;
     my $fargs = length($I) ? qq{-I"$I"} : undef;
@@ -312,6 +474,20 @@ sub expect_result {
         return;
     };
     is($got, $expect, $legend);
+    return;
+}
+
+sub expect_recurse_count {
+    my($legend, $count, $args) = @_;
+    my $lines = run_test($type, $args)
+            // return;
+    my $line = $lines->{367} && $lines->{367}[-1];
+    if (!$line || $line !~ /recurse (\d+)/) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    is($1, $count, $legend);
     return;
 }
 
