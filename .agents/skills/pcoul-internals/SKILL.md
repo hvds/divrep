@@ -168,11 +168,37 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   single large prime are handled via one flat descending sweep
   (`walk_midp()`) rather than normal recursion, since at most one
   such large prime can fit in the search bound per position anyway -
-  recursion there would be pure combinatorial waste.
+  recursion there would be pure combinatorial waste. `walk_midp()` is
+  invoked from `process_batch()`, which itself is run when a complete
+  batch has been allocated (ie when `fp_need` reaches 0).
+- **Forced levels have no gaps**: the forced-prime chain always occupies
+  exactly `forcedp` consecutive levels, one per prime, starting
+  at `final_level` (which is 1 `prep_presquare()` inserts an initial
+  dummy level, else 0). `prep_forcep()` builds `forcep[0..forcedp)`
+  in strictly increasing fpi order, one entry per forced prime, and
+  *truncates* `forcedp` itself (`forcedp = fpi; break;`) rather than
+  ever letting an entry have `count == 0` with more forced primes
+  to follow - a higher prime that would have no real batches becomes
+  genuinely unforced instead. `prep_presquare()` (run
+  once, before any of this) inserts that extra level - shifting where
+  the chain starts by one - whenever some position needs an odd number
+  of divisors (`target_t(vi) & 1`); for `TYPE_o` that's the same for
+  every position (`target_t(vi)` is just `n`), so it only depends on
+  whether `n` itself is odd, but `TYPE_r`'s per-position `target_tau[]`
+  can make it position-specific. Either way, code that reaches a
+  "forced batch just completed" point can rely on the chain having
+  taken exactly `forcedp` levels, but should not assume `level - 1 ==
+  forcedp` in absolute terms.
 - **-I / recovery patterns**: a textual format (`parse_305`) for
   pre-specifying or resuming specific prime allocations per position,
   used both for `-I` (start from a specific point) and internal
-  recovery/resume logic.
+  recovery/resume logic. Recovery replays a forced batch by calling
+  `apply_batch()` directly from `insert_stack()`/`insert_forced()`,
+  *not* through the normal `recurse()` loop - so it deliberately skips
+  the loop's own call to `process_batch()`, and `recurse()`'s `e_is`
+  jump value (`IS_DEEPER` vs `IS_MIDP`) is what tells it whether that
+  call still needs to happen fresh, or has already partly happened and
+  only needs resuming via `process_batch(cur_level, is_recover=1)`.
 - **-h / roughness**: this can be manually set to specify a tau value
   (more precisely a `divisors[t].sumpm` value) that `coultau.c` should
   recognize as best resolved by trial factorization. In future this is
