@@ -234,10 +234,11 @@ uint opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
-/* true unless the most recent "b%u:" (not "b*:") we parsed from a
- * recovery log tells us process_batch() already ran for the batch that
- * ends at whatever level we resume at - see the recurse() stanza that
- * gives process_batch() its one chance to run after replaying a batch.
+/* true unless we already know process_batch() ran for the batch ending
+ * at whatever level we resume at: either the recovery log's "b%u:" (not
+ * "b*:") said so (see parse_305()), or recurse() cleared it directly on
+ * seeing IS_MIDP. Guards the recurse() stanza that gives process_batch()
+ * its one chance to run after replaying a batch.
  */
 bool recover_batch_pending = 1;
 uint cur_batch_level = 0;   /* for disp_batch, best_fixed */
@@ -5248,14 +5249,15 @@ void recurse(e_is jump_continue) {
     else if (jump_continue == IS_MIDP) {
         /* (FIXME) discard any partial walk */
         have_rwalk = 0;
+        /* Reaching IS_MIDP at all means process_batch() (and therefore a
+         * complete forced batch) already happened in the run we are
+         * recovering - make that explicit rather than leaving it to be
+         * inferred from jump_continue at the point of use below. */
+        recover_batch_pending = 0;
         /* Resume the walk_midp() call interrupted by checkpoint, then
          * apply the rest of process_batch()'s logic (have_square, and
          * the return value's meaning to our caller) via the same
-         * function, rather than duplicating it here. Reaching IS_MIDP
-         * at all means process_batch() (and therefore a complete forced
-         * batch) already happened in the run we are recovering, so -
-         * unlike the IS_DEEPER case below - there is no "batch not yet
-         * complete" possibility to allow for here. */
+         * function, rather than duplicating it here. */
         if (!process_batch(prev_level, 1))
             goto derecurse;
         /* else go deeper */
@@ -5270,11 +5272,10 @@ void recurse(e_is jump_continue) {
      * chance to run - batch_id/opt_alloc bookkeeping matters regardless
      * of need_midp, not just the midp work it gates internally - but not
      * if it already ran (in the run we are recovering) for this exact
-     * batch: either we got here via IS_MIDP (see above), or the recovery
-     * log's own "b%u:" told us so via recover_batch_pending. */
-    if (jump_continue != IS_MIDP && prev_level->is_forced
-            && !prev_level->fp_need && recover_batch_pending
-            && !process_batch(prev_level, 0))
+     * batch, per recover_batch_pending (see IS_MIDP above, and parse_305
+     * for the other way it gets cleared). */
+    if (recover_batch_pending && prev_level->is_forced
+            && !prev_level->fp_need && !process_batch(prev_level, 0))
         goto derecurse;
 
     while (1) {
