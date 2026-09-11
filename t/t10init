@@ -87,18 +87,9 @@ if (1) {
         my $legend = $w
             ? q{-b excludes a complete -I batch, with -W}
             : q{-b excludes a complete -I batch, without -W};
-        my $args = [ '-a1', '-b1', ($w ? '-W100' : ()),
-              q{-I"2^2.3 . 2 3"}, qw{-x1e12 -f3 12 4} ];
-        if ($w) {
-            expect_recurse_count($legend, 0, $args);
-        } else {
-            TODO: {
-                local $TODO = 'process_batch() is not yet called for a'
-                    . ' batch -I completes by itself unless -W is also'
-                    . ' in use, so -b filtering is skipped for it';
-                expect_recurse_count($legend, 0, $args);
-            }
-        }
+        expect_recurse_count($legend, 0,
+            [ '-a1', '-b1', ($w ? '-W100' : ()),
+              q{-I"2^2.3 . 2 3"}, qw{-x1e12 -f3 12 4} ]);
     }
 
     {

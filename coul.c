@@ -234,6 +234,8 @@ uint opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
+/* may need initial process_batch() call at start of recurse() if true */
+bool recover_batch_pending = 0;
 uint cur_batch_level = 0;   /* for disp_batch, best_fixed */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 /* by default, we call walk_v() as soon as we have 2 values fixed to
@@ -1299,9 +1301,14 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             sscanf(s, "b*: %n", &off);
             if (off == 0)
                 fail("501 error parsing 305 line '%s'", s);
-        }
+            recover_batch_pending = 1;
+        } else
+            recover_batch_pending = 0;
         s += off;
         ++batch_alloc;  /* we always point to the next batch */
+    } else {
+        /* presumed to be a '-I' init pattern */
+        recover_batch_pending = 1;
     }
         
     for (int i = 0; i < k; ++i) {
@@ -2222,6 +2229,8 @@ void init_post(void) {
     }
     simple_fact(n, &nf);
     prep_target();
+    if (init_pattern)
+        parse_305(init_pattern, &istack, 0);
     if (rpath) {
         printf("path %s\n", rpath);
         if (!skip_recover) {
@@ -2237,8 +2246,6 @@ void init_post(void) {
             fail("%s: %s", rpath, strerror(errno));
         setlinebuf(rfp);
     }
-    if (init_pattern)
-        parse_305(init_pattern, &istack, 0);
 #ifdef HAVE_SETPROCTITLE
     setproctitle("-D(%u %u)", n, k);
 #endif
@@ -5252,6 +5259,7 @@ void recurse(e_is jump_continue) {
          * partial walk performed for that tuple; we can probably do better.
          */
         have_rwalk = 0;
+        recover_batch_pending = 0;  /* must be 0 already, but set for clarity */
         if (!process_batch(prev_level, 1))
             goto derecurse;
         /* else go deeper */
@@ -5263,10 +5271,8 @@ void recurse(e_is jump_continue) {
         goto derecurse;
     }
 
-    /* If we just completed a batch, must have a chance to trigger midp -
-     * except that if IS_MIDP we've already done that.
-     */
-    if (need_midp && jump_continue != IS_MIDP && prev_level->is_forced
+    /* if we just completed a batch, must have a chance to trigger midp */
+    if (recover_batch_pending && prev_level->is_forced
             && !prev_level->fp_need && !process_batch(prev_level, 0))
         goto derecurse;
 
