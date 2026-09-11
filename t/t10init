@@ -242,16 +242,11 @@ if (1) {
     # "315" lines, but its own choices don't depend on the search bound
     # the way -j4's do, so a plain "305" line is enough to confirm its
     # recovery works.
-    TODO: {
-        local $TODO = '-js recovery typically fails outright with'
-            . ' "failed to inject ..." (insert_stack() picks the wrong'
-            . ' next position for it)';
-        expect_recover(q{recover -js},
-            [ '-js1,3', @{[ qw{ -x1e10 -f3 12 4 } ]} ],
-            ['305 b0: 2^2.3 5^2 2 3.7^2: 94 / 340135'],
-            'b0: 2^2.3 5^2 2 3.7^2: 94 / 340135',
-        );
-    }
+    expect_recover(q{recover -js},
+        [ '-js1,3', @{[ qw{ -x1e10 -f3 12 4 } ]} ],
+        ['305 b0: 2^2.3 5^2 2 3.7^2: 94 / 340135'],
+        'b0: 2^2.3 5^2 2 3.7^2: 94 / 340135',
+    );
 }
 
 if (1) {

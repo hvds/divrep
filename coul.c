@@ -4996,13 +4996,13 @@ bool insert_forced(
     if (!init || !is_tail(bp)) {
         t_level *prev_level = &levels[level - 1];
         t_level *cur_level = &levels[level];
+        cur_batch_level = level;
         /* progress is shown just before we apply, so on recovery it is
          * legitimate for the last one to fail */
         if (apply_batch(prev_level, cur_level, fpi, bi))
             ++level;
         else
             *jump = IS_NEXT;
-        cur_batch_level = level;    /* from process_batch */
     }
 
     /* remove from stack */
@@ -5151,7 +5151,7 @@ e_is insert_stack(void) {
 
         /* insert the rest, in strategy-allocated order */
         while (1) {
-            uint vi = best_v(&levels[level - 1]);
+            uint vi = best_v(&levels[level]);
             if (vi >= k)
                 break;
             if (!insert_float(rstack->f, NULL, vi, &jump, 0))
