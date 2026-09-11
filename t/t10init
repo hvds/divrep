@@ -166,16 +166,11 @@ if (1) {
     # recovering mid-walk_midp() must not re-trigger process_batch(): that
     # would show up as a spurious extra '203' (disp_batch) line, and as a
     # skewed batch number in any further progress lines
-    TODO: {
-        local $TODO = 'IS_MIDP falls through into the "just completed a'
-            . ' batch" stanza, which redoes the whole walk_midp() sweep'
-            . ' and double-increments batch_alloc';
-        expect_no_relines(q{recover midp does not retrigger process_batch},
-            [ '-dB', @$args65W ],
-            ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0)'],
-            203,
-        );
-    }
+    expect_no_relines(q{recover midp does not retrigger process_batch},
+        [ '-dB', @$args65W ],
+        ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0)'],
+        203,
+    );
 }
 
 if (1) {

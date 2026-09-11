@@ -5255,9 +5255,11 @@ void recurse(e_is jump_continue) {
         walk_v(prev_level, rwalk_from);
         goto derecurse;
     }
-    /* if we just completed a batch, must have a chance to trigger midp */
-    if (need_midp && prev_level->is_forced && !prev_level->fp_need
-            && !process_batch(prev_level))
+    /* if we just completed a batch, must have a chance to trigger midp -
+     * but not if we got here via IS_MIDP, since we already did that (and
+     * process_batch() would wrongly redo the whole walk_midp() sweep) */
+    if (need_midp && jump_continue != IS_MIDP && prev_level->is_forced
+            && !prev_level->fp_need && !process_batch(prev_level))
         goto derecurse;
 
     while (1) {
