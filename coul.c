@@ -283,6 +283,7 @@ bool debugt = 0;    /* show target_t() */
 bool debugv = 0;    /* show modular constraints */
 bool debugV = 0;    /* show more modular constraints */
 bool debugm = 0;    /* track and show mintau results */
+bool debugL = 0;    /* force every diag to also write a 305/315 log line */
 bool log_full = 0;  /* show prefinal result for harness */
 
 ulong randseed = 1; /* for ECM, etc */
@@ -729,7 +730,7 @@ void diag_any(t_level *cur_level, bool need_disp) {
             }
     }
 
-    if (rfp && need_log) {
+    if (rfp && (need_log || debugL)) {
         char *code = "305";
         if (need_expanded_diag) {
             prep_show_v(cur_level, 1);
@@ -750,7 +751,7 @@ void diag_any(t_level *cur_level, bool need_disp) {
         need_log = 0;
         need_expanded_diag = 0;
     }
-    if (!debugw)
+    if (!debugw && !debugL)
         need_work = 0;
 }
 
@@ -2276,6 +2277,8 @@ void init_post(void) {
         need_work = 1;
         need_diag = 1;
     }
+    if (debugL)
+        need_work = 1;
     diagt = diag_delay;
     if (rfp)
         logt = log_delay;
@@ -5529,6 +5532,9 @@ int main(int argc, char **argv, char **envp) {
                 debugm = 1;
               case 'l':
                 log_full = 1;
+                break;
+              case 'L':
+                debugL = 1;
                 break;
               default:
                 fail("Unknown debug option '%s'", arg);
