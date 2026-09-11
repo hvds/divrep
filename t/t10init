@@ -242,17 +242,11 @@ if (1) {
     # but its own choice-making (best_fixed(), driven by cur_batch_level
     # and level, not by any cached zmax-dependent limit) doesn't actually
     # need them - a plain "305" is enough to confirm recovery works.
-    TODO: {
-        local $TODO = 'insert_stack() feeds best_fixed() an off-by-one'
-            . ' cur_level->level and cur_batch_level (only observable'
-            . ' during recovery replay, never live), so -js recovery'
-            . ' typically fails with "failed to inject ..."';
-        expect_recover(q{recover -js},
-            [ '-js1,3', @{[ qw{ -x1e10 -f3 12 4 } ]} ],
-            ['305 b0: 2^2.3 5^2 2 3.7^2: 94 / 340135'],
-            'b0: 2^2.3 5^2 2 3.7^2: 94 / 340135',
-        );
-    }
+    expect_recover(q{recover -js},
+        [ '-js1,3', @{[ qw{ -x1e10 -f3 12 4 } ]} ],
+        ['305 b0: 2^2.3 5^2 2 3.7^2: 94 / 340135'],
+        'b0: 2^2.3 5^2 2 3.7^2: 94 / 340135',
+    );
 }
 
 if (1) {
