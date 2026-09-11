@@ -5238,15 +5238,14 @@ void recurse(e_is jump_continue) {
         have_rwalk = 0;
         /* finish the walk_midp call with midp_recover */
         walk_midp(prev_level, 1);
-        /* then continue as main code would have, after process_batch() */
-        if (midp_only) {
+        /* then continue as main code would have, after process_batch().
+         * Reaching IS_MIDP at all means process_batch() (and therefore a
+         * complete forced batch) already happened in the run we are
+         * recovering, so - unlike the IS_DEEPER case below - there is no
+         * "batch not yet complete" possibility to allow for here. */
+        if (midp_only)
             /* process_batch() returns false in this case */
-            if (level - 1 < forcedp)
-                goto derecurse;
             goto continue_recurse;
-        }
-        if (level - 1 < forcedp)
-            goto unforced;
         /* else go deeper */
     }
     /* else jump_continue == IS_DEEPER */
