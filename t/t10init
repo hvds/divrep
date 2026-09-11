@@ -81,6 +81,26 @@ if (1) {
     count_batch(q{batches in combination 3+float},
             4, '. 3^2 5 .', $args124);
 
+    # batch selection (-b) must be honoured for a batch that -I completes
+    # entirely by itself, whether or not -W is also in use.
+    for my $w (0, 1) {
+        my $legend = $w
+            ? q{-b excludes a complete -I batch, with -W}
+            : q{-b excludes a complete -I batch, without -W};
+        my $args = [ '-a1', '-b1', ($w ? '-W100' : ()),
+              q{-I"2^2.3 . 2 3"}, qw{-x1e12 -f3 12 4} ];
+        if ($w) {
+            expect_recurse_count($legend, 0, $args);
+        } else {
+            TODO: {
+                local $TODO = 'process_batch() is not yet called for a'
+                    . ' batch -I completes by itself unless -W is also'
+                    . ' in use, so -b filtering is skipped for it';
+                expect_recurse_count($legend, 0, $args);
+            }
+        }
+    }
+
     {
         my $args124W = [qw{ -x1e12 -f3 -W100 -dW1 -Ls0 12 4 }];
         my $expect = q{b0: 2^2.3 . 2 3 W(316223,3,2)};
@@ -110,6 +130,7 @@ if (1) {
 
     my $args65 = [qw{ -x1e20 -f3 6 5 }];
     my $args65W = [qw{ -x1e20 -f3 -W1000 6 5 }];
+    my $args124W = [qw{ -x1e10 -f3 -W1000 12 4 }];
     expect_recover(q{recover empty}, $args65,
         [],
         'b*: . 2 . 2^2 .',
@@ -144,6 +165,127 @@ if (1) {
         ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263'],
         'b0: . 2 3^2 2^2 5^2 W(9929,3,0)',
     );
+    # recovering while -W's descending prime sweep is still mid-way
+    # through one batch must not skip a number when the search moves on
+    # to the next real batch
+    TODO: {
+        local $TODO = 'recurse() re-triggers process_batch() again for'
+            . ' the same batch when resuming mid--W sweep, redoing the'
+            . ' sweep and skipping a batch number for whatever comes next';
+        expect_recover_next_batch(
+            q{-W: batch numbering survives recovering mid-sweep},
+            $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],
+            'b1: 2^2 3^2 2 .',
+        );
+    }
+}
+
+if (1) {
+    # -j0..-j3 (see below for -j4) choose their next position purely
+    # from state that's already committed - the actual allocations made
+    # so far - so replay on recovery just re-derives the same choice
+    local $type = Type->new('o');
+    my $args124 = [qw{ -x1e10 -f3 12 4 }];
+
+    for my $j (0, 1, 3) {
+        expect_recover(qq{recover -j$j}, [ "-j$j", @$args124 ],
+            ['305 b0: 2^2.3 5^2 2 3.31^2: 29 / 228'],
+            'b0: 2^2.3 5^2 2 3.31^2: 29 / 17342',
+        );
+    }
+    expect_recover(q{recover -j2}, [ '-j2', @$args124 ],
+        ['305 b0: 2^2.3 . 2 3.43^2: 4 / 133'],
+        'b0: 2^2.3 . 2 3.43^2: 4 / 225346',
+    );
+
+    # An allocation pattern like "...2^{3+} . 2x^2..." triggers a temporary
+    # override strategy 'STRATEGY_6X' for as long as it holds; it is driven
+    # purely by reading live state, not by anything serialized to the log, so
+    # replay should reconstruct it with no special handling.
+    my $args64 = [qw{ -x1e14 6 4 }];
+    expect_recover(q{recover mid "...2^{3+} . 2x^2..." allocation},
+        $args64,
+        ['305 b0: 2 3^2 2^2 .: 506032523 / 1388888888888'],
+        'b0: 2 3^2 2^2 .: 506032523 / 1388888888888',
+    );
+}
+
+if (1) {
+    # -j4 (and -js, more lightly) can write "315" expanded diagnostic
+    # lines instead of plain "305" ones, recording the order in which
+    # unforced positions were allocated. This matters for -j4 because its
+    # choice of position can depend on the current search bound (which
+    # may have improved since the choice was made) - recovery must
+    # replay in the order the interrupted run actually used, not
+    # whatever order a fresh choice would make against the tighter
+    # bound.
+    local $type = Type->new('o');
+    my $args124j4 = [qw{ -j4 -x1e10 -f3 12 4 }];
+
+    expect_recover(q{recover -j4 from expanded line},
+        $args124j4,
+        ['315 b0: 2^2(1).3(2) 5^2(3) 2.13^2 3.7^2(4) (0.00s) [34 2 0 1]'],
+        'b0: 2^2.3 5^2 2.13^2 3.7^2: 0 / 2012',
+    );
+
+    # a candidate found after the last logged progress line must not
+    # tighten the search bound until after the recorded position has
+    # been fully replayed - doing it first would make the now-smaller
+    # bound disagree with the order recorded under the original, larger
+    # one.
+    expect_recover(q{recover -j4 trailing candidate after expanded line},
+        $args124j4,
+        ['315 b0: 2^2(1).3(2) 5^2(3) 2.13^2 3.7^2(4) (0.00s) [34 2 0 1]',
+         '202 Candidate 185622924 (0.00s)'],
+        'b0: 2^2.3 5^2 2.13^2 3.7^2: 0 / 2012',
+    );
+
+    # if the search backtracks (here, past the forced primes entirely -
+    # the batch id changes from b0 to b1) after the last "315" line was
+    # written, its recorded order is stale; recovery must fall back to
+    # the following "305" line's own genuine data rather than silently
+    # trusting the outdated order.
+    expect_recover(q{recover -j4 expanded order superseded by backtrack},
+        $args124j4,
+        ['315 b0: 2^2(1).3(2) 5^2(3) 2.13^2 3.7^2(4) (0.00s) [34 2 0 1]',
+         '305 b1: 2^2 3^2 2.11^2 5^2: 3 / 8 (0.02s) [2661 279 207 4]'],
+        'b1: 2^2 3^2 2.11^2 5^2: 3 / 45912',
+    );
+
+    # -js (a fixed, user-specified allocation order) can also produce
+    # "315" lines, but its own choices don't depend on the search bound
+    # the way -j4's do, so a plain "305" line is enough to confirm its
+    # recovery works.
+    TODO: {
+        local $TODO = '-js recovery typically fails outright with'
+            . ' "failed to inject ..." (insert_stack() picks the wrong'
+            . ' next position for it)';
+        expect_recover(q{recover -js},
+            [ '-js1,3', @{[ qw{ -x1e10 -f3 12 4 } ]} ],
+            ['305 b0: 2^2.3 5^2 2 3.7^2: 94 / 340135'],
+            'b0: 2^2.3 5^2 2 3.7^2: 94 / 340135',
+        );
+    }
+}
+
+if (1) {
+    # The 'FLIP_PQSQ' strategy does not yet support recovery: it needs to
+    # add a uniquely identifiable diagnostic that we can use to recover.
+    # TODO: tests to be added once we know the mechanism.
+    local $type = Type->new('o');
+    my $args364 = [qw{ -j2 -x1e6 36 4 }];
+
+    TODO: {
+        local $TODO = 'run_flip_pqsq() does not yet write enough diag'
+            . ' info to recover through it - see its TODO comment';
+        my $fh = temp_log(
+            ['305 b7: 2^2.5^2 . 2.3^8 . (0.00s) [93 230 7 0]']);
+        my $lines = run_test($type,
+                [ '-dW1', '-r' . $fh->filename, @$args364 ], 1);
+        my $got = $lines && $lines->{''} && $lines->{''}[-1];
+        like($got // '', qr/^b7: 2\^2\.5\^2 /,
+            q{recover mid run_flip_pqsq (v0 preserved)});
+    }
 }
 
 if (1) {
@@ -284,6 +426,22 @@ sub expect_recover {
     return;
 }
 
+sub expect_recover_next_batch {
+    my($legend, $args, $content, $expect) = @_;
+    my $fh = temp_log($content);
+    my $path = $fh->filename;
+    my $lines = run_test($type, [ '-dB', "-r$path", @$args ], 1)
+            // return;
+    my $got = $lines->{203} && $lines->{203}[0];
+    if (!$got) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    like($got, qr/^203 \Q$expect\E /, $legend);
+    return;
+}
+
 sub count_batch {
     my($legend, $count, $I, $args) = @_;
     my $fargs = length($I) ? qq{-I"$I"} : undef;
@@ -312,6 +470,20 @@ sub expect_result {
         return;
     };
     is($got, $expect, $legend);
+    return;
+}
+
+sub expect_recurse_count {
+    my($legend, $count, $args) = @_;
+    my $lines = run_test($type, $args)
+            // return;
+    my $line = $lines->{367} && $lines->{367}[-1];
+    if (!$line || $line !~ /recurse (\d+)/) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    is($1, $count, $legend);
     return;
 }
 
