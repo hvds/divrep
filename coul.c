@@ -234,6 +234,12 @@ uint opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
+/* true unless the most recent "b%u:" (not "b*:") we parsed from a
+ * recovery log tells us process_batch() already ran for the batch that
+ * ends at whatever level we resume at - see the recurse() stanza that
+ * gives process_batch() its one chance to run after replaying a batch.
+ */
+bool recover_batch_pending = 1;
 uint cur_batch_level = 0;   /* for disp_batch, best_fixed */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 /* by default, we call walk_v() as soon as we have 2 values fixed to
@@ -1293,7 +1299,9 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             sscanf(s, "b*: %n", &off);
             if (off == 0)
                 fail("501 error parsing 305 line '%s'", s);
-        }
+            recover_batch_pending = 1;
+        } else
+            recover_batch_pending = 0;
         s += off;
         ++batch_alloc;  /* we always point to the next batch */
     }
@@ -5258,11 +5266,15 @@ void recurse(e_is jump_continue) {
         walk_v(prev_level, rwalk_from);
         goto derecurse;
     }
-    /* if we just completed a batch, must have a chance to trigger midp -
-     * but not if we got here via IS_MIDP, since we already did that (and
-     * process_batch() would wrongly redo the whole walk_midp() sweep) */
-    if (need_midp && jump_continue != IS_MIDP && prev_level->is_forced
-            && !prev_level->fp_need && !process_batch(prev_level, 0))
+    /* if we just completed a batch, we must give process_batch() its one
+     * chance to run - batch_id/opt_alloc bookkeeping matters regardless
+     * of need_midp, not just the midp work it gates internally - but not
+     * if it already ran (in the run we are recovering) for this exact
+     * batch: either we got here via IS_MIDP (see above), or the recovery
+     * log's own "b%u:" told us so via recover_batch_pending. */
+    if (jump_continue != IS_MIDP && prev_level->is_forced
+            && !prev_level->fp_need && recover_batch_pending
+            && !process_batch(prev_level, 0))
         goto derecurse;
 
     while (1) {
