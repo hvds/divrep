@@ -168,11 +168,43 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   single large prime are handled via one flat descending sweep
   (`walk_midp()`) rather than normal recursion, since at most one
   such large prime can fit in the search bound per position anyway -
-  recursion there would be pure combinatorial waste.
+  recursion there would be pure combinatorial waste. `walk_midp()` is
+  only ever invoked from `process_batch()`, which itself only runs once
+  `fp_need` reaches 0 (see "forced levels have no gaps" below) - so any
+  code path that can prove it reached `walk_midp()` can assume the
+  forced-batch chain is already complete, with no partial-batch case to
+  allow for.
+- **Forced levels have no gaps: `level` runs 1..`forcedp` for the
+  forced-prime chain, always, with no prime skipped.** `prep_forcep()`
+  builds `forcep[0..forcedp)` in strictly increasing fpi order, one
+  entry per forced prime, and *truncates* `forcedp` itself (`forcedp =
+  fpi; break;`) rather than ever letting an entry have `count == 0`
+  with more forced primes to follow - a higher prime that would have no
+  real batches becomes genuinely unforced instead. So the forced chain
+  always occupies exactly levels `1..forcedp` one level per prime; code
+  that reaches a "forced batch just completed" point can rely on
+  `level - 1 == forcedp` without checking it.
 - **-I / recovery patterns**: a textual format (`parse_305`) for
   pre-specifying or resuming specific prime allocations per position,
   used both for `-I` (start from a specific point) and internal
-  recovery/resume logic.
+  recovery/resume logic. Recovery replays a forced batch by calling
+  `apply_batch()` directly from `insert_stack()`/`insert_forced()`,
+  *not* through the normal `recurse()` loop - so it deliberately skips
+  the loop's own call to `process_batch()`, and `recurse()`'s `e_is`
+  jump value (`IS_DEEPER` vs `IS_MIDP`) is what tells it whether that
+  call still needs to happen (`IS_DEEPER`: fresh, call `process_batch()`
+  for the first time) or has already partly happened and only needs
+  resuming (`IS_MIDP`: a `walk_midp()` sweep was mid-way through when
+  checkpointed - `process_batch(cur_level, is_recover=1)` resumes it rather
+  than re-running the batch's own bookkeeping, which was already logged
+  before the interruption). Conflating these two - e.g. letting
+  ordinary "just completed a batch" handling fire again after an
+  `IS_MIDP` resume - double-runs `walk_midp()` and double-increments
+  `batch_alloc`, desyncing `-a`/`-b` batch numbering for the rest of the
+  run without necessarily crashing or producing an obviously wrong
+  result, so it's easy to miss in testing (see `t/t10init`'s "recover
+  midp does not retrigger process_batch" for the regression test, added
+  after exactly this bug shipped).
 - **-h / roughness**: this can be manually set to specify a tau value
   (more precisely a `divisors[t].sumpm` value) that `coultau.c` should
   recognize as best resolved by trial factorization. In future this is
