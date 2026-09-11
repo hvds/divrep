@@ -4229,29 +4229,36 @@ bool apply_batch(
 /* A complete set of forced primes has been allocated. We may process
  * this batch or skip it, according to batch options; we also handle
  * midp ("-W") here, and skip the rest (i.e. allocation of unforced
- * primes) if midp_only.
+ * primes) if midp_only. Returns FALSE if there is nothing more to
+ * do for this batch, TRUE if the program should continue with standard
+ * allocation of unforced primes.
+ * 'recover' is set at first entry when recovering to midway through
+ * a walk_midp() call, so should jump back into that without duplicating
+ * preceding work.
  */
-bool process_batch(t_level *cur_level) {
-    uint batch_id = batch_alloc++;
-    cur_batch_level = cur_level->level;
-    seen_valid = 1;
-    if (debugB)
-        disp_batch();
-    if (opt_alloc) {
-        /* check if this is a batch we want to process */
-        if ((opt_alloc & 4) == 0
-            && opt_batch_min >= 0
-            && batch_id >= opt_batch_min
-            && batch_id <= opt_batch_max
-        )
-            goto do_process;
-        if (opt_batch_min < 0)
+bool process_batch(t_level *cur_level, bool recover) {
+    if (!recover) {
+        uint batch_id = batch_alloc++;
+        cur_batch_level = cur_level->level;
+        seen_valid = 1;
+        if (debugB)
             disp_batch();
-        return 0;
+        if (opt_alloc) {
+            /* check if this is a batch we want to process */
+            if ((opt_alloc & 4) == 0
+                && opt_batch_min >= 0
+                && batch_id >= opt_batch_min
+                && batch_id <= opt_batch_max
+            )
+                goto do_process;
+            if (opt_batch_min < 0)
+                disp_batch();
+            return 0;
+        }
     }
   do_process:
     if (need_midp) {
-        walk_midp(cur_level, 0);
+        walk_midp(cur_level, recover);
         if (midp_only)
             return 0;
     }
@@ -5240,19 +5247,13 @@ void recurse(e_is jump_continue) {
     else if (jump_continue == IS_NEXTX)
         goto continue_unforced_x;
     else if (jump_continue == IS_MIDP) {
-        /* (FIXME) discard any partial walk */
+        /* We were part way through walk_midp() called inside process_batch().
+         * (FIXME) we restore (p, x, vi) for walk_midp(), but discard any
+         * partial walk performed for that tuple; we can probably do better.
+         */
         have_rwalk = 0;
-        /* finish the walk_midp call with midp_recover */
-        walk_midp(prev_level, 1);
-        /* then continue as main code would have, after process_batch() */
-        if (midp_only) {
-            /* process_batch() returns false in this case */
-            if (level - 1 < forcedp)
-                goto derecurse;
-            goto continue_recurse;
-        }
-        if (level - 1 < forcedp)
-            goto unforced;
+        if (!process_batch(prev_level, 1))
+            goto derecurse;
         /* else go deeper */
     }
     /* else jump_continue == IS_DEEPER */
@@ -5261,9 +5262,12 @@ void recurse(e_is jump_continue) {
         walk_v(prev_level, rwalk_from);
         goto derecurse;
     }
-    /* if we just completed a batch, must have a chance to trigger midp */
-    if (need_midp && prev_level->is_forced && !prev_level->fp_need
-            && !process_batch(prev_level))
+
+    /* If we just completed a batch, must have a chance to trigger midp -
+     * except that if IS_MIDP we've already done that.
+     */
+    if (need_midp && jump_continue != IS_MIDP && prev_level->is_forced
+            && !prev_level->fp_need && !process_batch(prev_level, 0))
         goto derecurse;
 
     while (1) {
@@ -5363,7 +5367,7 @@ void recurse(e_is jump_continue) {
              * process_batch directly invokes walk_midp() under -W.
              */
             if (apply_batch(prev_level, cur_level, next_fpi(prev_level), bi)) {
-                if (cur_level->fp_need || process_batch(cur_level)) {
+                if (cur_level->fp_need || process_batch(cur_level, 0)) {
                     if (need_work)
                         diag_plain(cur_level);
                     ++level;

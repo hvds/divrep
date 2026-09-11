@@ -168,16 +168,11 @@ if (1) {
     # recovering while -W's descending prime sweep is still mid-way
     # through one batch must not skip a number when the search moves on
     # to the next real batch
-    TODO: {
-        local $TODO = 'recurse() re-triggers process_batch() again for'
-            . ' the same batch when resuming mid--W sweep, redoing the'
-            . ' sweep and skipping a batch number for whatever comes next';
-        expect_recover_next_batch(
-            q{-W: batch numbering survives recovering mid-sweep},
-            $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],
-            'b1: 2^2 3^2 2 .',
-        );
-    }
+    expect_recover_next_batch(
+        q{-W: batch numbering survives recovering mid-sweep},
+        $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],
+        'b1: 2^2 3^2 2 .',
+    );
 }
 
 if (1) {
