@@ -234,8 +234,6 @@ uint opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
 int last_batch_seen = -1;
-/* may need initial process_batch() call at start of recurse() if true */
-bool recover_batch_pending = 0;
 uint cur_batch_level = 0;   /* for disp_batch, best_fixed */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 /* by default, we call walk_v() as soon as we have 2 values fixed to
@@ -1301,14 +1299,9 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             sscanf(s, "b*: %n", &off);
             if (off == 0)
                 fail("501 error parsing 305 line '%s'", s);
-            recover_batch_pending = 1;
-        } else
-            recover_batch_pending = 0;
+        }
         s += off;
         ++batch_alloc;  /* we always point to the next batch */
-    } else {
-        /* presumed to be a '-I' init pattern */
-        recover_batch_pending = 1;
     }
         
     for (int i = 0; i < k; ++i) {
@@ -4060,7 +4053,7 @@ void walk_midp(t_level *prev_level, bool recover) {
     /* setp has set to a prime <= target */
     prime_iterator_next(&cur_level->piter);
 
-    if (recover) {
+    if (recover && midp_recover.valid) {
         p = midp_recover.p;
         x = midp_recover.x;
         vi = midp_recover.vi;
@@ -4246,7 +4239,8 @@ bool apply_batch(
  * allocation of unforced primes.
  * 'recover' is set at first entry when recovering to midway through
  * a walk_midp() call, so should jump back into that without duplicating
- * preceding work.
+ * preceding work. If there is no midp recovery structure, we're just
+ * starting at the point of a completed batch.
  */
 bool process_batch(t_level *cur_level, bool recover) {
     if (!recover) {
@@ -4920,15 +4914,12 @@ void stack_remove(t_fact *s, t_fact *s2, uint vi, ulong p, uint e) {
 
 /* e_is indicates where we should pick up when we enter recurse() */
 typedef enum {
-    /* Current level is good, try to recurse deeper.
-     * There may also be a partial walk to complete first.
-     */
-    IS_DEEPER = 0,
+    IS_DEEPER = 0,  /* Current level is good, try to recurse deeper */
     IS_FINISH,  /* Everything is done */
     IS_NEXTX,   /* Current power is done, try the next power */
     IS_NEXT,    /* Current prime is done, try the next prime */
     IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
-    IS_MIDP     /* Finish a partial midp walk before continuing */
+    IS_BATCH    /* Start in process_batch(), possibly with partial progress */
 } e_is;
 
 /* Given an init or recovery stack, check for the specified forced prime
@@ -5103,8 +5094,10 @@ static inline bool insert_float(
  * Returns IS_DEEPER if we should continue by recursing deeper from this
  * point; returns IS_NEXTX if we should continue by advancing the power
  * applied at the current position; returns IS_NEXT if we should continue
- * by advancing the current level; and returns IS_MIDP if we should continue
- * via walk_midp(). If the entire run is already complete, returns IS_FINISH.
+ * by advancing the current level; returns IS_RWALK if we should continue
+ * by completing a partial walk_v() call; and returns IS_BATCH if we should
+ * first call process_batch(), possibly with a partial walk_midp() to complete.
+ * If the entire run is already complete, returns IS_FINISH.
  */
 e_is insert_stack(void) {
     e_is jump = IS_DEEPER;
@@ -5176,13 +5169,18 @@ e_is insert_stack(void) {
         }
     }
 
-    if (need_midp && midp_recover.valid) {
-        if (jump != IS_DEEPER)
-            fail("data mismatch");
-        jump = IS_MIDP;
-    } else if (jump == IS_DEEPER && have_rwalk) {
-        jump = IS_RWALK;
-    }
+    if (jump == IS_DEEPER) {
+        t_level *prev = &levels[level - 1];
+        if (midp_recover.valid)
+            jump = IS_BATCH;    /* Note: may also have_rwalk */
+        else if (have_rwalk)
+            jump = IS_RWALK;
+        else if (prev->is_forced && !prev->fp_need)
+            /* need process_batch() without midp_recover */
+            jump = IS_BATCH;
+    } else if (midp_recover.valid)
+        fail("data mismatch");
+
     return jump;
 }
 
@@ -5257,6 +5255,9 @@ void recurse(e_is jump_continue) {
     t_level *cur_level = &levels[level];
     t_forcep *fp;
 
+    /* Find a suitable entry point when not starting from scratch due to
+     * init_pattern or recovery.
+     */
     if (jump_continue == IS_NEXT)
         goto continue_recurse;
     else if (jump_continue == IS_NEXTX)
@@ -5264,19 +5265,14 @@ void recurse(e_is jump_continue) {
     else if (jump_continue == IS_RWALK) {
         walk_v(prev_level, rwalk_from);
         goto derecurse;
-    } else if (jump_continue == IS_MIDP) {
-        /* we were part way through the walk_midp() call from process_batch() */
-        recover_batch_pending = 0;  /* must be 0 already, but set for clarity */
-        if (!process_batch(prev_level, 1))
+    } else if (jump_continue == IS_BATCH) {
+        /* if no midp_recover, should still honour any specified batch id */
+        bool true_recover = (midp_recover.valid || batch_alloc > 0) ? 1 : 0;
+        if (!process_batch(prev_level, true_recover))
             goto derecurse;
         /* else go deeper */
     }
     /* else jump_continue == IS_DEEPER */
-
-    /* if we just completed a batch, must have a chance to trigger midp */
-    if (recover_batch_pending && prev_level->is_forced
-            && !prev_level->fp_need && !process_batch(prev_level, 0))
-        goto derecurse;
 
     while (1) {
         ++countr;

@@ -250,6 +250,17 @@ if (1) {
 }
 
 if (1) {
+    # A -I pattern or manually-constructed recovery line may indicate
+    # that we've just allocated a complete batch, with no further progress.
+    local $type = Type->new('o');
+    expect_recover(q{recover a named batch id with no progress yet},
+        [qw{ -x1e10 -f3 -W1000 12 4 }],
+        ['305 b5: 2^2.3 . 2 3'],
+        'b5: 2^2.3 . 2 3 W(31607,3,2)',
+    );
+}
+
+if (1) {
     # The 'FLIP_PQSQ' strategy does not yet support recovery: it needs to
     # add a uniquely identifiable diagnostic that we can use to recover.
     # TODO: tests to be added once we know the mechanism.
