@@ -4028,12 +4028,8 @@ void prep_midp(t_level *cur_level) {
 
 /* Try all ways of allocating p^{x-1} at v_i for any p above the selected
  * -W limit.
- * If 'recover' is true, we initialize the state from midp_recover.
- * TODO: there may also be a partial walk to recover if have_rwalk,
- * currently ignored. That should be as simple as replacing recovery's
- * 'goto do_recover' with a modified duplication of the lines there,
- * then continuing at redo_mi instead. apply_single() failure should
- * probably be an error in this case.
+ * If 'recover' is true, we initialize the state from midp_recover, and
+ * resume any partial walk_v() if have_rwalk.
  */
 void walk_midp(t_level *prev_level, bool recover) {
     t_level *cur_level = &levels[prev_level->level + 1];
@@ -4062,8 +4058,22 @@ void walk_midp(t_level *prev_level, bool recover) {
         mi = midppc;    /* guard */
         for (mi = 0 ; mi < midppc; ++mi) {
             mp = &midpp[mi];
-            if (mp->vi == vi && mp->x == x)
-                goto do_recover;
+            if (mp->vi != vi || mp->x != x)
+                continue;
+            /* This is the (p,x,vi) tuple we were working on, we now
+             * duplicate the tail of the main loop to continue the work.
+             * The apply succeeded before, so must succeed again; the next
+             * diag point should be what we recover to, so must not diag
+             * here if have_rwalk.
+             */
+            if (!apply_single(prev_level, cur_level, vi, p, x))
+                fail("midp recovery: could not reapply %lu^%u at v_%u",
+                        p, x, vi);
+            if (need_work && !have_rwalk)
+                diag_plain(cur_level);
+            walk_v(cur_level, have_rwalk ? rwalk_from : Z(zero));
+            --cur_vlevel[vi];   /* unallocate */
+            goto next_mi;
         }
         fail("midp recovery x=%u vi=%u invalid", x, vi);
     }
@@ -4087,13 +4097,14 @@ void walk_midp(t_level *prev_level, bool recover) {
             }
             vi = mp->vi;
             x = mp->x;
-          do_recover:
             if (apply_single(prev_level, cur_level, vi, p, x)) {
                 if (need_work)
                     diag_plain(cur_level);
                 walk_v(cur_level, Z(zero));
                 --cur_vlevel[vi];   /* unallocate */
             }
+          next_mi:
+            ;
         }
     }
   walk_midp_done:

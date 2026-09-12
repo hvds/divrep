@@ -152,10 +152,9 @@ if (1) {
         ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0)'],
         'b0: . 2 3^2 2^2 5^2 W(9929,3,0)',
     );
-    # FIXME: we discard partial midp walk (it actually gets parsed as rwalk)
     expect_recover(q{recover midp walk}, $args65W,
         ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263'],
-        'b0: . 2 3^2 2^2 5^2 W(9929,3,0)',
+        'b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263',
     );
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
@@ -369,7 +368,7 @@ if (1) {
     expect_recover(q{recover midp walk constrain 3+float},
         [q{-I"3 . . 3.5^2"}, @$args124W],
         ['305 b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 2'],
-        'b0: 3.2^2 . 2 3.5^2 W(2633,3,2)'
+        'b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 1',
     );
 }
 
