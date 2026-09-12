@@ -1399,7 +1399,6 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
                 ++s;
         } else {
             int from_start, from_end, to_start, to_end = 0;
-            have_rwalk = 1;
             sscanf(s, "%n%*[0-9]%n / %n%*[0-9]%n ",
                     &from_start, &from_end, &to_start, &to_end);
             if (to_end == 0)
@@ -4036,6 +4035,12 @@ void prep_midp(t_level *cur_level) {
 
 /* Try all ways of allocating p^{x-1} at v_i for any p above the selected
  * -W limit.
+ * If 'recover' is true, we initialize the state from midp_recover.
+ * TODO: there may also be a partial walk to recover if have_rwalk,
+ * currently ignored. That should be as simple as replacing recovery's
+ * 'goto do_recover' with a modified duplication of the lines there,
+ * then continuing at redo_mi instead. apply_single() failure should
+ * probably be an error in this case.
  */
 void walk_midp(t_level *prev_level, bool recover) {
     t_level *cur_level = &levels[prev_level->level + 1];
@@ -4922,6 +4927,7 @@ typedef enum {
     IS_FINISH,  /* Everything is done */
     IS_NEXTX,   /* Current power is done, try the next power */
     IS_NEXT,    /* Current prime is done, try the next prime */
+    IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
     IS_MIDP     /* Finish a partial midp walk before continuing */
 } e_is;
 
@@ -5174,6 +5180,8 @@ e_is insert_stack(void) {
         if (jump != IS_DEEPER)
             fail("data mismatch");
         jump = IS_MIDP;
+    } else if (jump == IS_DEEPER && have_rwalk) {
+        jump = IS_RWALK;
     }
     return jump;
 }
@@ -5253,23 +5261,17 @@ void recurse(e_is jump_continue) {
         goto continue_recurse;
     else if (jump_continue == IS_NEXTX)
         goto continue_unforced_x;
-    else if (jump_continue == IS_MIDP) {
-        /* We were part way through walk_midp() called inside process_batch().
-         * (FIXME) we restore (p, x, vi) for walk_midp(), but discard any
-         * partial walk performed for that tuple; we can probably do better.
-         */
-        have_rwalk = 0;
+    else if (jump_continue == IS_RWALK) {
+        walk_v(prev_level, rwalk_from);
+        goto derecurse;
+    } else if (jump_continue == IS_MIDP) {
+        /* we were part way through the walk_midp() call from process_batch() */
         recover_batch_pending = 0;  /* must be 0 already, but set for clarity */
         if (!process_batch(prev_level, 1))
             goto derecurse;
         /* else go deeper */
     }
     /* else jump_continue == IS_DEEPER */
-
-    if (have_rwalk) {
-        walk_v(prev_level, rwalk_from);
-        goto derecurse;
-    }
 
     /* if we just completed a batch, must have a chance to trigger midp */
     if (recover_batch_pending && prev_level->is_forced
