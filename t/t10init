@@ -54,13 +54,13 @@ if (1) {
 
     my $result124b = 999649;
     expect_result(q{constraint on sub-high float for f(12,4)},
-        $result124b, '. . . 83', $args124);
+            $result124b, '. . . 83', $args124);
     expect_result(q{constraint on 2 + sub-high for f(12,4)},
-        $result124b, '. 2 . 2^2.83', $args124);
+            $result124b, '. 2 . 2^2.83', $args124);
     expect_result(q{allow products in -I},
-        $result124b, '1 2 1 332', $args124);
+            $result124b, '1 2 1 332', $args124);
     expect_result(q{constraint on 3 + sub-high for f(12,4)},
-        $result124b, '. . 3 83', $args124);
+            $result124b, '. . 3 83', $args124);
 
     count_batch(q{batches without constraint},
             56, '', $args124);
@@ -87,9 +87,10 @@ if (1) {
         my $legend = $w
             ? q{-b excludes a complete -I batch, with -W}
             : q{-b excludes a complete -I batch, without -W};
-        expect_recurse_count($legend, 0,
-            [ '-a1', '-b1', ($w ? '-W100' : ()),
-              q{-I"2^2.3 . 2 3"}, qw{-x1e12 -f3 12 4} ]);
+        expect_recurse_count($legend, 0, [
+            ($w ? '-W100' : ()),
+            q{-I"2^2.3 . 2 3"}, qw{-x1e12 -f3 -a1 -b1 12 4},
+        ]);
     }
 
     {
@@ -156,9 +157,6 @@ if (1) {
         ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263'],
         'b0: . 2 3^2 2^2 5^2 W(9929,3,0)',
     );
-    # recovering while -W's descending prime sweep is still mid-way
-    # through one batch must not skip a number when the search moves on
-    # to the next real batch
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
         $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],
@@ -167,9 +165,7 @@ if (1) {
 }
 
 if (1) {
-    # -j0..-j3 (see below for -j4) choose their next position purely
-    # from state that's already committed - the actual allocations made
-    # so far - so replay on recovery just re-derives the same choice
+    # -j0..-j3 and internal STRATEGY_6X are easy to recover
     local $type = Type->new('o');
     my $args124 = [qw{ -x1e10 -f3 12 4 }];
 
@@ -184,8 +180,8 @@ if (1) {
         'b0: 2^2.3 . 2 3.43^2: 4 / 225346',
     );
 
-    # An allocation pattern like "...2^{4+} . 2x^2..." triggers a temporary
-    # override strategy 'STRATEGY_6X' for as long as it holds.
+    # Allocation patterns like "...2^{4+} . 2x^2..." trigger a temporary
+    # override strategy 'STRATEGY_6X' for as long as they hold.
     expect_recover(q{recover STRATEGY_6X}, [qw{ -x1e14 6 4 }],
         ['305 b0: 2 3^2 2^2 .: 506032523 / 1388888888888'],
         'b0: 2 3^2 2^2 .: 506032523 / 1388888888888',
@@ -193,14 +189,12 @@ if (1) {
 }
 
 if (1) {
-    # -j4 (and -js, more lightly) can write "315" expanded diagnostic
-    # lines instead of plain "305" ones, recording the order in which
-    # unforced positions were allocated. This matters for -j4 because its
-    # choice of position can depend on the current search bound (which
-    # may have improved since the choice was made) - recovery must
-    # replay in the order the interrupted run actually used, not
-    # whatever order a fresh choice would make against the tighter
-    # bound.
+    # -j4 and -js can allocated power p^{2^x-1}, a more complex pathway
+    # that has more recover paths to consider.
+    # For each testcase where they are relevant, these tests should show:
+    # a) that recovered allocations are in the correct recurse order;
+    # b) that internal t_allocation.lim values are correctly recalculated;
+    # c) that the best recovered candidate is correctly recorded.
     local $type = Type->new('o');
     my $args124j4 = [qw{ -j4 -x1e10 -f3 12 4 }];
 
@@ -265,14 +259,13 @@ if (1) {
 
     TODO: {
         local $TODO = 'run_flip_pqsq() does not yet write enough diag'
-            . ' info to recover through it - see its TODO comment';
-        my $fh = temp_log(
-            ['305 b7: 2^2.5^2 . 2.3^8 . (0.00s) [93 230 7 0]']);
+                . ' info to recover through it - see its TODO comment';
+        my $fh = temp_log(['305 b7: 2^2.5^2 . 2.3^8 . (0.00s) [93 230 7 0]']);
         my $lines = run_test($type,
                 [ '-dW1', '-r' . $fh->filename, @$args364 ], 1);
         my $got = $lines && $lines->{''} && $lines->{''}[-1];
         like($got // '', qr/^b7: 2\^2\.5\^2 /,
-            q{recover mid run_flip_pqsq (v0 preserved)});
+                q{recover mid run_flip_pqsq (v0 preserved)});
     }
 }
 
