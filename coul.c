@@ -3692,8 +3692,8 @@ bool apply_secondary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
         return 0;
 #if defined(TYPE_o)
     if (p == 2 && x == 2 && vi >= 2 && (n % 4) == 2 && cur->have_square == 1) {
-        /* n_i = 2x^2 -> n_{i-2} = 2(x-1)(x+1)
-         * switch to a strategy that takes advantage of this; the strategy
+        /* n_i = 2z^2 -> n_{i-2} = 2(z-1)(z+1)
+         * Switch to a strategy that takes advantage of this; the strategy
          * itself will revert when the conditions no longer hold.
          */
         if (strategy != STRATEGY_6X)
@@ -4501,8 +4501,9 @@ uint best_v4(t_level *cur_level) {
     return ti ? vi : k;
 }
 
-/* STRATEGY_6X: if we have ...2^{3+} . 2x^2..., the former is of the
- * form 2(x-1)(x+1), which is very restrictive.
+/* STRATEGY_6X: if we have ...2^e . 2z^2..., the former is of the
+ * form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
+ * forced by the quadratic residue check).
  */
 uint best_6x(t_level *cur_level) {
     /* check if we still hold */
@@ -4587,7 +4588,7 @@ uint best_6x(t_level *cur_level) {
         mpz_fdiv_qr(Z(j4p), Z(j4m), Z(temp), Z(j4b));
         if (mpz_cmp_ui(Z(j4m), 2) <= 0) {
             if (_GMP_is_prob_prime(Z(j4p))) {
-                /* p = Z(j4p) is prime and yields v_{i+2} = 2x^2 */
+                /* p = Z(j4p) is prime and yields v_{i+2} = 2z^2 */
                 mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                 walk_1(cur_level, vi);
             }

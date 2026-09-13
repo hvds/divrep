@@ -184,13 +184,9 @@ if (1) {
         'b0: 2^2.3 . 2 3.43^2: 4 / 225346',
     );
 
-    # An allocation pattern like "...2^{3+} . 2x^2..." triggers a temporary
-    # override strategy 'STRATEGY_6X' for as long as it holds; it is driven
-    # purely by reading live state, not by anything serialized to the log, so
-    # replay should reconstruct it with no special handling.
-    my $args64 = [qw{ -x1e14 6 4 }];
-    expect_recover(q{recover mid "...2^{3+} . 2x^2..." allocation},
-        $args64,
+    # An allocation pattern like "...2^{4+} . 2x^2..." triggers a temporary
+    # override strategy 'STRATEGY_6X' for as long as it holds.
+    expect_recover(q{recover STRATEGY_6X}, [qw{ -x1e14 6 4 }],
         ['305 b0: 2 3^2 2^2 .: 506032523 / 1388888888888'],
         'b0: 2 3^2 2^2 .: 506032523 / 1388888888888',
     );
