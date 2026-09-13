@@ -4684,10 +4684,10 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
 #if defined(TYPE_o)
     } else if (strategy == STRATEGY_6X && nextt == 2) {
-        /* v_i = q_i p^{x-1} r => q_i p^{x-1} = 8ab such that br = a +/- 1,
-         * so for large p we have r >= (p^{x-1} - 1)/q_i so
-         * v_i > 8 p^{x-1} (p^{x-1} - 1), and we can therefore constrain
-         * p to be less than 1 + root(zmax / 8, 2(x-1))
+        /* v_i = q_i p^{x-1} r => q_i p^{x-1} = 8ab such that br = a +/- 1.
+         * When p^{x-1} dominates, we minimize v_i by setting a = p^{x-1}
+         * giving r >= 8(p^{x-1} - 1)/q_i so v_i >= 8 p^{x-1} (p^{x-1} - 1).
+         * We can therefore constrain p : p < 1 + (zmax / 8)^{1 / (2(x-1))}.
          */
         mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
         mpz_fdiv_q_2exp(Z(lp_x), Z(lp_x), 3);
