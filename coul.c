@@ -716,9 +716,8 @@ void diag_any(t_level *cur_level, bool need_disp) {
             if (debugw_count) {
                 --debugw_count;
                 if (debugw_count == 0) {
-                    debugw = 0;
-                    debugW = 0;
-                    need_diag = 0;
+                    report("301 Stopping: debug count exhausted\n");
+                    fail_silent();
                 }
             }
         } else
@@ -753,8 +752,10 @@ void diag_any(t_level *cur_level, bool need_disp) {
         need_expanded_diag = 0;
         if (debugL && debugL_count) {
             --debugL_count;
-            if (debugL_count == 0)
-                debugL = 0;
+            if (debugL_count == 0) {
+                report("301 Stopping: debug count exhausted\n");
+                fail_silent();
+            }
         }
     }
     if (!debugw && !debugL)
