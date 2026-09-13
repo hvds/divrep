@@ -207,6 +207,8 @@ char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
 bool highpow = 0;   /* allocate even p^{2^x-1} (based on roughness) */
 ulong limp_cap = 0;
 bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
+bool in_b6x = 0;        /* true while a STRATEGY_6X candidate is on trial */
+uint b6x_vi;            /* the v_i it is on trial for */
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
@@ -494,7 +496,8 @@ void prep_show_v(t_level *cur_level, bool expanded) {
         : sprintf(&diag_buf[offset], "b*: ");
     for (uint vi = 0; vi < k; ++vi) {
         uint vlevel = cur_vlevel[vi]
-                - ((in_midp && vi == mid_vi) ? 1 : 0);
+                - ((in_midp && vi == mid_vi) ? 1 : 0)
+                - ((in_b6x && vi == b6x_vi) ? 1 : 0);
         if (vi)
             diag_buf[offset++] = ' ';
         if (vlevel == 1)
@@ -525,6 +528,9 @@ void prep_show_v(t_level *cur_level, bool expanded) {
         uint x = cur_level->x;
         offset += sprintf(&diag_buf[offset], " W(%lu,%u,%u)", p, x, mid_vi);
     }
+    if (in_b6x)
+        offset += gmp_sprintf(&diag_buf[offset], " 6X(%Zu,%u,%u)",
+                Z(j4p), b6x_vi, cur_level->bi);
     diag_buf[offset] = 0;
 }
 
@@ -4513,6 +4519,18 @@ uint best_v4(t_level *cur_level) {
     return ti ? vi : k;
 }
 
+/* temporarily make the candidate prime visible to diag code (mirroring
+ * walk_1_set()'s own trick for a similar "about to test this" moment) -
+ * called just before each speculative walk_1() call in best_6x() below.
+ */
+void diag_6x(t_level *cur_level, uint vi, uint a) {
+    in_b6x = 1;
+    b6x_vi = vi;
+    cur_level->bi = a;     /* spare while cur_level->is_forced == 0 here */
+    diag_plain(cur_level);
+    in_b6x = 0;
+}
+
 /* STRATEGY_6X: if we have the pattern "...2^e . 2z^2...", allocating 2^e
  * at v_i and 2 or 2y^2 at v_{i+2} leaving an odd square, v_i must be of
  * the form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
@@ -4611,12 +4629,16 @@ uint best_6x(t_level *cur_level) {
             if (_GMP_is_prob_prime(Z(j4p))) {
                 /* p = Z(j4p) is prime and yields v_{i+2} = 2z^2 */
                 mpz_mul(ap_next->q, ap_last->q, Z(j4p));
+                if (need_work)
+                    diag_6x(cur_level, vi, a);
                 walk_1(cur_level, vi);
             }
             if (mpz_cmp_ui(Z(j4b), 2) <= 0) {
                 mpz_add_ui(Z(j4p), Z(j4p), 2 / mpz_get_ui(Z(j4b)));
                 if (_GMP_is_prob_prime(Z(j4p))) {
                     mpz_mul(ap_next->q, ap_last->q, Z(j4p));
+                    if (need_work)
+                        diag_6x(cur_level, vi, a);
                     walk_1(cur_level, vi);
                 }
             }

@@ -164,7 +164,7 @@ if (1) {
 }
 
 if (1) {
-    # -j0..-j3 and internal STRATEGY_6X are easy to recover
+    # -j0..-j3 are easy to recover
     local $type = Type->new('o');
     my $args124 = [qw{ -x1e10 -f3 12 4 }];
 
@@ -178,13 +178,30 @@ if (1) {
         ['305 b0: 2^2.3 . 2 3.43^2: 4 / 133'],
         'b0: 2^2.3 . 2 3.43^2: 4 / 225346',
     );
+}
 
-    # Allocation patterns like "...2^{4+} . 2x^2..." trigger a temporary
-    # override strategy 'STRATEGY_6X' for as long as they hold.
-    expect_recover(q{recover STRATEGY_6X}, [qw{ -x1e14 6 4 }],
-        ['305 b0: 2 3^2 2^2 .: 506032523 / 1388888888888'],
-        'b0: 2 3^2 2^2 .: 506032523 / 1388888888888',
+if (1) {
+    # STRATEGY_6X: allocation patterns like "...2^{4+} . 2z^2..." trigger
+    # a strategy switch taking advantage of the maths to restrict to a much
+    # smaller search space.
+    #
+    # In the tests we must set gain (-g) high enough to avoid being diverted
+    # to a full walk_v() sweep for the small -x values we test.
+    local $type = Type->new('o');
+
+    expect_diag(q{6x pattern is identified and applied, 30 4}, 4,
+        [qw{ -g1000 -x5200 -jp -b2 30 4 }],
+        'b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)',
     );
+    expect_recurse_count(q{6x search is exhaustively correct, 30 4}, 11,
+        [qw{ -g1000 -x5200 -jp -b2 30 4 }]);
+
+    expect_diag(q{6x pattern is identified and applied, 90 4}, 4,
+        [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }],
+        'b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)',
+    );
+    expect_recurse_count(q{6x search is exhaustively correct, 90 4}, 91,
+        [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 
 if (1) {
@@ -389,6 +406,26 @@ sub expect_recover {
     my $fh = temp_log($content);
     my $path = $fh->filename;
     my $lines = run_test($type, [ '-dW1', "-r$path", @$args ], 1)
+            // return;
+    my $gotlines = $lines->{''};
+    if (!$gotlines) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    if ($gotlines->[-1] eq $expect) {
+        pass($legend);
+    } else {
+        fail($legend);
+        diag_lines($lines);
+        diag($_) for @$gotlines;
+    }
+    return;
+}
+
+sub expect_diag {
+    my($legend, $dw, $args, $expect) = @_;
+    my $lines = run_test($type, [ "-dW$dw", @$args ], 1)
             // return;
     my $gotlines = $lines->{''};
     if (!$gotlines) {
