@@ -218,15 +218,13 @@ if (1) {
     # by comparing against the -dW trace at the recorded point.
     local $type = Type->new('o');
 
-    my $fh30 = temp_log(['305 b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)']);
-    expect_recurse_count(q{recover 6x from its own diag point, 30 4}, 7,
-        [ '-r' . $fh30->filename,
-          qw{ -G1000 -x5200 -jp -b2 30 4 }]);
+    expect_recover_recurse_count(q{recover 6x from its own diag point, 30 4},
+        7, ['305 b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)'],
+        [qw{ -g1000 -x5200 -jp -b2 30 4 }]);
 
-    my $fh90 = temp_log(['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)']);
-    expect_recurse_count(q{recover 6x from its own diag point, 90 4}, 87,
-        [ '-r' . $fh90->filename,
-          q{-I"2^4 . 2 ."}, qw{ -G1000 -x142838800 -f2 -jp -b4 90 4 }]);
+    expect_recover_recurse_count(q{recover 6x from its own diag point, 90 4},
+        87, ['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)'],
+        [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 
 if (1) {
@@ -518,6 +516,21 @@ sub expect_result {
 sub expect_recurse_count {
     my($legend, $count, $args) = @_;
     my $lines = run_test($type, $args)
+            // return;
+    my $line = $lines->{367} && $lines->{367}[-1];
+    if (!$line || $line !~ /recurse (\d+)/) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    is($1, $count, $legend);
+    return;
+}
+
+sub expect_recover_recurse_count {
+    my($legend, $count, $content, $args) = @_;
+    my $fh = temp_log($content);
+    my $lines = run_test($type, [ '-r' . $fh->filename, @$args ], 1)
             // return;
     my $line = $lines->{367} && $lines->{367}[-1];
     if (!$line || $line !~ /recurse (\d+)/) {
