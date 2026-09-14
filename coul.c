@@ -4513,9 +4513,18 @@ uint best_v4(t_level *cur_level) {
     return ti ? vi : k;
 }
 
-/* STRATEGY_6X: if we have ...2^e . 2z^2..., the former is of the
- * form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
+/* STRATEGY_6X: if we have the pattern "...2^e . 2z^2...", allocating 2^e
+ * at v_i and 2 or 2y^2 at v_{i+2} leaving an odd square, v_i must be of
+ * the form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
  * forced by the quadratic residue check).
+ *
+ * In detail: writing z-1=2m, z+1=2(m+1) for odd z, 2(z-1)(z+1) = 8m(m+1)
+ * with one of m, m+1 even, forcing 2^4 unconditionally. In practice,
+ * any allocation with e < 4 must be disallowed before we reach here:
+ * e=1 is impossible since we allocate 2^1 at v_{i+2}; e=3 is disallowed
+ * by the n == 2 (mod 4) precondition; and e=2 would give z^2 == 3 (mod 4),
+ * caught by the quadratic residue checks. This justifies the "panic"
+ * fail()s below.
  */
 uint best_6x(t_level *cur_level) {
     /* check if we still hold */
