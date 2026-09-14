@@ -209,6 +209,10 @@ ulong limp_cap = 0;
 bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
 bool in_b6x = 0;        /* true while a STRATEGY_6X candidate is on trial */
 uint b6x_vi;            /* the v_i it is on trial for */
+bool in_flip = 0;       /* true while run_flip_pqsq() is proceeding */
+uint flip_vi;           /* the v_i it is proceeding for */
+ulong flip_oldp;        /* prev_level->p, before run_flip_pqsq() overwrites
+                          * that slot - see flip_recover's comment */
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
@@ -536,6 +540,8 @@ void prep_show_v(t_level *cur_level, bool expanded) {
     if (in_b6x)
         offset += gmp_sprintf(&diag_buf[offset], " 6X(%Zu,%u,%u)",
                 Z(j4p), b6x_vi, cur_level->bi);
+    if (in_flip)
+        offset += sprintf(&diag_buf[offset], " F(%u,%lu)", flip_vi, flip_oldp);
     diag_buf[offset] = 0;
 }
 
@@ -5299,7 +5305,25 @@ e_is insert_stack(void) {
  * instead manually run partitions (2z, z) - this should be more efficient
  * than running a much higher number of (z, 2z) partitions, espectially
  * since each p^{2z} allocation fixes a square.
- * TODO: annotate diags to allow recovery, and support that
+ *
+ * While this is proceeding, the resulting p^{2z-1} entry replaces the
+ * original p^{z-1} entry in v_i's own chain (same array slot - the
+ * "deallocate" above is a bookkeeping decrement/increment pair around
+ * the new apply_single(), not a second entry) - so it is visible to
+ * diag/recovery just like any other allocation, indistinguishable by
+ * itself from a normal one apart from its shape: unlike an ordinary
+ * final entry (always ^2, i.e. x=3), this one has an odd exponent
+ * 2z-1 >= 5 at a prime exceeding maxforce[vi], a shape no non-flip
+ * allocation produces. That's enough to *detect* recovery has landed
+ * inside a flip, but not enough to *resume* it correctly: prev_level's
+ * own search bound (prev_level->limp, the limit already exhausted over
+ * the smaller p^z power before we decided to flip) is zeroed below and
+ * not otherwise recoverable from persisted state, so it is separately
+ * exposed via a " F(vi,limp)" diag fragment for as long as this
+ * function is running.
+ * TODO: recovery itself is not yet supported - see best_6x()/IS_6X for
+ * the established template (interception in insert_stack(), a resume
+ * struct populated by parse_305(), a new e_is dispatch in recurse()).
  */
 void run_flip_pqsq(uint vi) {
     t_level *anc_level = &levels[level - 2];
@@ -5309,7 +5333,15 @@ void run_flip_pqsq(uint vi) {
     ulong oldp = prev_level->p;
     uint xs = prev_level->x;
     uint xl = xs << 1;
-    prev_level->x = 0;      /* temp suppress in progress display */
+    in_flip = 1;
+    flip_vi = vi;
+    flip_oldp = oldp;
+    prev_level->x = 0;      /* tells anything relying on levels[] (not
+                              * value[]'s own alloc chains, which is what
+                              * diag actually displays) that there is no
+                              * allocation here - currently only consumed
+                              * by run_flip_pqsq()'s own levels[li].x > 1
+                              * dedup check below */
     prev_level->limp = 0;   /* ensure prev will know it is complete on return */
     --cur_vlevel[vi];       /* temp deallocate */
 
@@ -5341,6 +5373,13 @@ void run_flip_pqsq(uint vi) {
         if (!apply_single(anc_level, cur_level, vi, p, xl))
             continue;
         ap = &vp->alloc[cur_vlevel[vi] - 1];
+        /* explicit diag point for the outer p^xl allocation itself - do
+         * not rely solely on walk_1_set()'s own (much rarer, gated on
+         * finding an inner candidate that also passes its own modular
+         * filter) diag call below, since long stretches of flip attempts
+         * commonly find no inner candidate at all. */
+        if (need_work)
+            diag_plain(cur_level);
         mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
         mpz_fdiv_q(Z(temp), Z(temp), ap->q);
         mpz_root(Z(temp), Z(temp), xs - 1);
@@ -5353,6 +5392,7 @@ void run_flip_pqsq(uint vi) {
     }
     prev_level->x = xs;
     ++cur_vlevel[vi];
+    in_flip = 0;
 }
 
 /* we emulate recursive calls via the levels[] array */
