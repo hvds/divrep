@@ -205,6 +205,31 @@ if (1) {
 }
 
 if (1) {
+    # STRATEGY_6X recovery: a "6X(p,vi,a)" diag line (see above) must be
+    # enough to resume best_6x()'s own search loop exactly where it left
+    # off - including re-trying 'a' itself (hitting both of its walk_1()
+    # branches unconditionally, by design; see best_6x()'s own comment),
+    # then continuing on to whatever the search does next.
+    #
+    # Since recovery does not re-explore already-completed ancestor
+    # branches above the recorded point, a recovered run's recurse count
+    # is necessarily lower than the equivalent cold run's - the expected
+    # counts here were found the same way as the plain-run counts above:
+    # by comparing against the -dW trace at the recorded point.
+    local $type = Type->new('o');
+
+    my $fh30 = temp_log(['305 b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)']);
+    expect_recurse_count(q{recover 6x from its own diag point, 30 4}, 7,
+        [ '-r' . $fh30->filename,
+          qw{ -G1000 -x5200 -jp -b2 30 4 }]);
+
+    my $fh90 = temp_log(['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)']);
+    expect_recurse_count(q{recover 6x from its own diag point, 90 4}, 87,
+        [ '-r' . $fh90->filename,
+          q{-I"2^4 . 2 ."}, qw{ -G1000 -x142838800 -f2 -jp -b4 90 4 }]);
+}
+
+if (1) {
     # -j4 and -js can allocated power p^{2^x-1}, a more complex pathway
     # that has more recover paths to consider.
     # For each testcase where they are relevant, these tests should show:

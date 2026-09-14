@@ -225,6 +225,11 @@ struct {
     uint x;
     uint vi;
 } midp_recover;
+struct {
+    uint valid;
+    uint vi;
+    uint a;     /* bit-vector over allocated prime powers */
+} b6x_recover;
 uint rough = 0;     /* test roughness if tau >= rough */
 bool opt_print = 0; /* print candidates instead of fully testing them */
 uint opt_flake = 0; /* test less before printing candidates */
@@ -1252,6 +1257,7 @@ void init_pre(void) {
     mpz_set_ui(Z(zone), 1);
     mpz_init(best);
     midp_recover.valid = 0;
+    b6x_recover.valid = 0;
 }
 
 /* Given a forced recovery stack parsed from a 315 and a standard one parsed
@@ -1385,6 +1391,27 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             fail("505 unexpected character in W(...) recovery");
         ++s;
         midp_recover.valid = 1;
+    }
+    if (strncmp(s, " 6X(", 4) == 0) {
+        s += 4;
+        int pend = 0;
+        sscanf(s, "%*[0-9]%n", &pend);
+        if (pend == 0)
+            fail("514 could not parse 6X(...) recovery prime: '%s'", s);
+        /* skip the prime, it is not needed for recovery */
+        s += pend;
+        if (s[0] != ',')
+            fail("515 unexpected character in 6X(...) recovery");
+        ++s;
+        b6x_recover.vi = strtoul(s, &s, 10);
+        if (s[0] != ',')
+            fail("515 unexpected character in 6X(...) recovery");
+        ++s;
+        b6x_recover.a = strtoul(s, &s, 10);
+        if (s[0] != ')')
+            fail("515 unexpected character in 6X(...) recovery");
+        ++s;
+        b6x_recover.valid = 1;
     }
     if (s[0] == ':') {
         if (s[1] != ' ')
@@ -4543,9 +4570,15 @@ void diag_6x(t_level *cur_level, uint vi, uint a) {
  * by the n == 2 (mod 4) precondition; and e=2 would give z^2 == 3 (mod 4),
  * caught by the quadratic residue checks. This justifies the "panic"
  * fail()s below.
+ *
+ * TODO: insert_stack() needs intimate knowledge of our internals to support
+ * recovery: making this a pure strategy function would make things cleaner
+ * and more robust. So split out the search code to a new function dwalk_6x(),
+ * and define and return a sentinel value here to indicate when that should
+ * be called (either k+2 or (k+1 && STRATEGY_6X)).
  */
 uint best_6x(t_level *cur_level) {
-    /* check if we still hold */
+    /* check if conditions for STRATEGY_6X still hold */
     t_level *prev_level = &levels[ cur_level->level - 1 ];
     if (!prev_level->have_square || sq0 < 2) {
         strategy = prev_strategy;
@@ -4602,7 +4635,19 @@ uint best_6x(t_level *cur_level) {
      * duplicate multiplications here, worth considering when we start
      * dealing with higher values of n.
      */
-    for (uint a = (1 << vlevel) - 2; a; a -= 2) {
+    uint a_start = (1 << vlevel) - 2;
+    if (b6x_recover.valid) {
+        /* on recover, skip to the bit-vector value that was in progress */
+        if (b6x_recover.vi != vi)
+            fail("panic: STRATEGY_6X recovery wants vi=%u, but we have vi=%u",
+                    b6x_recover.vi, vi);
+        if (b6x_recover.a & 1)
+            fail("panic: STRATEGY_6X recovery has invalid bit-vector %u",
+                    b6x_recover.a);
+        a_start = b6x_recover.a;
+        b6x_recover.valid = 0;      /* consumed */
+    }
+    for (uint a = a_start; a; a -= 2) {
         mpz_set_ui(Z(j4a), 1);
         for (uint i = 1; i < vlevel; ++i) {
             if ((a & (1 << i)) == 0)
@@ -4963,7 +5008,8 @@ typedef enum {
     IS_NEXTX,   /* Current power is done, try the next power */
     IS_NEXT,    /* Current prime is done, try the next prime */
     IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
-    IS_BATCH    /* Start in process_batch(), possibly with partial progress */
+    IS_BATCH,   /* Start in process_batch(), possibly with partial progress */
+    IS_6X       /* Resume best_6x(), possibly with partial progress */
 } e_is;
 
 /* Given an init or recovery stack, check for the specified forced prime
@@ -5192,8 +5238,21 @@ e_is insert_stack(void) {
                 break;
         }
 
-        /* insert the rest, in strategy-allocated order */
+        /* insert the rest, in strategy-allocated order, but take care
+         * not to fall into the best_6x() case where it starts searching
+         */
         while (1) {
+            if (strategy == STRATEGY_6X && level > 0) {
+                t_level *b6prev = &levels[level - 1];
+                if (b6prev->have_square && sq0 >= 2) {
+                    uint b6vi = sq0 - 2;
+                    uint b6vl = cur_vlevel[b6vi];
+                    if (b6vl > 0 && value[b6vi].alloc[b6vl - 1].t == 2) {
+                        jump = IS_6X;
+                        break;
+                    }
+                }
+            }
             uint vi = best_v(&levels[level]);
             if (vi >= k)
                 break;
@@ -5315,6 +5374,15 @@ void recurse(e_is jump_continue) {
         if (!process_batch(prev_level, true_recover))
             goto derecurse;
         /* else go deeper */
+    } else if (jump_continue == IS_6X) {
+        /* best_6x() always fully handles cur_level itself (resuming from
+         * b6x_recover, consumed inside it) and always finishes with
+         * everything below it explored, so we always derecurse after. */
+        uint vi = best_6x(cur_level);
+        if (vi != k + 1)
+            fail("panic: best_6x() call on recovery returned %u, not %u",
+                    vi, k + 1);
+        goto derecurse;
     }
     /* else jump_continue == IS_DEEPER */
 
