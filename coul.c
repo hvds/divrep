@@ -223,6 +223,8 @@ typedef struct s_midpp {
 uint midppc;
 t_midpp *midpp = NULL;
 
+/* Temporary recovery structures: typically set up via parse_305(),
+ * then marked no longer valid once used. */
 struct {
     uint valid;
     ulong p;
@@ -234,6 +236,14 @@ struct {
     uint vi;
     uint a;     /* bit-vector over allocated prime powers */
 } b6x_recover;
+struct {
+    uint valid;
+    uint vi;            /* remaining tau at v_i is of form 2r^2 (r prime) */
+    ulong oldp;         /* have previously checked all p^r up to oldp */
+    ulong p_outer;      /* have checked all p^{2r} up to p_outer */
+    ulong p_inner;      /* have checked all p^{2r}.q^r up to p_inner */
+} flip_recover;
+
 uint rough = 0;     /* test roughness if tau >= rough */
 bool opt_print = 0; /* print candidates instead of fully testing them */
 uint opt_flake = 0; /* test less before printing candidates */
@@ -1264,6 +1274,7 @@ void init_pre(void) {
     mpz_init(best);
     midp_recover.valid = 0;
     b6x_recover.valid = 0;
+    flip_recover.valid = 0;
 }
 
 /* Given a forced recovery stack parsed from a 315 and a standard one parsed
@@ -1418,6 +1429,18 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             fail("515 unexpected character in 6X(...) recovery");
         ++s;
         b6x_recover.valid = 1;
+    }
+    if (strncmp(s, " F(", 3) == 0) {
+        s += 3;
+        flip_recover.vi = strtoul(s, &s, 10);
+        if (s[0] != ',')
+            fail("516 unexpected character in F(...) recovery");
+        ++s;
+        flip_recover.oldp = strtoul(s, &s, 10);
+        if (s[0] != ')')
+            fail("516 unexpected character in F(...) recovery");
+        ++s;
+        flip_recover.valid = 1;
     }
     if (s[0] == ':') {
         if (s[1] != ' ')
@@ -5020,7 +5043,8 @@ typedef enum {
     IS_NEXT,    /* Current prime is done, try the next prime */
     IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
     IS_BATCH,   /* Start in process_batch(), possibly with partial progress */
-    IS_6X       /* Resume best_6x(), possibly with partial progress */
+    IS_6X,      /* Resume best_6x(), possibly with partial progress */
+    IS_FLIP     /* Resume run_flip_pqsq(), possibly with partial progress */
 } e_is;
 
 /* Given an init or recovery stack, check for the specified forced prime
@@ -5191,6 +5215,59 @@ static inline bool insert_float(
     return 1;
 }
 
+/* If conditions are met, absorb the remaining 1 or 2 unapplied allocations
+ * ready for run_flip_pqsq recovery and return TRUE, else return FALSE.
+ */
+static inline uint flip_xs_tau(uint t);
+bool absorb_flip(uint vi, t_fact *rs) {
+    if (!flip_recover.valid)
+        return 0;   /* Why are you calling me? */
+    if (flip_recover.vi != vi)
+        return 0;   /* Current vi is not valid for us to kick in */
+    uint ti = value[vi].alloc[ cur_vlevel[vi] - 1 ].t;
+    uint xs = flip_xs_tau(ti);
+    if (xs == 0)
+        return 0;   /* Current tau is not valid for us to kick in */
+    uint xl = 2 * xs;
+
+    /* Conditions are met, remaining allocations should be only the ones
+     * needed for flip recovery.
+     */
+    t_ppow *outerp = (rs->count) ? &rs->ppow[rs->count - 1] : NULL;
+    if (!outerp || outerp->e != xl - 1)
+        fail("panic: flip outer recovery expected p^%u, not %lu^%u",
+                xl - 1, outerp ? outerp->p : 1, outerp ? outerp->e : 0);
+    flip_recover.p_outer = outerp->p;
+    stack_remove(rstack->f, NULL, vi, outerp->p, outerp->e);
+
+    if (rs->count) {
+        t_ppow *innerp = &rs->ppow[rs->count - 1];
+        flip_recover.p_inner = innerp->p;
+        if (innerp->e != xs - 1)
+            fail("panic: flip inner recovery expected p^%u, not %lu^%u",
+                    xs - 1, innerp->p, innerp->e);
+        stack_remove(rstack->f, NULL, vi, innerp->p, innerp->e);
+    }
+
+    /* set up the stack ready for a call to run_flip_pqsq */
+    t_level *prev_level = &levels[level - 1];
+    t_level *cur_level = &levels[level];
+    t_level *next_level = &levels[level + 1];
+    t_divisors *dp = &divisors[ti];
+    uint di;
+    for (di = 0; di < dp->highdiv; ++di)
+        if (dp->div[di] == xs)
+            break;
+    cur_level->ti = ti;
+    cur_level->di = di;
+    if (!apply_single(prev_level, cur_level, vi, flip_recover.oldp, xs))
+        fail("panic: could not reapply %u^%u at %u for flip recovery",
+                flip_recover.oldp, xs, vi);
+    ++level;
+    next_level->vi = vi;
+    return 1;
+}
+
 /* On recovery, set up the recursion stack to the point we had reached.
  * Returns IS_DEEPER if we should continue by recursing deeper from this
  * point; returns IS_NEXTX if we should continue by advancing the power
@@ -5267,6 +5344,11 @@ e_is insert_stack(void) {
             uint vi = best_v(&levels[level]);
             if (vi >= k)
                 break;
+            if (flip_recover.valid && absorb_flip(vi, &rstack->f[vi])) {
+                /* absorb_flip has handled all remaining allocations */
+                jump = IS_FLIP;
+                break;
+            }
             if (!insert_float(rstack->f, NULL, vi, &jump, 0))
                 break;
         }
@@ -5298,32 +5380,23 @@ e_is insert_stack(void) {
     return jump;
 }
 
-/* We have an allocation of eg p^z leaving t = 2z, and p is high enough
- * that there are no partitions (z, z, 2) left to try so all remaining
- * candidates have a (z, 2z) partition.
+/* If t (which must be a factor of n) is of the form 2p^2, returns p, else
+ * returns 0. Non-zero implies this is valid for run_flip_pqsq recovery.
+ */
+static inline uint flip_xs_tau(uint t) {
+    uint h = divisors[t].high;
+    return (t == 2 * h * h) ? h : 0;
+}
+
+/* We have an allocation of eg p^z leaving t = 2z (z prime), and p is high
+ * enough that there are no partitions (z, z, 2) left to try so all remaining
+ * candidates represent a (z, 2z) partition.
  * We leave the entry for p^z in the level stack but deallocate it, and
  * instead manually run partitions (2z, z) - this should be more efficient
- * than running a much higher number of (z, 2z) partitions, espectially
+ * than running a much higher number of (z, 2z) partitions, especially
  * since each p^{2z} allocation fixes a square.
- *
- * While this is proceeding, the resulting p^{2z-1} entry replaces the
- * original p^{z-1} entry in v_i's own chain (same array slot - the
- * "deallocate" above is a bookkeeping decrement/increment pair around
- * the new apply_single(), not a second entry) - so it is visible to
- * diag/recovery just like any other allocation, indistinguishable by
- * itself from a normal one apart from its shape: unlike an ordinary
- * final entry (always ^2, i.e. x=3), this one has an odd exponent
- * 2z-1 >= 5 at a prime exceeding maxforce[vi], a shape no non-flip
- * allocation produces. That's enough to *detect* recovery has landed
- * inside a flip, but not enough to *resume* it correctly: prev_level's
- * own search bound (prev_level->limp, the limit already exhausted over
- * the smaller p^z power before we decided to flip) is zeroed below and
- * not otherwise recoverable from persisted state, so it is separately
- * exposed via a " F(vi,limp)" diag fragment for as long as this
- * function is running.
- * TODO: recovery itself is not yet supported - see best_6x()/IS_6X for
- * the established template (interception in insert_stack(), a resume
- * struct populated by parse_305(), a new e_is dispatch in recurse()).
+ * On completion, we restore the p^z allocation but set limp = 0 to mark
+ * the allocation as fully handled.
  */
 void run_flip_pqsq(uint vi) {
     t_level *anc_level = &levels[level - 2];
@@ -5333,15 +5406,21 @@ void run_flip_pqsq(uint vi) {
     ulong oldp = prev_level->p;
     uint xs = prev_level->x;
     uint xl = xs << 1;
+    ulong resume_plow = 0;     /* only meaningful if resuming */
+    bool recover = flip_recover.valid;
+    if (recover) {
+        if (vi != flip_recover.vi)
+            fail("panic: flip wants to recover at %u, not %u",
+                    flip_recover.vi, vi);
+        resume_plow = flip_recover.p_inner;
+        if (resume_plow == 0)
+            resume_plow = oldp;
+        flip_recover.valid = 0;    /* consumed */
+    }
     in_flip = 1;
     flip_vi = vi;
     flip_oldp = oldp;
-    prev_level->x = 0;      /* tells anything relying on levels[] (not
-                              * value[]'s own alloc chains, which is what
-                              * diag actually displays) that there is no
-                              * allocation here - currently only consumed
-                              * by run_flip_pqsq()'s own levels[li].x > 1
-                              * dedup check below */
+    prev_level->x = 0;      /* hide entry from level[] walkers */
     prev_level->limp = 0;   /* ensure prev will know it is complete on return */
     --cur_vlevel[vi];       /* temp deallocate */
 
@@ -5357,7 +5436,7 @@ void run_flip_pqsq(uint vi) {
         fail("Tried to flip with target > max_ulong^%u", xl - 1);
     cur_level->limp = mpz_get_ui(Z(r_walk));
 
-    level_setp(cur_level, maxforce[vi]);
+    level_setp(cur_level, recover ? flip_recover.p_outer - 1 : maxforce[vi]);
     while (1) {
       redo_flip: ;
         ulong p = prime_iterator_next(&cur_level->piter);
@@ -5373,11 +5452,6 @@ void run_flip_pqsq(uint vi) {
         if (!apply_single(anc_level, cur_level, vi, p, xl))
             continue;
         ap = &vp->alloc[cur_vlevel[vi] - 1];
-        /* explicit diag point for the outer p^xl allocation itself - do
-         * not rely solely on walk_1_set()'s own (much rarer, gated on
-         * finding an inner candidate that also passes its own modular
-         * filter) diag call below, since long stretches of flip attempts
-         * commonly find no inner candidate at all. */
         if (need_work)
             diag_plain(cur_level);
         mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
@@ -5387,7 +5461,9 @@ void run_flip_pqsq(uint vi) {
             fail("Tried to flip with target > max_ulong^%u", xs - 1);
         ulong phigh = mpz_get_ui(Z(temp));
         next_level->have_min = cur_level->have_min;
-        walk_1_set(cur_level, next_level, vi, oldp, phigh, xs);
+        walk_1_set(cur_level, next_level, vi, recover ? resume_plow : oldp,
+                phigh, xs);
+        recover = 0;
         --cur_vlevel[vi];
     }
     prev_level->x = xs;
@@ -5427,6 +5503,10 @@ void recurse(e_is jump_continue) {
         if (vi != k + 1)
             fail("panic: best_6x() call on recovery returned %u, not %u",
                     vi, k + 1);
+        goto derecurse;
+    } else if (jump_continue == IS_FLIP) {
+        /* run_flip_pqsq() finishes with everything below it explored */
+        run_flip_pqsq(cur_level->vi);
         goto derecurse;
     }
     /* else jump_continue == IS_DEEPER */

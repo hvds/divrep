@@ -228,6 +228,28 @@ if (1) {
 }
 
 if (1) {
+    # run_flip_pqsq(): when a p^z allocation is too high to leave any
+    # (z,z,2) partitions, we deallocate it and instead exhaustively try
+    # (2z,z) partitions directly (see its own comment for the maths).
+    local $type = Type->new('o');
+
+    expect_diag(q{flip is identified and applied, 36 4}, 90,
+        [qw{ -j2 -x1e6 -b7 36 4 }],
+        'b7: 2^2.5^2 . 2.11^5 . F(2,23)',
+    );
+
+    expect_recover_recurse_count(q{recover flip from its own diag point, 36 4},
+        234, ['305 b7: 2^2.5^2 . 2.11^5 . F(2,23)'],
+        [qw{ -j2 -x1e6 -b7 36 4 }]);
+
+    # there can be unforced allocations before the flip set
+    expect_recover(q{recover flip past prior allocations to the same v_i},
+        [qw{ -x103148643381388141823 -j2 -f3 -g20 324 3 }],
+        ['305 b0: 2^2.3^2.5^2.7^2 . 2.11^2.13^2.79^5 F(2,3491)'],
+        'b0: 2^2.3^2.5^2.7^2 . 2.11^2.13^2.79^5 F(2,3491)');
+}
+
+if (1) {
     # -j4 and -js can allocated power p^{2^x-1}, a more complex pathway
     # that has more recover paths to consider.
     # For each testcase where they are relevant, these tests should show:
@@ -289,24 +311,6 @@ if (1) {
     );
 }
 
-if (1) {
-    # The 'FLIP_PQSQ' strategy does not yet support recovery: it needs to
-    # add a uniquely identifiable diagnostic that we can use to recover.
-    # TODO: tests to be added once we know the mechanism.
-    local $type = Type->new('o');
-    my $args364 = [qw{ -j2 -x1e6 36 4 }];
-
-    TODO: {
-        local $TODO = 'run_flip_pqsq() does not yet write enough diag'
-                . ' info to recover through it - see its TODO comment';
-        my $fh = temp_log(['305 b7: 2^2.5^2 . 2.3^8 . (0.00s) [93 230 7 0]']);
-        my $lines = run_test($type,
-                [ '-dW1', '-r' . $fh->filename, @$args364 ], 1);
-        my $got = $lines && $lines->{''} && $lines->{''}[-1];
-        like($got // '', qr/^b7: 2\^2\.5\^2 /,
-                q{recover mid run_flip_pqsq (v0 preserved)});
-    }
-}
 
 if (1) {
     # Test cases for recovery with -I
