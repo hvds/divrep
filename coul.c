@@ -270,6 +270,14 @@ uint prev_strategy;     /* for special-case strategy override */
 uint fixed_level = 0;   /* number of values specified for -js */
 uint *fixed_v = NULL;   /* values specified for -js */
 
+/* Sentinel values returned by best_v() and strategies[] functions.
+ * Any real v_i is < BV_SPECIAL; BV_WALK means there is no v_i to allocate
+ * to; BV_NEXTX means there is no work left to do for this x.
+ */
+#define BV_SPECIAL k
+#define BV_WALK (BV_SPECIAL + 0)
+#define BV_NEXTX (BV_SPECIAL + 1)
+
 typedef uint (*t_strategy)(t_level *cur_level);
 uint best_v0(t_level *cur_level);
 uint best_v1(t_level *cur_level);
@@ -4357,7 +4365,7 @@ uint best_v(t_level *cur_level);
 
 /* Choose that v_i with the highest t_i still to fulfil, or (on equality)
  * with the highest q_i, but having at least one factor to allocate.
- * If there is no best entry, returns k.
+ * If there is no best entry, returns BV_WALK.
  */
 uint best_v0(t_level *cur_level) {
     uint vi, ti = 0;
@@ -4388,13 +4396,13 @@ uint best_v0(t_level *cur_level) {
         ti = tj;
         qi = qj;
     }
-    return ti ? vi : k;
+    return ti ? vi : BV_WALK;
 }
 
 /* Choose that v_i with the highest prime dividing t_i still to fulfil,
  * or on equality with the highest t_i, or on equality with the highest
  * q_i.
- * If there is no best entry, returns k.
+ * If there is no best entry, returns BV_WALK.
  */
 uint best_v1(t_level *cur_level) {
     uint vi, ti = 0;
@@ -4428,12 +4436,12 @@ uint best_v1(t_level *cur_level) {
         ti = tj;
         qi = qj;
     }
-    return ti ? vi : k;
+    return ti ? vi : BV_WALK;
 }
 
 /* Choose that v_i with the lowest t_i still to fulfil, or (on equality)
  * with the highest q_i, but having at least one factor to allocate.
- * If there is no best entry, returns k.
+ * If there is no best entry, returns BV_WALK.
  */
 uint best_v2(t_level *cur_level) {
     uint vi, ti = 0;
@@ -4464,7 +4472,7 @@ uint best_v2(t_level *cur_level) {
         ti = tj;
         qi = qj;
     }
-    return ti ? vi : k;
+    return ti ? vi : BV_WALK;
 }
 
 /* Same as best_v0, except that if the last power allocated on some v_i
@@ -4515,14 +4523,14 @@ uint best_v3(t_level *cur_level) {
         ti = tj;
         qi = qj;
     }
-    return ti ? vi : k;
+    return ti ? vi : BV_WALK;
 }
 
 /* Choose that v_i with the highest prime dividing t_i still to fulfil,
  * or on equality with the highest t_i, or on equality with the highest
  * q_i. If all qualifying t_i are a power of 2, instead choose the one
  * with the smallest range.
- * If there is no best entry, returns k.
+ * If there is no best entry, returns BV_WALK.
  */
 uint best_v4(t_level *cur_level) {
     uint vi, ti = 0, hi;
@@ -4575,7 +4583,7 @@ uint best_v4(t_level *cur_level) {
             mini = minj;
         }
     }
-    return ti ? vi : k;
+    return ti ? vi : BV_WALK;
 }
 
 /* temporarily make the candidate prime visible to diag code (mirroring
@@ -4722,7 +4730,7 @@ uint best_6x(t_level *cur_level) {
         }
     }
     cur_vlevel[vi] = vlevel;
-    return k + 1;   /* all done */
+    return BV_NEXTX;   /* all done */
 }
 
 void set_fixed_strategy(char *s) {
@@ -4749,18 +4757,19 @@ void set_fixed_strategy(char *s) {
 uint best_fixed(t_level *cur_level) {
     uint effective_level = cur_level->level - (cur_batch_level + 1);
     if (effective_level >= fixed_level)
-        return k;
+        return BV_WALK;
     uint vi = fixed_v[effective_level];
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap_last = &vp->alloc[vlevel - 1];
     if (ap_last->t == 1)
-        return k;
+        return BV_WALK;
     return vi;
 }
 
-/* Find the best entry to progress, using the selected strategy.
- * If there is no best entry, returns k.
+/* Find the best entry to allocate to next, using the selected strategy.
+ * If there is no such entry, returns BV_WALK; if there is no work to
+ * do for this x, returns BV_NEXTX.
  */
 uint best_v(t_level *cur_level) {
     return strategies[strategy](cur_level);
@@ -5340,7 +5349,7 @@ e_is insert_stack(void) {
                 }
             }
             uint vi = best_v(&levels[level]);
-            if (vi >= k)
+            if (vi >= BV_SPECIAL)
                 break;
             if (flip_recover.valid && absorb_flip(vi, &rstack->f[vi])) {
                 /* absorb_flip has handled all remaining allocations */
@@ -5498,9 +5507,9 @@ void recurse(e_is jump_continue) {
          * b6x_recover, consumed inside it) and always finishes with
          * everything below it explored, so we always derecurse after. */
         uint vi = best_6x(cur_level);
-        if (vi != k + 1)
+        if (vi != BV_NEXTX)
             fail("panic: best_6x() call on recovery returned %u, not %u",
-                    vi, k + 1);
+                    vi, BV_NEXTX);
         goto derecurse;
     } else if (jump_continue == IS_FLIP) {
         /* run_flip_pqsq() finishes with everything below it explored */
@@ -5531,24 +5540,28 @@ void recurse(e_is jump_continue) {
             if (cur_level->next_best)
                 goto walk_now;
             uint vi = best_v(cur_level);
-            if (vi >= k) {
-                /* signal that best_v() already handled it */
-                if (vi > k)
+            if (vi >= BV_SPECIAL) {
+                switch (vi - BV_SPECIAL) {
+                  default:
+                    fail("panic: unknown best_v() result %u (k=%u)", vi, k);
+                  case BV_NEXTX - BV_SPECIAL:
+                    /* nothing left to do for this x */
                     goto derecurse;
-
-                /* failure result is stable if last allocation was unforced */
-                if (!prev_level->is_forced)
-                    cur_level->next_best = 1;
-              walk_now:
+                  case BV_WALK - BV_SPECIAL:
+                    /* failure result is stable if last allocation unforced */
+                    if (!prev_level->is_forced)
+                        cur_level->next_best = 1;
+                  walk_now:
 #ifdef SQONLY
-                if (prev_level->have_square)
-                    walk_v(prev_level, Z(zero));
-                else if (!prev_level->is_forced)
-                    level_setp(prev_level, prev_level->limp);
+                    if (prev_level->have_square)
+                        walk_v(prev_level, Z(zero));
+                    else if (!prev_level->is_forced)
+                        level_setp(prev_level, prev_level->limp);
 #else
-                walk_v(prev_level, Z(zero));
+                    walk_v(prev_level, Z(zero));
 #endif
-                goto derecurse;
+                    goto derecurse;
+                }
             }
             t_value *vp = &value[vi];
             uint vil = cur_vlevel[vi];
