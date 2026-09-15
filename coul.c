@@ -3346,25 +3346,6 @@ void walk_1_set(
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh)
             break;
-#if 0
-        /* CHECKME: do we gain correctness or speed by including this
-         * check that recurse() has? */
-        if (p <= levels[ cur_level->level - 1 ]->maxp)
-            for (uint li = 1; li < level; ++li)
-                if (p == levels[li].p)
-                    goto reject_this_one;
-#endif
-        mpz_ui_pow_ui(Z(w1_v), p, x - 1);
-        if (need_mod) {
-            mpz_fdiv_r(Z(temp), Z(w1_v), Z(w1_m));
-            if (mpz_cmp(Z(temp), Z(w1_mr)) != 0)
-                continue;
-        }
-        mpz_mul(Z(w1_v), Z(w1_v), aip->q);
-        mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
-        ++countw;
-        if (check && !cvec_testv(cx0, Z(w1_v)))
-            continue;
         if (need_work) {
             /* temporarily make this prime power visible to diag code */
             t_allocation *a2ip = &vip->alloc[vil];
@@ -3374,6 +3355,30 @@ void walk_1_set(
             diag_plain(cur_level);
             --cur_vlevel[vi];
         }
+#if 0
+        /* CHECKME: do we need this check that recurse() has? It seems
+         * unlikely to gain speed, but may be needed for correctness */
+        if (p <= levels[ cur_level->level - 1 ]->maxp)
+            for (uint li = 1; li < level; ++li)
+                if (p == levels[li].p)
+                    goto reject_this_one;
+#endif
+        mpz_ui_pow_ui(Z(w1_v), p, x - 1);
+        if (need_mod) {
+            /* TODO: think about a more efficient approach when the modulus
+             * is large: at a certain point generating each am+r and testing
+             * primality is going to be less work than generating every prime
+             * and testing p == r (mod m).
+             */
+            mpz_fdiv_r(Z(temp), Z(w1_v), Z(w1_m));
+            if (mpz_cmp(Z(temp), Z(w1_mr)) != 0)
+                continue;
+        }
+        mpz_mul(Z(w1_v), Z(w1_v), aip->q);
+        mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
+        ++countw;
+        if (check && !cvec_testv(cx0, Z(w1_v)))
+            continue;
 
         for (uint vj = 0; vj < k; ++vj) {
             t_value *vjp = &value[vj];
