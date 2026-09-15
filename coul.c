@@ -277,6 +277,7 @@ uint *fixed_v = NULL;   /* values specified for -js */
 #define BV_SPECIAL k
 #define BV_WALK (BV_SPECIAL + 0)
 #define BV_NEXTX (BV_SPECIAL + 1)
+#define BV_6X (BV_SPECIAL + 2)
 
 typedef uint (*t_strategy)(t_level *cur_level);
 uint best_v0(t_level *cur_level);
@@ -4603,19 +4604,9 @@ void diag_6x(t_level *cur_level, uint vi, uint a) {
  * the form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
  * forced by the quadratic residue check).
  *
- * In detail: writing z-1=2m, z+1=2(m+1) for odd z, 2(z-1)(z+1) = 8m(m+1)
- * with one of m, m+1 even, forcing 2^4 unconditionally. In practice,
- * any allocation with e < 4 must be disallowed before we reach here:
- * e=1 is impossible since we allocate 2^1 at v_{i+2}; e=3 is disallowed
- * by the n == 2 (mod 4) precondition; and e=2 would give z^2 == 3 (mod 4),
- * caught by the quadratic residue checks. This justifies the "panic"
- * fail()s below.
- *
- * TODO: insert_stack() needs intimate knowledge of our internals to support
- * recovery: making this a pure strategy function would make things cleaner
- * and more robust. So split out the search code to a new function dwalk_6x(),
- * and define and return a sentinel value here to indicate when that should
- * be called (either k+2 or (k+1 && STRATEGY_6X)).
+ * We force allocation at v_i until the remaining tau is odd (in which
+ * case we can finish with a Pell walk) or 2, in which case we return
+ * BV_6X to invoke the fast walk_6x().
  */
 uint best_6x(t_level *cur_level) {
     /* check if conditions for STRATEGY_6X still hold */
@@ -4628,12 +4619,31 @@ uint best_6x(t_level *cur_level) {
     uint vi = sq0 - 2;
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
-    t_allocation *ap_last = &vp->alloc[vlevel - 1];
-    if (ap_last->t != 2)
-        return vi;  /* allocate some more */
+    uint t = vp->alloc[vlevel - 1].t;
+    if (t & 1)
+        return BV_WALK;     /* Pell case, walk will be fast */
+    if (t != 2)
+        return vi;          /* allocate some more */
+    cur_level->vi = vi;
+    return BV_6X;           /* walk_6x() can now handle this */
+}
 
-    /* we can fully handle this here */
-    t_allocation *ap_next = &vp->alloc[vlevel], *ap;
+/* STRATEGY_6X: we have t_i = 2, t_{i+2} odd, such that v_{i+2} must be of
+ * the form 2z^2 (z odd) and v_i must be of the form 16abp (p as yet
+ * unallocated) with 8abp = (z-1)(z+1) so a = bp +/- 1.
+ * Thus from here the only solutions possible involve a pair of coprime
+ * factors ab that yield a prime p for the unallocated part: we generate
+ * all such coprime pairs for testing, and invoke walk_1() for each
+ * resulting p that is prime.
+ */
+void walk_6x(uint vi) {
+    t_level *cur_level = &levels[level];
+    t_level *prev_level = &levels[level - 1];
+    t_value *vp = &value[vi];
+    uint vlevel = cur_vlevel[vi];
+    t_allocation *ap;
+    t_allocation *ap_last = &vp->alloc[vlevel - 1];
+    t_allocation *ap_next = &vp->alloc[vlevel];
     ap_next->t = 1;
     ap_next->p = 0; /* the real value may well not fit */
     ap_next->x = 2;
@@ -4650,8 +4660,6 @@ uint best_6x(t_level *cur_level) {
      * We find that by iterating 'a' over all combinations of the prime power
      * allocations (excluding the constant factor 8).
      */
-    /* take out the constant factor */
-    mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
     /* find the actual power of 2 allocated */
     uint l2 = 0;
     for (uint i = 1; i < vlevel; ++i) {
@@ -4666,8 +4674,9 @@ uint best_6x(t_level *cur_level) {
     }
     if (l2 == 0)
         fail("panic: STRATEGY_6X in use but no power of 2 found");
-    if (vlevel > sizeof(uint) * 8 - 1)
-        fail("FIXME: too many factors for STRATEGY_6X");
+    /* take out the constant factor */
+    mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
+
     /* Iterate j4a over all combinations of the prime power allocations
      * via a bit vector of which allocations to include. (We don't need
      * to check 0 case of the vector, since it gives j4a = 1.)
@@ -4675,6 +4684,8 @@ uint best_6x(t_level *cur_level) {
      * duplicate multiplications here, worth considering when we start
      * dealing with higher values of n.
      */
+    if (vlevel > sizeof(uint) * 8 - 1)
+        fail("FIXME: too many factors for STRATEGY_6X");
     uint a_start = (1 << vlevel) - 2;
     if (b6x_recover.valid) {
         /* on recover, skip to the bit-vector value that was in progress */
@@ -4729,8 +4740,7 @@ uint best_6x(t_level *cur_level) {
             }
         }
     }
-    cur_vlevel[vi] = vlevel;
-    return BV_NEXTX;   /* all done */
+    cur_vlevel[vi] = vlevel;    /* restore */
 }
 
 void set_fixed_strategy(char *s) {
@@ -5333,24 +5343,16 @@ e_is insert_stack(void) {
                 break;
         }
 
-        /* insert the rest, in strategy-allocated order, but take care
-         * not to fall into the best_6x() case where it starts searching
-         */
+        /* insert the rest, in strategy-allocated order */
         while (1) {
-            if (strategy == STRATEGY_6X && level > 0) {
-                t_level *b6prev = &levels[level - 1];
-                if (b6prev->have_square && sq0 >= 2) {
-                    uint b6vi = sq0 - 2;
-                    uint b6vl = cur_vlevel[b6vi];
-                    if (b6vl > 0 && value[b6vi].alloc[b6vl - 1].t == 2) {
-                        jump = IS_6X;
-                        break;
-                    }
-                }
-            }
             uint vi = best_v(&levels[level]);
-            if (vi >= BV_SPECIAL)
+            if (vi >= BV_SPECIAL) {
+                if (vi == BV_6X)
+                    jump = IS_6X;
+                /* CHECKME: should we be handling the other cases here?
+                 * BV_WALK -> IS_RWALK, BV_NEXTX -> IS_NEXTX */
                 break;
+            }
             if (flip_recover.valid && absorb_flip(vi, &rstack->f[vi])) {
                 /* absorb_flip has handled all remaining allocations */
                 jump = IS_FLIP;
@@ -5503,13 +5505,11 @@ void recurse(e_is jump_continue) {
             goto derecurse;
         /* else go deeper */
     } else if (jump_continue == IS_6X) {
-        /* best_6x() always fully handles cur_level itself (resuming from
-         * b6x_recover, consumed inside it) and always finishes with
-         * everything below it explored, so we always derecurse after. */
-        uint vi = best_6x(cur_level);
-        if (vi != BV_NEXTX)
+        uint vi = best_6x(cur_level);   /* re-verify */
+        if (vi != BV_6X)
             fail("panic: best_6x() call on recovery returned %u, not %u",
-                    vi, BV_NEXTX);
+                    vi, BV_6X);
+        walk_6x(cur_level->vi);
         goto derecurse;
     } else if (jump_continue == IS_FLIP) {
         /* run_flip_pqsq() finishes with everything below it explored */
@@ -5544,6 +5544,10 @@ void recurse(e_is jump_continue) {
                 switch (vi - BV_SPECIAL) {
                   default:
                     fail("panic: unknown best_v() result %u (k=%u)", vi, k);
+                  case BV_6X - BV_SPECIAL:
+                    /* ready for a walk */
+                    walk_6x(cur_level->vi);
+                    goto derecurse;
                   case BV_NEXTX - BV_SPECIAL:
                     /* nothing left to do for this x */
                     goto derecurse;
