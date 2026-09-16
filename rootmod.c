@@ -38,7 +38,7 @@ typedef enum {
     rm_r, rm_p,
     arm_a,
     armkp_m, armkp_px,
-    armpp_px,
+    armpp_px, armpp_a,
     armc_n, armc_inv,
     arzpp_px,
     armppr_a, armppr_z, armppr_px, armppr_px2, armppr_pxm, armppr_t,
@@ -440,8 +440,9 @@ void _allrootmod_prime_power(mpz_t a, uint k, ulong p, uint e, mpz_t px) {
      * for all r_i in R and all j: 0 <= j < p^{m(k - 1)}.
      */
 
-    /* Note: we rely on armpp_r copying rm_r before overwriting it */
-    _allrootmod_prime_power_r(Z(rm_r), k, p, e - m * k);
+    /* we cannot rely on armpp_r copying rm_r before overwriting it */
+    mpz_set(Z(armpp_a), Z(rm_r));
+    _allrootmod_prime_power_r(Z(armpp_a), k, p, e - m * k);
 
     t_results *rp = &ra[rm_base];
     t_results *r2 = &ra[armpp_copy];
