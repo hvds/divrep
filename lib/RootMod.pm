@@ -20,10 +20,10 @@ sub MBI { defined($_[0]) ? Math::GMP->new(@_) : undef }
 # implementations in Math::Prime::Util::PP. The local implementation
 # is guaranteed to return bigints, but the MPU versions are not.
 *allrootmod = Math::Prime::Util->can('allrootmod')
-    ? sub { map MBI($_), Math::Prime::Util::allrootmod(@_) }
+    ? sub { map MBI($_), &Math::Prime::Util::allrootmod(@_) }
     : \&_allrootmod;
 *allsqrtmod = Math::Prime::Util->can('allsqrtmod')
-    ? sub { map MBI($_), Math::Prime::Util::allsqrtmod(@_) }
+    ? sub { map MBI($_), &Math::Prime::Util::allsqrtmod(@_) }
     : \&_allsqrtmod;
 *is_residue = Math::Prime::Util->can('is_residue')
     ? sub { Math::Prime::Util::is_residue(@_) }
