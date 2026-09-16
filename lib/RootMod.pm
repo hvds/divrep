@@ -428,6 +428,7 @@ an empty list is returned.
 sub _allrootmod {
     my($a, $k, $n) = @_;
     return () if $n == 0;
+    return +($zero) if $n == 1;
     $a %= $n;
     return () if $k <= 0 && $a == 0;
     if ($k < 0) {
