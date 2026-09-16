@@ -134,7 +134,7 @@ sub tf {
     }
 
     # trial_factor
-    {
+    if ($f > 1) {
         my @f = trial_factor($f, $hlim);
         $f = MBI(pop @f);
         diag($diag .= "@f ") if @f;
