@@ -352,10 +352,10 @@ fs_retry:
                 goto found_factor;
         }
         /* It's possible the previous calls failed or weren't available */
-        if (nbits <= 53)
+        if (nbits <= 53) {
             if (ct_squfof(fs->n, fs->f, 400000))
                 goto found_factor;
-        if (nbits <= 77) {
+        } else if (nbits <= 77) {
             int sb1 = (nbits < 58) ? 1
                 : (nbits < 63) ? 2
                 : (nbits < 72) ? 4
@@ -838,16 +838,16 @@ bool tmf_29(t_tm *tm) { return ct_holf(tm->n, tmf, 1 << 20); }
 bool tmf_30(t_tm *tm) { return ct_pminus1(tm->n, tmf, 5000000, 5000000 * 20); }
 bool tmf_31(t_tm *tm) { return ct_ecm(tm->n, tmf, 32 * tm->B1, 40); }
 /* last resort tests */
-bool tmf_32(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 4, 100); }
-bool tmf_33(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 5, 100); }
-bool tmf_34(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 6, 100); }
-bool tmf_35(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 7, 100); }
-bool tmf_36(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 8, 100); }
-bool tmf_37(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 9, 100); }
-bool tmf_38(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 10, 100); }
-bool tmf_39(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 11, 100); }
-bool tmf_40(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 12, 100); }
-bool tmf_41(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 13, 100); }
+bool tmf_32(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 3, 100); }
+bool tmf_33(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 4, 100); }
+bool tmf_34(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 5, 100); }
+bool tmf_35(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 6, 100); }
+bool tmf_36(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 7, 100); }
+bool tmf_37(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 8, 100); }
+bool tmf_38(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 9, 100); }
+bool tmf_39(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 10, 100); }
+bool tmf_40(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 11, 100); }
+bool tmf_41(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 12, 100); }
 
 typedef bool (*t_tmf)(t_tm *tm);
 const t_tmf tmfa[] = {
