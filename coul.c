@@ -559,7 +559,7 @@ void diag_csv_head(void) {
     printf("Batch id");
     for (uint i = 0; i < k; ++i)
         printf(",v_%u", i);
-    t_divisors *dp = &divisors[n];
+    t_divisors *dp = &divisors[target_lcm];
     printf(",LCM");
     for (uint i = 0; i < dp->alldiv; ++i)
         printf(",t %u", dp->div[i]);
@@ -567,7 +567,7 @@ void diag_csv_head(void) {
 }
 
 void diag_csv(t_level *cur_level) {
-    t_divisors *dp = &divisors[n];
+    t_divisors *dp = &divisors[target_lcm];
     uint tc[dp->alldiv];
     memset(&tc[0], 0, dp->alldiv * sizeof(uint));
     mpz_set_ui(Z(temp), 1);
@@ -981,8 +981,8 @@ t_mint_capped *mint_capped(t_mint *base, uint pdiff, bool create) {
 }
 
 void mint_init_base(t_mint ***p) {
-    t_divisors *dp = &divisors[n];
-    *p = calloc(n + 1, sizeof(t_mint *));
+    t_divisors *dp = &divisors[target_lcm];
+    *p = calloc(target_lcm + 1, sizeof(t_mint *));
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint f = dp->div[di];
         if (f == 1)
@@ -996,7 +996,7 @@ void prep_mintau(void) {
 
     restricted_count = 0;
     restricted = NULL;
-    t_divisors *dp = &divisors[n];
+    t_divisors *dp = &divisors[target_lcm];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint d = dp->div[di];
         uint h = divisors[d].high;
@@ -1013,7 +1013,7 @@ void prep_mintau(void) {
             mint_init_base(&mint_base_restricted[i]);
     }
 
-    uint maxtau = n / divisors[n].high;
+    uint maxtau = target_lcm / divisors[target_lcm].high;
     dp = &divisors[maxtau];
     ushort maxdepth = dp->sumpm;
     pfree_vecsize = (nsprimes + 31) >> 5;
@@ -1045,7 +1045,7 @@ void free_mint(t_mint *mtp) {
 }
 
 void mint_free_base(t_mint ***p) {
-    uint maxtau = n / divisors[n].high;
+    uint maxtau = target_lcm / divisors[target_lcm].high;
     t_divisors *dp = &divisors[maxtau];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint f = dp->div[di];
@@ -1070,7 +1070,7 @@ void done_mintau(void) {
         free(mint_base_restricted);
     }
 
-    uint maxtau = n / divisors[n].high;
+    uint maxtau = target_lcm / divisors[target_lcm].high;
     t_divisors *dp = &divisors[maxtau];
     ushort maxdepth = dp->sumpm;
     for (uint i = 0; i < maxdepth; ++i) {
@@ -2112,10 +2112,10 @@ ulong ulston(char *s) {
 }
 
 void do_prep_mp(ulong **mp, char *sp, char *spx) {
-    *mp = calloc(n, sizeof(ulong));
+    *mp = calloc(target_lcm, sizeof(ulong));
     if (sp) {
         char *t = strchr(sp, '^');
-        t_divisors *dp = &divisors[n];
+        t_divisors *dp = &divisors[target_lcm];
         if (t) {
             *t = 0;
             ulong p = ulston(sp);
@@ -2171,7 +2171,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
 
 void disp_px(char *name, ulong *mp) {
     report("311 %s: [ ", name);
-    t_divisors *dp = &divisors[n];
+    t_divisors *dp = &divisors[target_lcm];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint dm = dp->div[di] - 1;
         if (highpow ? dm == 0 : ispow2(dm + 1))
