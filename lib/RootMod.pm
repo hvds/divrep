@@ -334,7 +334,7 @@ sub allrootmod_prime_power {
 
     $a %= $px;
     if ($a == 0) {
-        my $t = ($x - 1) / $k + 1;
+        my $t = int(($x - 1) / $k) + 1;
         my $pt = $p ** $t;
         my $pr = $p ** ($x - $t);
         return map +(($_ * $pt) % $px), 0 .. $pr - 1;
