@@ -59,7 +59,8 @@ static inline ulong ct_power(mpz_t n) {
 static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
     bool r = _GMP_ECM_FACTOR(n, f, b1, curves);
-    gmp_printf("(%ld) ecm: %Zu [%lu, %lu] %u", cgdiff(&cg_tp0), n, b1, curves, r);
+    gmp_printf("(%ld) ecm: %Zu [%lu, %lu] %u",
+            cgdiff(&cg_tp0), n, b1, curves, r);
     if (r)
         gmp_printf(" %Zu", f);
     gmp_printf("\n");
@@ -122,7 +123,8 @@ static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
 static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
     bool r = _GMP_pbrent_factor(n, f, a, rounds);
-    gmp_printf("(%ld) sqf: %Zu [%lu, %lu] %d", cgdiff(&cg_tp0), n, a, rounds, r);
+    gmp_printf("(%ld) brent: %Zu [%lu, %lu] %d",
+            cgdiff(&cg_tp0), n, a, rounds, r);
     if (r)
         gmp_printf(" %Zu", f);
     gmp_printf("\n");
@@ -818,10 +820,8 @@ bool tmf_13(t_tm *tm) { return ct_ecm(tm->n, tmf, 600, 20); }
 bool tmf_14(t_tm *tm) { return ct_ecm(tm->n, tmf, 2000, 10); }
 bool tmf_15(t_tm *tm) { return ct_pminus1(tm->n, tmf, 200000, 3000000); }
 bool tmf_16(t_tm *tm) { tm->B1 = 5000; return ct_ecm(tm->n, tmf, tm->B1, 20); }
-/* FIXME: surely this and the next case should have curves = 20?
- * There was a comment on each "go to QS" - is the intent to do
- * a quick hit here, then rely on QS for more progress?
- */
+/* Dana confirms curves=2 is deliberate for these two: a quick ECM hit before
+ * going to QS. */
 bool tmf_17(t_tm *tm) { tm->B1 = 10000; return ct_ecm(tm->n, tmf, tm->B1, 2); }
 bool tmf_18(t_tm *tm) { tm->B1 = 20000; return ct_ecm(tm->n, tmf, tm->B1, 2); }
 bool tmf_19(t_tm *tm) { tm->B1 = 30000; return ct_ecm(tm->n, tmf, tm->B1, 20); }
