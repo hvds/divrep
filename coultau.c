@@ -130,6 +130,15 @@ static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
     gmp_printf("\n");
     return r;
 }
+static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    bool r = _GMP_cheb_factor(n, f, B, 0);
+    gmp_printf("(%ld) cheb: %Zu [%lu] %d", cgdiff(&cg_tp0), n, B, r);
+    if (r)
+        gmp_printf(" %Zu", f);
+    gmp_printf("\n");
+    return r;
+}
 extern int fs_trial(factor_state* fs);
 static inline bool ct_trial(factor_state *fs) {
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
@@ -152,6 +161,7 @@ static inline bool ct_trial(factor_state *fs) {
 #   define ct_brent63(n, f, rounds) pbrent63(n, f, rounds)
 #   define ct_brent(n, f, a, rounds) _GMP_pbrent_factor(n, f, a, rounds)
 #   define ct_trial(fs) fs_trial(fs)
+#   define ct_cheb(n, f, B) _GMP_cheb_factor(n, f, B, 0)
 #endif
 
 #define NPRIMES_SMALL 2000
@@ -465,6 +475,11 @@ fs_retry:
         /* HOLF in case it's a near-ratio-of-perfect-square */
         if (ct_holf(fs->n, fs->f, 1024 * 1024))
             goto found_factor;
+#ifdef MPUG_054
+        /* available earlier, presumed trustworthy from v0.54 */
+        if (ct_cheb(fs->n, fs->f, 50000))
+            goto found_factor;
+#endif
         /* Large p-1 with stage 2: B2 = 20 * B1 */
         if (ct_pminus1(fs->n, fs->f, 5000000, 5000000 * 20))
             goto found_factor;
@@ -835,19 +850,21 @@ bool tmf_26(t_tm *tm) { return ct_brent(tm->n, tmf, 1, 1 << 20); }
 bool tmf_27(t_tm *tm) { return ct_ecm(tm->n, tmf, 4 * tm->B1, 20); }
 bool tmf_28(t_tm *tm) { return ct_ecm(tm->n, tmf, 8 * tm->B1, 20); }
 bool tmf_29(t_tm *tm) { return ct_holf(tm->n, tmf, 1 << 20); }
-bool tmf_30(t_tm *tm) { return ct_pminus1(tm->n, tmf, 5000000, 5000000 * 20); }
-bool tmf_31(t_tm *tm) { return ct_ecm(tm->n, tmf, 32 * tm->B1, 40); }
+/* we enable ct_cheb only with MPUG_054 */
+bool tmf_30(t_tm *tm) { return ct_cheb(tm->n, tmf, 50000); }
+bool tmf_31(t_tm *tm) { return ct_pminus1(tm->n, tmf, 5000000, 5000000 * 20); }
+bool tmf_32(t_tm *tm) { return ct_ecm(tm->n, tmf, 32 * tm->B1, 40); }
 /* last resort tests */
-bool tmf_32(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 3, 100); }
-bool tmf_33(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 4, 100); }
-bool tmf_34(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 5, 100); }
-bool tmf_35(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 6, 100); }
-bool tmf_36(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 7, 100); }
-bool tmf_37(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 8, 100); }
-bool tmf_38(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 9, 100); }
-bool tmf_39(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 10, 100); }
-bool tmf_40(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 11, 100); }
-bool tmf_41(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 12, 100); }
+bool tmf_33(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 3, 100); }
+bool tmf_34(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 4, 100); }
+bool tmf_35(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 5, 100); }
+bool tmf_36(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 6, 100); }
+bool tmf_37(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 7, 100); }
+bool tmf_38(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 8, 100); }
+bool tmf_39(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 9, 100); }
+bool tmf_40(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 10, 100); }
+bool tmf_41(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 11, 100); }
+bool tmf_42(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 12, 100); }
 
 typedef bool (*t_tmf)(t_tm *tm);
 const t_tmf tmfa[] = {
@@ -856,7 +873,7 @@ const t_tmf tmfa[] = {
     &tmf_16, &tmf_17, &tmf_18, &tmf_19, &tmf_20, &tmf_21, &tmf_22, &tmf_23,
     &tmf_24, &tmf_25, &tmf_26, &tmf_27, &tmf_28, &tmf_29, &tmf_30, &tmf_31,
     &tmf_32, &tmf_33, &tmf_34, &tmf_35, &tmf_36, &tmf_37, &tmf_38, &tmf_39,
-    &tmf_40, &tmf_41
+    &tmf_40, &tmf_41, &tmf_42
 };
 #define TM_TERM 0
 /* leave room for possible power check at tmf_1() */
@@ -868,29 +885,29 @@ typedef struct s_tmf_bits {
 } t_tmf_bits;
 
 #ifdef TRY_HARDER
-/* include "last resort tests" tmf_32 .. tmf_41 */
-#   define HIGH_BITS 0b111111111100000000000000000000000000000000UL
+/* include "last resort tests" tmf_33 .. tmf_42 */
+#   define HIGH_BITS 0b1111111111000000000000000000000000000000000UL
 #else
 #   define HIGH_BITS 0
 #endif
 t_tmf_bits tmfb[] = {
-    { 53, 0b11111110000000011111110000100100UL | HIGH_BITS},
-    { 58, 0b11111110000000011111110001000100UL | HIGH_BITS},
-    { 63, 0b11111110000000011111110010000100UL | HIGH_BITS},
-    { 64, 0b11111110000000011111110100000000UL | HIGH_BITS},
-    { 72, 0b11111110000000011111111100011000UL | HIGH_BITS},
-    { 77, 0b11111110000000011111111000011000UL | HIGH_BITS},
-    { 89, 0b11111110000000011111100000011000UL | HIGH_BITS},
-    { 99, 0b11111111000000011111100000011000UL | HIGH_BITS},
-    {126, 0b11111111000000100111100000011000UL | HIGH_BITS},
-    {127, 0b11111111000000100111100000000000UL | HIGH_BITS},
-    {159, 0b11111111000001000111100000000000UL | HIGH_BITS},
-    {191, 0b11111111000010001111100000000000UL | HIGH_BITS},
-    {223, 0b11111111000100001111100000000000UL | HIGH_BITS},
-    {255, 0b11111111001000001111100000000000UL | HIGH_BITS},
-    {299, 0b11111111010000001111100000000000UL | HIGH_BITS},
-    {511, 0b11111110010000001111100000000000UL | HIGH_BITS},
-    {  0, 0b11111110100000001111100000000000UL | HIGH_BITS}
+    { 53, 0b110111110000000011111110000100100UL | HIGH_BITS},
+    { 58, 0b110111110000000011111110001000100UL | HIGH_BITS},
+    { 63, 0b110111110000000011111110010000100UL | HIGH_BITS},
+    { 64, 0b110111110000000011111110100000000UL | HIGH_BITS},
+    { 72, 0b110111110000000011111111100011000UL | HIGH_BITS},
+    { 77, 0b110111110000000011111111000011000UL | HIGH_BITS},
+    { 89, 0b110111110000000011111100000011000UL | HIGH_BITS},
+    { 99, 0b110111111000000011111100000011000UL | HIGH_BITS},
+    {126, 0b110111111000000100111100000011000UL | HIGH_BITS},
+    {127, 0b110111111000000100111100000000000UL | HIGH_BITS},
+    {159, 0b110111111000001000111100000000000UL | HIGH_BITS},
+    {191, 0b110111111000010001111100000000000UL | HIGH_BITS},
+    {223, 0b110111111000100001111100000000000UL | HIGH_BITS},
+    {255, 0b110111111001000001111100000000000UL | HIGH_BITS},
+    {299, 0b110111111010000001111100000000000UL | HIGH_BITS},
+    {511, 0b110111110010000001111100000000000UL | HIGH_BITS},
+    {  0, 0b110111110100000001111100000000000UL | HIGH_BITS}
 };
 #define TMFB_MAX (sizeof(tmfb) / sizeof(t_tmf_bits))
 ulong *tmfbl = NULL;
@@ -900,6 +917,14 @@ ulong tmfb_lim;
 /* don't flake out for anything before QS */
 #define NO_FLAKE ((1 << 24) - 1)
 void init_tmfbl(uint flake) {
+#ifdef MPUG_054
+    /* cheb_factor (tmf_30) is disabled by default, it is not clear how
+     * reliable it is at random non-release points before v0.54. Enable
+     * it now - it is valid for every bitsize.
+     */
+    for (uint j = 0; j < TMFB_MAX; ++j)
+        tmfb[j].tmf_bits |= (1UL << 30);
+#endif
     tmfb_lim = tmfb[TMFB_MAX - 1].tmf_bits;
     tmfb_maxb = tmfb[TMFB_MAX - 2].maxlen;
     if (flake && tmfb_maxb > flake)
