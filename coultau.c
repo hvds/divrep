@@ -424,6 +424,9 @@ fs_retry:
             return 1;
         fs->state = FS_POWER;
     case FS_POWER:
+        /* note that we currently rely on this to catch the factorization
+         * of tlim itself - the check at the start of FS_LARGE would
+         * assume 64007^2 is prime without it. */
         fs->ef = ct_power(fs->n);
         if (!fs->ef)
             fs->ef = 1;
