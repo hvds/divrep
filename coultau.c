@@ -164,9 +164,70 @@ static inline bool ct_trial(factor_state *fs) {
 #   define ct_cheb(n, f, B) _GMP_cheb_factor(n, f, B, 0)
 #endif
 
-#define NPRIMES_SMALL 2000
+#define NPRIMES_SMALL 6500
 /* MPUG declares this static, so we must copy it */
 static unsigned short primes_small[NPRIMES_SMALL];
+
+#ifdef MPUG_054
+/* GCD-batched trial division: each batch can rule out divisibility by
+ * a batch of primes with a single gcd test against a precomputed product.
+ */
+#   define TRIAL_BAND_A_END 169     /* primes 3 to 997 */
+#   define TRIAL_BAND_B_END 551     /* next to 3989 */
+#   define TRIAL_BAND_C_END 1863    /* next to 15991 */
+#   define TRIAL_BAND_D_END 3433    /* next to 31991 */
+#   define TRIAL_BAND_E_END 6414    /* next to 63997 */
+static mpz_t gcd_1k, gcd_4k, gcd_16k, gcd_32k, gcd_64k, gcd_scratch;
+
+/* Set *band_end and *gcdp to the next band iff sp lies exactly on a band
+ * boundary.
+ */
+static inline bool next_trial_band(UV sp, UV *band_end, mpz_t **gcdp) {
+    if (sp == 2) {
+        *band_end = TRIAL_BAND_A_END;
+        *gcdp = &gcd_1k;
+    } else if (sp == TRIAL_BAND_A_END) {
+        *band_end = TRIAL_BAND_B_END;
+        *gcdp = &gcd_4k;
+    } else if (sp == TRIAL_BAND_B_END) {
+        *band_end = TRIAL_BAND_C_END;
+        *gcdp = &gcd_16k;
+    } else if (sp == TRIAL_BAND_C_END) {
+        *band_end = TRIAL_BAND_D_END;
+        *gcdp = &gcd_32k;
+    } else if (sp == TRIAL_BAND_D_END) {
+        *band_end = TRIAL_BAND_E_END;
+        *gcdp = &gcd_64k;
+    } else {
+        return 0;
+    }
+    return 1;
+}
+
+/* Skip as many whole bands as possible from sp, returning the new sp.
+ * Only fires when a whole band is within lim and the GCD is 1.
+ * iter is optional: when given, it's kept in sync with the new sp.
+ */
+static inline UV skip_trial_bands(
+    UV sp, mpz_t n, UV lim, prime_iterator *iter
+) {
+    while (1) {
+        UV band_end;
+        mpz_t *gcdp;
+        if (!next_trial_band(sp, &band_end, &gcdp))
+            break;
+        if ((UV)primes_small[band_end - 1] * primes_small[band_end - 1] >= lim)
+            break;
+        mpz_gcd(gcd_scratch, n, *gcdp);
+        if (mpz_cmp_ui(gcd_scratch, 1) != 0)
+            break;
+        sp = band_end;
+        if (iter)
+            prime_iterator_setprime(iter, primes_small[sp - 1]);
+    }
+    return sp;
+}
+#endif
 
 void init_tmfbl(uint flake);
 void done_tmfbl(void);
@@ -185,6 +246,24 @@ void init_tau(uint rough, uint flake) {
     init_tmfbl(flake);
     for (uint i = 0; i < SIMPQS_SIZE; ++i)
         mpz_init(simpqs_array[i]);
+#ifdef MPUG_054
+    mpz_init_set_ui(gcd_1k, 1);
+    for (pn = 2; pn < TRIAL_BAND_A_END; ++pn)
+        mpz_mul_ui(gcd_1k, gcd_1k, primes_small[pn]);
+    mpz_init_set_ui(gcd_4k, 1);
+    for (pn = TRIAL_BAND_A_END; pn < TRIAL_BAND_B_END; ++pn)
+        mpz_mul_ui(gcd_4k, gcd_4k, primes_small[pn]);
+    mpz_init_set_ui(gcd_16k, 1);
+    for (pn = TRIAL_BAND_B_END; pn < TRIAL_BAND_C_END; ++pn)
+        mpz_mul_ui(gcd_16k, gcd_16k, primes_small[pn]);
+    mpz_init_set_ui(gcd_32k, 1);
+    for (pn = TRIAL_BAND_C_END; pn < TRIAL_BAND_D_END; ++pn)
+        mpz_mul_ui(gcd_32k, gcd_32k, primes_small[pn]);
+    mpz_init_set_ui(gcd_64k, 1);
+    for (pn = TRIAL_BAND_D_END; pn < TRIAL_BAND_E_END; ++pn)
+        mpz_mul_ui(gcd_64k, gcd_64k, primes_small[pn]);
+    mpz_init(gcd_scratch);
+#endif
 }
 
 void done_tau(void) {
@@ -198,6 +277,14 @@ void done_tau(void) {
     mpz_clear(tmf);
     mpz_clear(tmf2);
     mpz_clear(tmp_lim);
+#ifdef MPUG_054
+    mpz_clear(gcd_1k);
+    mpz_clear(gcd_4k);
+    mpz_clear(gcd_16k);
+    mpz_clear(gcd_32k);
+    mpz_clear(gcd_64k);
+    mpz_clear(gcd_scratch);
+#endif
 }
 
 void alloc_taum(uint size) {
@@ -251,6 +338,10 @@ int fs_trial(factor_state* fs) {
     }
 
     lim = (tlim < un) ? tlim : un;
+#ifdef MPUG_054
+    /* skip bands of trial primes via gcd if possible */
+    sp = skip_trial_bands(sp, fs->n, lim, NULL);
+#endif
     for (p = primes_small[sp]; p * p < lim; p = primes_small[++sp]) {
         int ep = 0;
         while (mpz_divisible_ui_p(fs->n, p)) {
@@ -321,7 +412,12 @@ fs_retry:
             return 1;
         }
         fs->sp = 0;
+#ifdef MPUG_054
+        /* new limits justified by gcd-banding support */
+        fs->tlim = 64007UL * 64007UL;
+#else
         fs->tlim = (nbits > 80) ? 4001 * 4001 : 16001 * 16001;
+#endif
         fs->state = FS_TRIAL;
     case FS_TRIAL:
         if (ct_trial(fs))
@@ -729,7 +825,12 @@ bool tau_multi_prep(uint i) {
 
     UV p;
     UV sp = 2;
+#ifdef MPUG_054
+    /* new limits justified by gcd-banding support */
+    UV tlim = 64007UL * 64007UL;
+#else
     UV tlim = (nbits > 80) ? 4001 * 4001 : 16001 * 16001;
+#endif
     if (test_rough)
         tlim = rough_assisted_tlim(tlim, tm->n, t);
     UV un = mpz_cmp_ui(tm->n, 2 * tlim) >= 0
@@ -737,6 +838,10 @@ bool tau_multi_prep(uint i) {
         : mpz_get_ui(tm->n);
     UV lim = (tlim < un) ? tlim : un;
     PRIME_ITERATOR(iter);
+#ifdef MPUG_054
+    /* skip bands of trial primes via gcd if possible, updating iterator */
+    sp = skip_trial_bands(sp, tm->n, lim, &iter);
+#endif
     while (1) {
         p = prime_iterator_next(&iter);
         if (p * p > lim)
@@ -777,6 +882,9 @@ bool tau_multi_prep(uint i) {
                 ? 2 * tlim
                 : mpz_get_ui(tm->n);
             lim = (tlim < un) ? tlim : un;
+#ifdef MPUG_054
+            sp = skip_trial_bands(sp, tm->n, lim, &iter);
+#endif
         }
     }
     prime_iterator_destroy(&iter);
