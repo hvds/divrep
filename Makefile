@@ -9,6 +9,7 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   db88b861fe (danaj master 2021-09-05)
 #   cbf87f5e18 (danaj master 2023-05-15)
 #   a2907ae3b7 (danaj master 2025-07-11)
+#   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 2389dcbc44
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
@@ -36,6 +37,11 @@ ifeq ($(MPUGMP_VER), a2907ae3b7)
     DEFINES += -DHAVE_MISC_UI_H
     HFACTOR += ${MPUGMP}/misc_ui.h ${MPUGMP}/poly.h
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c
+endif
+ifeq ($(MPUGMP_VER), 39982f872b)
+    DEFINES += -DHAVE_MISC_UI_H -DMPUG_054
+    HFACTOR += ${MPUGMP}/misc_ui.h ${MPUGMP}/poly.h ${MPUGMP}/znlog.h
+    CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c ${MPUGMP}/znlog.c
 endif
 
 # TODO: decide whether to remove optionality on these, we haven't built
