@@ -1171,7 +1171,7 @@ void done(void) {
     mpz_clear(zmin);
     mpz_clear(best);
     done_pell();
-    done_rootmod();
+    done_zrootmod();
     done_stats();
     done_tau();
     _GMP_destroy();
@@ -2229,7 +2229,7 @@ bool alloc_square(t_level *cur, uint vi) {
     /* qq = aq / q */
     mpz_divexact(Z(asq_qq), cur->aq, ap->q);
 
-    allrootmod(stash_level, Z(asq_o), g, Z(asq_qq));
+    allzrootmod(stash_level, Z(asq_o), g, Z(asq_qq));
     t_results *rp = res_array(stash_level);
     if (rp->count == 0)
         return 0;
@@ -2323,7 +2323,7 @@ void init_post(void) {
     if (!strategy_set)
         strategy = (nf.count > (highpow ? 1 : 2)) ? 1 : 0;
 
-    init_rootmod(maxlevel);
+    init_zrootmod(maxlevel);
     prep_fact();
     prep_maxforce();
     prep_mp();  /* maxp[], minp[], midp[] */
@@ -3510,7 +3510,7 @@ bool update_residues(t_level *old, t_level *new,
                     continue;
                 mpz_add(rdest->r[i], rdest->r[i], Z(ur_m));
             }
-            /* update ur_m for passing to root_extract */
+            /* update ur_m for passing to zroot_extract */
             if (oldg != newg)
                 mpz_mul_2exp(Z(ur_m), Z(ur_m), 1);
         }
@@ -3521,7 +3521,7 @@ bool update_residues(t_level *old, t_level *new,
 
         /* we want to upgrade the roots from oldg to newg
          * It is guaranteed that oldg | newg. */
-        root_extract(new->level, new->level, newg / oldg, Z(ur_m));
+        zroot_extract(new->level, new->level, newg / oldg, Z(ur_m));
         if (res_array(new->level)->count == 0)
             return 0;
         return 1;
@@ -3559,7 +3559,7 @@ bool update_residues(t_level *old, t_level *new,
 
     /* we may have a modfix */
     if (have_modfix && mpz_divisible_ui_p(levels[0].aq, p)) {
-        /* root_extend() needs coprime moduli to deal with, so we must
+        /* zroot_extend() needs coprime moduli to deal with, so we must
          * downgrade the input roots before calling it */
         uint fix = 0;
         mpz_set(Z(temp), levels[0].aq);
@@ -3593,7 +3593,7 @@ bool update_residues(t_level *old, t_level *new,
         r->count = rd;
     }
 
-    root_extend(new->level, from, Z(ur_m), Z(ur_a), g, p, x - 1, *ppx);
+    zroot_extend(new->level, from, Z(ur_m), Z(ur_a), g, p, x - 1, *ppx);
     if (res_array(new->level)->count == 0)
         return 0;
     return 1;

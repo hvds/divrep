@@ -63,13 +63,13 @@ int main(int argc, char **argv) {
     mpz_init(zy);
     _GMP_init();
     init_tau(0, 0);
-    init_rootmod(1);
+    init_zrootmod(1);
     init_pell();
     new_pell(zA, zD, in, zlimit);
     while (next_pell(zx, zy)) {
         gmp_printf("solution (%Zd, %Zd)\n", zx, zy);
     }
     done_pell();
-    done_rootmod();
+    done_zrootmod();
     done_tau();
 }

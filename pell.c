@@ -383,7 +383,7 @@ void init_genpell_coprime(t_interleave *gpp) {
     mpz_divexact(Z(mN), Z(mN), gpp->mul);
     mpz_abs(Z(aN), Z(mN));
     /* if D is not a quadratic residue (mod mN), there is no solution */
-    allrootmod(0, Z(D), 2, Z(aN));
+    allzrootmod(0, Z(D), 2, Z(aN));
     t_results *qrp = res_array(0);
     gpp->zmatch.size = 0;
     if (qrp->count == 0)

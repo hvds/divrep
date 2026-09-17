@@ -108,7 +108,7 @@ void _swapz_r(e_results e) {
     ra[rm_base].count = 0;
 }
 
-void init_rootmod(uint levels) {
+void init_zrootmod(uint levels) {
     ra_size = levels + E_RESULTS_MAX;
     ra = calloc(ra_size, sizeof(t_results));
     resize_results(&ra[rm_base], 16);
@@ -118,7 +118,7 @@ void init_rootmod(uint levels) {
     resize_kf(16);
 }
 
-void done_rootmod(void) {
+void done_zrootmod(void) {
     free(rm_kf);
     free(rm_nf);
     for (e_rmstash e = 0; e < E_RMSTASH_MAX; ++e)
@@ -534,11 +534,11 @@ void _allrootmod_kprime(mpz_t a, uint k, mpz_t n, t_lpow *nf, uint nfc) {
  * Returns the number of roots found, and writes the location of the
  * (singleton) array of roots (unordered) into *result.
  *
- * It is the caller's responsibility to avoid calling allrootmod() again
+ * It is the caller's responsibility to avoid calling allzrootmod() again
  * before they have finished looking at the results.
  *
  */
-void allrootmod(uint level, mpz_t a, uint k, mpz_t n) {
+void allzrootmod(uint level, mpz_t a, uint k, mpz_t n) {
     t_results *rp = &ra[rm_base];
     rp->count = 0;
 
@@ -559,7 +559,7 @@ void allrootmod(uint level, mpz_t a, uint k, mpz_t n) {
         ++nfc;
     }
     if (fs.state != FS_TERM)
-        fail("In allrootmod failed to factorize n=%Zu\n", fs.n);
+        fail("In allzrootmod failed to factorize n=%Zu\n", fs.n);
     fs_clear(&fs);
 
     /* now similarly factorize k */
@@ -607,7 +607,7 @@ void allrootmod(uint level, mpz_t a, uint k, mpz_t n) {
  * external array new_level.
  * It is legitimate to have new_level == old_level.
  */
-void root_extract(uint new_level, uint old_level, uint k, mpz_t n) {
+void zroot_extract(uint new_level, uint old_level, uint k, mpz_t n) {
     t_results *rp = &ra[rm_base];
     t_results *rin = &ra[E_RESULTS_MAX + old_level];
     rp->count = 0;
@@ -623,7 +623,7 @@ void root_extract(uint new_level, uint old_level, uint k, mpz_t n) {
         ++nfc;
     }
     if (fs.state != FS_TERM)
-        fail("In allrootmod failed to factorize n=%Zu\n", fs.n);
+        fail("In allzrootmod failed to factorize n=%Zu\n", fs.n);
     fs_clear(&fs);
 
     /* now similarly factorize k */
@@ -662,10 +662,10 @@ void root_extract(uint new_level, uint old_level, uint k, mpz_t n) {
  * list old_level of roots (mod n), with (p, n) = 1, to give a new list
  * of roots (mod n p^x) at new_level.
  * TOOD: this would be easier (and maybe more efficient: CHECKME) if the
- * order of events in allrootmod() was switched to split by factors of n
+ * order of events in allzrootmod() was switched to split by factors of n
  * at the top level, and by factors of k at the next level.
  */
-void root_extend(uint new_level, uint old_level, mpz_t n,
+void zroot_extend(uint new_level, uint old_level, mpz_t n,
         mpz_t a, uint k, ulong p, uint e, mpz_t px) {
     mpz_set_ui(Z(rm_p), p);
     factor_state fs;
