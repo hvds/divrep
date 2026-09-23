@@ -98,8 +98,8 @@ test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iter
 	gcc -o test_pell -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 	t/t05pell
 
-ftest: Makefile ftest.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
-	gcc -o ftest -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ftest.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+rungbench: Makefile rungbench.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
+	gcc -o rungbench -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} rungbench.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
 speed: Makefile speed.c prime_iterator.c ${HFACTOR} ${MPUGMP}/gmp_main.c
 	gcc -o speed -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} speed.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
