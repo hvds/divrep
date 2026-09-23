@@ -139,6 +139,18 @@ static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
     gmp_printf("\n");
     return r;
 }
+static inline int ct_pretest(mpz_t n) {
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    int r = primality_pretest(n);
+    gmp_printf("(%ld) pretest: %Zd %d\n", cgdiff(&cg_tp0), n, r);
+    return r;
+}
+static inline bool ct_bpsw(mpz_t n) {
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    bool r = _GMP_BPSW(n);
+    gmp_printf("(%ld) bpsw: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
+    return r;
+}
 extern int fs_trial(factor_state* fs);
 static inline bool ct_trial(factor_state *fs) {
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
@@ -162,6 +174,8 @@ static inline bool ct_trial(factor_state *fs) {
 #   define ct_brent(n, f, a, rounds) _GMP_pbrent_factor(n, f, a, rounds)
 #   define ct_trial(fs) fs_trial(fs)
 #   define ct_cheb(n, f, B) _GMP_cheb_factor(n, f, B, 0)
+#   define ct_pretest(n) primality_pretest(n)
+#   define ct_bpsw(n) _GMP_BPSW(n)
 #endif
 
 #define NPRIMES_SMALL 6500
@@ -752,9 +766,27 @@ static inline bool prep_abort(t_tm *tm, bool result) {
     return result;
 }
 
+/* Effectively identical to _GMP_is_prob_prime(), but with VERBOSE
+ * diagnostics for debugging/calibration.
+ */
+bool tau_prime_test(mpz_t n) {
+#ifdef VERBOSE
+    gmp_printf("tau_prime_test %Zu\n", n);
+#endif
+    int res = ct_pretest(n);
+    if (res == 0)
+        return 0;
+    if (res != 1)
+        return 1;
+    return ct_bpsw(n);
+}
+
 bool tau_prime_prep(uint i) {
+#ifdef VERBOSE
+    gmp_printf("tau_prime_prep vi=%u %Zu\n", taum[i].vi, taum[i].n);
+#endif
     /* FIXME: break this out further */
-    int res = primality_pretest(taum[i].n);
+    int res = ct_pretest(taum[i].n);
     if (res == 0)
         return 0;
     taum[i].state = (res == 1) ? 1 : 0;
@@ -797,7 +829,8 @@ bool tau_multi_prep(uint i) {
     tm->state = 1;  /* init */
 
 #ifdef VERBOSE
-    gmp_printf("tau_multi_prep t=%u e=%u (%u) %Zu\n", t, e, nbits, tm->n);
+    gmp_printf("tau_multi_prep vi=%u t=%u e=%u (%u) %Zu\n",
+            tm->vi, t, e, nbits, tm->n);
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
 #endif
     if (t == 1) {
@@ -1234,7 +1267,7 @@ uint tau_prime_run(uint count) {
     count = i;
     qsort(taum, count, sizeof(t_tm), &taum_comparator);
     for (i = 0; i < count; ++i) {
-        if (!_GMP_BPSW(taum[i].n)) {
+        if (!ct_bpsw(taum[i].n)) {
             taum[0].vi = taum[i].vi;
             return count - i;
         }

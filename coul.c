@@ -2239,6 +2239,10 @@ bool alloc_square(t_level *cur, uint vi) {
 
     allzrootmod(stash_level, Z(asq_o), g, Z(asq_qq));
     t_results *rp = res_array(stash_level);
+#ifdef VERBOSE
+    gmp_printf("alloc_square vi=%u g=%u qq=%Zu count=%u\n",
+            vi, g, Z(asq_qq), rp->count);
+#endif
     if (rp->count == 0)
         return 0;
     return 1;
@@ -2696,6 +2700,9 @@ bool test_zprime(mpz_t qq, mpz_t o, mpz_t ati) {
 }
 
 bool test_1primes(uint *need, uint nc) {
+#ifdef VERBOSE
+    gmp_printf("walk_1_call primes nc=%u\n", nc);
+#endif
     uint good = 0;
     test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
@@ -2719,6 +2726,9 @@ bool test_1primes(uint *need, uint nc) {
 }
 
 bool test_1multi(uint *need, uint nc, uint *t, tau_failure_handler tfh) {
+#ifdef VERBOSE
+    gmp_printf("walk_1_call other nc=%u\n", nc);
+#endif
     uint good = 0;
     test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
@@ -3165,7 +3175,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
             test_multi_reset();
             /* note: test_multi_append() steals Z(wv_r) */
             if (prime_power) {
-                if (!_GMP_is_prob_prime(Z(wv_r))) {
+                if (!tau_prime_test(Z(wv_r))) {
                     TRACK_BAD(0, sqi);
                     goto next_sqati;
                 } else
@@ -3251,11 +3261,17 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
 /* test the case where v_i has all divisors accounted for */
 void walk_1(t_level *cur_level, uint vi) {
+#ifdef VERBOSE
+    gmp_printf("walk_1 ENTRY vi=%u\n", vi);
+#endif
 #ifdef SQONLY
     if (!cur_level->have_square)
         return;
 #endif
     if (!cur_level->have_min) {
+#ifdef VERBOSE
+        gmp_printf("walk_1 EARLY-RETURN !have_min\n");
+#endif
         uint min = minp[cur_level->x - 1];
         if (min)
             level_setp(cur_level, min);
@@ -3269,18 +3285,30 @@ void walk_1(t_level *cur_level, uint vi) {
         mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
     }
 
-    if (mpz_cmp(Z(w1_v), zmin) < 0)
+    if (mpz_cmp(Z(w1_v), zmin) < 0) {
+#ifdef VERBOSE
+        gmp_printf("walk_1 EARLY-RETURN zmin\n");
+#endif
         return;
+    }
     ++countw;
-    if (check && !cvec_testv(cx0, Z(w1_v)))
+    if (check && !cvec_testv(cx0, Z(w1_v))) {
+#ifdef VERBOSE
+        gmp_printf("walk_1 EARLY-RETURN cvec\n");
+#endif
         return;
+    }
 
 
     /* Verify v_0 == rq (mod aq) to guarantee all allocations will
      * divide exactly. */
     mpz_fdiv_r(Z(w1_r), Z(w1_v), cur_level->aq);
-    if (mpz_cmp(Z(w1_r), cur_level->rq) != 0)
+    if (mpz_cmp(Z(w1_r), cur_level->rq) != 0) {
+#ifdef VERBOSE
+        gmp_printf("walk_1 EARLY-RETURN mod-mismatch\n");
+#endif
         return;
+    }
 
     uint t[k];
     uint need_prime[k];
@@ -3297,13 +3325,21 @@ void walk_1(t_level *cur_level, uint vi) {
             mpz_divexact(Z(w1_j), Z(w1_j), ajp->q);
             /* verify we don't double up on any allocated primes */
             mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
-            if (mpz_cmp_ui(Z(w1_r), 1) != 0)
+            if (mpz_cmp_ui(Z(w1_r), 1) != 0) {
+#ifdef VERBOSE
+                gmp_printf("walk_1 EARLY-RETURN gcd vj=%u\n", vj);
+#endif
                 return;
+            }
         }
         t[vj] = ajp->t;
         if (t[vj] == 1) {
-            if (mpz_cmp_ui(Z(w1_j), 1) != 0)
+            if (mpz_cmp_ui(Z(w1_j), 1) != 0) {
+#ifdef VERBOSE
+                gmp_printf("walk_1 EARLY-RETURN t1-mismatch vj=%u\n", vj);
+#endif
                 return;
+            }
         } else if (t[vj] == 2)
             need_prime[npc++] = vj;
         else
@@ -3327,6 +3363,10 @@ void walk_1_set(
     t_level *prev_level, t_level *cur_level,
     uint vi, ulong plow, ulong phigh, uint x
 ) {
+#ifdef VERBOSE
+    gmp_printf("walk_1_set ENTRY vi=%u plow=%lu phigh=%lu x=%u\n",
+            vi, plow, phigh, x);
+#endif
 #ifdef SQONLY
     if (!cur_level->have_square)
         return;
@@ -3379,10 +3419,20 @@ void walk_1_set(
     }
 
     level_setp(cur_level, plow - 1);    /* next prime should be plow */
+#ifdef VERBOSE
+    ulong w1s_tried = 0;
+#endif
     while (1) {
         ulong p = prime_iterator_next(&cur_level->piter);
-        if (p > phigh)
+        if (p > phigh) {
+#ifdef VERBOSE
+            gmp_printf("walk_1_set EXHAUSTED tried=%lu\n", w1s_tried);
+#endif
             break;
+        }
+#ifdef VERBOSE
+        ++w1s_tried;
+#endif
         if (need_work) {
             /* temporarily make this prime power visible to diag code */
             t_allocation *a2ip = &vip->alloc[vil];

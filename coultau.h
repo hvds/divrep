@@ -61,5 +61,6 @@ extern bool tau_multi_prep(uint i);
 extern uint tau_multi_run(uint i, tau_failure_handler tfh);
 extern bool tau_prime_prep(uint i);
 extern uint tau_prime_run(uint i);
+extern bool tau_prime_test(mpz_t n);
 
 #endif
