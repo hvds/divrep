@@ -95,6 +95,11 @@ mpz_t *mint_best, *mint_px; /* size [sumpm(n / high(n))] */
 /* for failure diagnostics */
 mpz_t *g_q0;
 uint g_ati;
+uint g_walkv_call;
+uint g_walkv_call_ctr;
+#ifdef STUB_SQUARE_BRANCH
+volatile ulong g_calibration_sink;
+#endif
 
 /* used to store disallowed inverses in walk_v() */
 typedef struct s_mod {
@@ -177,6 +182,10 @@ uint lastprime;
 
 /* set to utime at start of run, minus last timestamp of recovery file */
 double t0 = 0;
+double g_mock_spent_s = 0;   /* accumulated simulated cost under
+    MOCK_LADDER (coultau.c) - always declared, always 0 unless that
+    build flag is active, so seconds()/elapsed() don't need their own
+    #ifdef */
 struct rusage rusage_buf;
 static inline double utime(void) {
     getrusage(RUSAGE_SELF, &rusage_buf);
@@ -436,7 +445,12 @@ static inline uint test_prime_run(void) {
     return tau_prime_run(tm_count);
 }
 static inline uint test_multi_run(tau_failure_handler tfh) {
+#ifdef MOCK_LADDER
+    extern uint mock_tau_multi_run(uint count, tau_failure_handler tfh);
+    return mock_tau_multi_run(tm_count, tfh);
+#else
     return tau_multi_run(tm_count, tfh);
+#endif
 }
 
 #if defined(TYPE_o) || defined(TYPE_r)
@@ -626,7 +640,7 @@ void report(char *format, ...) {
 }
 
 double seconds(double t1) {
-    return (t1 - t0);
+    return (t1 - t0) + g_mock_spent_s;
 }
 
 double elapsed(void) {
@@ -2962,6 +2976,65 @@ void walk_v(t_level *cur_level, mpz_t start) {
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
 
+#ifdef VERBOSE
+    g_walkv_call = ++g_walkv_call_ctr;
+    gmp_printf("walk_v_call id=%u ati_start=%Zu ati_end=%Zu nqc=%u inv=[",
+            g_walkv_call, Z(wv_ati), Z(wv_end), nqc);
+    for (uint i = 0; i < inv_count; ++i)
+        gmp_printf("%s%lu", i ? "," : "", inv[i].m);
+    gmp_printf("] need_prime=[");
+    for (uint i = 0; i < npc; ++i)
+        gmp_printf("%s%u", i ? "," : "", need_prime[i]);
+    gmp_printf("] need_other=[");
+    for (uint i = 0; i < noc; ++i)
+        gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i], t[need_other[i]]);
+    gmp_printf("]\n");
+#endif
+
+#ifdef STUB_SQUARE_BRANCH
+    /* Calibration-only: we're building a cost MODEL for the non-square
+     * main sweep, not running a real search - there's no need to pay
+     * for (or need to separately subtract out) the have_square branch's
+     * own cost while isolating that. Everything that leads up to this
+     * point (classification into need_prime/need_square/need_other,
+     * the qsort, the inv[] pre-filter setup) is real, unavoidable
+     * overhead and stays - only the square-specific work itself
+     * (Pell equation solving for nqc>1, res_array traversal for
+     * nqc==1) is skipped. Never define this for a real search: it
+     * silently drops every candidate that needed a square position,
+     * which is wrong output, not just slow output.
+     *
+     * The sink write below is NOT optional decoration: need_square[]
+     * (and wv_o[] for those positions) would otherwise only ever be
+     * READ inside the block we're about to skip, and with nothing
+     * downstream observing them, the compiler is free to prove their
+     * computation dead and remove it - silently making the "real
+     * prep overhead" this stub is supposed to preserve cheaper than
+     * it actually is. A volatile write can't be optimized away by
+     * definition, forcing the values to be genuinely computed. This
+     * has to stay outside any #ifdef VERBOSE guard: the VERBOSE-only
+     * prints above don't reference need_square[] at all, so they
+     * don't already provide this protection.
+     *
+     * The sink loop lives INSIDE this if(nqc), not before it: nqc==0
+     * is exactly the common case this stub exists to measure cleanly,
+     * and a loop that runs zero iterations still isn't free (setup,
+     * bounds check) - hoisting it above the branch would add that
+     * overhead to every nqc==0 call too, contaminating the very
+     * measurement this exists to keep clean. Keeping it here costs
+     * nqc==0 calls nothing beyond the single branch test that the
+     * real (non-stub) code already pays for at the very next line
+     * anyway.
+     */
+    if (nqc) {
+        for (uint i = 0; i < nqc; ++i) {
+            uint sqi = need_square[i];
+            g_calibration_sink ^= sqi ^ mpz_get_ui(wv_o[sqi]);
+        }
+        return;
+    }
+#endif
+
     if (nqc) {
         uint sqi = need_square[0];
         mpz_t *oi = &wv_o[sqi];
@@ -3232,6 +3305,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
             if (ati % ip->m == ip->v)
                 goto next_ati;
         }
+#ifdef VERBOSE
+        gmp_printf("prefilter_pass call=%u ati=%lu\n", g_walkv_call, ati);
+#endif
 #ifdef DEBUG_ALL
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -3352,6 +3428,16 @@ void walk_1(t_level *cur_level, uint vi) {
         return;
     oc_t = t;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
+#ifdef VERBOSE
+    g_walkv_call = ++g_walkv_call_ctr;
+    gmp_printf("walk_1_call id=%u need_prime=[", g_walkv_call);
+    for (uint i = 0; i < npc; ++i)
+        gmp_printf("%s%u", i ? "," : "", need_prime[i]);
+    gmp_printf("] need_other=[");
+    for (uint i = 0; i < noc; ++i)
+        gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i], t[need_other[i]]);
+    gmp_printf("]\n");
+#endif
     if (!test_1multi(need_other, noc, t, walk_1_failure))
         return;
     candidate(Z(w1_v));
@@ -3485,6 +3571,16 @@ void walk_1_set(
             goto reject_this_one;
         oc_t = t;
         qsort(need_other, noc, sizeof(uint), &other_comparator);
+#ifdef VERBOSE
+        g_walkv_call = ++g_walkv_call_ctr;
+        gmp_printf("walk_1_set_call id=%u need_prime=[", g_walkv_call);
+        for (uint i = 0; i < npc; ++i)
+            gmp_printf("%s%u", i ? "," : "", need_prime[i]);
+        gmp_printf("] need_other=[");
+        for (uint i = 0; i < noc; ++i)
+            gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i], t[need_other[i]]);
+        gmp_printf("]\n");
+#endif
         if (!test_1multi(need_other, noc, t, walk_1_failure))
             goto reject_this_one;
         if (candidate(Z(w1_v)))
