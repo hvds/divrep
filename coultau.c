@@ -1150,10 +1150,69 @@ mpz_t *tm_factor(t_tm *tm) {
     return &tmf;
 }
 
+#ifdef LADDER_STATS
+/* Ground-truth instrumentation for coulmock.c's MOCK_LADDER model:
+ * per-rung attempt/success counts and wall time, plus whole-call
+ * totals, printed at exit in a format matching mock_tau_multi_run()'s
+ * MOCK_LADDER_STATS lines so the two can be diffed directly. Costs
+ * two clock_gettime() calls per rung attempt - negligible against
+ * any real factoring attempt, but not free, so off by default. */
+#define LS_NBUCKET 64   /* residual size in 8-bit buckets, up to 512 bits */
+static double ls_rung_s[64], ls_total_s;
+static ulong ls_rung_tries[64], ls_rung_hits[64];
+static double ls_bk_s[64][LS_NBUCKET];
+static ulong ls_bk_tries[64][LS_NBUCKET], ls_bk_hits[64][LS_NBUCKET];
+static ulong ls_calls, ls_entries, ls_aborts, ls_passes;
+static inline double ls_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+static void ls_report(void) {
+    double rung_sum = 0;
+    for (uint i = 0; i < 64; ++i) {
+        if (!ls_rung_tries[i])
+            continue;
+        rung_sum += ls_rung_s[i];
+        fprintf(stderr, "LADDER_STATS rung=%u tries=%lu hits=%lu s=%.6f\n",
+                i, ls_rung_tries[i], ls_rung_hits[i], ls_rung_s[i]);
+        for (uint b = 0; b < LS_NBUCKET; ++b)
+            if (ls_bk_tries[i][b])
+                fprintf(stderr, "LADDER_BUCKET rung=%u bits=%u-%u tries=%lu"
+                        " hits=%lu s=%.6f\n", i, b * 8, b * 8 + 7,
+                        ls_bk_tries[i][b], ls_bk_hits[i][b], ls_bk_s[i][b]);
+    }
+    fprintf(stderr, "LADDER_TOTAL calls=%lu entries=%lu aborts=%lu passes=%lu"
+            " rung_s=%.6f total_s=%.6f\n", ls_calls, ls_entries, ls_aborts,
+            ls_passes, rung_sum, ls_total_s);
+}
+static uint tau_multi_run_inner(uint count, tau_failure_handler tfh);
+uint tau_multi_run(uint count, tau_failure_handler tfh) {
+    static bool registered = 0;
+    if (!registered) {
+        atexit(ls_report);
+        registered = 1;
+    }
+    double t0 = ls_now();
+    uint r = tau_multi_run_inner(count, tfh);
+    ls_total_s += ls_now() - t0;
+    ++ls_calls;
+    if (r)
+        ++ls_aborts;
+    else
+        ++ls_passes;
+    return r;
+}
+#   define tau_multi_run tau_multi_run_inner
+#   define LS_STATIC static
+#else
+#   define LS_STATIC
+#endif
+
 /* Returns the number of values still being tested at the point a failure
  * was seen; return value of zero implies success.
  */
-uint tau_multi_run(uint count, tau_failure_handler tfh) {
+LS_STATIC uint tau_multi_run(uint count, tau_failure_handler tfh) {
     uint i = 0;
     /* Shuffle the entries that did not complete by trial division to
      * the front. Find size and thus the associated tmfb entry for each. */
@@ -1173,6 +1232,9 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
     if (i == 0)
         return 0;
     count = i;
+#ifdef LADDER_STATS
+    ls_entries += count;
+#endif
 
     qsort(taum, count, sizeof(t_tm), &taum_comparator);
 
@@ -1187,7 +1249,25 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
                 continue;
             if (!(tm->bits & (1UL << i)))
                 continue;
+#ifdef LADDER_STATS
+            uint ls_b = mpz_sizeinbase(tm->n, 2) >> 3;
+            if (ls_b >= LS_NBUCKET)
+                ls_b = LS_NBUCKET - 1;
+            double ls_t0 = ls_now();
+            bool ls_ok = (*tmfa[i])(tm);
+            double ls_dt = ls_now() - ls_t0;
+            ls_rung_s[i] += ls_dt;
+            ls_bk_s[i][ls_b] += ls_dt;
+            ++ls_rung_tries[i];
+            ++ls_bk_tries[i][ls_b];
+            if (ls_ok) {
+                ++ls_rung_hits[i];
+                ++ls_bk_hits[i][ls_b];
+            }
+            if (!ls_ok) {
+#else
             if (!(*tmfa[i])(tm)) {
+#endif
                 tm->state = i + 1;
                 continue;
             }
@@ -1261,6 +1341,10 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
         count, taum[0].n, taum[0].t
     );
 }
+
+#ifdef LADDER_STATS
+#   undef tau_multi_run
+#endif
 
 /* Same as tau_multi_run() except that all values are required to be prime.
  * It is the caller's responsibility to ensure the precondition is met.
