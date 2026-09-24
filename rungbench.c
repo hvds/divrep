@@ -54,6 +54,7 @@
  */
 #include <stdlib.h>
 #include <stdarg.h>
+#include <string.h>
 #include <time.h>
 
 #include "coul.h"
@@ -64,7 +65,8 @@
 #include "utility.h"
 #include "primality.h"
 
-extern bool tau_single_try(uint i);
+extern bool (*const tmfa[])(t_tm *tm);
+extern mpz_t *tm_factor(t_tm *tm);
 t_divisors *divisors = NULL;
 double t0 = 0;
 
@@ -89,7 +91,18 @@ static inline double elapsed_ns(struct timespec *t0, struct timespec *t1) {
 int main(int argc, char **argv) {
     if (argc < 4) {
         fprintf(stderr,
-            "Usage: %s <rung> <bits> <count> [seed_base] [B1] [smallbits]\n",
+            "Usage: %s <rung> <bits> <count> [seed_base] [B1] [smallbits] [mode]\n"
+            "  mode: pq (default) - existing constructed-semiprime input,\n"
+            "        multiplicity is ALWAYS exactly 1 by construction (p,q\n"
+            "        distinct independent primes) - use for success-rate\n"
+            "        calibration, NOT for multiplicity-distribution work.\n"
+            "        rand - genuine random integer, filtered to remove\n"
+            "        factors below the roughness threshold (matching what\n"
+            "        real trial division would already have stripped) and\n"
+            "        rejected if prime (real escalation candidates are\n"
+            "        guaranteed composite) - use this for multiplicity\n"
+            "        distribution measurement. smallbits is ignored in\n"
+            "        this mode.\n",
             argv[0]);
         return 1;
     }
@@ -99,7 +112,8 @@ int main(int argc, char **argv) {
     ulong seed_base = (argc > 4) ? strtoul(argv[4], NULL, 10) : 1;
     ulong B1 = (argc > 5) ? strtoul(argv[5], NULL, 10) : 160000;
     uint smallbits = (argc > 6) ? strtoul(argv[6], NULL, 10) : bits / 2;
-    if (smallbits == 0 || smallbits >= bits) {
+    int rand_mode = (argc > 7) && !strcmp(argv[7], "rand");
+    if (!rand_mode && (smallbits == 0 || smallbits >= bits)) {
         fprintf(stderr, "smallbits must be > 0 and < bits\n");
         return 1;
     }
@@ -120,60 +134,132 @@ int main(int argc, char **argv) {
     gmp_randinit_default(gen_rs);
     gmp_randseed_ui(gen_rs, seed_base * 2654435761UL + 12345);
 
-    mpz_t p, q;
+    mpz_t p, q, orig_n;
     mpz_init(p);
     mpz_init(q);
+    mpz_init(orig_n);
+
+    /* roughness filter for rand mode - matches tau_multi_prep()'s own
+     * trial division under MPUG_054 (tlim = 64007^2, primes tested up
+     * to 64007). A candidate reaching real escalation has, by
+     * construction, already survived this - testing against inputs
+     * that could still have small factors wouldn't represent what
+     * this rung actually sees. */
+    static const ulong SMALL_PRIMES[] = {
+        2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97,
+        101,103,107,109,113,127,131,137,139,149,151,157,163,167,173,179,181,
+        191,193,197,199 /* ...continuing far enough for a reasonable filter;
+        a full sieve to 64007 would need ~6400 primes, more than is worth
+        hardcoding here - this partial list catches the overwhelming
+        majority of non-rough candidates cheaply. Full fidelity to the
+        real 64007 threshold isn't essential for THIS measurement: we
+        only need candidates the target rung might plausibly be tested
+        against, not literally identical to real tau_multi_prep output. */
+    };
+    #define N_SMALL_PRIMES (sizeof(SMALL_PRIMES)/sizeof(SMALL_PRIMES[0]))
 
     uint n_success = 0;
     double sum_ns_all = 0, sum_ns_fail = 0;
     double min_ns_fail = -1, max_ns_fail = 0;
+    uint mult_hist[16] = {0};   /* mult_hist[k] = count of successes with
+                                   multiplicity k+1 (index 0 = mult 1) */
+    uint mult_overflow = 0;     /* multiplicity >= 16, shouldn't happen
+                                    but tracked rather than silently
+                                    miscounted if it somehow does */
 
-    for (uint i = 0; i < count; ++i) {
-        uint rest = bits - smallbits;
-        mpz_urandomb(p, gen_rs, smallbits);
-        mpz_setbit(p, smallbits - 1);   /* force full width */
-        mpz_setbit(p, 0);               /* odd */
-        mpz_nextprime(p, p);
-        mpz_urandomb(q, gen_rs, rest);
-        mpz_setbit(q, rest - 1);
-        mpz_setbit(q, 0);
-        mpz_nextprime(q, q);
-        mpz_mul(tm->n, p, q);
+    uint i = 0, attempts = 0;
+    while (i < count) {
+        ++attempts;
+        if (rand_mode) {
+            /* genuine random integer, rejection-filtered for
+             * roughness and compositeness */
+            mpz_urandomb(tm->n, gen_rs, bits);
+            mpz_setbit(tm->n, bits - 1);
+            mpz_setbit(tm->n, 0);
+            int rough = 1;
+            for (uint k = 0; k < N_SMALL_PRIMES; ++k) {
+                if (mpz_divisible_ui_p(tm->n, SMALL_PRIMES[k])) {
+                    rough = 0;
+                    break;
+                }
+            }
+            if (!rough) continue;
+            if (mpz_probab_prime_p(tm->n, 25)) continue;
+        } else {
+            uint rest = bits - smallbits;
+            mpz_urandomb(p, gen_rs, smallbits);
+            mpz_setbit(p, smallbits - 1);
+            mpz_setbit(p, 0);
+            mpz_nextprime(p, p);
+            mpz_urandomb(q, gen_rs, rest);
+            mpz_setbit(q, rest - 1);
+            mpz_setbit(q, 0);
+            mpz_nextprime(q, q);
+            mpz_mul(tm->n, p, q);
+        }
 
         clear_randstate();
         init_randstate(seed_base + i);
 
-        uint n_bits = mpz_sizeinbase(tm->n, 2);   /* capture before the call -
-            tau_single_try() overwrites tm->n with the found factor on
-            success, so reading this after would report the factor's own
-            size, not n's */
+        uint n_bits = mpz_sizeinbase(tm->n, 2);
+        mpz_set(orig_n, tm->n);   /* save before the call - the rung
+            function itself overwrites tm->n with the found factor on
+            success (same reason ftest.c's old bits= bug existed) */
 
         struct timespec ts0, ts1;
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts0);
-        bool r = tau_single_try(0);
+        bool r = (*tmfa[rung])(tm);
         clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts1);
         double ns = elapsed_ns(&ts0, &ts1);
 
         sum_ns_all += ns;
+        int mult = 0;
+        uint factor_bits = 0;
         if (r) {
             ++n_success;
+            /* replicate tau_multi_run()'s own multiplicity-counting
+             * exactly (coultau.c ~line 1180), but against our saved
+             * copy of n rather than the now-overwritten tm->n */
+            mpz_t *f = tm_factor(tm);
+            factor_bits = mpz_sizeinbase(*f, 2);
+            while (mpz_divisible_p(orig_n, *f)) {
+                ++mult;
+                mpz_divexact(orig_n, orig_n, *f);
+            }
+            if (mult >= 1 && mult <= 16)
+                ++mult_hist[mult - 1];
+            else
+                ++mult_overflow;
         } else {
             sum_ns_fail += ns;
             if (min_ns_fail < 0 || ns < min_ns_fail) min_ns_fail = ns;
             if (ns > max_ns_fail) max_ns_fail = ns;
         }
-        gmp_printf("trial %u: bits=%u smallbits=%u %s ns=%.0f\n", i,
-            n_bits, smallbits, r ? "success" : "fail", ns);
+        gmp_printf("trial %u: bits=%u smallbits=%u %s mult=%d "
+            "factor_bits=%u ns=%.0f\n", i,
+            n_bits, smallbits, r ? "success" : "fail", mult, factor_bits, ns);
+        ++i;
     }
 
     uint n_fail = count - n_success;
-    gmp_printf("SUMMARY rung=%u bits=%u smallbits=%u n=%u success=%u fail=%u "
-        "mean_ns_all=%.0f mean_ns_fail=%.0f min_ns_fail=%.0f max_ns_fail=%.0f\n",
-        rung, bits, smallbits, count, n_success, n_fail,
+    gmp_printf("SUMMARY rung=%u bits=%u smallbits=%u mode=%s n=%u success=%u "
+        "fail=%u attempts=%u mean_ns_all=%.0f mean_ns_fail=%.0f "
+        "min_ns_fail=%.0f max_ns_fail=%.0f\n",
+        rung, bits, smallbits, rand_mode ? "rand" : "pq", count, n_success,
+        n_fail, attempts,
         count ? sum_ns_all / count : 0,
         n_fail ? sum_ns_fail / n_fail : 0,
         n_fail ? min_ns_fail : 0,
         n_fail ? max_ns_fail : 0);
+    if (n_success) {
+        gmp_printf("MULT_HIST rung=%u bits=%u", rung, bits);
+        for (int k = 0; k < 16; ++k)
+            if (mult_hist[k])
+                gmp_printf(" mult%d=%u", k + 1, mult_hist[k]);
+        if (mult_overflow)
+            gmp_printf(" mult_overflow=%u", mult_overflow);
+        gmp_printf("\n");
+    }
 
     return 0;
 }
