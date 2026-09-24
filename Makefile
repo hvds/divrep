@@ -11,7 +11,7 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   a2907ae3b7 (danaj master 2025-07-11)
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 2389dcbc44
-COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
+COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c coulmock.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
     coulvec.h
 
@@ -63,6 +63,12 @@ endif
 # Produces factorization debugging output to stdout.
 ifdef VERBOSE
     DEFINES += -DVERBOSE
+endif
+ifdef STUB_SQUARE_BRANCH
+    DEFINES += -DSTUB_SQUARE_BRANCH
+endif
+ifdef MOCK_LADDER
+    DEFINES += -DMOCK_LADDER
 endif
 # Optional optimization when lower bound for search is a significant
 # proportion of the upper bound.
