@@ -345,15 +345,15 @@ sub discern_rad {
     return +($p, $s / $p / $r, $r);
 }
 
-# 
+#
 # Given n, d, returns true if d divides n to give an odd number.
-# 
+#
 sub divides_oddly {
     my($n, $d) = @_;
     my($q, $r) = $n->bdiv($d);
     return 0 if $r;
     return +($q & 1) ? 1 : 0;
-}   
+}
 
 #
 # Given factorisation of n = [ [p_1, pow_1], ... ], return rad(n) = prod(p_i)
@@ -397,7 +397,7 @@ sub unfactor_exp {
     return $n;
 }
 
-# 
+#
 # Given n, return an iterator that yields each factorisation of n into
 # parts > 1, or undef.
 #

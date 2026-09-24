@@ -388,7 +388,7 @@ sub test_target {
         ? sub { is_prime($_[0] + $k) }
         : sub { $tau == tau($_[0] + $k) }
     ];
-}   
+}
 
 #
 # Calculate floor(y) given d: floor(y) = floor(((d + k) / x) ^ (1/z))

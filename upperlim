@@ -284,7 +284,7 @@ sub find_perms {
         }
         my @none = sort { $none{$b} <=> $none{$a} } keys %none;
         my $mods = $opt_fq ? do {
-            my $mm = sprintf '-mm%s/', join ',', 
+            my $mm = sprintf '-mm%s/', join ',',
                     map sprintf('%s=%s', $_->[0] ** $_->[1], $_->[2]), @mods;
             my $count = @mods;
             my $subindex = 0;

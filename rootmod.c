@@ -564,7 +564,7 @@ void allzrootmod(uint level, mpz_t a, uint k, mpz_t n) {
 
     /* now similarly factorize k */
     uint kfc = 0;
-    fs_init(&fs); 
+    fs_init(&fs);
     mpz_set_ui(fs.n, k);
     while (factor_one(&fs)) {
         resize_kf(kfc + 1);
@@ -628,7 +628,7 @@ void zroot_extract(uint new_level, uint old_level, uint k, mpz_t n) {
 
     /* now similarly factorize k */
     uint kfc = 0;
-    fs_init(&fs); 
+    fs_init(&fs);
     mpz_set_ui(fs.n, k);
     while (factor_one(&fs)) {
         resize_kf(kfc + 1);

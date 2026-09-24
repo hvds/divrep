@@ -243,7 +243,7 @@ OUT
 #
 # Using this modulus for a test will trap u / k of the inputs, and
 # we convert this into a positive "potency" of k / (k - u).
-# 
+#
 sub _potency {
     my($n, $u, $v) = map numify($_), @_;
     my $k = $n - $v;

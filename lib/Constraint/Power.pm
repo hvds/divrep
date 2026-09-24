@@ -113,7 +113,7 @@ sub next {
 # v_y, so we additionally must specify which one we want.
 # Input is of form [ "${m_d}=$v_d", $which ], output is of form "$m_y=$v_y"
 # such that when $which == 0 we return the numerically least $v_y, etc.
-# 
+#
 sub convert_mod_override {
     my($self, $array) = @_;
     my($override, $which) = @$array;

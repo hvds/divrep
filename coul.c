@@ -1333,7 +1333,7 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         s += off;
         ++batch_alloc;  /* we always point to the next batch */
     }
-        
+
     for (int i = 0; i < k; ++i) {
         if (i) {
             if (s[0] != ' ') {
