@@ -1,4 +1,4 @@
-# walk_v() escalation-cost model - status, 2026-09-24
+# walk_v() escalation-cost model - status, 2026-09-24 (updated late 2026-09-24)
 
 Handoff document. Companion to `calibration-estimator-status.md`
 (the separate, still-open recursion/gate-decision estimator -
@@ -128,60 +128,90 @@ build this session.
   rung (`tmf_31`, P-1 5M/100M rung). Not gated behind any flag -
   harmless overhead, always printed when `MOCK_LADDER` is built.
 
-## Immediate next step - unresolved from this session
+## Resolved late 2026-09-24: batch_survival collapse, and much more
 
-A quick post-compatibility-split-rewrite check
-(`./pcoul.mock7 -X -x1e21 88 5`) showed `g_mock_spent_s` coming out
-near ZERO relative to the raw per-family sums (e.g. `p1=13.7` but
-`total=0.000000` in the `MOCK_FAMILY_BREAKDOWN` line) - i.e.
-`batch_survival` (the cross-candidate joint-survival product) is
-collapsing close to 0. **Not yet diagnosed**: this could be a genuine
-correct consequence of aggressive incompatible-triggering (many
-candidates really do have a near-certain eventual incompatible
-success somewhere across their full recursive chain), or a bug in how
-`p_causes_abort` compounds across rungs/recursion levels. Needs
-investigation BEFORE trusting any new aggregate timing numbers from
-the rewritten model, and before re-running the windowed comparison to
-see whether the ~11x bias improved.
+Commits `db7341c..5348b94`. See the `5348b94` commit message for the
+full list; in brief:
 
-## Other known open gaps (see also `coulmock.c`'s own file-header and
-inline comments, which are the authoritative, most detailed version)
+- **Diagnosis**: the collapse was genuine *probability* (almost every
+  batch is meant to abort) combined with a wrong *cost* formula:
+  `total * P(no abort)` charged aborted batches nothing. Replaced by a
+  rung-major walk over per-entry events, each weighted by P(no other
+  entry has aborted yet). An aborted batch costs what was spent before
+  the abort.
+- **Ground truth**: `make LADDER_STATS=1` builds a real pcoul that
+  prints per-rung (and per-8-bit-bucket) tries/hits/seconds, in the
+  same shape as the mock's `MOCK_LADDER_STATS`/`MOCK_LADDER_BUCKET`.
+  **This is now the primary validation tool** - far more diagnostic
+  than whole-run timing, since it shows which rung is wrong and at
+  what size.
+- **Real-code bug found** (`db7341c`, needs hvds review): after
+  splicing out the last live entry, `tau_multi_run()` redid rung i on
+  the dead entry - e.g. 400000 brent63 rounds on a known prime.
+  Results unchanged; real ladder time -54% at 1e27, -15% at 1e30.
+- **Model bugs fixed**: missing 1/b^2 in the smallest-factor density
+  (the dominant error once the structure was fixed); P-1 rungs with B2
+  in the curves slot; ECM cost not scaling with B1; roughness bound
+  ignoring the build; brent63/tinyqs bits-independent; prep-resolved
+  entries charged a full ladder; odd-t / t==2 follow-ups modelled as
+  full ladders or free successes; `tm->e` ignored; factor size
+  resampled per rung.
+- **Current accuracy** (`pcoul -X 88 5`, real build includes the
+  splice fix): 1e27 real 0.038s / mock 0.030s; 1e30 0.278 / 0.325;
+  1e33 2.27 / 2.45, with per-rung tries/hits/cost within ~15%. Windows
+  `Ze31:(Z+1)e31`, Z=1..8: mock/real 0.89-1.28, mean ~1.11.
 
-- Aggregate cost-prediction accuracy has NOT been re-validated via the
-  windowed methodology since the compatibility-split/recursive
-  rewrite (blocked on the item above).
-- `tm->B1` chaining is not preserved across a `candidate_outcome()`
-  recursive re-entry (starts fresh rather than inheriting the calling
-  pass's B1 state).
-- `t==1` (need remaining `n==1` exactly) and `t==2` (need remaining
-  `n` prime) resolution are treated as free/certain, not costed - the
-  real `ct_prime()` check has some real, probably small, cost this
-  doesn't charge for.
-- `nqc>0` (have_square/Pell branch) multiplicity/compatibility theory
-  is unverified - flagged by hvds, not investigated this session.
-- QS (index 24 in `coulmock.c`) uses a rough hardcoded chart, not
-  precisely copied from `WalkCost.pm`'s `cost_simpqs_seconds()`.
-- `WalkCost.pm`'s `mean_prep_cost_ns()` still has no bits-scaling term
-  (pre-existing gap, not addressed this session) - proper isolation
-  needs total-attempted-`ati` count (from `walk_v_call` `nqc==0`
-  traces), not survivor count.
+## Open gaps (see coulmock.c comments for detail)
+
+- **Coverage**: D(88,5) up to 1e33 only exercises rungs 2-4 (brent63,
+  P-1 5000, tinyqs) plus a trickle of 11-13. Everything from rung 5 up
+  - the deep ECM/P-1 rungs, QS, and the B1 chain - is modelled but
+  essentially unvalidated. Needs a workload with larger residuals.
+- Mild residual overestimate (~1.1x over 8 windows), mostly rung 3
+  P-1 cost at 88-103 bits (mock ~75us/try, real ~56us).
+- Squfof (rungs 5, 10) still bits-independent with 0% success; never
+  reached in the runs so far (tinyqs precedes it).
+- Placeholder check costs (`CT_PRIME_S`, `IS_TAUX_S`); real non-rung
+  overhead is `LADDER_TOTAL total_s - rung_s`, ~1.5% of ladder time so
+  far, and the mock's check costs land in roughly the same place.
+- `p_cofactor_prime()` is a Mertens-style estimate, not checked.
+- Only the smallest factor is modelled; P-1/ECM can find any factor.
+  Seems not to matter at these sizes (hit rates match), may matter
+  for larger residuals with several mid-sized factors.
+- tm->B1 not carried into a retried chain; relative-B1 rungs with no
+  B1-setting rung earlier in the pass are treated as no-ops.
+- `nqc>0` (have_square/Pell branch) multiplicity theory unverified.
+- QS chart still rough; `WalkCost.pm`'s `mean_prep_cost_ns()` still
+  lacks bits-scaling.
+- Factor size is still one *sample* per residual, so mock totals have
+  sampling noise; see simplifications below.
+
+## Simplification directions (for "close enough and fast")
+
+- Rung-model fits are now per-rung empirical curves in bits, and
+  rungbench can refit them after a library upgrade in minutes. A
+  cruder but faster mock could replace the per-residual chain
+  expansion with a per-(rung, 8-bit bucket) table of *conditional*
+  hit rate and cost measured directly by LADDER_STATS - that captures
+  ladder-order conditioning for free, at the price of needing a real
+  run per library version and per rough workload shape.
+- The cross-candidate walk costs O(events * count); with count <= k
+  this is small, but it could drop to O(events) by keeping a running
+  product and dividing out the current entry's own term.
+- Most mass sits in rungs 2-4 at these sizes; a short-circuit that
+  stops expanding a chain once its remaining weight is below, say,
+  1e-4 would cut work substantially without visible effect.
 
 ## If this work resumes: suggested order
 
-1. Diagnose the `batch_survival`-near-zero anomaly above - this blocks
-   trusting anything else.
-2. Re-run the windowed real-vs-mock comparison (same methodology: 8
-   consecutive same-width windows at a large magnitude, D(88,5) or
-   similar) to see whether the compatibility-split/recursive rewrite
-   actually improved the aggregate accuracy versus the pre-rewrite
-   ~11x bias, once (1) is resolved.
-3. If still biased, use `g_mock_family_s[]`'s per-family breakdown
-   again to re-isolate which component dominates, same approach as
-   before.
-4. Gather more `rungbench rand`-mode multiplicity data (one event at
-   one factor size isn't a real validation of the `1/p` law, just a
-   promising first check) if the compatibility-split theory itself
-   becomes the suspect.
-5. Only once aggregate accuracy is trusted: revisit the deferred gaps
-   above (`nqc>0`, B1 chaining, t==1/2 costing, QS chart fidelity) in
-   whatever order the windowed comparison suggests matters most.
+1. hvds: review `db7341c` (real-code splice fix) independently of the
+   mock work.
+2. Find a workload that reaches rungs 5+ at real volume (larger
+   residuals - a bigger target size or different n/k) and repeat the
+   LADDER_STATS vs MOCK_LADDER_STATS comparison there; fit/verify the
+   deeper rungs with rungbench as done for rungs 2-4 and P-1.
+3. Replace the placeholder check costs and `p_cofactor_prime()` with
+   measured values if they show up as material there.
+4. Then decide which simplification (above) is close enough for the
+   calibration goal, measured against the same windowed comparison.
+5. Deferred: nqc>0 theory, B1 chaining, QS chart fidelity.
