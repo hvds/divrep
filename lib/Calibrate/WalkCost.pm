@@ -5,7 +5,7 @@ use warnings;
 
 use base 'Exporter';
 our @EXPORT_OK = qw(
-    sumpm cost_prime_candidate cost_other_candidate
+    sumpm cost_prime_candidate cost_other_candidate p_escalate
     estimate_walk_seconds calibrate_cpu_scale load_params save_params
     %PARAMS
 );
@@ -132,14 +132,41 @@ our %DEFAULT_PARAMS = (
     bpsw_anchor_ns    => 2000,            # order-of-magnitude only - see
                                            # "known gaps": never bit-bucketed
 
-    # need_other trial-division cost (see mean_prep_cost_ns)
-    cost_prep_step_ns => 15,
+    # need_other trial-division cost (see mean_prep_cost_ns). Revised
+    # from the old 15ns placeholder: back-calculated from D(120,6)
+    # real total time (0.60s internal) over 42006 real tau_multi_prep
+    # calls (weighted mean (1+sumpm)=6.356), once the escalation term
+    # was fixed to ~0 for this batch's sumpm range - so this single
+    # number is currently carrying more than pure prep cost (it also
+    # absorbs need_prime overhead, the ati-loop's own per-iteration
+    # cost, and the modular pre-filter check, none of which are
+    # separately parameterized yet). Needs independent validation via
+    # isolated timing (rungbench-style) before trusting the absolute
+    # value, not just the fact that 15ns was ~150x too low.
+    cost_prep_step_ns => 2247,
 
     # need_other escalation probability, 2-point placeholder fit vs
-    # sumpm(t) (see p_escalate - "known gaps": barely more than a
+    # sumpm(t) (see p_escalate - "known gaps": still barely more than a
     # sketch, recalibrate_walkcost.pl should replace this with a real
-    # regression once more (sumpm,rate) pairs exist)
-    esc_low_sumpm_rate  => 0.003,   # sumpm<=18 (t=4,6,12,51)
+    # regression once more (sumpm,rate) pairs exist).
+    #
+    # esc_low_sumpm/_rate revised from real data (D(32,7), D(64,5),
+    # D(12,9), D(88,5), D(120,6), sumpm 2-12): the old anchor
+    # (sumpm<=18 -> flat 0.003) was never actually calibrated below
+    # sumpm=18 (t=51) and turned out ~2 orders of magnitude too high -
+    # every real observation across that sumpm range came back zero or
+    # a small handful of events against millions of candidates. Low
+    # confidence: most of those are zero-event upper bounds, not
+    # precise rates. The one actual nonzero low-end data point (1
+    # escalation - a single b63 - across ~4.9M candidates with sumpm
+    # up to ~9, D(120,6) at x=1e14) sets the new low anchor. The old
+    # flat-below-the-anchor shape is also gone: sumpm<esc_low_sumpm now
+    # extrapolates the SAME line down from esc_low_sumpm rather than a
+    # separate flat segment, since a flat region contradicts both this
+    # data and the increasing trend the high-end anchors already imply
+    # - clamped at 0 rather than going negative, per p_escalate().
+    esc_low_sumpm       => 9,       # D(120,6)'s largest observed sumpm
+    esc_low_sumpm_rate  => 0.00002, # 1 event / ~4.9M candidates
     esc_high_sumpm      => 25,      # t=184's sumpm
     esc_high_sumpm_rate => 0.075,   # t=184's observed rate
 
@@ -348,12 +375,13 @@ sub cost_prime_candidate {
 sub p_escalate {
     my($t) = @_;
     my $s = sumpm($t);
-    my $lo_s = 18;   # t=51's sumpm - the calibration's low anchor
-    return $PARAMS{esc_low_sumpm_rate} if $s <= $lo_s;
-    return $PARAMS{esc_high_sumpm_rate} if $s >= $PARAMS{esc_high_sumpm};
-    my $frac = ($s - $lo_s) / ($PARAMS{esc_high_sumpm} - $lo_s);
-    return $PARAMS{esc_low_sumpm_rate}
-        + $frac * ($PARAMS{esc_high_sumpm_rate} - $PARAMS{esc_low_sumpm_rate});
+    my $lo_s = $PARAMS{esc_low_sumpm};
+    my $hi_s = $PARAMS{esc_high_sumpm};
+    my $slope = ($PARAMS{esc_high_sumpm_rate} - $PARAMS{esc_low_sumpm_rate})
+        / ($hi_s - $lo_s);
+    return $PARAMS{esc_high_sumpm_rate} if $s >= $hi_s;
+    my $rate = $PARAMS{esc_low_sumpm_rate} + ($s - $lo_s) * $slope;
+    return $rate > 0 ? $rate : 0;
 }
 
 # ---------------------------------------------------------------------
