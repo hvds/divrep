@@ -829,8 +829,9 @@ bool tau_multi_prep(uint i) {
     tm->state = 1;  /* init */
 
 #ifdef VERBOSE
-    gmp_printf("tau_multi_prep vi=%u t=%u e=%u (%u) %Zu\n",
-            tm->vi, t, e, nbits, tm->n);
+    extern uint g_ati, g_walkv_call;
+    gmp_printf("tau_multi_prep vi=%u t=%u e=%u call=%u ati=%u (%u) %Zu\n",
+            tm->vi, t, e, g_walkv_call, g_ati, nbits, tm->n);
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
 #endif
     if (t == 1) {
@@ -1092,6 +1093,21 @@ static inline ulong _find_tmfb(uint size) {
     if (size <= tmfb_maxb)
         return tmfbl[size];
     return tmfb_lim;
+}
+
+/* Safety-checked accessor for tmfbl, for callers outside this file
+ * (coulmock.c) that need the SAME bracket table rather than a
+ * hand-copied duplicate that can silently drift out of sync (and, as
+ * built the first time, missed the flake masking init_tmfbl() applies
+ * above). Returns the pointer rather than exposing tmfbl/tmfb_maxb/
+ * tmfb_lim as raw externs, so this can fail() cleanly if init_tmfbl()
+ * hasn't run yet instead of the caller silently reading NULL/garbage. */
+const ulong *get_tmfbl(uint *out_maxb, ulong *out_lim) {
+    if (!tmfbl)
+        fail("get_tmfbl: init_tmfbl() has not been called yet");
+    *out_maxb = tmfb_maxb;
+    *out_lim = tmfb_lim;
+    return tmfbl;
 }
 
 /* see also other_comparator() in coul.c */
