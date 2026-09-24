@@ -70,6 +70,11 @@ endif
 ifdef MOCK_LADDER
     DEFINES += -DMOCK_LADDER
 endif
+# Per-rung ground-truth timing of the real tau_multi_run(), for
+# validating MOCK_LADDER (prints LADDER_STATS lines at exit).
+ifdef LADDER_STATS
+    DEFINES += -DLADDER_STATS
+endif
 # Optional optimization when lower bound for search is a significant
 # proportion of the upper bound.
 ifdef LARGE_MIN
