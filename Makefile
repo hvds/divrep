@@ -44,9 +44,8 @@ ifeq ($(MPUGMP_VER), 39982f872b)
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c ${MPUGMP}/znlog.c
 endif
 
-# TODO: decide whether to remove optionality on these, we haven't built
-# without them for a long time.
-DEFINES += -DLARGE_MIN -DTRACK_STATS
+# TODO: decide individually whether to remove optionality on these
+DEFINES += -DLARGE_MIN -DTRACK_STATS -DCHECK_OVERFLOW
 
 pcoul dpcoul: DEFINES += -DTYPE_o
 pcaul dpcaul: DEFINES += -DTYPE_a
@@ -57,7 +56,7 @@ pcrul dpcrul: DEFINES += -DTYPE_r
 ifdef SQONLY
     DEFINES += -DSQONLY
 endif
-# Optional optimization, appears to cost more than it saves.
+# Bail out early if CRT shows v_0 == r_q (mod a_q), with r_q > z_max.
 ifdef CHECK_OVERFLOW
     DEFINES += -DCHECK_OVERFLOW
 endif

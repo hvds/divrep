@@ -3722,7 +3722,6 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     if (!update_chinese(prev, cur, vi, px))
         return 0;
 
-/* CHECKME: this appears to cost more than it saves in almost all cases */
 #ifdef CHECK_OVERFLOW
     /* if rq > zmax, no solution <= zmax is possible */
     if (mpz_cmp(cur->rq, zmax) > 0)

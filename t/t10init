@@ -95,7 +95,7 @@ if (1) {
 
     {
         my $args124W = [qw{ -x1e12 -f3 -W100 -dW1 -Ls0 12 4 }];
-        my $expect = q{b0: 2^2.3 . 2 3 W(316223,3,2)};
+        my $expect = q{b0: 2^2.3 . 2 3 W(267259,3,2)};
         for (
             [q{start midp on init partial}, '2^2 . 2 .'],
             [q{start midp on init full}, '2^2.3 . 2 3']
@@ -189,18 +189,20 @@ if (1) {
     # to a full walk_v() sweep for the small -x values we test.
     local $type = Type->new('o');
 
+    # -x must be at least 19600, the residue of 2^4.5^2 . 2.3^4
+
     expect_diag(q{6x pattern is identified and applied, 30 4}, 4,
-        [qw{ -g1000 -x5200 -jp -b2 30 4 }],
+        [qw{ -g1000 -x20000 -jp -b2 30 4 }],
         'b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)',
     );
-    expect_recurse_count(q{6x search is exhaustively correct, 30 4}, 11,
-        [qw{ -g1000 -x5200 -jp -b2 30 4 }]);
+    expect_recurse_count(q{6x search is exhaustively correct, 30 4}, 14,
+        [qw{ -g1000 -x20000 -jp -b2 30 4 }]);
 
     expect_diag(q{6x pattern is identified and applied, 90 4}, 4,
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }],
         'b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)',
     );
-    expect_recurse_count(q{6x search is exhaustively correct, 90 4}, 91,
+    expect_recurse_count(q{6x search is exhaustively correct, 90 4}, 59,
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 
@@ -219,11 +221,11 @@ if (1) {
     local $type = Type->new('o');
 
     expect_recover_recurse_count(q{recover 6x from its own diag point, 30 4},
-        7, ['305 b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)'],
-        [qw{ -g1000 -x5200 -jp -b2 30 4 }]);
+        10, ['305 b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)'],
+        [qw{ -g1000 -x20000 -jp -b2 30 4 }]);
 
     expect_recover_recurse_count(q{recover 6x from its own diag point, 90 4},
-        87, ['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)'],
+        55, ['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)'],
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 
@@ -239,8 +241,19 @@ if (1) {
     );
 
     expect_recover_recurse_count(q{recover flip from its own diag point, 36 4},
-        234, ['305 b7: 2^2.5^2 . 2.11^5 . F(2,23)'],
+        150, ['305 b7: 2^2.5^2 . 2.11^5 . F(2,23)'],
         [qw{ -j2 -x1e6 -b7 36 4 }]);
+
+    # A candidate logged after the last 305 line can lower zmax enough that
+    # the flip allocation now overflows; applying it should be deferred.
+    TODO: {
+        local $TODO = q{defer trailing 202 until flip reapply is done};
+        expect_recover(q{recover flip with trailing candidate},
+            [qw{ -j2 -x1e12 36 4 }],
+            [q{305 b6: 2^2.3.31^2 . 2.7^5.5443^2 3^8 F(2,587)},
+             q{202 Candidate 460546327700 (70.18s)}],
+            q{b6: 2^2.3.31^2 . 2.7^5 3^8 F(2,587)});
+    }
 
     # there can be unforced allocations before the flip set
     expect_recover(q{recover flip past prior allocations to the same v_i},
@@ -307,7 +320,7 @@ if (1) {
     expect_recover(q{recover a named batch id with no progress yet},
         [qw{ -x1e10 -f3 -W1000 12 4 }],
         ['305 b5: 2^2.3 . 2 3'],
-        'b5: 2^2.3 . 2 3 W(31607,3,2)',
+        'b5: 2^2.3 . 2 3 W(26723,3,2)',
     );
 }
 
@@ -406,9 +419,18 @@ if (1) {
     );
     expect_recover(q{recover midp constrain 3+float},
         [q{-I"3 . . 3.5^2"}, @$args124W],
-        ['305 b0: 3.2^2 . 2 3.5^2 W(26681,3,2)'],
-        'b0: 3.2^2 . 2 3.5^2 W(26681,3,2)'
+        ['305 b0: 3.2^2 . 2 3.5^2 W(26479,3,2)'],
+        'b0: 3.2^2 . 2 3.5^2 W(26479,3,2)'
     );
+    # As for flip, a trailing candidate can make the midp reapply fail.
+    TODO: {
+        local $TODO = q{defer trailing 202 until midp reapply is done};
+        expect_recover(q{recover midp with trailing candidate},
+            [qw{ -x1e10 -f3 -W1000 12 4 }],
+            [q{305 b0: 2^2.3 . 2 3 W(16963,3,3)},
+             q{202 Candidate 4309961844 (0.10s)}],
+            q{b0: 2^2.3 . 2 3 W(16963,3,3)});
+    }
     expect_recover(q{recover midp walk constrain 3+float},
         [q{-I"3 . . 3.5^2"}, @$args124W],
         ['305 b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 2'],
