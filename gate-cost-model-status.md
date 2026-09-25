@@ -215,15 +215,34 @@ tuples (GATE_STATS builds):
 
 | run | measured | predicted |
 |---|---|---|
-| D(18,4) -x1e16 (b1/b3/b4) | 4.46/2.29/2.59 | 5.56/2.49/2.89 |
-| D(18,4) -x1e17 | 28.9 | 26.0 |
-| D(30,4) -x1e24 | 19.6 | 26.9 |
-| D(54,4) -x1e16 | 6.0 | 9.7 |
-| D(90,4) -x1e20 (incl. 6X and flips) | 12.4 | 18.1 |
+| D(18,4) -x1e18 | 70.7 | 80.5 |
+| D(18,4) full range, b3 alone | 104 | 109 |
+| D(18,4) -x1e17 -W100000 (b1/b3/b4) | 87.9/19.8/86.7 | 62.3/34.3/55.7 |
+| D(30,4) -x1e24 | 19.6 | 27.2 |
+| D(54,4) -x1e16 | 6.0 | 10.6 |
+| D(90,4) -x1e20 (incl. 6X and flips) | 12.4 | 16.1 |
 | D(48,10) I, g20, no -W / -W30000 | 26.1 / 5.9 | 29.8 / 7.2 |
 
-Per batch, larger batches are mostly within 1.1-1.7x. Run-to-run noise
-on the VM was up to ~20% for the same batch.
+Per batch, larger batches are mostly within 1.1-1.8x, consistently
+high; run-to-run noise on the VM was up to ~20% for the same batch.
+The structure shift with range for n == 6 (mod 12) - recursion going
+a level deeper at full range, leaving a few very large walks - comes
+out of the gate logic and scaling laws unchanged (full-range b3 above).
+-W is correctly predicted to be ruinous for D(18,4) at every W.
+
+Further details now modelled:
+- run_flip_pqsq()'s outer allocation p^(2z-1) usually leaves an odd
+  tau, making v_i a further fixed power that apply_allocv() rejects
+  about half the time; with that, its accepted outer primes (230 vs
+  191) and inner walk_1_set() primes (2.5M vs 1.7M) come close;
+- when the fixed power's tau is not prime its root goes through the
+  multi prep, whose cost grows with root size (0.43us at 19 bits to
+  6.6us at 39 bits) and whose pass rate depends on the shape required
+  (~0.4 for t = 9, 27; ~0.125 for t = 15);
+- for bucketed primes only a fraction mean(1/gcd(g, p-1)) of children
+  leave the fixed power roots; a fixed-power walk expected to cover
+  under one root iteration usually never happens (overflow rejection),
+  so its setup is scaled accordingly.
 
 ## Open
 
@@ -236,7 +255,7 @@ on the VM was up to ~20% for the same batch.
 - batch-estimate: fixed powers arising below the batch level (only
   the Pell case is handled); midp (-W) with fixed powers; strategies
   3 and 4; g >= 4 walks validated only for pass rates, not timing;
-  run_flip_pqsq() accepts ~25% of outer primes where ~50% are expected
-  (an unidentified further constraint), so flips are overestimated;
-  full-range structure shift for n == 6 (mod 12) not yet checked.
+  multi-prep pass rates for fixed-power tau shapes other than 9, 15,
+  27; the remaining ~1.1-1.8x overestimate (worst D(54,4)); g >= 4
+  batches in these tuples were too small to test timing.
 - Other n groups; fixed higher powers than squares.
