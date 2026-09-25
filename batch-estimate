@@ -2,113 +2,195 @@
 BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
 use strict;
 use warnings;
+use Math::Prime::Util qw{ factor_exp primes gcd invmod powmod };
 
 =head1 batch-estimate: predict the cost of a pcoul batch
 
 Given a log written by pcoul built with C<GATE_STATS=1>, reads the
-batch-level B and BP records of the first batch and predicts the time
-to process that batch for a given gain (C<-g>) over one or more values
-of C<-W>, printing the predicted recursion and midp components.
+batch-level B, BP, BS and BM records of one batch (by default the first)
+and predicts the time to process that batch for a given strategy
+(C<-j>) and gain (C<-g>) over one or more values of C<-W>, printing
+the predicted recursion and midp components.
 
-  batch-estimate [-g<gain>] logfile W...
+  batch-estimate [-j<strategy>] [-g<gain>] [-b<index>] [-v] logfile W...
 
-where each I<W> is a number or C<none> (meaning no C<-W>).
+where each I<W> is a number or C<none> (meaning no C<-W>), and I<index>
+counts batches in the log from 0. With C<-v>, also shows the predicted
+work at each depth below the batch (recurse loops and primes tried,
+walks and their size, walk_6x() calls), for comparison with the
+GATE_STATS records of the real run.
 
 =head2 Model
 
-The recursion is idealised as follows: a node whose walk would cover
-I<r> ati walks if C<gain * r < cap>, and otherwise tries each prime
-C<p < cap> at the next position and recurses into C<r / p^(x-1)>;
-positions are taken in order of increasing remaining tau, then limit.
+The recursion is idealised as follows. At each node the position to
+allocate at is chosen by the strategy's rule, and the gate compares
+C<gain * r> with the cap of its first allocation option, where I<r> is
+the size of the walk that node would do: ati for a linear walk, root
+iterations if one value is a fixed power. If it recurses, each prime
+C<p> up to the cap is tried and the child continues with
+C<r / p^(x-1)>, or C<r / p^((x-1)/g)> for an allocation at the fixed
+power itself (whose root shrinks); the position's remaining tau and q
+are updated, and its limit recomputed from the batch's mintau table.
+A second fixed power makes it a Pell case, treated as nearly free. An
+odd prime tau left at a position is enumerated by walk_1_set() without
+-W, and left to the walks with it.
+
 With C<-W>, caps are limited to I<W>, and walk_midp() allocates each
 C<p^(x-1)> above I<W> once per position, walking from the batch level.
 
-Walk cost per ati is C<loop + P_inv * C_p + P_inv * P_prime * C_m>,
-where I<P_inv> is the batch's inverse-filter pass rate and I<P_prime>
-the product over need_prime positions of C<K / (b ln 2)> for a residual
-of I<b> bits. Each prime tried costs I<c_prime>. See
+Walk cost per ati (linear) is
+C<loop + P_inv * C_p + P_inv * P_prime * C_m>, where I<P_inv> is the
+batch's inverse-filter pass rate and I<P_prime> the product over
+need_prime positions of C<K / (b ln 2)> for a residual of I<b> bits.
+Per root iteration (fixed power) it is
+C<loop_sq + P_inv * (C_sq + P_sq * (C_p + P_prime * C_m))>, where
+I<P_inv> is the pass rate over root residues and I<P_sq> the chance
+that the root passes the fixed power's own test; each such walk also
+costs I<setup_sq>. Each prime tried costs I<c_prime> (more with a
+fixed power, whose residues must be updated). See
 gate-cost-model-status.md for where these constants come from.
 
-Only nqc == 0, and only positions whose remaining tau has odd part 3
-(so that each needs exactly one allocation), are supported.
+Only nqc <= 1 at the batch level is handled, and a fixed power arising
+below the batch level is treated as the Pell case only if it is the
+second one.
 
 =cut
 
 my %cost = (
     prime => 0.57e-6,   # c_prime: per prime tried in a recurse loop
-    multi => 15.5e-6,   # C_m: per test_multi() call
+    prime_sq => 4.3e-6, # c_prime with a fixed power present
+    multi0 => 11e-6,    # C_m: per test_multi() call ...
+    multi1 => 0.5e-6,   # ... plus this per need_other position
     tprime1 => 1.0e-6,  # C_p: per test_primes() call, npc > 0
     tprime0 => 0.1e-6,  # C_p: per test_primes() call, npc == 0
     loop => 0.03e-6,    # per ati, inverse filter loop
-    K => 4.8,           # prime density correction for need_prime residuals
+    loop_sq => 0.16e-6, # per root iteration, including mpz arithmetic
+    test_sq => 0.6e-6,  # C_sq: the fixed power's own test, per call
+    setup_sq => 2.5e-6, # per fixed-power walk
+    pell => 20e-6,      # per Pell walk
+    walk6x => 2.4e-6,   # per walk_6x() call
+    walk1_flip => 0.47e-6,  # per prime iterated by walk_1_set() in a flip
+    walk1 => 1e-6,      # per prime tried by walk_1_set()
+    K => 4.8,           # prime density correction, need_prime residuals
+    K_sq => 4.0,        # prime density correction, prime roots
+    P_sq_multi => 0.37, # pass rate of the fixed power's test, tau not prime
 );
-my $P0 = 11;        # first prime tried in a recurse loop
+my $EXACT = 1000;   # below this, primes are taken individually
+my %work;           # with -v: predicted work at each depth
+my %flip_work;      # with -v: run_flip_pqsq() counts
 
-my $gain = 1;
+my($strategy, $gain, $index, $verbose) = (0, 1, 0, 0);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
+    $strategy = $1, next if $arg =~ /^-j(\d)$/;
     $gain = $1, next if $arg =~ /^-g(\d+(?:\.\d+)?)$/;
+    $index = $1, next if $arg =~ /^-b(\d+)$/;
+    $verbose = 1, next if $arg eq '-v';
     die "Unknown option '$arg'";
 }
-@ARGV >= 2 or die "500 Usage: $0 [-g<gain>] logfile W...";
+@ARGV >= 2 or die "500 Usage: $0 [-j<strategy>] [-g<gain>] [-b<index>] [-v] logfile W...";
 my($logfile, @W) = @ARGV;
+my $batch = read_batch($logfile, $index);
 
-my($batch, $base, $pos) = read_batch($logfile);
-my($npc0, $pp0) = (scalar @$base, 1);
-$pp0 *= p_prime($_) for @$base;
-printf "batch at level %s: X=%.4g pinv=%.4f, %d base prime positions\n",
-        @$batch{qw{ level X pinv }}, $npc0;
-printf "  needy positions (vi:t:limit): %s\n", join ' ', map {
-    sprintf '%s:%s:%.3g', $_->{vi}, $_->{t}, $_->{opt}[0]{L}
-} @$pos;
+printf "batch %d at level %s: X=%.4g pinv=%.4f%s%s\n", $index,
+        @$batch{qw{ level X pinv }},
+        (($batch->{strategy} // 0) == 5) ? ' (STRATEGY_6X)' : '',
+        $batch->{sq} ? sprintf(
+            ", fixed power at v_%d (t=%d, g=%d) Xsq=%.4g pinv_sq=%.4f",
+            @{ $batch->{sq} }{qw{ vi t g Xsq pinv }}) : '';
 
 for my $warg (@W) {
     my $w = ($warg eq 'none') ? 9**9**9 : $warg;
-    my $rec = recurse_cost($w, $batch->{X}, 0, $npc0, $pp0, {});
-    my $mid = ($warg eq 'none') ? 0 : midp_cost($w, $npc0, $pp0);
-    printf "  g=%s W=%-8s predicted %7.2fs (recursion %7.2fs, midp %6.2fs)\n",
-            $gain, $warg, $rec + $mid, $rec, $mid;
+    my %memo;
+    my $root = initial_state($batch);
+    %work = %flip_work = ();
+    my $rec = node_cost($w, $root, $verbose ? {} : \%memo, 1);
+    my $mid = ($warg eq 'none') ? 0 : midp_cost($w, $root);
+    printf "  j=%d g=%s W=%-8s predicted %8.2fs (recursion %8.2fs, midp %7.2fs)\n",
+            $strategy, $gain, $warg, $rec + $mid, $rec, $mid;
+    if ($verbose) {
+        printf "    flips: outer %.4g, accepted %.4g, inner %.4g\n",
+                map $flip_work{$_} // 0, qw{ outer outer_ok inner } if %flip_work;
+        for my $d (sort { $a <=> $b } keys %work) {
+            my $h = $work{$d};
+            printf "    depth %d: recurse %.4g (primes %.4g), walks %.4g (size %.4g), walk_6x %.4g, flip %.4g\n",
+                    $d, map $h->{$_} // 0, qw{ recurse primes walks size w6x flip };
+        }
+    }
 }
 exit 0;
 
 sub read_batch {
-    my($file) = @_;
-    my(%batch, @bp);
+    my($file, $want) = @_;
+    my(%b, @bp, %mintau, %restricted);
+    my $seen = 0;
     open my $fh, '<', $file or die "$file: $!";
     while (<$fh>) {
         my @f = split;
-        if ($f[0] eq 'BP') {
-            push @bp, [ @f[1 .. 5] ];
-        } elsif ($f[0] eq 'B') {
-            @batch{qw{ level X pinv zbits }} = @f[1 .. 4];
-            last;
+        next unless $f[0] =~ /^B/;
+        if ($f[0] eq 'B') {
+            if ($seen++ == $want) {
+                @b{qw{ level X pinv zbits cpu k strategy }} = @f[1 .. 7];
+                last;
+            }
+            (@bp, %mintau, %restricted) = ();
+            delete $b{sq};
+        } elsif ($seen == $want) {
+            if ($f[0] eq 'BP') {
+                push @bp, [ @f[1 .. 6] ];
+            } elsif ($f[0] eq 'BM') {
+                $mintau{$f[1]} = log($f[2]) / log(2);
+            } elsif ($f[0] eq 'BR') {
+                $restricted{$f[2]}{$f[1]} = $f[3] ? log($f[3]) / log(2) : undef;
+            } elsif ($f[0] eq 'BS') {
+                my %s;
+                @s{qw{ vi t g rc root Xsq pinv q }} = @f[1 .. 8];
+                $b{sq} = \%s;
+            }
         }
     }
     close $fh;
-    defined $batch{X} or die "No B record found in $file";
+    defined $b{X} or die "No batch $want found in $file";
+    $b{mintau} = \%mintau;
+    $b{restricted} = \%restricted;
 
-    my(@base, %opt);
+    # per-position state: remaining t and log2(q)
+    my %pos;
     for (@bp) {
-        my($vi, $x, $t, $L, $qbits) = @$_;
-        if ($x == 0) {
-            # already needs a prime
-            push @base, $batch{zbits} - $qbits;
-            next;
-        }
-        my $rest = $t / $x;
-        die "vi=$vi t=$t x=$x: residual tau has odd part, not supported"
-                if $rest & ($rest - 1);
-        push @{ $opt{$vi} }, { x => $x, t => $t, L => $L, qbits => $qbits };
+        my($vi, $x, $t, $L, $qbits, $maxforce) = @$_;
+        $pos{$vi} = { t => $t, qbits => $qbits, maxforce => $maxforce };
     }
-    my @pos = sort {
-        $a->{t} <=> $b->{t} || $a->{opt}[0]{L} <=> $b->{opt}[0]{L}
-    } map +{
-        vi => $_,
-        t => $opt{$_}[0]{t},
-        opt => [ sort { $a->{x} <=> $b->{x} } @{ $opt{$_} } ],
-    }, keys %opt;
-    return (\%batch, \@base, \@pos);
+    $b{pos} = \%pos;
+    # primes up to the greatest maxforce are fixed by the batch: pcoul
+    # tries them but apply_single() rejects them
+    my($fmax) = sort { $b <=> $a } map $_->{maxforce}, values %pos;
+    $b{fmax} = $fmax // 0;
+    return \%b;
+}
+
+sub initial_state {
+    my($b) = @_;
+    my %s = (
+        pos => { map +($_ => { %{ $b->{pos}{$_} } }), keys %{ $b->{pos} } },
+        nsq => $b->{sq} ? 1 : 0,
+        npc => 0,
+        pp => 1,
+        pinv => 1,      # further inverse-filter factor from allocations
+    );
+    for my $vi (keys %{ $s{pos} }) {
+        my $p = $s{pos}{$vi};
+        next unless $p->{t} == 2;
+        ++$s{npc};
+        $s{pp} *= p_prime($b->{zbits} - $p->{qbits});
+    }
+    if ($b->{sq}) {
+        $s{r} = $b->{sq}{Xsq};
+        $s{root_bits} = log($b->{sq}{root}) / log(2);
+    } else {
+        $s{r} = $b->{X};
+    }
+    return \%s;
 }
 
 # approximate count of primes <= x
@@ -119,11 +201,15 @@ sub li {
     return $x / $l * (1 + 1 / $l + 2 / $l ** 2);
 }
 
-# split primes in [lo, hi] into geometric buckets of [count, midpoint]
+# split primes in [lo, hi] into [count, p, exact], with primes below
+# $EXACT listed individually and the rest in geometric buckets
 sub buckets {
     my($lo, $hi) = @_;
     my $step = 2 ** 0.125;
     my @b;
+    my $top = ($hi < $EXACT) ? $hi : $EXACT;
+    push @b, map [ 1, $_, 1 ], @{ primes(int($lo) + 1, int($top)) } if $lo < $top;
+    $lo = $top if $lo < $top;
     for (my $l = $lo; $l < $hi; $l *= $step) {
         my $h = $l * $step;
         $h = $hi if $h > $hi;
@@ -133,69 +219,324 @@ sub buckets {
     return @b;
 }
 
-# probability that a need_prime residual of b bits is prime
 sub p_prime {
-    my($bits) = @_;
+    my($bits, $K) = @_;
+    $K //= $cost{K};
     $bits = 1 if $bits < 1;
-    my $p = $cost{K} / ($bits * log(2));
+    my $p = $K / ($bits * log(2));
     return $p > 1 ? 1 : $p;
 }
 
-sub walk_cost {
-    my($npc, $pp) = @_;
-    my $pinv = $batch->{pinv};
-    return $cost{loop} + $pinv * ($npc ? $cost{tprime1} : $cost{tprime0})
-            + $pinv * $pp * $cost{multi};
+sub is_pow2 { my($t) = @_; return !($t & ($t - 1)) }
+sub odd_high { my($t) = @_; my @f = factor_exp($t); return $f[-1][0] }
+sub is_prime_t { my($t) = @_; my @f = factor_exp($t); return @f == 1 && $f[0][1] == 1 }
+sub high { my($t) = @_; my @f = factor_exp($t); return @f ? $f[-1][0] : 1 }
+
+# the allocations recurse() tries at a position with remaining t: divisors
+# x of t sharing its highest prime (divisors[t].highdiv), smallest first
+sub options {
+    my($t) = @_;
+    my $h = high($t);
+    return () if $h <= 2;
+    return grep { $t % $_ == 0 && $_ % $h == 0 } $h .. $t;
 }
 
-# state after allocating p^(x-1) for option opt
-sub allocate {
-    my($opt, $p, $npc, $pp) = @_;
-    if ($opt->{t} / $opt->{x} == 2) {
-        ++$npc;
-        $pp *= p_prime($batch->{zbits} - $opt->{qbits}
-                - ($opt->{x} - 1) * log($p) / log(2));
+# the allocations walk_midp() tries: every non-power-of-2 divisor of t
+sub midp_options {
+    my($t) = @_;
+    return grep { $t % $_ == 0 && !is_pow2($_) } 3 .. $t;
+}
+
+# limit on p for allocating p^(x-1) at a position with remaining t, q,
+# following limit_p()
+sub limit {
+    my($st, $p, $x) = @_;
+    my $rest = $p->{t} / $x;
+    my $bits = $batch->{zbits} - $p->{qbits};
+    if ($x == $rest && is_prime_t($x)) {
+        # this and the remaining allocation are p^(x-1).q^(x-1)
+        return 2 ** ($bits / (2 * ($x - 1)));
     }
-    return ($npc, $pp);
+    if (($batch->{strategy} // 0) == 5 && $rest == 2) {
+        # STRATEGY_6X: v_i >= 8 p^(x-1) (p^(x-1) - 1)
+        return 1 + 2 ** (($batch->{zbits} - 3) / (2 * ($x - 1)));
+    }
+    my $r = $batch->{restricted}{$x};
+    if ($r && high($x) == high($rest)) {
+        # the next allocation at this position is either x again with a
+        # higher prime, or a higher power sharing x's highest prime
+        my $best;
+        $best = $bits - $r->{$rest} if defined $r->{$rest};
+        my($itert, $iter) = ($rest, 1);
+        while ($itert % $x == 0) {
+            ++$iter;
+            $itert /= $x;
+            next unless defined $r->{$itert};
+            my $v = ($bits - $r->{$itert}) / $iter;
+            $best = $v if !defined($best) || $v > $best;
+        }
+        return defined($best) ? 2 ** ($best / ($x - 1)) : 0;
+    }
+    my $mt = ($rest > 1) ? $batch->{mintau}{$rest} // 0 : 0;
+    return 2 ** (($bits - $mt) / ($x - 1));
 }
 
-sub recurse_cost {
-    my($w, $r, $depth, $npc, $pp, $memo) = @_;
-    my $walk = walk_cost($npc, $pp) * $r;
-    return $walk if $depth == @$pos || $r < 1e-4;
-    my $key = join ' ', int(4 * log($r) / log(2)), $depth, $npc,
-            int(8 * log($pp));
+sub choose {
+    my($st, $capped) = @_;
+    if (($batch->{strategy} // 0) == 5) {
+        # STRATEGY_6X: allocate at v_{sq0-2} until its tau is 2, then
+        # walk_6x(); odd tau there makes a second square (Pell case)
+        my $vi = $batch->{sq}{vi} - 2;
+        my $p = $st->{pos}{$vi};
+        return 'walk' if !$p || ($p->{t} & 1) || is_pow2($p->{t}) && $p->{t} > 2;
+        return '6x' if $p->{t} == 2;
+        return $vi;
+    }
+    my($best, $bkey);
+    for my $vi (sort { $a <=> $b } keys %{ $st->{pos} }) {
+        my $p = $st->{pos}{$vi};
+        my $t = $p->{t};
+        next if is_pow2($t);
+        next if $capped && ($t & 1) && is_prime_t($t);
+        my @key = ($strategy == 0) ? ($t, $p->{qbits})
+                : ($strategy == 1) ? (odd_high($t), $t, $p->{qbits})
+                : ($strategy == 2) ? (-$t, $p->{qbits})
+                : die "strategy $strategy not supported";
+        if (!defined($best) || cmp_key(\@key, $bkey) > 0) {
+            ($best, $bkey) = ($vi, \@key);
+        }
+    }
+    return $best;
+}
+
+sub cmp_key {
+    my($a, $b) = @_;
+    for (0 .. $#$a) {
+        my $c = $a->[$_] <=> $b->[$_];
+        return $c if $c;
+    }
+    return 0;
+}
+
+sub walk_cost {
+    my($st) = @_;
+    return $cost{pell} if $st->{nsq} >= 2;
+    my $pr = $st->{npc} ? $cost{tprime1} : $cost{tprime0};
+    my $noc = $batch->{k} - $st->{npc} - $st->{nsq};
+    my $multi = $cost{multi0} + $noc * $cost{multi1};
+    if ($st->{nsq}) {
+        my $sq = $batch->{sq};
+        my $psq = is_prime_t($st->{pos}{ $sq->{vi} }{t})
+                ? p_prime($st->{root_bits}, $cost{K_sq}) : $cost{P_sq_multi};
+        return $cost{setup_sq} + $st->{r} * ($cost{loop_sq}
+                + $sq->{pinv} * $st->{pinv}
+                * ($cost{test_sq} + $psq * ($pr + $st->{pp} * $multi)));
+    }
+    return $st->{r} * ($cost{loop} + $batch->{pinv} * $st->{pinv}
+            * ($pr + $st->{pp} * $multi));
+}
+
+# how many residues of the fixed power's root survive an allocation
+# p^(x-1) at another position vi: q_s.r^g == s - vi (mod p^(x-1)) has
+# gcd(g, p - 1) roots if (s - vi) / q_s is a g-th power residue, else
+# none; for bucketed primes, the average of 1
+sub root_factor {
+    my($vi, $p, $exact) = @_;
+    my $sq = $batch->{sq};
+    return 1 unless $exact && $sq && $vi != $sq->{vi};
+    my $d = ($sq->{vi} - $vi) % $p;
+    return 1 if $d == 0 || $sq->{q} % $p == 0;
+    my $c = $d * invmod($sq->{q} % $p, $p) % $p;
+    my $h = gcd($sq->{g}, $p - 1);
+    return (powmod($c, ($p - 1) / $h, $p) == 1) ? $h : 0;
+}
+
+# state after allocating p^(x-1) at position vi
+sub allocate {
+    my($st, $vi, $x, $p, $factor) = @_;
+    $factor //= 1;
+    my %c = (%$st, pos => { %{ $st->{pos} } });
+    # the new allocation excludes one residue class mod p from the walk
+    $c{pinv} = $st->{pinv} * (1 - 1 / $p);
+    my $old = $st->{pos}{$vi};
+    my $new = { %$old, t => $old->{t} / $x, lastx => $x, lastp => $p,
+            qbits => $old->{qbits} + ($x - 1) * log($p) / log(2) };
+    $c{pos}{$vi} = $new;
+    my $sq = $batch->{sq};
+    if ($sq && $vi == $sq->{vi}) {
+        $c{r} = $st->{r} / $p ** (($x - 1) / $sq->{g});
+        $c{root_bits} = $st->{root_bits} - ($x - 1) / $sq->{g} * log($p) / log(2);
+    } else {
+        $c{r} = $st->{r} * $factor / $p ** ($x - 1);
+        ++$c{nsq} if ($new->{t} & 1) && $new->{t} > 1;
+    }
+    if ($new->{t} == 2) {
+        ++$c{npc};
+        $c{pp} *= p_prime($batch->{zbits} - $new->{qbits});
+    }
+    return \%c;
+}
+
+sub state_key {
+    my($st) = @_;
+    return join ' ', $st->{depth} // 0, int(16 * log($st->{r}) / log(2)), $st->{nsq}, $st->{npc},
+            int(8 * log($st->{pp})), map {
+                my $p = $st->{pos}{$_};
+                "$_:$p->{t}:" . int($p->{qbits}) . ':'
+                        . ($p->{lastx} // 0) . ':' . int($p->{lastp} // 0);
+            } sort { $a <=> $b } keys %{ $st->{pos} };
+}
+
+# the prime after which prep_unforced_x() starts allocating p^(x-1) at a
+# position, or undef if it skips this x
+sub start_prime {
+    my($p, $x) = @_;
+    my $nextt = $p->{t} / $x;
+    my $lastx = $p->{lastx} // 0;
+    return $p->{lastp} if $x == $lastx;
+    return undef if $x < $lastx && high($x) == high($lastx);
+    return undef if $x > $nextt && high($x) == high($nextt);
+    return $p->{maxforce};
+}
+
+# record predicted work (weight: expected number of such nodes)
+sub note {
+    my($depth, $weight, %add) = @_;
+    return unless $verbose;
+    $work{$depth}{$_} += $weight * $add{$_} for keys %add;
+}
+
+# If allocating p^(x-1) at vi with t = 2x^2 (x prime), the continuation
+# allocates x again with a higher prime; once its limit falls below p it
+# is empty, and recurse() stops this loop and hands the remainder to
+# run_flip_pqsq(). Returns the prime where that happens, if below cap.
+sub flip_point {
+    my($st, $vi, $x, $start, $cap) = @_;
+    my $p = $st->{pos}{$vi};
+    return undef unless is_prime_t($x) && $p->{t} == 2 * $x * $x;
+    my $empty = sub {
+        my($q) = @_;
+        my $c = allocate($st, $vi, $x, $q, 1);
+        return limit($c, $c->{pos}{$vi}, $x) < $q;
+    };
+    return undef unless $empty->($cap);
+    return $start if $empty->($start + 1);
+    my($lo, $hi) = (log($start + 1), log($cap));
+    for (1 .. 40) {
+        my $mid = ($lo + $hi) / 2;
+        if ($empty->(exp($mid))) { $hi = $mid } else { $lo = $mid }
+    }
+    return exp($hi);
+}
+
+# run_flip_pqsq(): allocate p^(2x-1) at vi for each p up to its limit,
+# then walk_1_set() over q^(x-1) from the flip point up to the rest
+sub flip_cost {
+    my($st, $vi, $x, $pf) = @_;
+    my $p = $st->{pos}{$vi};
+    my $bits = $batch->{zbits} - $p->{qbits};
+    my $xl = 2 * $x;
+    my $lim = 2 ** ($bits / ($xl - 1));
+    my $cprime = $st->{nsq} ? $cost{prime_sq} : $cost{prime};
+    my $cost = 0;
+    for (buckets($p->{maxforce}, $lim)) {
+        my($count, $q, $exact) = @$_;
+        $cost += $count * $cprime;
+        my $f = root_factor($vi, $q, $exact);
+        next unless $f;
+        my $phigh = 2 ** (($bits - ($xl - 1) * log($q) / log(2)) / ($x - 1));
+        next if $phigh <= $pf;
+        # a fraction f / (average 1) of outer allocations leave a square
+        my $inner = $count * ($f > 1 ? 1 : $f) * (li($phigh) - li($pf));
+        $cost += $inner * $cost{walk1_flip};
+        $flip_work{outer_ok} += $count * ($f > 1 ? 1 : $f);
+        $flip_work{inner} += $inner;
+    }
+    $flip_work{outer} += li($lim) - li($p->{maxforce});
+    return $cost;
+}
+
+sub node_cost {
+    my($w, $st, $memo, $weight) = @_;
+    my $depth = $st->{depth} // 0;
+    my $walk = walk_cost($st);
+    if ($st->{nsq} >= 2 || $st->{r} < 1e-4) {
+        note($depth, $weight, walks => 1, size => $st->{r});
+        return $walk;
+    }
+    my $capped = $w < 9**9**9;
+    my $vi = choose($st, $capped);
+    if (!defined($vi) || $vi eq 'walk') {
+        note($depth, $weight, walks => 1, size => $st->{r});
+        return $walk;
+    }
+    if ($vi eq '6x') {
+        note($depth, $weight, w6x => 1);
+        return $cost{walk6x};
+    }
+    my $key = state_key($st);
     return $memo->{$key} if exists $memo->{$key};
 
+    my $p = $st->{pos}{$vi};
+    my $cprime = $st->{nsq} ? $cost{prime_sq} : $cost{prime};
     my $cost = 0;
     my $first = 1;
-    for my $opt (@{ $pos->[$depth]{opt} }) {
-        my $cap = ($w < $opt->{L}) ? $w : $opt->{L};
-        next if $cap <= $P0 && !$first;
+    for my $x (options($p->{t})) {
+        my $start = start_prime($p, $x);
+        next unless defined $start;
+        my $L = limit($st, $p, $x);
+        my $cap = ($w < $L) ? $w : $L;
+        if ($x == $p->{t}) {
+            # odd prime tau: walk_1_set() enumerates p directly
+            $cost += $cost{walk1} * (li($cap) - li($start)) if $cap > $start;
+            $first = 0;
+            next;
+        }
+        next if $cap <= $start && !$first;
         # the gate is decided on the first option
-        return $memo->{$key} = $walk if $first && $gain * $r < $cap - $P0;
+        if ($first && $gain * $st->{r} < $cap - $start) {
+            note($depth, $weight, walks => 1, size => $st->{r});
+            return $memo->{$key} = $walk;
+        }
         $first = 0;
-        $cost += $cost{prime} * (li($cap) - li($P0));
-        for (buckets($P0, $cap)) {
-            my($count, $p) = @$_;
-            $cost += $count * recurse_cost($w, $r / $p ** ($opt->{x} - 1),
-                    $depth + 1, allocate($opt, $p, $npc, $pp), $memo);
+        next if $cap <= $start;
+        my $pf = flip_point($st, $vi, $x, $start, $cap);
+        if (defined $pf) {
+            $cost += flip_cost($st, $vi, $x, $pf);
+            note($depth, $weight, flip => 1);
+            $cap = $pf;
+        }
+        $cost += $cprime * (li($cap) - li($start));
+        note($depth, $weight, recurse => 1, primes => li($cap) - li($start));
+        for (buckets($start, $cap)) {
+            my($count, $q, $exact) = @$_;
+            next if $exact && $q <= $batch->{fmax};
+            my $f = root_factor($vi, $q, $exact);
+            next unless $f;
+            my $child = allocate($st, $vi, $x, $q, $f);
+            $child->{depth} = $depth + 1;
+            $cost += $count * node_cost($w, $child, $memo, $weight * $count);
         }
     }
     return $memo->{$key} = $cost;
 }
 
 sub midp_cost {
-    my($w, $npc, $pp) = @_;
+    my($w, $st) = @_;
+    my $cprime = $st->{nsq} ? $cost{prime_sq} : $cost{prime};
     my $cost = 0;
-    for my $pd (@$pos) {
-        for my $opt (@{ $pd->{opt} }) {
-            next if $w >= $opt->{L};
-            for (buckets($w, $opt->{L})) {
-                my($count, $p) = @$_;
-                $cost += $count * ($cost{prime} + walk_cost(
-                    allocate($opt, $p, $npc, $pp)
-                ) * $batch->{X} / $p ** ($opt->{x} - 1));
+    for my $vi (keys %{ $st->{pos} }) {
+        my $p = $st->{pos}{$vi};
+        next if is_pow2($p->{t});
+        next if ($p->{t} & 1) && is_prime_t($p->{t});
+        for my $x (midp_options($p->{t})) {
+            my $L = limit($st, $p, $x);
+            next if $w >= $L;
+            for (buckets($w, $L)) {
+                my($count, $q, $exact) = @$_;
+                my $f = root_factor($vi, $q, $exact);
+                $cost += $count * $cprime;
+                $cost += $count * walk_cost(allocate($st, $vi, $x, $q, $f)) if $f;
             }
         }
     }

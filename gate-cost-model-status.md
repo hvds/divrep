@@ -165,6 +165,66 @@ Measured on D(18,4) at reduced `-x` (1e15-1e17):
   (zmax - zmin); the walk itself starts at the root of zmin, so narrow
   windows overstate square walks and push the gate towards recursion.
 
+## Fixed powers across the n groups
+
+`pcoul -a` flags batches with a fixed power as `[sq=<count>]`. At each
+tuple's current upper bound: every batch for n == 6 (mod 12), 3-20% of
+batches for n == 0 and 4/8 (mod 12), none for D(128,7); forcing alone
+never fixes two (so no Pell batches). Root degrees g = gcd(p - 1) over
+primes p | t: 2 (t = 3, 9, 15, 27, 45, 55), 4 (t = 5, 25: D(30,4),
+D(90,4), D(60,6), D(100,5), D(200,5)), 6 (t = 7: D(224,6)), 10
+(t = 11: D(220,4)). Fixed-power batches in n == 0 (mod 12) carry heavily
+constrained forced primes and are usually trivial.
+
+r^g takes few values mod small p, so some fixed-power batches are
+impossible modulo a small forced prime yet are searched in full (see
+TODO-coul); for the same reason the inverse-filter pass rate of a
+fixed-power walk must be computed over root residues, not by assuming
+uniform ati: `gs_square_pinv()` does this, and is exact in every case
+checked (e.g. D(100,5) b33: 0 vs 0.23 from the uniform formula).
+
+## batch-estimate, generalised
+
+`batch-estimate` now follows the search closely enough to reproduce
+its structure (per-depth counts of recurse loops, primes tried, walks
+and walk sizes match the GATE_STATS records to within a few percent):
+
+- position choice by strategy 0/1/2 rules (and STRATEGY_6X when its
+  conditions hold); at a position only divisors x sharing t's highest
+  prime are tried (`highdiv`), smallest first, with `prep_unforced_x()`'s
+  loop start and skip rules (continue after the previous prime for a
+  repeated x; primes fixed by the batch are tried but rejected);
+- limits as `limit_p()`: the x == nextt prime case, the STRATEGY_6X
+  bound, restricted mintau (from BR records), else mintau (BM);
+- a fixed power's walk is in root iterations, rc * root / qq; an
+  allocation elsewhere multiplies it by (number of g-th roots)/p^(x-1),
+  exact for p < 1000 (0 or gcd(g, p-1)) and 1 on average beyond; one at
+  the fixed power shrinks its root by p^((x-1)/g); a second fixed power
+  is the Pell case (nearly free);
+- `recurse()` stops a loop when the same-x continuation becomes empty
+  (t = 2z^2) and hands the rest to `run_flip_pqsq()`, costed from its
+  outer primes and the primes its `walk_1_set()` calls iterate;
+- walk cost updates the inverse pass rate by (1 - 1/p) per allocation,
+  and `test_multi()` cost as ~11us + 0.5us per need_other position;
+  fixed-power walks: ~0.16us loop per iteration, the root test (passes
+  ~4.0/(b ln 2) when the root must be prime), ~2.5us setup per walk;
+  recursion ~4.3us per prime tried with a fixed power present.
+
+Measured vs predicted total, default strategies, no retuning between
+tuples (GATE_STATS builds):
+
+| run | measured | predicted |
+|---|---|---|
+| D(18,4) -x1e16 (b1/b3/b4) | 4.46/2.29/2.59 | 5.56/2.49/2.89 |
+| D(18,4) -x1e17 | 28.9 | 26.0 |
+| D(30,4) -x1e24 | 19.6 | 26.9 |
+| D(54,4) -x1e16 | 6.0 | 9.7 |
+| D(90,4) -x1e20 (incl. 6X and flips) | 12.4 | 18.1 |
+| D(48,10) I, g20, no -W / -W30000 | 26.1 / 5.9 | 29.8 / 7.2 |
+
+Per batch, larger batches are mostly within 1.1-1.7x. Run-to-run noise
+on the VM was up to ~20% for the same batch.
+
 ## Open
 
 - C_p refinement (pretest cost + P(reach BPSW) * BPSW cost); C_m as a
@@ -173,7 +233,10 @@ Measured on D(18,4) at reduced `-x` (1e15-1e17):
   decisions whose children recurse need the full recursive estimate.
 - A dynamic gate would need P_inv/P_prime before walk setup has run;
   worth it only for decisions that are not clear-cut.
-- batch-estimate: odd part > 3 (positions needing several
-  allocations, whose limits change after each), square positions,
-  allocation order taken from `best_v()` rather than inferred.
+- batch-estimate: fixed powers arising below the batch level (only
+  the Pell case is handled); midp (-W) with fixed powers; strategies
+  3 and 4; g >= 4 walks validated only for pass rates, not timing;
+  run_flip_pqsq() accepts ~25% of outer primes where ~50% are expected
+  (an unidentified further constraint), so flips are overestimated;
+  full-range structure shift for n == 6 (mod 12) not yet checked.
 - Other n groups; fixed higher powers than squares.
