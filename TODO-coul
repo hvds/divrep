@@ -18,4 +18,12 @@ TODO (lower priority):
 - reimplement next_prime()
 - cater for end value > 2^64 in walk_v, if needed
 - prep the simple_valuation() checks for apply_batch()
+- for a fixed power v_s = q.r^g, intersect the residues of r with the
+  exactness conditions at the other positions mod small forced primes,
+  at batch time and when a square is fixed later: r^g takes few values
+  mod small p (r^4 == 1 mod 3), so a batch can be impossible yet fully
+  searched; eg this recurses over 1.7M primes (11s) testing nothing:
+    coul -x262115601893874169743895637062461858125 -I". 2^4.3.5 . 2 3" 100 5
+  About 14% of D(224,6) fixed-power batches are impossible this way,
+  though most are cheap.
 - for unforced primes, do constant apply_alloc() work in advance
