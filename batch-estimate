@@ -73,8 +73,33 @@ my %cost = (
     walk1 => 1e-6,      # per prime tried by walk_1_set()
     K => 4.8,           # prime density correction, need_prime residuals
     K_sq => 4.0,        # prime density correction, prime roots
-    P_sq_multi => 0.37, # pass rate of the fixed power's test, tau not prime
 );
+
+# When the fixed power's tau is not prime, its root goes through the
+# multi prep (trial division, then the ladder). The cost per call grows
+# with the root's size: measured (bits, us) points D(54,4) -x1e16
+# (19.2, 0.43), D(18,4) -x1e16 (26.1, 1.93), D(30,4) -x1e24 (39.4, 6.6),
+# interpolated log-linearly and clamped outside. The pass rate depends
+# on the shape the root must have: for t = 9 or 27 (r ~ pq) ~0.4, for
+# t = 15 (r ~ pq^2) ~0.125; other shapes are not yet measured.
+my @sq_multi_cost = ([ 19.2, 0.43e-6 ], [ 26.1, 1.93e-6 ], [ 39.4, 6.6e-6 ]);
+my %sq_multi_pass = (9 => 0.4, 27 => 0.4, 15 => 0.125);
+sub sq_multi {
+    my($bits, $t) = @_;
+    my $c = \@sq_multi_cost;
+    my $cost;
+    if ($bits <= $c->[0][0]) {
+        $cost = $c->[0][1];
+    } elsif ($bits >= $c->[-1][0]) {
+        $cost = $c->[-1][1];
+    } else {
+        my $i = 1;
+        ++$i while $bits > $c->[$i][0];
+        my $f = ($bits - $c->[$i - 1][0]) / ($c->[$i][0] - $c->[$i - 1][0]);
+        $cost = $c->[$i - 1][1] * ($c->[$i][1] / $c->[$i - 1][1]) ** $f;
+    }
+    return ($cost, $sq_multi_pass{$t} // 0.25);
+}
 my $EXACT = 1000;   # below this, primes are taken individually
 my %work;           # with -v: predicted work at each depth
 my %flip_work;      # with -v: run_flip_pqsq() counts
@@ -326,11 +351,15 @@ sub walk_cost {
     my $multi = $cost{multi0} + $noc * $cost{multi1};
     if ($st->{nsq}) {
         my $sq = $batch->{sq};
-        my $psq = is_prime_t($st->{pos}{ $sq->{vi} }{t})
-                ? p_prime($st->{root_bits}, $cost{K_sq}) : $cost{P_sq_multi};
-        return $cost{setup_sq} + $st->{r} * ($cost{loop_sq}
+        my($ctest, $psq) = is_prime_t($st->{pos}{ $sq->{vi} }{t})
+                ? ($cost{test_sq}, p_prime($st->{root_bits}, $cost{K_sq}))
+                : sq_multi($st->{root_bits}, $st->{pos}{ $sq->{vi} }{t});
+        # a walk expected to cover r < 1 root iterations mostly never
+        # happens: apply_single() rejects the allocation on overflow
+        my $setup = $cost{setup_sq} * ($st->{r} < 1 ? $st->{r} : 1);
+        return $setup + $st->{r} * ($cost{loop_sq}
                 + $sq->{pinv} * $st->{pinv}
-                * ($cost{test_sq} + $psq * ($pr + $st->{pp} * $multi)));
+                * ($ctest + $psq * ($pr + $st->{pp} * $multi)));
     }
     return $st->{r} * ($cost{loop} + $batch->{pinv} * $st->{pinv}
             * ($pr + $st->{pp} * $multi));
@@ -349,6 +378,21 @@ sub root_factor {
     my $c = $d * invmod($sq->{q} % $p, $p) % $p;
     my $h = gcd($sq->{g}, $p - 1);
     return (powmod($c, ($p - 1) / $h, $p) == 1) ? $h : 0;
+}
+
+# average over primes of 1 / gcd(g, p - 1), the chance that a random
+# residue is a g-th power residue mod p
+{
+    my %mean;
+    sub mean_survive {
+        my($g) = @_;
+        return $mean{$g} //= do {
+            my @p = @{ primes($EXACT, 20 * $EXACT) };
+            my $sum = 0;
+            $sum += 1 / gcd($g, $_ - 1) for @p;
+            $sum / @p;
+        };
+    }
 }
 
 # state after allocating p^(x-1) at position vi
@@ -438,18 +482,26 @@ sub flip_cost {
     my $xl = 2 * $x;
     my $lim = 2 ** ($bits / ($xl - 1));
     my $cprime = $st->{nsq} ? $cost{prime_sq} : $cost{prime};
+    # if p^(2x-1) leaves an odd tau, v_i becomes a further fixed power,
+    # which apply_allocv() rejects about half the time as impossible
+    my $rest = $p->{t} / $xl;
+    my $square_ok = (($rest & 1) && $rest > 1) ? 0.5 : 1;
     my $cost = 0;
     for (buckets($p->{maxforce}, $lim)) {
         my($count, $q, $exact) = @$_;
         $cost += $count * $cprime;
+        # chance the existing fixed power still has roots: exact below
+        # $EXACT, else 1 / (number of roots when there are any)
         my $f = root_factor($vi, $q, $exact);
-        next unless $f;
+        my $survive = !$batch->{sq} || $vi == $batch->{sq}{vi} ? 1
+                : $exact ? ($f ? 1 : 0) : mean_survive($batch->{sq}{g});
+        $survive *= $square_ok;
+        next unless $survive;
+        $flip_work{outer_ok} += $count * $survive;
         my $phigh = 2 ** (($bits - ($xl - 1) * log($q) / log(2)) / ($x - 1));
         next if $phigh <= $pf;
-        # a fraction f / (average 1) of outer allocations leave a square
-        my $inner = $count * ($f > 1 ? 1 : $f) * (li($phigh) - li($pf));
+        my $inner = $count * $survive * (li($phigh) - li($pf));
         $cost += $inner * $cost{walk1_flip};
-        $flip_work{outer_ok} += $count * ($f > 1 ? 1 : $f);
         $flip_work{inner} += $inner;
     }
     $flip_work{outer} += li($lim) - li($p->{maxforce});
@@ -513,9 +565,17 @@ sub node_cost {
             next if $exact && $q <= $batch->{fmax};
             my $f = root_factor($vi, $q, $exact);
             next unless $f;
+            my $n = $count;
+            if (!$exact && $st->{nsq} && $vi != $batch->{sq}{vi}) {
+                # only some bucketed primes leave the fixed power any roots;
+                # those that do have correspondingly more
+                my $ms = mean_survive($batch->{sq}{g});
+                $n *= $ms;
+                $f /= $ms;
+            }
             my $child = allocate($st, $vi, $x, $q, $f);
             $child->{depth} = $depth + 1;
-            $cost += $count * node_cost($w, $child, $memo, $weight * $count);
+            $cost += $n * node_cost($w, $child, $memo, $weight * $n);
         }
     }
     return $memo->{$key} = $cost;
