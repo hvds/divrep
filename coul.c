@@ -2909,13 +2909,18 @@ int inv_comparator(const void *va, const void *vb) {
  *   G lvl vi x ti p cap rw sq dec
  *       one per walk/recurse gate decision in prep_unforced_x(): rw is
  *       r_walk (gain applied), sq prev_level->have_square, dec W or R
- *   R lvl np dt
- *       closes a gate R decision: primes tried at that level and wall
- *       time of the whole subtree (nested R and walks included)
+ *   R lvl np dt t
+ *       closes a gate R decision: primes tried at that level, wall
+ *       time of the whole subtree (nested R and walks included), and
+ *       the time since the first record
+ *   C lvl thr t
+ *       an open R decision's loop first tried a prime p > thr, at time
+ *       t; with the matching R record this bounds the time a -W<thr>
+ *       run would have moved to walk_midp()
  *   W lvl org ati nqc dt cause rm raq inv npc noc pbits obits
  *     ninv nprime nmulti tprime tmulti pinv_pred pprime_pred
  *       one per walk_v() call. org: G=gate, F=forced (limp==0), B=best_v
- *       walk_now, O=other. cause: M/m no minimum yet (m: minp is 0),
+ *       walk_now, M=walk_midp(), O=other. cause: M/m no minimum yet (m: minp is 0),
  *       Z residue m > zmax, E range empty from the zmin side, N
  *       nonempty. rm/raq: bit-size of m and aq relative to zmax.
  *       The rest are for the nqc == 0 sweep only: inv[] count, number
@@ -2925,6 +2930,10 @@ int inv_comparator(const void *va, const void *vb) {
  *       model predictions of the inverse-filter pass rate (exact, from
  *       inv[]) and of the test_primes() pass rate (prod 4.8/(b ln 2)
  *       over need_prime residuals of b bits).
+ *   B, BP: batch-level estimator inputs, see gs_batch_record()
+ *   P lvl tried dt
+ *       one per walk_midp() call (-W): (p, vi, x) combinations tried and
+ *       wall time of the whole midp phase for the batch at lvl
  * The stage timing adds two clock_gettime() calls per inverse-filter
  * pass, inflating test_primes() time slightly; the log for a busy run
  * can reach GB, so use short runs or single -I/-b batches.
@@ -2940,6 +2949,7 @@ static char gs_cause;       /* M/m: no minimum (m: minp 0), Z: m > zmax,
 static double gs_rm, gs_raq;    /* log2(m / zmax), log2(aq / zmax) */
 /* per-walk structure and stage pass counts (nqc == 0 sweep only) */
 static uint gs_inv, gs_npc, gs_noc;
+static ulong gs_mp_tried;           /* walk_midp(): (p, vi, x) tried */
 static double gs_pbits, gs_obits;   /* mean residual bits, prime/other */
 static ulong gs_n_inv, gs_n_prime, gs_n_multi;
 static double gs_t_prime, gs_t_multi;   /* time inside test_primes/test_multi */
@@ -2947,10 +2957,26 @@ static double gs_pinv_pred, gs_pprime_pred; /* model predictions, see walk_v */
 static double gs_rec_t0[GS_MAXLEVEL];
 static ulong gs_rec_np[GS_MAXLEVEL];
 static bool gs_rec_open[GS_MAXLEVEL];
+/* p thresholds for C records: when a recurse loop's p first exceeds
+ * gs_thr[i], log the time, so the cost of the part of the search that a
+ * -W<gs_thr[i]> run would move to walk_midp() can be measured */
+static const ulong gs_thr[] = {
+    1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000,
+    1000000, 2000000, 5000000, 10000000
+};
+#define GS_NTHR (sizeof(gs_thr) / sizeof(gs_thr[0]))
+static uint gs_thr_i[GS_MAXLEVEL];
 static double gs_now(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+static double gs_t_base = -1;
+static inline double gs_rel(void) {
+    double t = gs_now();
+    if (gs_t_base < 0)
+        gs_t_base = t;
+    return t - gs_t_base;
 }
 static void gs_close(void) {
     if (gs_fp)
@@ -2970,8 +2996,8 @@ static FILE *gs_file(void) {
 }
 static inline void gs_rec_end(uint lvl) {
     if (lvl < GS_MAXLEVEL && gs_rec_open[lvl]) {
-        fprintf(gs_file(), "R %u %lu %.9f\n", lvl, gs_rec_np[lvl],
-                gs_now() - gs_rec_t0[lvl]);
+        fprintf(gs_file(), "R %u %lu %.9f %.6f\n", lvl, gs_rec_np[lvl],
+                gs_now() - gs_rec_t0[lvl], gs_rel());
         gs_rec_open[lvl] = 0;
     }
 }
@@ -4452,6 +4478,10 @@ void walk_midp(t_level *prev_level, bool recover) {
     in_midp = 1;
     cur_level->is_forced = 0;
     midppc = 0;
+#ifdef GATE_STATS
+    double gs_mp_t0 = gs_now();
+    gs_mp_tried = 0;
+#endif
     prep_midp(cur_level);
     if (midppc == 0)
         goto walk_midp_done;
@@ -4508,9 +4538,13 @@ void walk_midp(t_level *prev_level, bool recover) {
             }
             vi = mp->vi;
             x = mp->x;
+#ifdef GATE_STATS
+            ++gs_mp_tried;
+#endif
             if (apply_single(prev_level, cur_level, vi, p, x)) {
                 if (need_work)
                     diag_plain(cur_level);
+                GS_ORIGIN('M');
                 walk_v(cur_level, Z(zero));
                 --cur_vlevel[vi];   /* unallocate */
             }
@@ -4520,6 +4554,10 @@ void walk_midp(t_level *prev_level, bool recover) {
     }
   walk_midp_done:
     in_midp = 0;
+#ifdef GATE_STATS
+    fprintf(gs_file(), "P %u %lu %.9f\n", prev_level->level, gs_mp_tried,
+            gs_now() - gs_mp_t0);
+#endif
 }
 
 uint relative_valuation(uint i, ulong p, uint e) {
@@ -4653,6 +4691,87 @@ bool apply_batch(
     return 1;
 }
 
+#ifdef GATE_STATS
+/* B/BP records: the batch-level inputs of the per-batch cost estimator.
+ *   B lvl X pinv zbits cpu
+ *       X = (zmax - zmin) / aq at the batch, pinv the inverse-filter pass
+ *       rate a walk at the batch level would see, zbits = log2(zmax),
+ *       cpu the process CPU time used before this batch started
+ *   BP vi x t L qbits
+ *       for each position vi and each allocation p^{x-1} it could still
+ *       take (x a non-power-of-2 divisor of its remaining t), the batch-
+ *       level limit L on p (as prep_midp() computes it) and log2(q_vi);
+ *       x == 0 marks a position that already needs a prime (t == 2)
+ */
+static void gs_batch_record(t_level *cur_level) {
+    FILE *fp = gs_file();
+    mpz_t *aq = &cur_level->aq, *m = &cur_level->rq;
+    mpz_t qq, o, tmp, mt;
+    mpz_init(qq); mpz_init(o); mpz_init(tmp); mpz_init(mt);
+    ulong mods[256]; ulong res[256][64]; uint nres[256]; uint nm = 0;
+    double zb = log2(mpz_get_d(zmax));
+    for (uint vi = 0; vi < k; ++vi) {
+        t_value *vp = &value[vi];
+        uint vl = cur_vlevel[vi];
+        t_allocation *ap = &vp->alloc[vl - 1];
+        double qb = log2(mpz_get_d(ap->q));
+        mpz_divexact(qq, *aq, ap->q);
+        mpz_add_ui(o, *m, TYPE_OFFSET(vi));
+        mpz_divexact(o, o, ap->q);
+        for (uint ai = 1; ai < vl; ++ai) {
+            t_allocation *a = &vp->alloc[ai];
+            if (a->p == 2)
+                continue;
+            ulong inverse = small_divmod(o, qq, a->p);
+            if (inverse >= a->p)
+                continue;
+            ulong v = inverse ? a->p - inverse : 0;
+            uint mi;
+            for (mi = 0; mi < nm; ++mi)
+                if (mods[mi] == a->p)
+                    break;
+            if (mi == nm) {
+                if (nm == 256)
+                    continue;
+                mods[nm] = a->p;
+                nres[nm++] = 0;
+            }
+            uint ri;
+            for (ri = 0; ri < nres[mi]; ++ri)
+                if (res[mi][ri] == v)
+                    break;
+            if (ri == nres[mi] && nres[mi] < 64)
+                res[mi][nres[mi]++] = v;
+        }
+        uint t = ap->t;
+        if (t == 2) {
+            fprintf(fp, "BP %u 0 2 0 %.2f\n", vi, qb);
+            continue;
+        }
+        t_divisors *dp = &divisors[t];
+        for (uint di = 0; di < dp->alldiv; ++di) {
+            uint x = dp->div[di];
+            if (ispow2(x))
+                break;
+            mpz_add_ui(tmp, zmax, TYPE_OFFSET(vi));
+            mintau(cur_level, mt, t / x);
+            mpz_fdiv_q(tmp, tmp, mt);
+            mpz_fdiv_q(tmp, tmp, ap->q);
+            mpz_root(tmp, tmp, x - 1);
+            fprintf(fp, "BP %u %u %u %.6g %.2f\n", vi, x, t, mpz_get_d(tmp), qb);
+        }
+    }
+    double pinv = 1.0;
+    for (uint mi = 0; mi < nm; ++mi)
+        pinv *= 1.0 - (double)nres[mi] / mods[mi];
+    mpz_sub(tmp, zmax, zmin);
+    mpz_fdiv_q(tmp, tmp, *aq);
+    fprintf(fp, "B %u %.6g %.6g %.3f %.3f\n", cur_level->level,
+            mpz_get_d(tmp), pinv, zb, utime());
+    mpz_clear(qq); mpz_clear(o); mpz_clear(tmp); mpz_clear(mt);
+}
+#endif
+
 /* A complete set of forced primes has been allocated. We may process
  * this batch or skip it, according to batch options; we also handle
  * midp ("-W") here, and skip the rest (i.e. allocation of unforced
@@ -4685,6 +4804,9 @@ bool process_batch(t_level *cur_level, bool recover) {
         }
     }
   do_process:
+#ifdef GATE_STATS
+    gs_batch_record(cur_level);
+#endif
     if (need_midp) {
         walk_midp(cur_level, recover);
         if (midp_only)
@@ -5391,6 +5513,10 @@ e_pux prep_unforced_x(
             gs_rec_t0[lvl] = gs_now();
             gs_rec_np[lvl] = 0;
             gs_rec_open[lvl] = 1;
+            uint ti = 0;
+            while (ti < GS_NTHR && gs_thr[ti] < p)
+                ++ti;
+            gs_thr_i[lvl] = ti;
         }
     }
 #endif
@@ -6036,8 +6162,15 @@ void recurse(e_is jump_continue) {
             if (p > cur_level->limp)
                 goto continue_unforced_x;
 #ifdef GATE_STATS
-            if (level < GS_MAXLEVEL)
+            if (level < GS_MAXLEVEL && gs_rec_open[level]) {
                 ++gs_rec_np[level];
+                while (gs_thr_i[level] < GS_NTHR
+                        && p > gs_thr[gs_thr_i[level]]) {
+                    fprintf(gs_file(), "C %u %lu %.6f\n", level,
+                            gs_thr[gs_thr_i[level]], gs_rel());
+                    ++gs_thr_i[level];
+                }
+            }
 #endif
             if (p <= prev_level->maxp)
                 for (uint li = 1; li < level; ++li)
