@@ -837,6 +837,18 @@ void updated_zmax(void) {
     }
 }
 
+/* Record a new candidate, tightening zmax if allowed */
+void update_best(mpz_t c) {
+    if (!seen_best || mpz_cmp(c, best) <= 0) {
+        mpz_set(best, c);
+        ++seen_best;
+    }
+    if (improve_max && mpz_cmp(c, zmax) <= 0) {
+        mpz_sub_ui(zmax, c, 1);
+        updated_zmax();
+    }
+}
+
 /* Record a found candidate; returns FALSE if we should continue testing
  * larger candidates with the current set of allocations.
  */
@@ -848,14 +860,7 @@ bool candidate(mpz_t c) {
     keep_diag();
     double t1 = utime();
     report("202 Candidate %Zu (%.2fs)\n", c, seconds(t1));
-    if (!seen_best || mpz_cmp(c, best) <= 0) {
-        mpz_set(best, c);
-        ++seen_best;
-    }
-    if (improve_max && mpz_cmp(c, zmax) <= 0) {
-        mpz_sub_ui(zmax, c, 1);
-        updated_zmax();
-    }
+    update_best(c);
     return improve_max;
 }
 
@@ -1518,9 +1523,7 @@ void apply_202(char *s) {
         fail("error parsing 202 line '%s'", s);
     s[end] = 0;
     mpz_init_set_str(cand, &s[start], 10);
-    if (!seen_best || mpz_cmp(best, cand) >= 0)
-        mpz_set(best, cand);
-    seen_best = 1;
+    update_best(cand);
     mpz_clear(cand);
 }
 
@@ -1603,10 +1606,6 @@ void recover(FILE *fp) {
             ;   /* batch number */
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
-    }
-    if (improve_max && seen_best && mpz_cmp(best, zmax) < 0) {
-        mpz_set(zmax, best);
-        updated_zmax();
     }
     if (last305 || last315) {
         if (!last315)
@@ -5872,7 +5871,6 @@ int main(int argc, char **argv, char **envp) {
     if (pend202) {
         apply_202(pend202);
         free(pend202);
-        updated_zmax();
     }
     if (jump != IS_FINISH)
         recurse(jump);
