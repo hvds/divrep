@@ -2936,7 +2936,14 @@ int inv_comparator(const void *va, const void *vb) {
  *       whether the square's tau is a prime power (tau_prime_test()),
  *       and log2 of the root limit. For S walks ninv counts inverse
  *       passes, nprime/tprime cover test_zprimes() only.
- *   B, BP: batch-level estimator inputs, see gs_batch_record()
+ *   B, BP, BS: batch-level estimator inputs, see gs_batch_record()
+ *   F lvl oldp outer ok inner dt
+ *       one per run_flip_pqsq() call: the flip point, outer primes tried
+ *       and accepted by apply_single(), primes iterated by its
+ *       walk_1_set() calls, and wall time
+ *   X lvl vlevel dt
+ *       one per walk_6x() call (STRATEGY_6X): the allocation count at
+ *       v_{sq0-2} and wall time
  *   P lvl tried dt
  *       one per walk_midp() call (-W): (p, vi, x) combinations tried and
  *       wall time of the whole midp phase for the batch at lvl
@@ -2956,6 +2963,7 @@ static double gs_rm, gs_raq;    /* log2(m / zmax), log2(aq / zmax) */
 /* per-walk structure and stage pass counts (nqc == 0 sweep only) */
 static uint gs_inv, gs_npc, gs_noc;
 static ulong gs_mp_tried;           /* walk_midp(): (p, vi, x) tried */
+static ulong gs_w1s_primes;         /* walk_1_set(): primes iterated */
 static double gs_pbits, gs_obits;   /* mean residual bits, prime/other */
 static ulong gs_n_inv, gs_n_prime, gs_n_multi;
 static double gs_t_prime, gs_t_multi;   /* time inside test_primes/test_multi */
@@ -2964,6 +2972,7 @@ static double gs_pinv_pred, gs_pprime_pred; /* model predictions, see walk_v */
  * own test, time in it, residue count, root degree, log2 of the root limit */
 static ulong gs_sq_iter, gs_n_sq;
 static double gs_t_sq, gs_rbits;
+static double gs_sq_pinv_pred;      /* inverse pass rate over root residues */
 static uint gs_rc, gs_xi, gs_pp;
 static double gs_rec_t0[GS_MAXLEVEL];
 static ulong gs_rec_np[GS_MAXLEVEL];
@@ -3011,6 +3020,71 @@ static inline void gs_rec_end(uint lvl) {
                 gs_now() - gs_rec_t0[lvl], gs_rel());
         gs_rec_open[lvl] = 0;
     }
+}
+/* Predicted inverse-filter pass rate for a square (or higher power)
+ * walk. The walk visits r = r0 + j.qq for each of the root residues r0,
+ * and tests ati = (r^g - o) / qq against inv[]; for a modulus m the
+ * outcome depends on j mod m, so the pass rate is exact from enumerating
+ * j for each r0 and each small m (r^g takes few values mod small m, so
+ * ati is far from uniform), with 1 - excluded/m for large m. Returns -1
+ * unless the walk is expected to make at least 1000 iterations.
+ */
+static double gs_square_pinv(t_mod *inv, uint inv_count, t_results *xr,
+        mpz_t qq, mpz_t o, uint g, mpz_t endr) {
+    if (mpz_get_d(endr) / mpz_get_d(qq) * xr->count < 1000)
+        return -1;
+    ulong mods[256];
+    uint nm = 0;
+    for (uint i = 0; i < inv_count && nm < 256; ++i) {
+        uint j;
+        for (j = 0; j < nm; ++j)
+            if (mods[j] == inv[i].m)
+                break;
+        if (j == nm)
+            mods[nm++] = inv[i].m;
+    }
+    mpz_t M, t, u;
+    mpz_init(M); mpz_init(t); mpz_init(u);
+    uint nr = xr->count > 64 ? 64 : xr->count;
+    double sum = 0;
+    for (uint ri = 0; ri < nr; ++ri) {
+        mpz_t *r0 = &xr->r[ri * xr->count / nr];
+        double prod = 1;
+        for (uint mi = 0; mi < nm; ++mi) {
+            ulong m = mods[mi];
+            uint nex = 0;
+            for (uint i = 0; i < inv_count; ++i)
+                if (inv[i].m == m)
+                    ++nex;
+            if (m > 2000) {
+                prod *= 1.0 - (double)nex / m;
+                continue;
+            }
+            mpz_mul_ui(M, qq, m);
+            uint pass = 0;
+            for (ulong j = 0; j < m; ++j) {
+                mpz_mul_ui(t, qq, j);
+                mpz_add(t, t, *r0);
+                mpz_powm_ui(t, t, g, M);
+                mpz_sub(t, t, o);
+                mpz_mod(t, t, M);
+                mpz_fdiv_q(t, t, qq);
+                ulong a = mpz_get_ui(t);
+                bool excl = 0;
+                for (uint i = 0; i < inv_count; ++i)
+                    if (inv[i].m == m && inv[i].v == a) {
+                        excl = 1;
+                        break;
+                    }
+                if (!excl)
+                    ++pass;
+            }
+            prod *= (double)pass / m;
+        }
+        sum += prod;
+    }
+    mpz_clear(M); mpz_clear(t); mpz_clear(u);
+    return sum / nr;
 }
 #   define GS_ORIGIN(c) (gs_origin = (c))
 #   define walk_v walk_v_inner
@@ -3405,6 +3479,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
         gs_xi = xi;
         gs_pp = prime_power;
         gs_rbits = log2(mpz_get_d(Z(wv_endr)) + 1);
+        gs_sq_pinv_pred = gs_square_pinv(inv, inv_count, xr, *qqi, *oi, xi,
+                Z(wv_endr));
 #endif
 
         while (1) {
@@ -3590,6 +3666,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
     gs_sq_iter = gs_n_sq = 0;
     gs_t_sq = gs_rbits = 0;
     gs_rc = gs_xi = gs_pp = 0;
+    gs_sq_pinv_pred = 0;
     double t0 = gs_now();
     walk_v_inner(cur_level, start);
     double dt = gs_now() - t0;
@@ -3597,12 +3674,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
      * minimum yet) */
     fprintf(gs_file(), "W %u %c %.0f %d %.9f %c %.0f %.0f"
             " %u %u %u %.1f %.1f %lu %lu %lu %.9f %.9f %.5g %.5g"
-            " %lu %lu %.9f %u %u %u %.1f\n",
+            " %lu %lu %.9f %u %u %u %.1f %.5g\n",
             cur_level->level, org, gs_ati, gs_nqc, dt, gs_cause, gs_rm,
             gs_raq, gs_inv, gs_npc, gs_noc, gs_pbits, gs_obits,
             gs_n_inv, gs_n_prime, gs_n_multi, gs_t_prime, gs_t_multi,
             gs_pinv_pred, gs_pprime_pred, gs_sq_iter, gs_n_sq, gs_t_sq,
-            gs_rc, gs_xi, gs_pp, gs_rbits);
+            gs_rc, gs_xi, gs_pp, gs_rbits, gs_sq_pinv_pred);
 }
 #endif
 
@@ -3789,6 +3866,9 @@ void walk_1_set(
         }
 #ifdef VERBOSE
         ++w1s_tried;
+#endif
+#ifdef GATE_STATS
+        ++gs_w1s_primes;
 #endif
         if (need_work) {
             /* temporarily make this prime power visible to diag code */
@@ -4756,15 +4836,29 @@ bool apply_batch(
 
 #ifdef GATE_STATS
 /* B/BP records: the batch-level inputs of the per-batch cost estimator.
- *   B lvl X pinv zbits cpu
+ *   B lvl X pinv zbits cpu k strategy
  *       X = (zmax - zmin) / aq at the batch, pinv the inverse-filter pass
  *       rate a walk at the batch level would see, zbits = log2(zmax),
- *       cpu the process CPU time used before this batch started
- *   BP vi x t L qbits
+ *       cpu the process CPU time used before this batch started, k, and
+ *       the strategy best_v() will use for this batch (STRATEGY_6X only
+ *       if its conditions hold here)
+ *   BP vi x t L qbits maxforce
  *       for each position vi and each allocation p^{x-1} it could still
  *       take (x a non-power-of-2 divisor of its remaining t), the batch-
- *       level limit L on p (as prep_midp() computes it) and log2(q_vi);
- *       x == 0 marks a position that already needs a prime (t == 2)
+ *       level limit L on p (as prep_midp() computes it), log2(q_vi),
+ *       and maxforce[vi] (unforced allocations there use primes above
+ *       it); x == 0 marks a position that already needs a prime (t == 2)
+ *   BM u mintau
+ *       mintau(u) at the batch level, for each proper divisor u of n
+ *   BR u x mintau
+ *       mintau_restricted(u, x) at the batch level, for each restricted x
+ *       (as limit_p() uses them) and each proper divisor u of n
+ *   BS sqi t g rc root Xsq pinv q
+ *       if one value is a fixed power (have_square == 1): its position,
+ *       remaining tau and root degree, the number of root residues, the
+ *       root limit, Xsq = rc * root / qq (root iterations to walk it at
+ *       the batch level), the inverse pass rate over root residues, and
+ *       its q
  */
 static void gs_batch_record(t_level *cur_level) {
     FILE *fp = gs_file();
@@ -4808,7 +4902,7 @@ static void gs_batch_record(t_level *cur_level) {
         }
         uint t = ap->t;
         if (t == 2) {
-            fprintf(fp, "BP %u 0 2 0 %.2f\n", vi, qb);
+            fprintf(fp, "BP %u 0 2 0 %.2f %u\n", vi, qb, maxforce[vi]);
             continue;
         }
         t_divisors *dp = &divisors[t];
@@ -4821,16 +4915,69 @@ static void gs_batch_record(t_level *cur_level) {
             mpz_fdiv_q(tmp, tmp, mt);
             mpz_fdiv_q(tmp, tmp, ap->q);
             mpz_root(tmp, tmp, x - 1);
-            fprintf(fp, "BP %u %u %u %.6g %.2f\n", vi, x, t, mpz_get_d(tmp), qb);
+            fprintf(fp, "BP %u %u %u %.6g %.2f %u\n", vi, x, t, mpz_get_d(tmp),
+                    qb, maxforce[vi]);
         }
     }
     double pinv = 1.0;
     for (uint mi = 0; mi < nm; ++mi)
         pinv *= 1.0 - (double)nres[mi] / mods[mi];
+    if (cur_level->have_square == 1) {
+        /* the root space of the fixed power at sq0: iterations
+         * rc * root / qq, and the inverse pass rate over root residues */
+        t_value *vp = &value[sq0];
+        t_allocation *ap = &vp->alloc[cur_vlevel[sq0] - 1];
+        uint g = divisors[ap->t].gcddm;
+        t_results *xr = res_array(cur_level->level);
+        t_mod im[256 * 64];
+        uint nim = 0;
+        for (uint mi = 0; mi < nm; ++mi)
+            for (uint ri = 0; ri < nres[mi]; ++ri)
+                im[nim++] = (t_mod){ .v = res[mi][ri], .m = mods[mi] };
+        mpz_divexact(qq, *aq, ap->q);
+        mpz_add_ui(o, *m, TYPE_OFFSET(sq0));
+        mpz_divexact(o, o, ap->q);
+        mpz_add_ui(tmp, zmax, TYPE_OFFSET(sq0));
+        mpz_fdiv_q(tmp, tmp, ap->q);
+        mpz_root(tmp, tmp, g);
+        double root = mpz_get_d(tmp);
+        mpz_set_d(mt, 1e300);   /* force the full calculation */
+        double sq_pinv = gs_square_pinv(im, nim, xr, qq, o, g, mt);
+        gmp_fprintf(fp, "BS %u %u %u %u %.6g %.6g %.6g %Zd\n", sq0, ap->t, g,
+                xr->count, root, root * xr->count / mpz_get_d(qq), sq_pinv,
+                ap->q);
+    }
+    t_divisors *nd = &divisors[n];
+    for (uint di = 0; di < nd->alldiv; ++di) {
+        /* only proper divisors are needed (t/x for x > 1); mintau(n)
+         * is not supported */
+        if (nd->div[di] == n)
+            continue;
+        mintau(cur_level, mt, nd->div[di]);
+        fprintf(fp, "BM %u %.6g\n", nd->div[di], mpz_get_d(mt));
+    }
+    /* mintau_restricted(u, x) where limit_p() would use it: x and u
+     * sharing their highest prime */
+    for (uint ri = 0; ri < restricted_count; ++ri) {
+        uint x = restricted[ri];
+        for (uint di = 0; di < nd->alldiv; ++di) {
+            uint u = nd->div[di];
+            if (u == n)
+                continue;
+            mintau_restricted(cur_level, mt, u, x);
+            fprintf(fp, "BR %u %u %.6g\n", u, x, mpz_get_d(mt));
+        }
+    }
     mpz_sub(tmp, zmax, zmin);
     mpz_fdiv_q(tmp, tmp, *aq);
-    fprintf(fp, "B %u %.6g %.6g %.3f %.3f\n", cur_level->level,
-            mpz_get_d(tmp), pinv, zb, utime());
+    /* strategy may be a stale STRATEGY_6X from an earlier batch: report
+     * what best_6x() will do, reverting unless its conditions hold here */
+    uint eff_strategy = strategy;
+    if (eff_strategy == STRATEGY_6X
+            && !(cur_level->have_square && sq0 >= 2))
+        eff_strategy = prev_strategy;
+    fprintf(fp, "B %u %.6g %.6g %.3f %.3f %u %u\n", cur_level->level,
+            mpz_get_d(tmp), pinv, zb, utime(), k, eff_strategy);
     mpz_clear(qq); mpz_clear(o); mpz_clear(tmp); mpz_clear(mt);
 }
 #endif
@@ -5999,6 +6146,10 @@ void run_flip_pqsq(uint vi) {
     in_flip = 1;
     flip_vi = vi;
     flip_oldp = oldp;
+#ifdef GATE_STATS
+    double gs_f_t0 = gs_now();
+    ulong gs_f_w1 = gs_w1s_primes, gs_f_outer = 0, gs_f_ok = 0;
+#endif
     prev_level->x = 0;      /* hide entry from level[] walkers */
     prev_level->limp = 0;   /* ensure prev will know it is complete on return */
     --cur_vlevel[vi];       /* temp deallocate */
@@ -6025,11 +6176,17 @@ void run_flip_pqsq(uint vi) {
             for (uint li = 1; li < level; ++li)
                 if (p == levels[li].p && levels[li].x > 1)
                     goto redo_flip;
+#ifdef GATE_STATS
+        ++gs_f_outer;
+#endif
         /* Failure most likely means it does not leave a valid square;
          * we pass the grandparent as prev_level to reflect our notional
          * deallocation of prev_level. */
         if (!apply_single(anc_level, cur_level, vi, p, xl))
             continue;
+#ifdef GATE_STATS
+        ++gs_f_ok;
+#endif
         ap = &vp->alloc[cur_vlevel[vi] - 1];
         if (need_work)
             diag_plain(cur_level);
@@ -6048,6 +6205,10 @@ void run_flip_pqsq(uint vi) {
     prev_level->x = xs;
     ++cur_vlevel[vi];
     in_flip = 0;
+#ifdef GATE_STATS
+    fprintf(gs_file(), "F %u %lu %lu %lu %lu %.9f\n", level, oldp, gs_f_outer,
+            gs_f_ok, gs_w1s_primes - gs_f_w1, gs_now() - gs_f_t0);
+#endif
 }
 
 /* we emulate recursive calls via the levels[] array */
@@ -6116,7 +6277,17 @@ void recurse(e_is jump_continue) {
                     fail("panic: unknown best_v() result %u (k=%u)", vi, k);
                   case BV_6X - BV_SPECIAL:
                     /* ready for a walk */
+#ifdef GATE_STATS
+                  {
+                    double gs_t0 = gs_now();
+                    uint gs_vl = cur_vlevel[cur_level->vi];
                     walk_6x(cur_level->vi);
+                    fprintf(gs_file(), "X %u %u %.9f\n", level, gs_vl,
+                            gs_now() - gs_t0);
+                  }
+#else
+                    walk_6x(cur_level->vi);
+#endif
                     goto derecurse;
                   case BV_NEXTX - BV_SPECIAL:
                     /* nothing left to do for this x */
