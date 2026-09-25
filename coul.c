@@ -4060,6 +4060,14 @@ void prep_midp(t_level *cur_level) {
         uint t = ap->t;
         if (highpow ? t == 1 : ispow2(t))
             continue;
+        /* Under need_maxp no strategy allocates at a position whose
+         * remaining tau is an odd prime: best_v0() .. best_v4() skip it
+         * ("skip prime powers when capped"), and best_fixed() and
+         * best_6x() walk instead. Such a position is a fixed square (or
+         * higher power), covered by the walks for every size of root,
+         * so a p^{x-1} allocation here would only duplicate that. */
+        if ((t & 1) && divisors[t].alldiv == 2)
+            continue;
         t_divisors *dp = &divisors[t];
         /* try all divisors until we reach the powers of 2 */
         for (uint di = 0; di < dp->alldiv; ++di) {
@@ -4620,8 +4628,10 @@ uint best_6x(t_level *cur_level) {
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
     uint t = vp->alloc[vlevel - 1].t;
+    /* odd t makes v_i a second square: Pell case, walk will be fast;
+     * prep_midp() relies on us not allocating here when t is an odd prime */
     if (t & 1)
-        return BV_WALK;     /* Pell case, walk will be fast */
+        return BV_WALK;
     if (t != 2)
         return vi;          /* allocate some more */
     cur_level->vi = vi;
@@ -4772,7 +4782,11 @@ uint best_fixed(t_level *cur_level) {
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap_last = &vp->alloc[vlevel - 1];
-    if (ap_last->t == 1)
+    uint t = ap_last->t;
+    if (t == 1)
+        return BV_WALK;
+    /* skip prime powers when capped (invariant) */
+    if (need_maxp && (t & 1) && divisors[t].alldiv == 2)
         return BV_WALK;
     return vi;
 }
@@ -4956,6 +4970,23 @@ e_pux prep_unforced_x(
         }
         return PUX_SKIP_THIS_X; /* nothing to do here */
     }
+    /* TODO: rather than diverting odd-prime-tau positions to a walk under
+     * need_maxp, consider handling them always via walk_1_set(), as the
+     * uncapped search does. That would mean not applying the maxp cap in
+     * limit_p() when nextt == 1 with t prime (so walk_1_set() covers every p
+     * itself, even under -W/-p), and removing the "skip prime powers when
+     * capped" checks from best_v0() .. best_v4() and best_fixed();
+     * prep_midp() skip would remain valid, and capped and uncapped runs
+     * would then choose positions identically. Correctness should be
+     * unaffected, but performance would change in both directions:
+     * walk_1_set() does a CRT check for every prime up to (zmax/q)^{1/(t-1)},
+     * while a square walk visits only the rc residue classes mod qq.
+     * Note also that the nextt == 1 path in prep_unforced_x() is taken
+     * before the gate, so walk_1_set() is never weighed against a walk.
+     * Ideally the cost model would make that choice, as the gate does
+     * for walk vs recurse.
+     * This probably needs more progress on calibration before we consider it.
+     */
     if (nextt == 1) {
         cur_level->have_min = prev_level->have_min;
         walk_1_set(prev_level, cur_level, vi, p, limp, x);
