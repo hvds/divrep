@@ -1199,8 +1199,10 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
                 taum[j].bits = taum[count].bits;
                 taum[j].B1 = taum[count].B1;
                 taum[j].tlim = taum[count].tlim;
+                goto tmr_redo;
             }
-            goto tmr_redo;
+            /* don't redo this j, it has fallen off the end */
+            continue;
         }
     }
     /* handle failure */
