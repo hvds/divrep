@@ -2903,6 +2903,84 @@ int inv_comparator(const void *va, const void *vb) {
     return (b->m < a->m) - (a->m < b->m);
 }
 
+#ifdef GATE_STATS
+/* Gate-calibration instrumentation (make GATE_STATS=1). Writes to the
+ * file named by $GATE_STATS (default gate_stats.log), one line per event:
+ *   G lvl vi x ti p cap rw sq dec
+ *       one per walk/recurse gate decision in prep_unforced_x(): rw is
+ *       r_walk (gain applied), sq prev_level->have_square, dec W or R
+ *   R lvl np dt
+ *       closes a gate R decision: primes tried at that level and wall
+ *       time of the whole subtree (nested R and walks included)
+ *   W lvl org ati nqc dt cause rm raq inv npc noc pbits obits
+ *     ninv nprime nmulti tprime tmulti pinv_pred pprime_pred
+ *       one per walk_v() call. org: G=gate, F=forced (limp==0), B=best_v
+ *       walk_now, O=other. cause: M/m no minimum yet (m: minp is 0),
+ *       Z residue m > zmax, E range empty from the zmin side, N
+ *       nonempty. rm/raq: bit-size of m and aq relative to zmax.
+ *       The rest are for the nqc == 0 sweep only: inv[] count, number
+ *       of need_prime / need_other positions and their mean residual
+ *       bits; how many ati passed the inverse filter, test_primes() and
+ *       test_multi(); time inside test_primes() and test_multi(); and
+ *       model predictions of the inverse-filter pass rate (exact, from
+ *       inv[]) and of the test_primes() pass rate (prod 4.8/(b ln 2)
+ *       over need_prime residuals of b bits).
+ * The stage timing adds two clock_gettime() calls per inverse-filter
+ * pass, inflating test_primes() time slightly; the log for a busy run
+ * can reach GB, so use short runs or single -I/-b batches.
+ */
+#define GS_MAXLEVEL 256
+static FILE *gs_fp;
+static char gs_origin = 'O';
+static double gs_ati;
+static int gs_nqc;
+static char gs_cause;       /* M/m: no minimum (m: minp 0), Z: m > zmax,
+                               E: range empty from the zmin side,
+                               N: nonempty range */
+static double gs_rm, gs_raq;    /* log2(m / zmax), log2(aq / zmax) */
+/* per-walk structure and stage pass counts (nqc == 0 sweep only) */
+static uint gs_inv, gs_npc, gs_noc;
+static double gs_pbits, gs_obits;   /* mean residual bits, prime/other */
+static ulong gs_n_inv, gs_n_prime, gs_n_multi;
+static double gs_t_prime, gs_t_multi;   /* time inside test_primes/test_multi */
+static double gs_pinv_pred, gs_pprime_pred; /* model predictions, see walk_v */
+static double gs_rec_t0[GS_MAXLEVEL];
+static ulong gs_rec_np[GS_MAXLEVEL];
+static bool gs_rec_open[GS_MAXLEVEL];
+static double gs_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+static void gs_close(void) {
+    if (gs_fp)
+        fclose(gs_fp);
+    gs_fp = NULL;
+}
+static FILE *gs_file(void) {
+    if (!gs_fp) {
+        const char *fn = getenv("GATE_STATS");
+        gs_fp = fopen(fn ? fn : "gate_stats.log", "w");
+        if (!gs_fp)
+            fail("GATE_STATS: cannot open output: %s", strerror(errno));
+        setvbuf(gs_fp, NULL, _IOFBF, 1 << 20);
+        atexit(gs_close);
+    }
+    return gs_fp;
+}
+static inline void gs_rec_end(uint lvl) {
+    if (lvl < GS_MAXLEVEL && gs_rec_open[lvl]) {
+        fprintf(gs_file(), "R %u %lu %.9f\n", lvl, gs_rec_np[lvl],
+                gs_now() - gs_rec_t0[lvl]);
+        gs_rec_open[lvl] = 0;
+    }
+}
+#   define GS_ORIGIN(c) (gs_origin = (c))
+#   define walk_v walk_v_inner
+static
+#else
+#   define GS_ORIGIN(c)
+#endif
 void walk_v(t_level *cur_level, mpz_t start) {
 #ifdef SQONLY
     if (!cur_level->have_square)
@@ -2910,6 +2988,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #endif
     if (!cur_level->have_min) {
         uint min = minp[cur_level->x - 1];
+#ifdef GATE_STATS
+        gs_cause = min ? 'M' : 'm';
+#endif
         if (min)
             level_setp(cur_level, min);
         return;
@@ -2930,6 +3011,14 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
     mpz_sub(Z(wv_end), zmax, *m);
     mpz_fdiv_q(Z(wv_end), Z(wv_end), *aq);
+#ifdef GATE_STATS
+    {
+        double lz = mpz_sizeinbase(zmax, 2);
+        gs_rm = mpz_sgn(*m) ? mpz_sizeinbase(*m, 2) - lz : -999;
+        gs_raq = mpz_sizeinbase(*aq, 2) - lz;
+    }
+    gs_cause = 'Z';
+#endif
     if (mpz_sgn(Z(wv_end)) < 0)
         return;
 
@@ -2939,6 +3028,10 @@ void walk_v(t_level *cur_level, mpz_t start) {
         mpz_sub(Z(wv_ati), zmin, *m);
         mpz_cdiv_q(Z(wv_ati), Z(wv_ati), *aq);
     }
+#ifdef GATE_STATS
+    gs_ati = mpz_get_d(Z(wv_end)) - mpz_get_d(Z(wv_ati)) + 1;
+    gs_cause = (gs_ati > 0) ? 'N' : 'E';
+#endif
 
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
@@ -2968,6 +3061,51 @@ void walk_v(t_level *cur_level, mpz_t start) {
             need_other[noc++] = vi;
     }
     g_q0 = q[0];
+#ifdef GATE_STATS
+    gs_nqc = nqc;
+    gs_inv = inv_count;
+    gs_npc = npc;
+    gs_noc = noc;
+    {
+        double zb = mpz_sizeinbase(zmax, 2), sp = 0, so = 0;
+        for (uint i = 0; i < npc; ++i)
+            sp += zb - mpz_sizeinbase(*q[need_prime[i]], 2);
+        for (uint i = 0; i < noc; ++i)
+            so += zb - mpz_sizeinbase(*q[need_other[i]], 2);
+        gs_pbits = npc ? sp / npc : 0;
+        gs_obits = noc ? so / noc : 0;
+        /* predicted inverse-filter pass rate: per distinct modulus m, the
+         * fraction of residues mod m not excluded (entries for the same m
+         * from different positions may coincide) */
+        gs_pinv_pred = 1.0;
+        for (uint i = 0; i < inv_count; ++i) {
+            bool seen = 0;
+            for (uint j = 0; j < i; ++j)
+                if (inv[j].m == inv[i].m) { seen = 1; break; }
+            if (seen)
+                continue;
+            uint distinct = 0;
+            for (uint j = i; j < inv_count; ++j) {
+                if (inv[j].m != inv[i].m)
+                    continue;
+                bool dup = 0;
+                for (uint l = i; l < j; ++l)
+                    if (inv[l].m == inv[j].m && inv[l].v == inv[j].v) { dup = 1; break; }
+                if (!dup)
+                    ++distinct;
+            }
+            gs_pinv_pred *= 1.0 - (double)distinct / inv[i].m;
+        }
+        /* predicted prime-stage pass rate: each need_prime residual of b
+         * bits is prime with probability ~ K / (b ln 2), K ~ 4.8 */
+        gs_pprime_pred = 1.0;
+        for (uint i = 0; i < npc; ++i) {
+            double b = zb - mpz_sizeinbase(*q[need_prime[i]], 2) + 0.5;
+            double pp = 4.8 / (b * 0.6931472);
+            gs_pprime_pred *= (pp < 1) ? pp : 1;
+        }
+    }
+#endif
 
 #if 0
     qsort(inv, inv_count, sizeof(t_mod), &inv_comparator);
@@ -3308,6 +3446,22 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #ifdef VERBOSE
         gmp_printf("prefilter_pass call=%u ati=%lu\n", g_walkv_call, ati);
 #endif
+#ifdef GATE_STATS
+        ++gs_n_inv;
+        double gs_t0 = gs_now();
+        bool gs_okp = test_primes(need_prime, npc, ati);
+        double gs_t1 = gs_now();
+        gs_t_prime += gs_t1 - gs_t0;
+        if (!gs_okp)
+            goto next_ati;
+        ++gs_n_prime;
+        g_ati = ati;
+        bool gs_okm = test_multi(need_other, noc, ati, t, walk_v_failure);
+        gs_t_multi += gs_now() - gs_t1;
+        if (!gs_okm)
+            goto next_ati;
+        ++gs_n_multi;
+#else
 #ifdef DEBUG_ALL
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -3322,6 +3476,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         g_ati = ati;
         if (!test_multi(need_other, noc, ati, t, walk_v_failure))
             goto next_ati;
+#endif
         /* have candidate: calculate and apply it */
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -3334,6 +3489,33 @@ void walk_v(t_level *cur_level, mpz_t start) {
     if (would_fail)
         fail("TODO: walk_v.end > 2^64");
 }
+#ifdef GATE_STATS
+#   undef walk_v
+void walk_v(t_level *cur_level, mpz_t start) {
+    char org = gs_origin;
+    gs_origin = 'O';
+    gs_ati = -1;
+    gs_nqc = -1;
+    gs_cause = '?';
+    gs_rm = gs_raq = 0;
+    gs_inv = gs_npc = gs_noc = 0;
+    gs_pbits = gs_obits = 0;
+    gs_n_inv = gs_n_prime = gs_n_multi = 0;
+    gs_t_prime = gs_t_multi = 0;
+    gs_pinv_pred = gs_pprime_pred = 0;
+    double t0 = gs_now();
+    walk_v_inner(cur_level, start);
+    double dt = gs_now() - t0;
+    /* ati == -1: returned before computing a range (empty, or no
+     * minimum yet) */
+    fprintf(gs_file(), "W %u %c %.0f %d %.9f %c %.0f %.0f"
+            " %u %u %u %.1f %.1f %lu %lu %lu %.9f %.9f %.5g %.5g\n",
+            cur_level->level, org, gs_ati, gs_nqc, dt, gs_cause, gs_rm,
+            gs_raq, gs_inv, gs_npc, gs_noc, gs_pbits, gs_obits,
+            gs_n_inv, gs_n_prime, gs_n_multi, gs_t_prime, gs_t_multi,
+            gs_pinv_pred, gs_pprime_pred);
+}
+#endif
 
 /* test the case where v_i has all divisors accounted for */
 void walk_1(t_level *cur_level, uint vi) {
@@ -5092,6 +5274,7 @@ e_pux prep_unforced_x(
     limp = limit_p(cur_level, vi, x, nextt);
     if (limp == 0) {
         /* force walk */
+        GS_ORIGIN('F');
 #ifdef SQONLY
         if (prev_level->have_square)
             walk_v(prev_level, Z(zero));
@@ -5177,6 +5360,16 @@ e_pux prep_unforced_x(
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
     }
     uint cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+#ifdef GATE_STATS
+    bool gs_walk = mpz_fits_ulong_p(Z(r_walk))
+        && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p);
+    fprintf(gs_file(), "G %u %u %u %u %lu %u %.6g %u %c\n",
+            (uint)(cur_level - levels), vi, x, ti, p, cap,
+            mpz_get_d(Z(r_walk)), prev_level->have_square,
+            gs_walk ? 'W' : 'R');
+    if (gs_walk)
+        GS_ORIGIN('G');
+#endif
     if (mpz_fits_ulong_p(Z(r_walk))
         && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p)
     ) {
@@ -5190,6 +5383,17 @@ e_pux prep_unforced_x(
 #endif
         return PUX_NOTHING_TO_DO;
     }
+#ifdef GATE_STATS
+    {
+        uint lvl = cur_level - levels;
+        if (lvl < GS_MAXLEVEL) {
+            gs_rec_end(lvl);    /* improve_max recompute: restart timing */
+            gs_rec_t0[lvl] = gs_now();
+            gs_rec_np[lvl] = 0;
+            gs_rec_open[lvl] = 1;
+        }
+    }
+#endif
   force_unforced:
     level_setp(cur_level, p);
     cur_level->x = x;
@@ -5733,6 +5937,7 @@ void recurse(e_is jump_continue) {
                     if (!prev_level->is_forced)
                         cur_level->next_best = 1;
                   walk_now:
+                    GS_ORIGIN('B');
 #ifdef SQONLY
                     if (prev_level->have_square)
                         walk_v(prev_level, Z(zero));
@@ -5756,6 +5961,9 @@ void recurse(e_is jump_continue) {
             goto have_unforced_x;
         }
       continue_unforced_x:
+#ifdef GATE_STATS
+        gs_rec_end(level);
+#endif
         ++cur_level->di;
       have_unforced_x:
         {
@@ -5827,6 +6035,10 @@ void recurse(e_is jump_continue) {
             ulong p = prime_iterator_next(&cur_level->piter);
             if (p > cur_level->limp)
                 goto continue_unforced_x;
+#ifdef GATE_STATS
+            if (level < GS_MAXLEVEL)
+                ++gs_rec_np[level];
+#endif
             if (p <= prev_level->maxp)
                 for (uint li = 1; li < level; ++li)
                     if (p == levels[li].p && levels[li].x > 1)

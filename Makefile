@@ -75,6 +75,11 @@ endif
 ifdef LADDER_STATS
     DEFINES += -DLADDER_STATS
 endif
+# Per-decision walk/recurse gate records, see coul.c (GATE_STATS env var
+# names the output file).
+ifdef GATE_STATS
+    DEFINES += -DGATE_STATS
+endif
 # Optional optimization when lower bound for search is a significant
 # proportion of the upper bound.
 ifdef LARGE_MIN
