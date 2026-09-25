@@ -2930,6 +2930,12 @@ int inv_comparator(const void *va, const void *vb) {
  *       model predictions of the inverse-filter pass rate (exact, from
  *       inv[]) and of the test_primes() pass rate (prod 4.8/(b ln 2)
  *       over need_prime residuals of b bits).
+ *       Then, for nqc == 1 square walks (cause S): root iterations, how
+ *       many passed the square position's own test (after the inverse
+ *       filter) and time in that test, the residue count, root degree,
+ *       whether the square's tau is a prime power (tau_prime_test()),
+ *       and log2 of the root limit. For S walks ninv counts inverse
+ *       passes, nprime/tprime cover test_zprimes() only.
  *   B, BP: batch-level estimator inputs, see gs_batch_record()
  *   P lvl tried dt
  *       one per walk_midp() call (-W): (p, vi, x) combinations tried and
@@ -2954,6 +2960,11 @@ static double gs_pbits, gs_obits;   /* mean residual bits, prime/other */
 static ulong gs_n_inv, gs_n_prime, gs_n_multi;
 static double gs_t_prime, gs_t_multi;   /* time inside test_primes/test_multi */
 static double gs_pinv_pred, gs_pprime_pred; /* model predictions, see walk_v */
+/* nqc == 1 square walks: root iterations, passes of the square position's
+ * own test, time in it, residue count, root degree, log2 of the root limit */
+static ulong gs_sq_iter, gs_n_sq;
+static double gs_t_sq, gs_rbits;
+static uint gs_rc, gs_xi, gs_pp;
 static double gs_rec_t0[GS_MAXLEVEL];
 static ulong gs_rec_np[GS_MAXLEVEL];
 static bool gs_rec_open[GS_MAXLEVEL];
@@ -3388,12 +3399,22 @@ void walk_v(t_level *cur_level, mpz_t start) {
         bool tester = (mpz_cmp(Z(wv_qqnext), Z(wv_endr)) > 0);
         if (check)
             cvec_prep_test(cx0, m, aq);
+#ifdef GATE_STATS
+        gs_cause = 'S';
+        gs_rc = xr->count;
+        gs_xi = xi;
+        gs_pp = prime_power;
+        gs_rbits = log2(mpz_get_d(Z(wv_endr)) + 1);
+#endif
 
         while (1) {
             mpz_add(Z(wv_r), Z(wv_qqr), xr->r[rindex]);
             if (tester && mpz_cmp(Z(wv_r), Z(wv_endr)) > 0)
                 return;
             ++countwi;
+#ifdef GATE_STATS
+            ++gs_sq_iter;
+#endif
             mpz_pow_ui(Z(wv_rx), Z(wv_r), xi);
             mpz_sub(Z(wv_ati), Z(wv_rx), *oi);
             /* this could be divexact, since we know the roots are valid,
@@ -3408,6 +3429,40 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
                     goto next_sqati;
             }
+#ifdef GATE_STATS
+            ++gs_n_inv;
+            double gs_ts0 = gs_now();
+            bool gs_sqok;
+            test_multi_reset();
+            if (prime_power)
+                gs_sqok = tau_prime_test(Z(wv_r));
+            else
+                gs_sqok = test_multi_append(Z(wv_r), sqi, ti, xi);
+            double gs_ts1 = gs_now();
+            gs_t_sq += gs_ts1 - gs_ts0;
+            if (!gs_sqok) {
+                if (prime_power)
+                    TRACK_BAD(0, sqi);
+                else
+                    TRACK_BAD(0, sqi);
+                goto next_sqati;
+            }
+            if (prime_power)
+                TRACK_GOOD(0, sqi);
+            ++gs_n_sq;
+            bool gs_okp = test_zprimes(need_prime, npc, Z(wv_ati));
+            double gs_ts2 = gs_now();
+            gs_t_prime += gs_ts2 - gs_ts1;
+            if (!gs_okp)
+                goto next_sqati;
+            ++gs_n_prime;
+            bool gs_okm = test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure);
+            gs_t_multi += gs_now() - gs_ts2;
+            if (!gs_okm)
+                goto next_sqati;
+            ++gs_n_multi;
+            goto gs_sq_candidate;
+#endif
 
             test_multi_reset();
             /* note: test_multi_append() steals Z(wv_r) */
@@ -3427,6 +3482,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
             /* TODO: bail and print somewhere here if 'opt_print' */
             if (!test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure))
                 goto next_sqati;
+#ifdef GATE_STATS
+          gs_sq_candidate:
+#endif
             /* have candidate: calculate and apply it */
             mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
             mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -3529,17 +3587,22 @@ void walk_v(t_level *cur_level, mpz_t start) {
     gs_n_inv = gs_n_prime = gs_n_multi = 0;
     gs_t_prime = gs_t_multi = 0;
     gs_pinv_pred = gs_pprime_pred = 0;
+    gs_sq_iter = gs_n_sq = 0;
+    gs_t_sq = gs_rbits = 0;
+    gs_rc = gs_xi = gs_pp = 0;
     double t0 = gs_now();
     walk_v_inner(cur_level, start);
     double dt = gs_now() - t0;
     /* ati == -1: returned before computing a range (empty, or no
      * minimum yet) */
     fprintf(gs_file(), "W %u %c %.0f %d %.9f %c %.0f %.0f"
-            " %u %u %u %.1f %.1f %lu %lu %lu %.9f %.9f %.5g %.5g\n",
+            " %u %u %u %.1f %.1f %lu %lu %lu %.9f %.9f %.5g %.5g"
+            " %lu %lu %.9f %u %u %u %.1f\n",
             cur_level->level, org, gs_ati, gs_nqc, dt, gs_cause, gs_rm,
             gs_raq, gs_inv, gs_npc, gs_noc, gs_pbits, gs_obits,
             gs_n_inv, gs_n_prime, gs_n_multi, gs_t_prime, gs_t_multi,
-            gs_pinv_pred, gs_pprime_pred);
+            gs_pinv_pred, gs_pprime_pred, gs_sq_iter, gs_n_sq, gs_t_sq,
+            gs_rc, gs_xi, gs_pp, gs_rbits);
 }
 #endif
 
