@@ -1,0 +1,203 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+
+=head1 batch-estimate: predict the cost of a pcoul batch
+
+Given a log written by pcoul built with C<GATE_STATS=1>, reads the
+batch-level B and BP records of the first batch and predicts the time
+to process that batch for a given gain (C<-g>) over one or more values
+of C<-W>, printing the predicted recursion and midp components.
+
+  batch-estimate [-g<gain>] logfile W...
+
+where each I<W> is a number or C<none> (meaning no C<-W>).
+
+=head2 Model
+
+The recursion is idealised as follows: a node whose walk would cover
+I<r> ati walks if C<gain * r < cap>, and otherwise tries each prime
+C<p < cap> at the next position and recurses into C<r / p^(x-1)>;
+positions are taken in order of increasing remaining tau, then limit.
+With C<-W>, caps are limited to I<W>, and walk_midp() allocates each
+C<p^(x-1)> above I<W> once per position, walking from the batch level.
+
+Walk cost per ati is C<loop + P_inv * C_p + P_inv * P_prime * C_m>,
+where I<P_inv> is the batch's inverse-filter pass rate and I<P_prime>
+the product over need_prime positions of C<K / (b ln 2)> for a residual
+of I<b> bits. Each prime tried costs I<c_prime>. See
+gate-cost-model-status.md for where these constants come from.
+
+Only nqc == 0, and only positions whose remaining tau has odd part 3
+(so that each needs exactly one allocation), are supported.
+
+=cut
+
+my %cost = (
+    prime => 0.57e-6,   # c_prime: per prime tried in a recurse loop
+    multi => 15.5e-6,   # C_m: per test_multi() call
+    tprime1 => 1.0e-6,  # C_p: per test_primes() call, npc > 0
+    tprime0 => 0.1e-6,  # C_p: per test_primes() call, npc == 0
+    loop => 0.03e-6,    # per ati, inverse filter loop
+    K => 4.8,           # prime density correction for need_prime residuals
+);
+my $P0 = 11;        # first prime tried in a recurse loop
+
+my $gain = 1;
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    $gain = $1, next if $arg =~ /^-g(\d+(?:\.\d+)?)$/;
+    die "Unknown option '$arg'";
+}
+@ARGV >= 2 or die "500 Usage: $0 [-g<gain>] logfile W...";
+my($logfile, @W) = @ARGV;
+
+my($batch, $base, $pos) = read_batch($logfile);
+my($npc0, $pp0) = (scalar @$base, 1);
+$pp0 *= p_prime($_) for @$base;
+printf "batch at level %s: X=%.4g pinv=%.4f, %d base prime positions\n",
+        @$batch{qw{ level X pinv }}, $npc0;
+printf "  needy positions (vi:t:limit): %s\n", join ' ', map {
+    sprintf '%s:%s:%.3g', $_->{vi}, $_->{t}, $_->{opt}[0]{L}
+} @$pos;
+
+for my $warg (@W) {
+    my $w = ($warg eq 'none') ? 9**9**9 : $warg;
+    my $rec = recurse_cost($w, $batch->{X}, 0, $npc0, $pp0, {});
+    my $mid = ($warg eq 'none') ? 0 : midp_cost($w, $npc0, $pp0);
+    printf "  g=%s W=%-8s predicted %7.2fs (recursion %7.2fs, midp %6.2fs)\n",
+            $gain, $warg, $rec + $mid, $rec, $mid;
+}
+exit 0;
+
+sub read_batch {
+    my($file) = @_;
+    my(%batch, @bp);
+    open my $fh, '<', $file or die "$file: $!";
+    while (<$fh>) {
+        my @f = split;
+        if ($f[0] eq 'BP') {
+            push @bp, [ @f[1 .. 5] ];
+        } elsif ($f[0] eq 'B') {
+            @batch{qw{ level X pinv zbits }} = @f[1 .. 4];
+            last;
+        }
+    }
+    close $fh;
+    defined $batch{X} or die "No B record found in $file";
+
+    my(@base, %opt);
+    for (@bp) {
+        my($vi, $x, $t, $L, $qbits) = @$_;
+        if ($x == 0) {
+            # already needs a prime
+            push @base, $batch{zbits} - $qbits;
+            next;
+        }
+        my $rest = $t / $x;
+        die "vi=$vi t=$t x=$x: residual tau has odd part, not supported"
+                if $rest & ($rest - 1);
+        push @{ $opt{$vi} }, { x => $x, t => $t, L => $L, qbits => $qbits };
+    }
+    my @pos = sort {
+        $a->{t} <=> $b->{t} || $a->{opt}[0]{L} <=> $b->{opt}[0]{L}
+    } map +{
+        vi => $_,
+        t => $opt{$_}[0]{t},
+        opt => [ sort { $a->{x} <=> $b->{x} } @{ $opt{$_} } ],
+    }, keys %opt;
+    return (\%batch, \@base, \@pos);
+}
+
+# approximate count of primes <= x
+sub li {
+    my($x) = @_;
+    return 0 if $x < 2;
+    my $l = log($x);
+    return $x / $l * (1 + 1 / $l + 2 / $l ** 2);
+}
+
+# split primes in [lo, hi] into geometric buckets of [count, midpoint]
+sub buckets {
+    my($lo, $hi) = @_;
+    my $step = 2 ** 0.125;
+    my @b;
+    for (my $l = $lo; $l < $hi; $l *= $step) {
+        my $h = $l * $step;
+        $h = $hi if $h > $hi;
+        my $count = li($h) - li($l);
+        push @b, [ $count, sqrt($l * $h) ] if $count > 0;
+    }
+    return @b;
+}
+
+# probability that a need_prime residual of b bits is prime
+sub p_prime {
+    my($bits) = @_;
+    $bits = 1 if $bits < 1;
+    my $p = $cost{K} / ($bits * log(2));
+    return $p > 1 ? 1 : $p;
+}
+
+sub walk_cost {
+    my($npc, $pp) = @_;
+    my $pinv = $batch->{pinv};
+    return $cost{loop} + $pinv * ($npc ? $cost{tprime1} : $cost{tprime0})
+            + $pinv * $pp * $cost{multi};
+}
+
+# state after allocating p^(x-1) for option opt
+sub allocate {
+    my($opt, $p, $npc, $pp) = @_;
+    if ($opt->{t} / $opt->{x} == 2) {
+        ++$npc;
+        $pp *= p_prime($batch->{zbits} - $opt->{qbits}
+                - ($opt->{x} - 1) * log($p) / log(2));
+    }
+    return ($npc, $pp);
+}
+
+sub recurse_cost {
+    my($w, $r, $depth, $npc, $pp, $memo) = @_;
+    my $walk = walk_cost($npc, $pp) * $r;
+    return $walk if $depth == @$pos || $r < 1e-4;
+    my $key = join ' ', int(4 * log($r) / log(2)), $depth, $npc,
+            int(8 * log($pp));
+    return $memo->{$key} if exists $memo->{$key};
+
+    my $cost = 0;
+    my $first = 1;
+    for my $opt (@{ $pos->[$depth]{opt} }) {
+        my $cap = ($w < $opt->{L}) ? $w : $opt->{L};
+        next if $cap <= $P0 && !$first;
+        # the gate is decided on the first option
+        return $memo->{$key} = $walk if $first && $gain * $r < $cap - $P0;
+        $first = 0;
+        $cost += $cost{prime} * (li($cap) - li($P0));
+        for (buckets($P0, $cap)) {
+            my($count, $p) = @$_;
+            $cost += $count * recurse_cost($w, $r / $p ** ($opt->{x} - 1),
+                    $depth + 1, allocate($opt, $p, $npc, $pp), $memo);
+        }
+    }
+    return $memo->{$key} = $cost;
+}
+
+sub midp_cost {
+    my($w, $npc, $pp) = @_;
+    my $cost = 0;
+    for my $pd (@$pos) {
+        for my $opt (@{ $pd->{opt} }) {
+            next if $w >= $opt->{L};
+            for (buckets($w, $opt->{L})) {
+                my($count, $p) = @$_;
+                $cost += $count * ($cost{prime} + walk_cost(
+                    allocate($opt, $p, $npc, $pp)
+                ) * $batch->{X} / $p ** ($opt->{x} - 1));
+            }
+        }
+    }
+    return $cost;
+}
