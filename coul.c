@@ -4929,6 +4929,8 @@ bool apply_batch(
  *       level limit L on p (as prep_midp() computes it), log2(q_vi),
  *       and maxforce[vi] (unforced allocations there use primes above
  *       it); x == 0 marks a position that already needs a prime (t == 2)
+ *   BQ vi t qbits maxforce
+ *       every position's remaining tau, log2(q_vi) and maxforce[vi]
  *   BM u mintau
  *       mintau(u) at the batch level, for each proper divisor u of n
  *   BR u x mintau
@@ -4982,6 +4984,7 @@ static void gs_batch_record(t_level *cur_level) {
                 res[mi][nres[mi]++] = v;
         }
         uint t = ap->t;
+        fprintf(fp, "BQ %u %u %.2f %u\n", vi, t, qb, maxforce[vi]);
         if (t == 2) {
             fprintf(fp, "BP %u 0 2 0 %.2f %u\n", vi, qb, maxforce[vi]);
             continue;
