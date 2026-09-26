@@ -6530,6 +6530,83 @@ void recurse(e_is jump_continue) {
     }
 }
 
+#ifdef MULTIBENCH
+/* Calibration benchmark for test_multi(), the costliest stage of a walk
+ * (make MULTIBENCH=1; see calibration notes). With MULTIBENCH set to
+ * "bits,t,count,F[,seed[,e]]" in the environment, pcoul initialises as usual
+ * for its n and k, then feeds test_multi_append() (tau_multi_prep())
+ * count random integers of the given bits, coprime to every prime <= F
+ * (as the v_i / q_i a walk tests are coprime to the forced primes), with
+ * target tau t and exponent multiplier e (default 1; the root of a fixed
+ * power v = q.r^g is tested with e = g), runs test_multi_run() on those
+ * prep leaves undecided, and reports the outcome fractions and mean
+ * times.
+ */
+static inline double mb_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+void multibench(char *spec) {
+    uint bits, t, count, F, e = 1;
+    ulong seed = 1;
+    if (sscanf(spec, "%u,%u,%u,%u,%lu,%u", &bits, &t, &count, &F, &seed, &e) < 4)
+        fail("MULTIBENCH: expected bits,t,count,F[,seed[,e]]");
+    if (t == 0 || n % t)
+        fail("MULTIBENCH: t=%u does not divide n=%u", t, n);
+    gmp_randstate_t rs;
+    gmp_randinit_default(rs);
+    gmp_randseed_ui(rs, seed * 2654435761UL + 1);
+    mpz_t m;
+    mpz_init(m);
+    ulong nfail = 0, ndecided = 0, npending = 0, npass = 0;
+    double tprep_fail = 0, tprep_ok = 0, trun = 0;
+    for (uint i = 0; i < count; ++i) {
+      regen:
+        mpz_urandomb(m, rs, bits - 1);
+        mpz_setbit(m, bits - 1);
+        for (uint p = 2; p <= F; ++p) {
+            bool prime = 1;
+            for (uint d = 2; d * d <= p; ++d)
+                if (p % d == 0) { prime = 0; break; }
+            if (prime && mpz_divisible_ui_p(m, p))
+                goto regen;
+        }
+        test_multi_reset();
+        double t0 = mb_now();
+        bool ok = test_multi_append(m, 0, t, e);
+        double t1 = mb_now();
+        if (!ok) {
+            ++nfail;
+            tprep_fail += t1 - t0;
+            continue;
+        }
+        tprep_ok += t1 - t0;
+        if (taum[0].state == 0) {
+            ++ndecided;
+            continue;
+        }
+        ++npending;
+        uint remain = test_multi_run(NULL);
+        trun += mb_now() - t1;
+        if (remain == 0)
+            ++npass;
+    }
+    printf("MULTIBENCH n=%u bits=%u t=%u e=%u F=%u count=%u: fail %.4f decided %.4f"
+            " pending %.4f (pass %.4f); prep %.3fus (fail %.3fus, ok %.3fus);"
+            " run %.3fus per pending\n",
+            n, bits, t, e, F, count, (double)nfail / count,
+            (double)ndecided / count, (double)npending / count,
+            npending ? (double)npass / npending : 0,
+            1e6 * (tprep_fail + tprep_ok) / count,
+            nfail ? 1e6 * tprep_fail / nfail : 0,
+            (count - nfail) ? 1e6 * tprep_ok / (count - nfail) : 0,
+            npending ? 1e6 * trun / npending : 0);
+    mpz_clear(m);
+    gmp_randclear(rs);
+}
+#endif
+
 int main(int argc, char **argv, char **envp) {
     int i = 1;
 #ifdef HAVE_SETPROCTITLE
@@ -6741,6 +6818,12 @@ int main(int argc, char **argv, char **envp) {
             check = 1;
     }
     prep_presquare();
+#ifdef MULTIBENCH
+    if (getenv("MULTIBENCH")) {
+        multibench(getenv("MULTIBENCH"));
+        return 0;
+    }
+#endif
 
     e_is jump = IS_DEEPER;
     if (rstack || istack)

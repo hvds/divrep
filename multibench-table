@@ -1,0 +1,55 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+use Math::Prime::Util qw{ divisors factor_exp gcd };
+
+=head1 multibench-table: tabulate test_multi() cost and outcomes
+
+  multibench-table [-c<pcoul>] [-b<bits,...>] n k F
+
+Runs a pcoul built with C<MULTIBENCH=1> (default F<./pcoul>) for each
+divisor t > 2 of n and each size in the bits grid, feeding
+test_multi_append() random integers coprime to all primes <= F, and
+prints one table line per case:
+
+  t e bits F rej dec pend pass prep_us run_us
+
+For even t the exponent multiplier e is 1 (a need_other value); for odd
+t it is gcd(p - 1: p | t), as used for the root of a fixed power. The
+fractions are of inputs rejected in prep, fully decided in prep, and
+left pending for the ladder; I<pass> is the fraction of pending inputs
+the ladder accepts; the times are mean prep time per input and mean
+ladder time per pending input.
+
+=cut
+
+my $pcoul = './pcoul';
+my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 72, 80, 96, 112, 128);
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    $pcoul = $1, next if $arg =~ /^-c(.+)$/;
+    @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
+    die "Unknown option '$arg'";
+}
+@ARGV == 3 or die "500 Usage: $0 [-c<pcoul>] [-b<bits,...>] n k F";
+my($n, $k, $F) = @ARGV;
+
+for my $t (grep $_ > 2, divisors($n)) {
+    my $e = 1;
+    if ($t & 1) {
+        $e = 0;
+        $e = gcd($e, $_->[0] - 1) for factor_exp($t);
+    }
+    for my $b (@bits) {
+        my $count = ($b <= 64) ? 5000 : ($b <= 80) ? 2000 : 500;
+        local $ENV{MULTIBENCH} = "$b,$t,$count,$F,1,$e";
+        my($line) = grep /^MULTIBENCH /, `'$pcoul' -X $n $k 2>&1`;
+        my @v = ($line // '') =~ m{
+            fail\ ([\d.]+)\ decided\ ([\d.]+)\ pending\ ([\d.]+)
+            \ \(pass\ ([\d.]+)\);\ prep\ ([\d.]+)us .* run\ ([\d.]+)us
+        }x or die "no result for t=$t bits=$b";
+        print join(' ', $t, $e, $b, $F, @v), "\n";
+    }
+}
