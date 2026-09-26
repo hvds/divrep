@@ -12,13 +12,15 @@ and predicts the time to process that batch for a given strategy
 (C<-j>) and gain (C<-g>) over one or more values of C<-W>, printing
 the predicted recursion and midp components.
 
-  batch-estimate [-j<strategy>] [-g<gain>] [-b<index>] [-v] logfile W...
+  batch-estimate [-j<strategy>] [-g<gain>] [-b<index>] [-m<table>] [-v] logfile W...
 
 where each I<W> is a number or C<none> (meaning no C<-W>), and I<index>
 counts batches in the log from 0. With C<-v>, also shows the predicted
 work at each depth below the batch (recurse loops and primes tried,
 walks and their size, walk_6x() calls), for comparison with the
-GATE_STATS records of the real run.
+GATE_STATS records of the real run. With C<-m>, the costs and outcomes
+of test_multi() come from a table written by multibench-table (for the
+same n and F) rather than from fixed constants.
 
 =head2 Model
 
@@ -56,6 +58,7 @@ second one.
 
 =cut
 
+my %mt;             # with -m: the test_multi() table
 my %cost = (
     prime => 0.57e-6,   # c_prime: per prime tried in a recurse loop
     prime_sq => 4.3e-6, # c_prime with a fixed power present
@@ -74,6 +77,20 @@ my %cost = (
     K => 4.8,           # prime density correction, need_prime residuals
     K_sq => 4.0,        # prime density correction, prime roots
 );
+
+# the fixed power's own root test when its tau is composite: from the
+# table if we have it (odd t with e = g), else the fitted fallback
+sub sq_root_test {
+    my($t, $g, $bits) = @_;
+    if (%mt) {
+        my @m = mlookup($t, $g, $bits);
+        if (@m) {
+            my($rej, $dec, $pend, $pass, $prep, $run) = @m;
+            return ($prep + $pend * $run, $dec + $pend * $pass);
+        }
+    }
+    return sq_multi($bits, $t);
+}
 
 # When the fixed power's tau is not prime, its root goes through the
 # multi prep (trial division, then the ladder). The cost per call grows
@@ -104,7 +121,7 @@ my $EXACT = 1000;   # below this, primes are taken individually
 my %work;           # with -v: predicted work at each depth
 my %flip_work;      # with -v: run_flip_pqsq() counts
 
-my($strategy, $gain, $index, $verbose) = (0, 1, 0, 0);
+my($strategy, $gain, $index, $verbose, $mtable) = (0, 1, 0, 0, undef);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
@@ -112,11 +129,13 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $gain = $1, next if $arg =~ /^-g(\d+(?:\.\d+)?)$/;
     $index = $1, next if $arg =~ /^-b(\d+)$/;
     $verbose = 1, next if $arg eq '-v';
+    $mtable = $1, next if $arg =~ /^-m(.+)$/;
     die "Unknown option '$arg'";
 }
-@ARGV >= 2 or die "500 Usage: $0 [-j<strategy>] [-g<gain>] [-b<index>] [-v] logfile W...";
+@ARGV >= 2 or die "500 Usage: $0 [-j<strategy>] [-g<gain>] [-b<index>] [-m<table>] [-v] logfile W...";
 my($logfile, @W) = @ARGV;
 my $batch = read_batch($logfile, $index);
+%mt = read_mtable($mtable) if $mtable;
 # -j4 sets highpow: powers of 2 are allocated too
 my $highpow = ($strategy == 4);
 
@@ -150,7 +169,7 @@ exit 0;
 
 sub read_batch {
     my($file, $want) = @_;
-    my(%b, @bp, %mintau, %restricted);
+    my(%b, @bp, @bq, %mintau, %restricted);
     my $seen = 0;
     open my $fh, '<', $file or die "$file: $!";
     while (<$fh>) {
@@ -161,11 +180,13 @@ sub read_batch {
                 @b{qw{ level X pinv zbits cpu k strategy }} = @f[1 .. 7];
                 last;
             }
-            (@bp, %mintau, %restricted) = ();
+            (@bp, @bq, %mintau, %restricted) = ();
             delete $b{sq};
         } elsif ($seen == $want) {
             if ($f[0] eq 'BP') {
                 push @bp, [ @f[1 .. 6] ];
+            } elsif ($f[0] eq 'BQ') {
+                push @bq, [ @f[1 .. 4] ];
             } elsif ($f[0] eq 'BM') {
                 $mintau{$f[1]} = log($f[2]) / log(2);
             } elsif ($f[0] eq 'BR') {
@@ -184,9 +205,13 @@ sub read_batch {
 
     # per-position state: remaining t and log2(q)
     my %pos;
+    for (@bq) {
+        my($vi, $t, $qbits, $maxforce) = @$_;
+        $pos{$vi} = { t => $t, qbits => $qbits, maxforce => $maxforce };
+    }
     for (@bp) {
         my($vi, $x, $t, $L, $qbits, $maxforce) = @$_;
-        $pos{$vi} = { t => $t, qbits => $qbits, maxforce => $maxforce };
+        $pos{$vi} //= { t => $t, qbits => $qbits, maxforce => $maxforce };
     }
     $b{pos} = \%pos;
     # primes up to the greatest maxforce are fixed by the batch: pcoul
@@ -218,6 +243,66 @@ sub initial_state {
         $s{r} = $b->{X};
     }
     return \%s;
+}
+
+# The multibench table: for each (t, e), rows by bits of
+# [ rej, dec, pend, pass, prep_s, run_s ].
+sub read_mtable {
+    my($file) = @_;
+    my %t;
+    open my $fh, '<', $file or die "$file: $!";
+    while (<$fh>) {
+        my($t, $e, $bits, $F, @v) = split;
+        next unless @v == 6;
+        $v[4] *= 1e-6;
+        $v[5] *= 1e-6;
+        push @{ $t{"$t $e"} }, [ $bits, @v ];
+    }
+    close $fh;
+    $_ = [ sort { $a->[0] <=> $b->[0] } @$_ ] for values %t;
+    return %t;
+}
+
+# interpolate the table at (t, e, bits): fractions linearly, times
+# log-linearly; clamped at the ends of the bits grid
+sub mlookup {
+    my($t, $e, $bits) = @_;
+    my $rows = $mt{"$t $e"} or return;
+    return @{ $rows->[0] }[1 .. 6] if $bits <= $rows->[0][0];
+    return @{ $rows->[-1] }[1 .. 6] if $bits >= $rows->[-1][0];
+    my $i = 1;
+    ++$i while $bits > $rows->[$i][0];
+    my($lo, $hi) = ($rows->[$i - 1], $rows->[$i]);
+    my $f = ($bits - $lo->[0]) / ($hi->[0] - $lo->[0]);
+    my @r;
+    for my $j (1 .. 4) {
+        push @r, $lo->[$j] + $f * ($hi->[$j] - $lo->[$j]);
+    }
+    for my $j (5, 6) {
+        my($a, $b) = ($lo->[$j], $hi->[$j]);
+        push @r, ($a > 0 && $b > 0) ? $a * ($b / $a) ** $f
+                : $a + $f * ($b - $a);
+    }
+    return @r;
+}
+
+# expected cost of one test_multi() call over the need_other positions of
+# a state, in vi order: each is prepped until one is rejected; if none
+# is, the ladder runs over those left pending
+sub multi_cost {
+    my($st) = @_;
+    my($cost, $survive, $ladder) = (0, 1, 0);
+    for my $vi (sort { $a <=> $b } keys %{ $st->{pos} }) {
+        my $p = $st->{pos}{$vi};
+        my $t = $p->{t};
+        next if $t <= 2 || ($t & 1);
+        my @m = mlookup($t, 1, $batch->{zbits} - $p->{qbits}) or return undef;
+        my($rej, $dec, $pend, $pass, $prep, $run) = @m;
+        $cost += $survive * $prep;
+        $survive *= 1 - $rej;
+        $ladder += ($rej < 1 ? $pend / (1 - $rej) : 0) * $run;
+    }
+    return $cost + $survive * $ladder;
 }
 
 # approximate count of primes <= x
@@ -395,12 +480,14 @@ sub walk_cost {
     return $cost{pell} if $st->{nsq} >= 2;
     my $pr = $st->{npc} ? $cost{tprime1} : $cost{tprime0};
     my $noc = $batch->{k} - $st->{npc} - $st->{nsq};
-    my $multi = $cost{multi0} + $noc * $cost{multi1};
+    my $multi = (%mt ? multi_cost($st) : undef)
+            // $cost{multi0} + $noc * $cost{multi1};
     if ($st->{nsq}) {
         my $sq = $batch->{sq};
-        my($ctest, $psq) = is_prime_t($st->{pos}{ $sq->{vi} }{t})
+        my $tsq = $st->{pos}{ $sq->{vi} }{t};
+        my($ctest, $psq) = is_prime_t($tsq)
                 ? ($cost{test_sq}, p_prime($st->{root_bits}, $cost{K_sq}))
-                : sq_multi($st->{root_bits}, $st->{pos}{ $sq->{vi} }{t});
+                : sq_root_test($tsq, $sq->{g}, $st->{root_bits});
         # a walk expected to cover r < 1 root iterations mostly never
         # happens: apply_single() rejects the allocation on overflow
         my $setup = $cost{setup_sq} * ($st->{r} < 1 ? $st->{r} : 1);
@@ -509,6 +596,10 @@ sub flip_point {
     my($st, $vi, $x, $start, $cap) = @_;
     my $p = $st->{pos}{$vi};
     return undef unless is_prime_t($x) && $p->{t} == 2 * $x * $x;
+    # the flip happens only if the continuation is at the same position
+    my $probe = allocate($st, $vi, $x, $start + 1, 1);
+    my $next = choose($probe, 0);
+    return undef unless defined($next) && $next eq $vi;
     my $empty = sub {
         my($q) = @_;
         my $c = allocate($st, $vi, $x, $q, 1);
