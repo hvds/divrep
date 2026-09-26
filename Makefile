@@ -84,6 +84,10 @@ endif
 ifdef MULTIBENCH
     DEFINES += -DMULTIBENCH
 endif
+# Calibration-only stub of walk_v() (MOCK_WALK_TABLE env var), see coul.c
+ifdef MOCK_WALK
+    DEFINES += -DMOCK_WALK
+endif
 # Optional optimization when lower bound for search is a significant
 # proportion of the upper bound.
 ifdef LARGE_MIN
