@@ -2935,6 +2935,148 @@ int inv_comparator(const void *va, const void *vb) {
     return (b->m < a->m) - (a->m < b->m);
 }
 
+#ifdef MOCK_WALK
+/* MOCK_WALK: calibration-only stub for walk_v(). Everything up to the
+ * iteration loops runs for real; the loops themselves are replaced by
+ * their expected cost, added to g_mock_spent_s, so that a run reports
+ * real non-walk time plus modelled walk time, deterministically. Never
+ * use for a real search: no candidate is ever tested.
+ *
+ * Per iteration: loop + P_inv * (C_p + P_prime * C_m) for a linear walk,
+ * loop_sq + P_inv * (C_sq + P_sq * (C_p + P_prime * C_m)) plus setup per
+ * walk for a fixed power (nqc == 1). P_inv is exact from inv[]; P_prime
+ * multiplies K / (b ln 2) over need_prime residuals of b bits; C_m, and
+ * C_sq / P_sq when the fixed power's tau is composite, come from the
+ * multibench table named by $MOCK_WALK_TABLE (see multibench-table).
+ * Pell walks (nqc > 1) still run for real.
+ */
+#define MW_MAXT 256
+#define MW_MAXB 32
+typedef struct {
+    uint t, e, nb;
+    double bits[MW_MAXB], v[MW_MAXB][6];   /* rej dec pend pass prep run */
+} t_mw;
+static t_mw mw_tab[MW_MAXT];
+static uint mw_count = 0;
+static bool mw_loaded = 0;
+
+static void mw_load(void) {
+    mw_loaded = 1;
+    char *fn = getenv("MOCK_WALK_TABLE");
+    if (!fn)
+        fail("MOCK_WALK: set MOCK_WALK_TABLE to a multibench table");
+    FILE *fp = fopen(fn, "r");
+    if (!fp)
+        fail("MOCK_WALK: %s: %s", fn, strerror(errno));
+    uint t, e, b, F;
+    double v[6];
+    while (fscanf(fp, "%u %u %u %u %lf %lf %lf %lf %lf %lf", &t, &e, &b, &F,
+            &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 10) {
+        uint i;
+        for (i = 0; i < mw_count; ++i)
+            if (mw_tab[i].t == t && mw_tab[i].e == e)
+                break;
+        if (i == mw_count) {
+            if (mw_count == MW_MAXT)
+                fail("MOCK_WALK: table too large");
+            mw_tab[mw_count++] = (t_mw){ .t = t, .e = e, .nb = 0 };
+        }
+        t_mw *mp = &mw_tab[i];
+        if (mp->nb == MW_MAXB)
+            continue;
+        mp->bits[mp->nb] = b;
+        v[4] *= 1e-6;
+        v[5] *= 1e-6;
+        memcpy(mp->v[mp->nb++], v, sizeof(v));
+    }
+    fclose(fp);
+}
+
+/* interpolate the table at (t, e, bits); rows are in increasing bits */
+static bool mw_lookup(uint t, uint e, double bits, double out[6]) {
+    if (!mw_loaded)
+        mw_load();
+    for (uint i = 0; i < mw_count; ++i) {
+        t_mw *mp = &mw_tab[i];
+        if (mp->t != t || mp->e != e)
+            continue;
+        uint j = 1;
+        if (bits <= mp->bits[0]) {
+            memcpy(out, mp->v[0], 6 * sizeof(double));
+            return 1;
+        }
+        if (bits >= mp->bits[mp->nb - 1]) {
+            memcpy(out, mp->v[mp->nb - 1], 6 * sizeof(double));
+            return 1;
+        }
+        while (bits > mp->bits[j])
+            ++j;
+        double f = (bits - mp->bits[j - 1]) / (mp->bits[j] - mp->bits[j - 1]);
+        for (uint k = 0; k < 4; ++k)
+            out[k] = mp->v[j - 1][k] + f * (mp->v[j][k] - mp->v[j - 1][k]);
+        for (uint k = 4; k < 6; ++k) {
+            double a = mp->v[j - 1][k], b = mp->v[j][k];
+            out[k] = (a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a);
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* exact inverse-filter pass rate: per distinct modulus m, the fraction
+ * of residues mod m not excluded */
+static double mw_pinv(t_mod *inv, uint inv_count) {
+    double p = 1.0;
+    for (uint i = 0; i < inv_count; ++i) {
+        bool seen = 0;
+        for (uint j = 0; j < i; ++j)
+            if (inv[j].m == inv[i].m) { seen = 1; break; }
+        if (seen)
+            continue;
+        uint distinct = 0;
+        for (uint j = i; j < inv_count; ++j) {
+            if (inv[j].m != inv[i].m)
+                continue;
+            bool dup = 0;
+            for (uint l = i; l < j; ++l)
+                if (inv[l].m == inv[j].m && inv[l].v == inv[j].v) { dup = 1; break; }
+            if (!dup)
+                ++distinct;
+        }
+        p *= 1.0 - (double)distinct / inv[i].m;
+    }
+    return p;
+}
+
+/* expected cost after the inverse filter and any fixed power's own test:
+ * C_p + P_prime * C_m, over the need_prime and need_other positions */
+static double mw_tail(mpz_t **q, uint *t, uint *need_prime, uint npc,
+        uint *need_other, uint noc) {
+    double zb = log2(mpz_get_d(zmax));
+    double pprime = 1.0;
+    for (uint i = 0; i < npc; ++i) {
+        double b = zb - log2(mpz_get_d(*q[need_prime[i]]));
+        double pp = 4.8 / ((b < 1 ? 1 : b) * M_LN2);
+        pprime *= (pp < 1) ? pp : 1;
+    }
+    double cm = 0, survive = 1, ladder = 0;
+    for (uint i = 0; i < noc; ++i) {
+        uint vi = need_other[i];
+        double m[6];
+        double b = zb - log2(mpz_get_d(*q[vi]));
+        if (!mw_lookup(t[vi], 1, b, m)) {
+            cm += survive * 15e-6;      /* no table row: rough fallback */
+            continue;
+        }
+        cm += survive * m[4];
+        survive *= 1 - m[0];
+        ladder += (m[0] < 1 ? m[2] / (1 - m[0]) : 0) * m[5];
+    }
+    cm += survive * ladder;
+    return (npc ? 1.0e-6 : 0.1e-6) + pprime * cm;
+}
+#endif
+
 #ifdef GATE_STATS
 /* Gate-calibration instrumentation (make GATE_STATS=1). Writes to the
  * file named by $GATE_STATS (default gate_stats.log), one line per event:
@@ -3312,6 +3454,50 @@ void walk_v(t_level *cur_level, mpz_t start) {
             uint sqi = need_square[i];
             g_calibration_sink ^= sqi ^ mpz_get_ui(wv_o[sqi]);
         }
+        return;
+    }
+#endif
+#ifdef MOCK_WALK
+    if (nqc < 2) {
+        double tail = mw_tail(q, t, need_prime, npc, need_other, noc);
+        double pinv = mw_pinv(inv, inv_count);
+        double cost;
+        if (nqc == 0) {
+            double iters = mpz_get_d(Z(wv_end)) - mpz_get_d(Z(wv_ati)) + 1;
+            if (iters < 0)
+                iters = 0;
+            cost = iters * (0.03e-6 + pinv * tail);
+        } else {
+            uint sqi = need_square[0];
+            uint ti = t[sqi];
+            uint xi = divisors[ti].gcddm;
+            t_results *xr = res_array(cur_level->level);
+            double qd = mpz_get_d(*q[sqi]), qqd = mpz_get_d(wv_qq[sqi]);
+            double hi = pow((mpz_get_d(zmax) + TYPE_OFFSET(sqi)) / qd, 1.0 / xi);
+            double lo = (mpz_sgn(zmin) > 0)
+                    ? pow((mpz_get_d(zmin) + TYPE_OFFSET(sqi)) / qd, 1.0 / xi) : 0;
+            double iters = xr->count * (hi - lo) / qqd;
+            double rbits = log2(hi > 2 ? hi : 2);
+            double csq, psq;
+            if (divisors[ti].alldiv == 2) {
+                csq = 0.6e-6;
+                psq = 4.0 / (rbits * M_LN2);
+                if (psq > 1)
+                    psq = 1;
+            } else {
+                double m[6];
+                if (mw_lookup(ti, xi, rbits, m)) {
+                    csq = m[4] + m[2] * m[5];
+                    psq = m[1] + m[2] * m[3];
+                } else {
+                    csq = 2e-6;
+                    psq = 0.3;
+                }
+            }
+            double setup = 2.5e-6 * (iters < 1 ? iters : 1);
+            cost = setup + iters * (0.16e-6 + pinv * (csq + psq * tail));
+        }
+        g_mock_spent_s += cost;
         return;
     }
 #endif
