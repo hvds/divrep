@@ -80,6 +80,10 @@ endif
 ifdef GATE_STATS
     DEFINES += -DGATE_STATS
 endif
+# Calibration benchmark for test_multi() (MULTIBENCH env var), see coul.c
+ifdef MULTIBENCH
+    DEFINES += -DMULTIBENCH
+endif
 # Optional optimization when lower bound for search is a significant
 # proportion of the upper bound.
 ifdef LARGE_MIN
