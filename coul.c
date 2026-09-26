@@ -4844,7 +4844,8 @@ bool apply_batch(
  *       if its conditions hold here)
  *   BP vi x t L qbits maxforce
  *       for each position vi and each allocation p^{x-1} it could still
- *       take (x a non-power-of-2 divisor of its remaining t), the batch-
+ *       take (x a non-power-of-2 divisor of its remaining t, or with
+ *       highpow any divisor x > 1), the batch-
  *       level limit L on p (as prep_midp() computes it), log2(q_vi),
  *       and maxforce[vi] (unforced allocations there use primes above
  *       it); x == 0 marks a position that already needs a prime (t == 2)
@@ -4908,7 +4909,8 @@ static void gs_batch_record(t_level *cur_level) {
         t_divisors *dp = &divisors[t];
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
-            if (ispow2(x))
+            /* with highpow, powers of 2 are allocated too */
+            if (x == 1 || (!highpow && ispow2(x)))
                 break;
             mpz_add_ui(tmp, zmax, TYPE_OFFSET(vi));
             mintau(cur_level, mt, t / x);

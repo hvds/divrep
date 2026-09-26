@@ -117,6 +117,8 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
 @ARGV >= 2 or die "500 Usage: $0 [-j<strategy>] [-g<gain>] [-b<index>] [-v] logfile W...";
 my($logfile, @W) = @ARGV;
 my $batch = read_batch($logfile, $index);
+# -j4 sets highpow: powers of 2 are allocated too
+my $highpow = ($strategy == 4);
 
 printf "batch %d at level %s: X=%.4g pinv=%.4f%s%s\n", $index,
         @$batch{qw{ level X pinv }},
@@ -256,13 +258,15 @@ sub is_pow2 { my($t) = @_; return !($t & ($t - 1)) }
 sub odd_high { my($t) = @_; my @f = factor_exp($t); return $f[-1][0] }
 sub is_prime_t { my($t) = @_; my @f = factor_exp($t); return @f == 1 && $f[0][1] == 1 }
 sub high { my($t) = @_; my @f = factor_exp($t); return @f ? $f[-1][0] : 1 }
+# sum of (p - 1) over the prime factors of t, with multiplicity
+sub sumpm { my($t) = @_; my $s = 0; $s += ($_->[0] - 1) * $_->[1] for factor_exp($t); return $s }
 
 # the allocations recurse() tries at a position with remaining t: divisors
 # x of t sharing its highest prime (divisors[t].highdiv), smallest first
 sub options {
     my($t) = @_;
     my $h = high($t);
-    return () if $h <= 2;
+    return () if $h <= ($highpow ? 1 : 2);
     return grep { $t % $_ == 0 && $_ % $h == 0 } $h .. $t;
 }
 
@@ -278,6 +282,13 @@ sub limit {
     my($st, $p, $x) = @_;
     my $rest = $p->{t} / $x;
     my $bits = $batch->{zbits} - $p->{qbits};
+    if (is_pow2($x)) {
+        # highpow: allocating p^(x-1) leaves nextt = 2^b, and no smaller
+        # prime divides the rest, so the limit is zmax^(1/(x-1+b))
+        my $b = 0;
+        $b++ while $rest > (1 << $b);
+        return 2 ** ($bits / ($x - 1 + $b));
+    }
     if ($x == $rest && is_prime_t($x)) {
         # this and the remaining allocation are p^(x-1).q^(x-1)
         return 2 ** ($bits / (2 * ($x - 1)));
@@ -317,6 +328,7 @@ sub choose {
         return '6x' if $p->{t} == 2;
         return $vi;
     }
+    return choose4($st, $capped) if $strategy == 4;
     my($best, $bkey);
     for my $vi (sort { $a <=> $b } keys %{ $st->{pos} }) {
         my $p = $st->{pos}{$vi};
@@ -330,6 +342,41 @@ sub choose {
         if (!defined($best) || cmp_key(\@key, $bkey) > 0) {
             ($best, $bkey) = ($vi, \@key);
         }
+    }
+    return $best;
+}
+
+# best_v4(): highest prime dividing t, then highest t, then highest q;
+# if only powers of 2 remain, the smallest range lim - min, where
+# lim = ((zmax + i)/q)^(1/sumpm(t)) and min is the last prime if the last
+# allocation there was a power of 2, else maxforce
+sub choose4 {
+    my($st, $capped) = @_;
+    my($best, $bh, $bt, $bq, $brange);
+    for my $vi (sort { $a <=> $b } keys %{ $st->{pos} }) {
+        my $p = $st->{pos}{$vi};
+        my $t = $p->{t};
+        next if $t <= 1;
+        next if $capped && ($t & 1) && is_prime_t($t);
+        my $h = high($t);
+        my $range;
+        if ($h == 2) {
+            my $lim = 2 ** (($batch->{zbits} - $p->{qbits}) / sumpm($t));
+            my $min = (defined($p->{lastx}) && is_pow2($p->{lastx}))
+                    ? $p->{lastp} : $p->{maxforce};
+            $range = $lim - $min;
+        }
+        if (defined $best) {
+            next if $h < $bh;
+            if ($h == $bh) {
+                if ($h > 2) {
+                    next if $t < $bt || ($t == $bt && $p->{qbits} <= $bq);
+                } else {
+                    next if $range >= $brange;
+                }
+            }
+        }
+        ($best, $bh, $bt, $bq, $brange) = ($vi, $h, $t, $p->{qbits}, $range);
     }
     return $best;
 }
@@ -437,6 +484,10 @@ sub start_prime {
     my($p, $x) = @_;
     my $nextt = $p->{t} / $x;
     my $lastx = $p->{lastx} // 0;
+    if (is_pow2($x)) {
+        # powers of 2: increasing p, not decreasing powers
+        return ($lastx && is_pow2($lastx)) ? $p->{lastp} : $p->{maxforce};
+    }
     return $p->{lastp} if $x == $lastx;
     return undef if $x < $lastx && high($x) == high($lastx);
     return undef if $x > $nextt && high($x) == high($nextt);
