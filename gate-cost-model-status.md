@@ -244,6 +244,80 @@ Further details now modelled:
   under one root iteration usually never happens (overflow rejection),
   so its setup is scaled accordingly.
 
+## test_multi() tables
+
+`test_multi()` is the costliest stage of a walk, and its cost depends on
+the target tau and size of each value tested, not just on how many
+there are. pcoul built with `MULTIBENCH=1` measures it directly (see
+`multibench-table`); tables for the tuples used so far are in `calib/`,
+named `multibench-n<n>-F<F>.tab`, as measured on the sandbox machine
+(PORTABLE build; timings scale with the machine). Findings:
+
+- prep costs ~1.6us at 24 bits (trial division completes), 6-8us at
+  32, 11-14us at 40, and levels at 12-20us from 48 bits (it stops at
+  tlim), almost regardless of t or outcome;
+- outcomes depend strongly on t and size: small t (4, 8) is mostly
+  rejected or decided in prep; large t (24-96) is almost all rejected
+  at small sizes, but at 56-64 bits 40-52% is left pending, where the
+  ladder costs 33-100us and almost never accepts - which is where
+  D(96,8)'s ~27us per call comes from.
+
+`batch-estimate -m<table>` uses these. Measured vs predicted totals
+(GATE_STATS builds, default or stated strategies):
+
+| run | ratio |
+|---|---|
+| D(96,8) -j4 -f5 -g24, 12 heavy batches (log10 X 12-14) | 0.97 (0.72-1.37 each; 0.72 without tables) |
+| D(18,4) -x1e17 | 1.00 |
+| D(54,4) -x1e16 | 1.13 |
+| D(30,4) -x1e24 | 1.25 |
+| D(90,4) -x1e20 | 1.87 - its STRATEGY_6X batches are overestimated |
+
+## Estimating full-range batches: windows without LARGE_MIN
+
+Without LARGE_MIN, the gate uses zmax rather than zmax - zmin, so a
+narrow window just below zmax makes exactly the full-range gate
+decisions and runs the full recursion, while walking only the window.
+For D(18,4) full-range b3 the recursion count matched the full run
+exactly, and the window's walk iterations scaled by 1/f matched the
+full run's walkc exactly (f = window/zmax for linear walks,
+1 - (zmin/zmax)^(1/g) for fixed-power walks). Only the per-iteration
+cost still has to come from elsewhere, and per-walk setup must not be
+scaled. Caveat: LARGE_MIN also guards against a walk's starting ati
+exceeding 2^64; without it that goes unchecked.
+
+This is a useful cross-check, but the plan is to stub walk_v() with a
+calibrated mean (MOCK_WALK), making the rest of the stack
+deterministic, and to work up from there.
+
+## D(96,8) -j4 -f5 (a live run)
+
+Batch cost rises steeply with X = (zmax - zmin)/aq (computable for every
+batch from `pcoul -a`): measured means ~1160s at log10 X = 12, ~3050s at
+13, ~11600s at 14 (user's machine, -g24). Remaining batches with
+log10 X >= 11 dominate the remaining time. Estimates favour -g64 over
+-g24 by 8-24% on every heavy batch tried; real paired runs pending.
+Note that -I with a pattern that leaves 7 unplaced expands to every
+placement of 7 at v_0/v_7: select the real batch with -b<index>.
+
+## n = 50, 100 and -j2
+
+Complete runs: D(50,3) -j0/-j1 3.4-3.6s vs -j2 4.9s; D(100,3) -j2 27.9s
+vs -j0/-j1 33.8-34.2s; D(100,4) -x1e19 -j2 62.0s vs -j0 63.6s; D(100,5)
+-x1e17 -j2 11.2s vs -j0 3.05s. The estimator ranks these correctly
+(sometimes exaggerating margins). In D(100,5) at that range, -j2's walks
+test 6.5x more candidates: it first allocates at low-tau positions
+(t = 10, 20), where one p^4 leaves a prime or small tau, with large
+caps and many primes tried, leaving the high-tau positions to be walked
+at larger ranges. Whether -j2 wins at the full range (where the flip
+also matters more) is not yet known: the estimator is still too slow
+for full-range D(100,5) batches (X ~ 5e35).
+
+## Candidates
+
+Calibration assumes no candidate lowers zmax during the run; if one does
+substantially, the calibrated options may no longer be optimal.
+
 ## Open
 
 - C_p refinement (pretest cost + P(reach BPSW) * BPSW cost); C_m as a
@@ -252,6 +326,12 @@ Further details now modelled:
   decisions whose children recurse need the full recursive estimate.
 - A dynamic gate would need P_inv/P_prime before walk setup has run;
   worth it only for decisions that are not clear-cut.
+- STRATEGY_6X batches overestimated with tables (D(90,4)); flips there
+  still accept more outer primes than measured.
+- estimator speed for full-range batches with huge X (an unvalidated
+  attempt at coarser memoisation broke fixed-power cases and was
+  reverted).
+- MOCK_WALK: stub walk_v() with the calibrated mean.
 - batch-estimate: fixed powers arising below the batch level (only
   the Pell case is handled); midp (-W) with fixed powers; strategies
   3 and 4; g >= 4 walks validated only for pass rates, not timing;
