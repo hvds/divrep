@@ -3048,6 +3048,50 @@ static double mw_pinv(t_mod *inv, uint inv_count) {
     return p;
 }
 
+#ifdef MOCK_LEAF
+/* MOCK_LEAF: with MOCK_WALK, also stub innermost recurse loops - those
+ * whose children all walk. A loop is pending from when it starts; if the
+ * first child to survive apply_single() walks (a linear walk), that
+ * walk's per-iteration cost and expected size are recorded, and when the
+ * loop resumes, the remaining primes up to its cap are replaced by
+ * c_prime each plus their walks, whose size scales as (p0/p)^(x-1). If
+ * the first child recurses, or does anything not yet modelled, the loop
+ * runs normally.
+ */
+#define ML_MAX 256
+#define ML_PENDING 1
+#define ML_LEAF 2
+#define ML_NOT 3
+static uint ml_state[ML_MAX];
+static double ml_iter_cost[ML_MAX], ml_r0[ML_MAX];
+static ulong ml_p0[ML_MAX];
+double g_ml_c_prime = 0.57e-6;
+
+static double ml_li(double x) {
+    if (x < 2)
+        return 0;
+    double l = log(x);
+    return x / l * (1 + 1 / l + 2 / (l * l));
+}
+
+/* the cost of the rest of a leaf loop at level lvl, after prime p */
+static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
+    if (limp <= p)
+        return 0;
+    double s = x - 1, cost = g_ml_c_prime * (ml_li(limp) - ml_li(p));
+    double sum = 0, step = pow(2.0, 0.125);
+    for (double lo = p; lo < limp; lo *= step) {
+        double hi = lo * step;
+        if (hi > limp)
+            hi = limp;
+        double n = ml_li(hi) - ml_li(lo);
+        if (n > 0)
+            sum += n * pow(ml_p0[lvl] / sqrt(lo * hi), s);
+    }
+    return cost + ml_iter_cost[lvl] * ml_r0[lvl] * sum;
+}
+#endif
+
 /* expected cost after the inverse filter and any fixed power's own test:
  * C_p + P_prime * C_m, over the need_prime and need_other positions */
 static double mw_tail(mpz_t **q, uint *t, uint *need_prime, uint npc,
@@ -3467,7 +3511,22 @@ void walk_v(t_level *cur_level, mpz_t start) {
             if (iters < 0)
                 iters = 0;
             cost = iters * (0.03e-6 + pinv * tail);
+#ifdef MOCK_LEAF
+            uint L = cur_level->level;
+            if (L < ML_MAX && ml_state[L] == ML_PENDING) {
+                ml_state[L] = ML_LEAF;
+                ml_iter_cost[L] = 0.03e-6 + pinv * tail;
+                ml_r0[L] = (mpz_get_d(zmax) - mpz_get_d(zmin))
+                        / mpz_get_d(cur_level->aq);
+                ml_p0[L] = cur_level->p;
+            }
+#endif
         } else {
+#ifdef MOCK_LEAF
+            if (cur_level->level < ML_MAX
+                    && ml_state[cur_level->level] == ML_PENDING)
+                ml_state[cur_level->level] = ML_NOT;
+#endif
             uint sqi = need_square[0];
             uint ti = t[sqi];
             uint xi = divisors[ti].gcddm;
@@ -4017,6 +4076,10 @@ void walk_1_set(
     t_level *prev_level, t_level *cur_level,
     uint vi, ulong plow, ulong phigh, uint x
 ) {
+#ifdef MOCK_LEAF
+    if (prev_level->level < ML_MAX && ml_state[prev_level->level] == ML_PENDING)
+        ml_state[prev_level->level] = ML_NOT;
+#endif
 #ifdef VERBOSE
     gmp_printf("walk_1_set ENTRY vi=%u plow=%lu phigh=%lu x=%u\n",
             vi, plow, phigh, x);
@@ -6618,6 +6681,13 @@ void recurse(e_is jump_continue) {
               case PUX_SKIP_THIS_X:
                 goto continue_unforced_x;
               case PUX_DO_THIS_X:
+#ifdef MOCK_LEAF
+                if (level < ML_MAX)
+                    ml_state[level] = ML_PENDING;
+                if (level >= 1 && level - 1 < ML_MAX
+                        && ml_state[level - 1] == ML_PENDING)
+                    ml_state[level - 1] = ML_NOT;
+#endif
                 ;
             }
             goto continue_unforced;
@@ -6660,6 +6730,14 @@ void recurse(e_is jump_continue) {
         }
       continue_unforced:
         {
+#ifdef MOCK_LEAF
+            if (level < ML_MAX && ml_state[level] == ML_LEAF) {
+                g_mock_spent_s += ml_stub_cost(level, cur_level->p,
+                        cur_level->limp, cur_level->x);
+                ml_state[level] = 0;
+                goto continue_unforced_x;
+            }
+#endif
             /* recalculate limit if we have an improved maximum */
             if (improve_max && seen_best > cur_level->max_at)
                 switch (prep_unforced_x(

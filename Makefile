@@ -88,6 +88,10 @@ endif
 ifdef MOCK_WALK
     DEFINES += -DMOCK_WALK
 endif
+# with MOCK_WALK, also stub innermost recurse loops, see coul.c
+ifdef MOCK_LEAF
+    DEFINES += -DMOCK_LEAF
+endif
 # Optional optimization when lower bound for search is a significant
 # proportion of the upper bound.
 ifdef LARGE_MIN
