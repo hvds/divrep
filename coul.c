@@ -663,8 +663,11 @@ void report(char *format, ...) {
     }
 }
 
+/* CPU time the mocks spend computing costs, not part of what they model */
+double g_mock_overhead_s = 0;
+
 double seconds(double t1) {
-    return (t1 - t0) + g_mock_spent_s;
+    return (t1 - t0) + g_mock_spent_s - g_mock_overhead_s;
 }
 
 double elapsed(void) {
@@ -2955,8 +2958,8 @@ int inv_comparator(const void *va, const void *vb) {
  * loop_sq + P_inv * (C_sq + P_sq * (C_p + P_prime * C_m)) plus setup per
  * walk for a fixed power (nqc == 1), where each loop cost is a base plus
  * a cost per inverse-filter entry tested. P_inv is exact from inv[];
- * P_prime multiplies K / (b ln 2) over need_prime residuals of b bits.
- * All costs and K come from the machine's cost table named by
+ * P_prime multiplies prime probabilities over need_prime residuals.
+ * All costs come from the machine's cost table named by
  * $MOCK_WALK_TABLE (see multibench-table), so that nothing here is
  * specific to one machine or MPUGMP build. Pell walks (nqc > 1) still
  * run for real.
@@ -2964,10 +2967,22 @@ int inv_comparator(const void *va, const void *vb) {
  * walk_1_set() runs for real over its first MW_W1S_PREFIX primes, but
  * with each surviving prime's tests replaced by their expected cost;
  * the rest of its primes are then charged per prime, plus the prefix's
- * rate of survivors times the cost of the checks and tests at the range's
- * geometric midpoint.
+ * rate of survivors times the cost of the checks and its mean test cost.
+ *
+ * The test costs model trial division explicitly, following
+ * tau_multi_prep(): for each position, the distribution of the valuation
+ * at each trial prime p of the values reaching the tests follows from the
+ * walk (see t_mwwalk), and the tau still to find as factors are divided
+ * out decides a rejection or an immediate decision there (all of tau
+ * found, or only a prime left to find), at the cost measured for
+ * stopping at p. Trial division goes to sqrt(value) when that is below
+ * its limit L, and is then complete. The table, for inputs with no trial
+ * factor, gives the rest. Results are cached by what decides them, and
+ * for walk_1_set(), whose values are known exactly, sampled. The mock's
+ * own CPU time is measured and discounted.
  */
 #define MW_W1S_PREFIX 10000
+#define MW_W1S_SAMPLE 8
 #define MW_MAXT 256
 #define MW_MAXB 32
 typedef struct {
@@ -2977,6 +2992,22 @@ typedef struct {
 static t_mw mw_tab[MW_MAXT];
 static uint mw_count = 0;
 static bool mw_loaded = 0;
+/* Trial division: the table's rows are for inputs with no factor up to
+ * the trial limit L for their size, since the mock handles the trial
+ * primes itself for each walk. The "L bits p" rows give L by size and
+ * the "S bits p prep_us prime_us" rows the cost of a test that fails at
+ * trial prime p; each set is used for sizes nearest its bits. */
+#define MW_MAXS 64
+typedef struct {
+    uint bits, L, ns;
+    uint p[MW_MAXS];
+    double prep[MW_MAXS], prime[MW_MAXS];
+    double KL;      /* prod p / (p - 1) over the trial primes */
+} t_mwscan;
+static t_mwscan mw_scan[8];
+static uint mw_nscan = 0;
+static uint *mw_tp = NULL, mw_ntp = 0;  /* primes up to the largest L */
+static mpz_t mw_tmp;
 
 /* prime test cost by bits: (pass rate, seconds) */
 typedef struct {
@@ -2998,15 +3029,13 @@ static t_mwc mw_C[] = {
     { "sqsetup", 0, 0, 1 },     /* fixed-power walk per walk */
     { "sqloop0", 0, 0, 1 },     /* fixed-power walk per root */
     { "sqtest", 0, 0, 1 },      /* fixed-power walk per inverse test */
-    { "kprime", 0, 0, 0 },      /* P(prime) = kprime / (bits ln 2) */
-    { "ksquare", 0, 0, 0 },     /* likewise for a fixed power's root */
     { "cprime", 0, 0, 1 },      /* leaf loop per prime */
     { "cprimesq", 0, 0, 1 },    /* likewise, with a fixed-power walk */
     { "w1siter", 0, 0, 1 },     /* walk_1_set() per prime */
     { "w1scheck", 0, 0, 1 },    /* walk_1_set() per prime passing mod check */
 };
 enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
-        MWC_KPRIME, MWC_KSQUARE, MWC_CPRIME, MWC_CPRIMESQ, MWC_W1SITER,
+        MWC_CPRIME, MWC_CPRIMESQ, MWC_W1SITER,
         MWC_W1SCHECK, MWC_COUNT };
 #define MWC(i) (mw_C[i].v)
 
@@ -3019,12 +3048,33 @@ static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
     ++tp->nb;
 }
 
+/* the trial division data for values of the given size: that with the
+ * nearest bits, or with create set a new set for exactly these bits */
+static t_mwscan *mw_scan_for(uint bits, bool create) {
+    t_mwscan *best = NULL;
+    for (uint i = 0; i < mw_nscan; ++i) {
+        t_mwscan *sp = &mw_scan[i];
+        if (create ? sp->bits == bits
+                : (!best || abs((int)sp->bits - (int)bits)
+                        < abs((int)best->bits - (int)bits)))
+            best = sp;
+    }
+    if (create && !best) {
+        if (mw_nscan == sizeof(mw_scan) / sizeof(mw_scan[0]))
+            fail("MOCK_WALK: too many trial division sizes");
+        best = &mw_scan[mw_nscan++];
+        *best = (t_mwscan){ .bits = bits };
+    }
+    return best;
+}
+
 /* The table is the output of multibench-table: lines starting with a
  * digit are test_multi() rows "t e bits F rej dec pend pass prep run";
- * others are "C name value" or "P bits F pass us". Times in the file
- * are in microseconds. */
+ * others are "C name value", "P bits F pass us", "S bits p us us" or
+ * "L bits p". Times in the file are in microseconds. */
 static void mw_load(void) {
     mw_loaded = 1;
+    mpz_init(mw_tmp);
     char *fn = getenv("MOCK_WALK_TABLE");
     if (!fn)
         fail("MOCK_WALK: set MOCK_WALK_TABLE to a multibench table");
@@ -3045,6 +3095,20 @@ static void mw_load(void) {
         }
         if (sscanf(line, "P %u %u %lf %lf", &b, &F, &v[0], &v[1]) == 4) {
             mw_add1(&mw_P, b, v[0], v[1] * 1e-6);
+            continue;
+        }
+        uint p;
+        if (sscanf(line, "S %u %u %lf %lf", &b, &p, &v[0], &v[1]) == 4) {
+            t_mwscan *sp = mw_scan_for(b, 1);
+            if (sp->ns == MW_MAXS)
+                fail("MOCK_WALK: too many S rows");
+            sp->p[sp->ns] = p;
+            sp->prep[sp->ns] = v[0] * 1e-6;
+            sp->prime[sp->ns++] = v[1] * 1e-6;
+            continue;
+        }
+        if (sscanf(line, "L %u %u", &b, &p) == 2) {
+            mw_scan_for(b, 1)->L = p;
             continue;
         }
         if (sscanf(line, "%u %u %u %u %lf %lf %lf %lf %lf %lf", &t, &e, &b,
@@ -3073,6 +3137,32 @@ static void mw_load(void) {
             fail("MOCK_WALK: %s: no value for C %s", fn, mw_C[i].name);
     if (!mw_P.nb)
         fail("MOCK_WALK: %s: need P rows", fn);
+    if (!mw_nscan)
+        fail("MOCK_WALK: %s: need S and L rows", fn);
+    uint maxL = 0;
+    for (uint i = 0; i < mw_nscan; ++i) {
+        if (!mw_scan[i].L || !mw_scan[i].ns)
+            fail("MOCK_WALK: %s: need S and L rows for %u bits", fn,
+                    mw_scan[i].bits);
+        if (mw_scan[i].L > maxL)
+            maxL = mw_scan[i].L;
+    }
+    /* sieve the trial primes */
+    char *comp = calloc(maxL + 1, 1);
+    mw_tp = malloc((maxL / 2 + 2) * sizeof(uint));
+    for (uint p = 2; p <= maxL; ++p) {
+        if (comp[p])
+            continue;
+        mw_tp[mw_ntp++] = p;
+        for (ulong q = (ulong)p * p; q <= maxL; q += p)
+            comp[q] = 1;
+    }
+    free(comp);
+    for (uint i = 0; i < mw_nscan; ++i) {
+        mw_scan[i].KL = 1;
+        for (uint j = 0; j < mw_ntp && mw_tp[j] <= mw_scan[i].L; ++j)
+            mw_scan[i].KL *= (double)mw_tp[j] / (mw_tp[j] - 1);
+    }
 }
 
 /* interpolate a one-dimensional table at bits, geometrically for
@@ -3221,35 +3311,528 @@ static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
 }
 #endif
 
-/* expected cost after the inverse filter and any fixed power's own test:
- * C_p + P_prime * C_m, over the need_prime and need_other positions, for
- * candidates of zb bits */
+#define MW_MAXEXCL 16
+
+/* process CPU time, to measure (and discount) the mock's own overhead */
+static inline double mw_clock(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+/* The distribution of the valuation of a value at p, for a value
+ * qq.ati + o over the ati that reach the tests, or of o itself if qq is
+ * NULL: val[a] for a < MW_MAXV (the tail beyond is dropped). excl lists
+ * residues of ati mod p already known not to reach the tests (because
+ * they make some other position divisible by p where it may not be).
+ */
+#define MW_MAXV 8
+static void mw_valuation(double *val, uint p, mpz_t o, mpz_t *qq,
+        ulong *excl, uint nexcl) {
+    for (uint a = 0; a < MW_MAXV; ++a)
+        val[a] = 0;
+    uint a0 = 0, b0 = 0;
+    mpz_set(mw_tmp, o);
+    while (a0 < MW_MAXV - 1 && mpz_divisible_ui_p(mw_tmp, p)) {
+        mpz_divexact_ui(mw_tmp, mw_tmp, p);
+        ++a0;
+    }
+    if (!qq) {
+        val[a0] = 1;
+        return;
+    }
+    mpz_set(mw_tmp, *qq);
+    while (b0 < MW_MAXV - 1 && mpz_divisible_ui_p(mw_tmp, p)) {
+        mpz_divexact_ui(mw_tmp, mw_tmp, p);
+        ++b0;
+    }
+    double d;       /* probability that p^b0 divides, then 1/p for each more */
+    if (b0 > 0) {
+        if (a0 < b0) {
+            val[a0] = 1;
+            return;
+        }
+        d = 1;
+    } else {
+        ulong r = small_divmod(o, *qq, p);
+        r = r ? p - r : 0;      /* the ati residue making p divide */
+        uint ne = 0;
+        bool hit = 0;
+        for (uint i = 0; i < nexcl; ++i) {
+            bool dup = 0;
+            for (uint l = 0; l < i; ++l)
+                if (excl[l] == excl[i]) { dup = 1; break; }
+            if (dup)
+                continue;
+            ++ne;
+            if (excl[i] == r)
+                hit = 1;
+        }
+        d = hit ? 0 : 1.0 / (p - ne);
+        b0 = 1;
+    }
+    val[0] = 1 - d;
+    double pa = d * (1 - 1.0 / p);
+    for (uint a = b0; a < MW_MAXV; ++a) {
+        val[a] += pa;
+        pa /= p;
+    }
+}
+
+/* the valuation of a value divisible by p with probability d, and by
+ * each further power of p with probability 1/p */
+static void mw_geometric(double *val, uint p, double d) {
+    val[0] = 1 - d;
+    double pa = d * (1 - 1.0 / p);
+    for (uint a = 1; a < MW_MAXV; ++a) {
+        val[a] = pa;
+        pa /= p;
+    }
+}
+
+static inline ulong mw_mulmod(ulong a, ulong b, ulong m) {
+    return (ulong)((unsigned __int128)a * b % m);
+}
+
+static ulong mw_powmod(ulong b, ulong e, ulong m) {
+    ulong r = 1;
+    b %= m;
+    while (e) {
+        if (e & 1)
+            r = mw_mulmod(r, b, m);
+        b = mw_mulmod(b, b, m);
+        e >>= 1;
+    }
+    return r;
+}
+
+/* The walk a value comes from, which decides how its divisibility by the
+ * trial primes is distributed. In a linear walk the values are qq.ati + o
+ * with ati uniform; in a walk of a fixed power at position s, with
+ * cand + off_s = q_s.r^xi and r uniform, position j has q_j.v_j =
+ * q_s.r^xi - c for c = off_s - off_j, so p divides v_j for as many r
+ * mod p as c / q_s has xi-th roots: for xi == 2, when q_s.c is a square
+ * v_j factorizes algebraically, and is divisible by p about twice as often.
+ */
+#define MWK_LINEAR 0
+#define MWK_FIXED 1     /* in a walk of a fixed power */
+#define MWK_EXACT 2     /* wv_o[] is the value itself */
+#define MWK_ROOT 3      /* the root of a fixed power: coprime to the
+                         * allocated primes, else no information */
+typedef struct {
+    uint kind;
+    uint s, xi;         /* MWK_FIXED: the fixed power's position, root degree */
+    bool pp;            /* MWK_FIXED: the root must be prime */
+    mpz_t *qs;          /* MWK_FIXED: q_s */
+    ulong khash;        /* MWK_FIXED: hash of q_s free of xi-th powers */
+    ulong *alloc;       /* primes allocated anywhere */
+    uint nalloc;
+} t_mwwalk;
+
+/* the outcome of trial division of one value: probability and cost of
+ * rejection there, and for each tau s still to find the probability of
+ * surviving with it and the expected bits divided out meanwhile */
+typedef struct {
+    ulong key;
+    uint t;
+    double rej, rejcost;
+    double pass, passcost;  /* completed within trial division */
+    double *w, *rb;
+} t_mwtrial;
+#define MW_CACHE (1 << 16)
+static t_mwtrial *mw_cache[MW_CACHE];
+
+static inline ulong mw_hash(ulong h, const void *p, size_t n) {
+    const unsigned char *c = p;
+    for (size_t i = 0; i < n; ++i)
+        h = (h ^ c[i]) * 0x100000001b3UL;
+    return h;
+}
+
+/* the valuation at p of position vj's value, for p not handled by the
+ * key's special cases */
+static void mw_generic(double *val, uint p, t_mwwalk *wk, uint vj) {
+    if (wk->kind != MWK_FIXED) {
+        mw_geometric(val, p, 1.0 / p);
+        return;
+    }
+    long c = (long)TYPE_OFFSET(wk->s) - (long)TYPE_OFFSET(vj);
+    ulong qs = mpz_fdiv_ui(*wk->qs, p);
+    ulong cp = (ulong)(((c % (long)p) + (long)p) % (long)p);
+    uint den = p - (wk->pp ? 1 : 0);
+    uint N;
+    if (qs == 0)
+        N = cp ? 0 : p;         /* not expected: p would be allocated */
+    else if (cp == 0)
+        N = wk->pp ? 0 : 1;     /* r == 0 (mod p) */
+    else {
+        ulong x = mw_mulmod(cp, simple_invert(qs, p), p);
+        ulong g = p - 1, xi = wk->xi;
+        while (xi) {            /* g = gcd(xi, p - 1) */
+            ulong r = g % xi;
+            g = xi;
+            xi = r;
+        }
+        N = (mw_powmod(x, (p - 1) / g, p) == 1) ? g : 0;
+    }
+    mw_geometric(val, p, (double)N / den);
+}
+
+/* the cost of a test that fails at trial prime p, interpolated */
+static double mw_scan_cost(t_mwscan *sc, uint p, bool prime) {
+    double *cv = prime ? sc->prime : sc->prep;
+    if (p <= sc->p[0])
+        return cv[0];
+    for (uint i = 1; i < sc->ns; ++i)
+        if (p <= sc->p[i])
+            return cv[i - 1] + (cv[i] - cv[i - 1])
+                    * (double)(p - sc->p[i - 1]) / (sc->p[i] - sc->p[i - 1]);
+    return cv[sc->ns - 1];
+}
+
+/* the trial division part of the test of position vj's value for tau t
+ * with exponent multiplier e; with prime set, the costs are those of a
+ * prime test */
+static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
+        double bits, bool prime, ulong excl[][MW_MAXEXCL], uint *nexcl) {
+    t_mwscan *sc = mw_scan_for((uint)bits, 0);
+    /* special primes: the small ones, whose valuations may be known
+     * exactly or be modified by exclusions; larger allocated primes are
+     * treated as generic, an error of O(1/p), since keying on them would
+     * defeat the cache */
+    uint nspecial = 0;
+    uint sp[16];
+    double sval[16][MW_MAXV];
+    ulong key = mw_hash(0xcbf29ce484222325UL, &t, sizeof(t));
+    key = mw_hash(key, &e, sizeof(e));
+    key = mw_hash(key, &sc->L, sizeof(sc->L));
+    key = mw_hash(key, &prime, sizeof(prime));
+    uint ibits = (uint)bits;
+    key = mw_hash(key, &ibits, sizeof(ibits));
+    key = mw_hash(key, &wk->kind, sizeof(wk->kind));
+    if (wk->kind == MWK_FIXED) {
+        long c = (long)TYPE_OFFSET(wk->s) - (long)TYPE_OFFSET(vj);
+        key = mw_hash(key, &c, sizeof(c));
+        key = mw_hash(key, &wk->xi, sizeof(wk->xi));
+        key = mw_hash(key, &wk->pp, sizeof(wk->pp));
+        key = mw_hash(key, &wk->khash, sizeof(wk->khash));
+    }
+    {
+        for (uint i = 0; i < mw_ntp && mw_tp[i] <= 47; ++i) {
+            uint p = mw_tp[i];
+            bool alloc = 0;
+            for (uint j = 0; j < wk->nalloc; ++j)
+                if (wk->alloc[j] == p) { alloc = 1; break; }
+            if (wk->kind == MWK_ROOT) {
+                /* the root is coprime to the allocated primes */
+                if (!alloc)
+                    continue;
+                mw_geometric(sval[nspecial], p, 0);
+            } else if (wk->kind == MWK_EXACT)
+                mw_valuation(sval[nspecial], p, wv_o[vj], NULL, NULL, 0);
+            else if (alloc || wk->kind == MWK_LINEAR)
+                mw_valuation(sval[nspecial], p, wv_o[vj], &wv_qq[vj],
+                        excl ? excl[i] : NULL, excl ? nexcl[i] : 0);
+            else
+                mw_generic(sval[nspecial], p, wk, vj);
+            sp[nspecial++] = p;
+        }
+        key = mw_hash(key, sp, nspecial * sizeof(sp[0]));
+        key = mw_hash(key, sval, nspecial * sizeof(sval[0]));
+    }
+    /* the value itself is known: find its exact valuations, uncached */
+    static t_mwtrial exact_r;
+    bool exact = (wk->kind == MWK_EXACT);
+    t_mwtrial **slot = &mw_cache[key & (MW_CACHE - 1)];
+    if (exact) {
+        mpz_set(mw_tmp, wv_o[vj]);
+        slot = NULL;
+    } else if (*slot && (*slot)->key == key && (*slot)->t == t)
+        return *slot;
+
+    double w[t + 1], w2[t + 1], rb[t + 1], rb2[t + 1];
+    for (uint i = 0; i <= t; ++i)
+        w[i] = rb[i] = 0;
+    w[t] = 1;
+    double rej = 0, rejcost = 0, pass = 0, passcost = 0;
+    /* trial division goes up to sqrt(value) if that is below L, and is
+     * then complete: what is left is 1 or a prime */
+    double lim = (bits < 62) ? sqrt(pow(2.0, bits)) : sc->L;
+    bool complete = (lim < sc->L);
+    if (!complete)
+        lim = sc->L;
+    uint lastp = 2;
+    double Kp = 1;      /* prod q / (q - 1) over the trial primes so far */
+    for (uint i = 0; i < mw_ntp && mw_tp[i] <= lim; ++i) {
+        uint p = mw_tp[i];
+        lastp = p;
+        double gval[MW_MAXV], *val;
+        uint j;
+        if (exact) {
+            uint a = 0;
+            while (a < MW_MAXV - 1 && mpz_divisible_ui_p(mw_tmp, p)) {
+                mpz_divexact_ui(mw_tmp, mw_tmp, p);
+                ++a;
+            }
+            for (j = 0; j < MW_MAXV; ++j)
+                gval[j] = (j == a);
+            val = gval;
+        } else {
+            for (j = 0; j < nspecial; ++j)
+                if (sp[j] == p)
+                    break;
+            if (j < nspecial)
+                val = sval[j];
+            else {
+                mw_generic(gval, p, wk, vj);
+                val = gval;
+            }
+        }
+        /* what is left after p has no factor up to p */
+        Kp *= (double)p / (p - 1);
+        if (val[0] >= 1)
+            continue;
+        double cost = mw_scan_cost(sc, p, prime);
+        double lp = log2(p);
+        for (uint x = 0; x <= t; ++x)
+            w2[x] = rb2[x] = 0;
+        for (uint x = 2; x <= t; ++x) {
+            if (w[x] == 0)
+                continue;
+            w2[x] += w[x] * val[0];
+            rb2[x] += rb[x] * val[0];
+            for (uint a = 1; a < MW_MAXV; ++a) {
+                double y = w[x] * val[a];
+                if (y == 0)
+                    continue;
+                uint et = a * e + 1;
+                if (x / et == 1 && x % et == 0) {
+                    /* all of tau found: passes if nothing is left, which
+                     * (since what is left has no factor up to p) is when
+                     * less than p is left */
+                    double left = bits - rb[x] / w[x] - a * lp;
+                    if (left < lp) {
+                        pass += y;
+                        passcost += y * cost;
+                    } else {
+                        rej += y;
+                        rejcost += y * cost;
+                    }
+                } else if (x % et || x / et < e + 1) {
+                    rej += y;
+                    rejcost += y * cost;
+                } else if (x / et == e + 1 && !prime) {
+                    /* the rest must be prime: prep tests it at once */
+                    double left = bits - rb[x] / w[x] - a * lp;
+                    double pp = (left < 2 * lp) ? 1 : Kp / (left * M_LN2);
+                    if (pp > 1)
+                        pp = 1;
+                    double c = cost + mw_interp1(&mw_P, left < 1 ? 1 : left, 1);
+                    pass += y * pp;
+                    passcost += y * pp * c;
+                    rej += y * (1 - pp);
+                    rejcost += y * (1 - pp) * c;
+                } else {
+                    w2[x / et] += y;
+                    rb2[x / et] += rb[x] * val[a] + y * a * lp;
+                }
+            }
+        }
+        memcpy(w, w2, sizeof(w));
+        memcpy(rb, rb2, sizeof(rb));
+    }
+    if (complete) {
+        /* what is left is a prime, which must supply the rest of tau */
+        double cost = mw_scan_cost(sc, lastp, prime);
+        for (uint x = 2; x <= t; ++x) {
+            if (w[x] == 0)
+                continue;
+            if (x == e + 1) {
+                pass += w[x];
+                passcost += w[x] * cost;
+            } else {
+                rej += w[x];
+                rejcost += w[x] * cost;
+            }
+            w[x] = 0;
+        }
+    }
+    t_mwtrial *r = exact ? &exact_r : *slot;
+    if (!r || r->t < t) {
+        if (r) {
+            free(r->w);
+            free(r->rb);
+        } else
+            r = malloc(sizeof(t_mwtrial));
+        r->w = malloc((t + 1) * sizeof(double));
+        r->rb = malloc((t + 1) * sizeof(double));
+    }
+    r->key = key;
+    r->t = t;
+    r->rej = rej;
+    r->rejcost = rejcost;
+    r->pass = pass;
+    r->passcost = passcost;
+    for (uint x = 0; x <= t; ++x) {
+        r->w[x] = w[x];
+        r->rb[x] = w[x] > 0 ? rb[x] / w[x] : 0;
+    }
+    if (slot)
+        *slot = r;
+    return r;
+}
+
+/* expected outcome of one position's test: prep time, probability of
+ * rejection in prep, of passing in prep, of pending for the ladder, and
+ * of passing the ladder, and the ladder's time if pending */
+typedef struct {
+    double prep, rej, dec, pend, pass, run;
+} t_mwtest;
+
+/* the test of position vj's value, of tau t with exponent multiplier e
+ * and about 'bits' bits: trial division as above, then the table for
+ * each tau still to find */
+static void mw_other(t_mwtest *out, t_mwwalk *wk, uint vj, uint t, uint e,
+        double bits, ulong excl[][MW_MAXEXCL], uint *nexcl) {
+    t_mwtrial *tr = mw_trial(wk, vj, t, e, bits, 0, excl, nexcl);
+    *out = (t_mwtest){ .prep = tr->rejcost + tr->passcost, .rej = tr->rej,
+            .dec = tr->pass };
+    double pend_run = 0, pend_pass = 0;
+    for (uint s = 2; s <= t; ++s) {
+        double w = tr->w[s];
+        if (w == 0)
+            continue;
+        double b = bits - tr->rb[s];
+        if (b < 1)
+            b = 1;
+        if (s == 2) {
+            /* the rest must be prime */
+            t_mwscan *sc = mw_scan_for((uint)bits, 0);
+            double pp = sc->KL / (b * M_LN2);
+            if (pp > 1)
+                pp = 1;
+            out->prep += w * mw_interp1(&mw_P, b, 1);
+            out->rej += w * (1 - pp);
+            out->dec += w * pp;
+            continue;
+        }
+        double m[6];
+        if (!mw_lookup(s, e, b, m)) {
+            out->prep += w * 15e-6;     /* no table row: rough fallback */
+            continue;
+        }
+        out->prep += w * m[4];
+        out->rej += w * m[0];
+        out->dec += w * m[1];
+        out->pend += w * m[2];
+        pend_pass += w * m[2] * m[3];
+        pend_run += w * m[2] * m[5];
+    }
+    out->pass = out->pend > 0 ? pend_pass / out->pend : 0;
+    out->run = out->pend > 0 ? pend_run / out->pend : 0;
+}
+
+/* The expected cost after the inverse filter and any fixed power's own
+ * test: C_p + P_prime * C_m, over the need_prime and need_other positions,
+ * for candidates of zb bits, from the walk wk. For a linear walk,
+ * positions that must be prime exclude the residues making them
+ * divisible by a small prime from the values reaching the later tests.
+ */
 static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
-        uint npc, uint *need_other, uint noc) {
+        uint npc, uint *need_other, uint noc, t_mwwalk *wk) {
     if (!mw_loaded)
         mw_load();
+    uint nsmall = 0;
+    while (nsmall < mw_ntp && mw_tp[nsmall] <= 47)
+        ++nsmall;
+    ulong excl[nsmall][MW_MAXEXCL];
+    uint nexcl[nsmall];
+    for (uint i = 0; i < nsmall; ++i) {
+        nexcl[i] = 0;
+        if (wk->kind != MWK_LINEAR)
+            continue;
+        uint p = mw_tp[i];
+        for (uint j = 0; j < npc; ++j) {
+            uint vj = need_prime[j];
+            ulong r = small_divmod(wv_o[vj], wv_qq[vj], p);
+            if (r == p)     /* p | qq: fixed, not a residue of ati */
+                continue;
+            if (nexcl[i] < MW_MAXEXCL)
+                excl[i][nexcl[i]++] = r ? p - r : 0;
+        }
+    }
     double pprime = 1.0, cp = 0;
     for (uint i = 0; i < npc; ++i) {
-        double b = zb - log2(mpz_get_d(*q[need_prime[i]]));
-        cp += pprime * mw_interp1(&mw_P, b, 1);
-        double pp = MWC(MWC_KPRIME) / ((b < 1 ? 1 : b) * M_LN2);
+        uint vi = need_prime[i];
+        double b = zb - log2(mpz_get_d(*q[vi]));
+        if (b < 1)
+            b = 1;
+        /* those with a trial factor fail early */
+        t_mwtrial *tr = mw_trial(wk, vi, 2, 1, b, 1, NULL, NULL);
+        double pc = tr->w[2];
+        double bb = b - tr->rb[2];
+        if (bb < 1)
+            bb = 1;
+        cp += pprime * (tr->rejcost + tr->passcost
+                + pc * mw_interp1(&mw_P, bb, 1));
+        double pp = tr->pass + pc * mw_scan_for((uint)b, 0)->KL / (bb * M_LN2);
         pprime *= (pp < 1) ? pp : 1;
     }
     double cm = 0, survive = 1, ladder = 0;
     for (uint i = 0; i < noc; ++i) {
         uint vi = need_other[i];
-        double m[6];
-        double b = zb - log2(mpz_get_d(*q[vi]));
-        if (!mw_lookup(t[vi], 1, b, m)) {
-            cm += survive * 15e-6;      /* no table row: rough fallback */
-            continue;
-        }
-        cm += survive * m[4];
-        survive *= 1 - m[0];
-        ladder += (m[0] < 1 ? m[2] / (1 - m[0]) : 0) * m[5];
+        t_mwtest m;
+        mw_other(&m, wk, vi, t[vi], 1, zb - log2(mpz_get_d(*q[vi])),
+                excl, nexcl);
+        cm += survive * m.prep;
+        survive *= 1 - m.rej;
+        ladder += (m.rej < 1 ? m.pend / (1 - m.rej) : 0) * m.run;
     }
     cm += survive * ladder;
     return cp + pprime * cm;
+}
+
+/* set up wk for a walk: the primes allocated anywhere, and for a fixed
+ * power at position s (s >= k for none) its details */
+static void mw_walk_init(t_mwwalk *wk, uint kind, ulong *alloc, uint s,
+        uint xi, bool pp) {
+    wk->kind = kind;
+    wk->alloc = alloc;
+    wk->nalloc = 0;
+    for (uint vi = 0; vi < k; ++vi) {
+        t_value *vp = &value[vi];
+        for (uint ai = 1; ai < cur_vlevel[vi]; ++ai) {
+            ulong p = vp->alloc[ai].p;
+            uint j;
+            for (j = 0; j < wk->nalloc; ++j)
+                if (alloc[j] == p)
+                    break;
+            if (j == wk->nalloc)
+                alloc[wk->nalloc++] = p;
+        }
+    }
+    if (kind != MWK_FIXED)
+        return;
+    wk->s = s;
+    wk->xi = xi;
+    wk->pp = pp;
+    wk->qs = &value[s].alloc[cur_vlevel[s] - 1].q;
+    /* q_s with xi-th powers removed, for the character of q_s mod p */
+    ulong h = 0xcbf29ce484222325UL;
+    t_value *vp = &value[s];
+    for (uint i = 0; i < wk->nalloc; ++i) {
+        ulong p = alloc[i];
+        uint x = 0;
+        for (uint ai = 1; ai < cur_vlevel[s]; ++ai)
+            if (vp->alloc[ai].p == p)
+                x += vp->alloc[ai].x - 1;
+        x %= xi;
+        if (x) {
+            h = mw_hash(h, &p, sizeof(p));
+            h = mw_hash(h, &x, sizeof(x));
+        }
+    }
+    wk->khash = h;
 }
 #endif
 
@@ -3650,8 +4233,17 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #endif
 #ifdef MOCK_WALK
     if (nqc < 2) {
+        double mo0 = mw_clock();
+        ulong mw_alloc[k * maxfact];
+        t_mwwalk wk;
+        if (nqc)
+            mw_walk_init(&wk, MWK_FIXED, mw_alloc, need_square[0],
+                    divisors[t[need_square[0]]].gcddm,
+                    divisors[t[need_square[0]]].alldiv == 2);
+        else
+            mw_walk_init(&wk, MWK_LINEAR, mw_alloc, k, 0, 0);
         double tail = mw_tail(log2(mpz_get_d(zmax)), q, t, need_prime, npc,
-                need_other, noc);
+                need_other, noc, &wk);
         double tests;
         double pinv = mw_pinv(inv, inv_count, &tests);
         double cost;
@@ -3692,19 +4284,30 @@ void walk_v(t_level *cur_level, mpz_t start) {
             double rbits = log2(hi > 2 ? hi : 2);
             double csq, psq;
             if (divisors[ti].alldiv == 2) {
-                csq = mw_interp1(&mw_P, rbits, 1);
-                psq = MWC(MWC_KSQUARE) / (rbits * M_LN2);
+                /* a prime test of the root, coprime to the allocated
+                 * primes */
+                t_mwwalk rk = { .kind = MWK_ROOT, .alloc = wk.alloc,
+                        .nalloc = wk.nalloc };
+                t_mwtrial *tr = mw_trial(&rk, sqi, 2, 1, rbits, 1,
+                        NULL, NULL);
+                double b = rbits - tr->rb[2];
+                if (b < 1)
+                    b = 1;
+                csq = tr->rejcost + tr->passcost
+                        + tr->w[2] * mw_interp1(&mw_P, b, 1);
+                psq = tr->pass + tr->w[2]
+                        * mw_scan_for((uint)rbits, 0)->KL / (b * M_LN2);
                 if (psq > 1)
                     psq = 1;
             } else {
-                double m[6];
-                if (mw_lookup(ti, xi, rbits, m)) {
-                    csq = m[4] + m[2] * m[5];
-                    psq = m[1] + m[2] * m[3];
-                } else {
-                    csq = 2e-6;
-                    psq = 0.3;
-                }
+                /* the root's own test, with no information on its
+                 * divisibility */
+                t_mwwalk rk = { .kind = MWK_ROOT, .alloc = wk.alloc,
+                        .nalloc = wk.nalloc };
+                t_mwtest m;
+                mw_other(&m, &rk, sqi, ti, xi, rbits, NULL, NULL);
+                csq = m.prep + m.pend * m.run;
+                psq = m.dec + m.pend * m.pass;
             }
             double setup = MWC(MWC_SQSETUP) * (iters < 1 ? iters : 1);
             double loop = MWC(MWC_SQLOOP0) + tests * MWC(MWC_SQTEST);
@@ -3715,6 +4318,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #endif
         }
         g_mock_spent_s += cost;
+        g_mock_overhead_s += mw_clock() - mo0;
         return;
     }
 #endif
@@ -4309,6 +4913,11 @@ void walk_1_set(
     for (uint vj = 0; vj < k; ++vj)
         mw_q[vj] = &value[vj].alloc[cur_vlevel[vj] - 1].q;
     ulong mw_primes = 0, mw_pass = 0;
+    double mw_tailsum = 0;
+    ulong mw_nsample = 0;
+    ulong mw_alloc[k * maxfact];
+    t_mwwalk mw_wk;
+    mw_walk_init(&mw_wk, MWK_EXACT, mw_alloc, k, 0, 0);
 #endif
     while (1) {
         ulong p = prime_iterator_next(&cur_level->piter);
@@ -4322,12 +4931,10 @@ void walk_1_set(
         if (++mw_primes > MW_W1S_PREFIX) {
             /* charge the rest, p..phigh, at the prefix's rates */
             double rem = mw_li(phigh) - mw_li(p) + 1;
-            double pm = sqrt((double)p * phigh);
-            double vb = log2(mpz_get_d(aip->q)) + (x - 1) * log2(pm);
             double rate = (double)mw_pass / MW_W1S_PREFIX;
-            g_mock_spent_s += rem * (MWC(MWC_W1SITER) + rate
-                    * (MWC(MWC_W1SCHECK) + mw_tail(vb, mw_q, t, need_prime,
-                        npc, need_other, noc)));
+            double tail = mw_nsample ? mw_tailsum / mw_nsample : 0;
+            g_mock_spent_s += rem * (MWC(MWC_W1SITER)
+                    + rate * (MWC(MWC_W1SCHECK) + tail));
             break;
         }
 #endif
@@ -4385,8 +4992,18 @@ void walk_1_set(
         ++countwi;
 #ifdef MOCK_WALK
         ++mw_pass;
-        g_mock_spent_s += mw_tail(log2(mpz_get_d(Z(w1_v))), mw_q, t,
-                need_prime, npc, need_other, noc);
+        /* tested in the same order as below */
+        oc_t = t;
+        qsort(need_other, noc, sizeof(uint), &other_comparator);
+        /* the exact model is costly, so sample every MW_W1S_SAMPLE-th */
+        if ((mw_pass - 1) % MW_W1S_SAMPLE == 0) {
+            double mo0 = mw_clock();
+            mw_tailsum += mw_tail(log2(mpz_get_d(Z(w1_v))), mw_q, t,
+                    need_prime, npc, need_other, noc, &mw_wk);
+            ++mw_nsample;
+            g_mock_overhead_s += mw_clock() - mo0;
+        }
+        g_mock_spent_s += mw_tailsum / mw_nsample;
         continue;
 #endif
 #ifdef GATE_STATS
@@ -7031,7 +7648,8 @@ void recurse(e_is jump_continue) {
  * power v = q.r^g is tested with e = g), runs test_multi_run() on those
  * prep leaves undecided, and reports the outcome fractions and mean
  * times. "prime,bits,count,F" instead measures a prime test on one
- * value (as for a need_prime position or a fixed power's root). The
+ * value (as for a need_prime position or a fixed power's root), and
+ * "scan,bits,count,t" the cost of tests that fail at a trial prime. The
  * walk loops' own costs are fitted from GATE_STATS runs instead (see
  * multibench-table), since a synthetic loop misses too much of them.
  */
@@ -7042,16 +7660,21 @@ static inline double mb_now(void) {
 }
 /* random integer of the given bits coprime to every prime <= F */
 static void mb_random(mpz_t m, gmp_randstate_t rs, uint bits, uint F) {
-  regen:
-    mpz_urandomb(m, rs, bits - 1);
-    mpz_setbit(m, bits - 1);
-    for (uint p = 2; p <= F; ++p) {
-        bool prime = 1;
-        for (uint d = 2; d * d <= p; ++d)
-            if (p % d == 0) { prime = 0; break; }
-        if (prime && mpz_divisible_ui_p(m, p))
-            goto regen;
+    static mpz_t prim, g;
+    static uint primF = 0;
+    if (primF != F) {
+        if (!primF) {
+            mpz_init(prim);
+            mpz_init(g);
+        }
+        mpz_primorial_ui(prim, F);
+        primF = F;
     }
+    do {
+        mpz_urandomb(m, rs, bits - 1);
+        mpz_setbit(m, bits - 1);
+        mpz_gcd(g, prim, m);
+    } while (mpz_cmp_ui(g, 1) != 0);
 }
 
 /* "prime,bits,count,F": test_primes() on a single value, as for a
@@ -7082,11 +7705,68 @@ static void mb_prime(char *spec) {
     gmp_randclear(rs);
 }
 
+/* "scan,bits,count,t": the cost of tests that fail at a trial prime p,
+ * for a range of p: test_multi() prep for tau t of a value whose first
+ * factor is p^a with a + 1 not dividing t, and a prime test of a value
+ * whose first factor is p; one line "S bits p prep_us prime_us" per p,
+ * up to the trial division limit, and then "L bits p" giving that limit
+ * (the last p for which prep still finds the factor) */
+static void mb_scan(char *spec) {
+    uint bits, count, t;
+    if (sscanf(spec, "%u,%u,%u", &bits, &count, &t) != 3)
+        fail("MULTIBENCH: expected scan,bits,count,t");
+    uint a = 1;
+    while (t % (a + 1) == 0)
+        ++a;
+    static const uint target[] = {
+        3, 5, 7, 11, 13, 17, 23, 31, 47, 101, 211, 503, 1009, 2003, 4001,
+        8009, 16001, 32003, 64007
+    };
+    gmp_randstate_t rs;
+    gmp_randinit_default(rs);
+    gmp_randseed_ui(rs, 31337 + bits);
+    mpz_t m;
+    mpz_init(m);
+    uint last = 0;
+    for (uint ti = 0; ti < sizeof(target) / sizeof(target[0]); ++ti) {
+        uint p = target[ti];
+        double tm = 0, tp = 0;
+        uint pb = (uint)ceil(a * log2(p));
+        for (uint i = 0; i < count; ++i) {
+            /* p^a times a cofactor with no factor below p */
+            mb_random(m, rs, bits > pb + 16 ? bits - pb : 16, p - 1);
+            for (uint j = 0; j < a; ++j)
+                mpz_mul_ui(m, m, p);
+            test_multi_reset();
+            double t0 = mb_now();
+            bool ok = test_multi_append(m, 0, t, 1);
+            tm += mb_now() - t0;
+            if (ok)
+                goto done;
+            mb_random(m, rs, bits > pb + 16 ? bits - (uint)log2(p) : 16, p - 1);
+            mpz_mul_ui(m, m, p);
+            test_multi_reset();
+            t0 = mb_now();
+            ok = test_prime_append(m, 0) && test_prime_run() == 0;
+            tp += mb_now() - t0;
+        }
+        printf("S %u %u %.4f %.4f\n", bits, p, 1e6 * tm / count,
+                1e6 * tp / count);
+        last = p;
+    }
+  done:
+    printf("L %u %u\n", bits, last);
+    mpz_clear(m);
+    gmp_randclear(rs);
+}
+
 void multibench(char *spec) {
     /* start clean after any progress line */
     printf("\n");
     if (strncmp(spec, "prime,", 6) == 0)
         return mb_prime(spec + 6);
+    if (strncmp(spec, "scan,", 5) == 0)
+        return mb_scan(spec + 5);
     uint bits, t, count, F, e = 1;
     ulong seed = 1;
     if (sscanf(spec, "%u,%u,%u,%u,%lu,%u", &bits, &t, &count, &F, &seed, &e) < 4)
@@ -7369,7 +8049,8 @@ int main(int argc, char **argv, char **envp) {
         recurse(jump);
     keep_diag();
 #ifdef MOCK_WALK
-    report("368 mock %.3fs", g_mock_spent_s);
+    report("368 mock %.3fs (overhead %.3fs)", g_mock_spent_s,
+            g_mock_overhead_s);
 #   ifdef MOCK_LEAF
     report(", leaf primes %.0f, sq primes %.0f", g_ml_primes, g_ml_primes_sq);
 #   endif
