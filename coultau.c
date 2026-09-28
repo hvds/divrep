@@ -177,6 +177,7 @@ static unsigned short primes_small[NPRIMES_SMALL];
 #   define TRIAL_BAND_C_END 1863    /* next to 15991 */
 #   define TRIAL_BAND_D_END 3433    /* next to 31991 */
 #   define TRIAL_BAND_E_END 6414    /* next to 63997 */
+#   define TRIAL_BAND_FEW 64        /* scan fewer than this without a gcd */
 static mpz_t gcd_1k, gcd_4k, gcd_16k, gcd_32k, gcd_64k, gcd_scratch;
 
 /* Set *band_end and *gcdp to the next band iff sp lies exactly on a band
@@ -205,7 +206,10 @@ static inline bool next_trial_band(UV sp, UV *band_end, mpz_t **gcdp) {
 }
 
 /* Skip as many whole bands as possible from sp, returning the new sp.
- * Only fires when a whole band is within lim and the GCD is 1.
+ * A band is skipped when its GCD with n is 1, which is tested whenever
+ * at least TRIAL_BAND_FEW of its primes are within sqrt(lim), even if
+ * the band extends beyond it: then none of the primes still needed divide
+ * n, and trial division ends as soon as it resumes past the band.
  * iter is optional: when given, it's kept in sync with the new sp.
  */
 static inline UV skip_trial_bands(
@@ -216,7 +220,11 @@ static inline UV skip_trial_bands(
         mpz_t *gcdp;
         if (!next_trial_band(sp, &band_end, &gcdp))
             break;
-        if ((UV)primes_small[band_end - 1] * primes_small[band_end - 1] >= lim)
+        /* The band's gcd is worthwhile even if the band extends beyond
+         * sqrt(lim), unless only a few of its primes are needed; if the
+         * gcd is 1, none of them divide n. */
+        UV few = sp + TRIAL_BAND_FEW;
+        if (few < band_end && (UV)primes_small[few] * primes_small[few] > lim)
             break;
         mpz_gcd(gcd_scratch, n, *gcdp);
         if (mpz_cmp_ui(gcd_scratch, 1) != 0)
