@@ -7721,8 +7721,8 @@ static void mb_scan(char *spec) {
         double tm = 0, tp = 0;
         uint pb = (uint)ceil(a * log2(p));
         for (uint i = 0; i < count; ++i) {
-            /* p^a times a cofactor with no factor below p */
-            mb_random(m, rs, bits > pb + 16 ? bits - pb : 16, p - 1);
+            /* p^a times a cofactor with no factor up to p */
+            mb_random(m, rs, bits > pb + 16 ? bits - pb : 16, p);
             for (uint j = 0; j < a; ++j)
                 mpz_mul_ui(m, m, p);
             test_multi_reset();
@@ -7731,7 +7731,7 @@ static void mb_scan(char *spec) {
             tm += mb_now() - t0;
             if (ok)
                 goto done;
-            mb_random(m, rs, bits > pb + 16 ? bits - (uint)log2(p) : 16, p - 1);
+            mb_random(m, rs, bits > pb + 16 ? bits - (uint)log2(p) : 16, p);
             mpz_mul_ui(m, m, p);
             test_multi_reset();
             t0 = mb_now();
