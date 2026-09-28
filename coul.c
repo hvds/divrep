@@ -2953,11 +2953,13 @@ int inv_comparator(const void *va, const void *vb) {
  *
  * Per iteration: loop + P_inv * (C_p + P_prime * C_m) for a linear walk,
  * loop_sq + P_inv * (C_sq + P_sq * (C_p + P_prime * C_m)) plus setup per
- * walk for a fixed power (nqc == 1). P_inv is exact from inv[]; P_prime
- * multiplies K / (b ln 2) over need_prime residuals of b bits; C_m, and
- * C_sq / P_sq when the fixed power's tau is composite, come from the
- * multibench table named by $MOCK_WALK_TABLE (see multibench-table).
- * Pell walks (nqc > 1) still run for real.
+ * walk for a fixed power (nqc == 1), where each loop cost is a base plus
+ * a cost per inverse-filter entry tested. P_inv is exact from inv[];
+ * P_prime multiplies K / (b ln 2) over need_prime residuals of b bits.
+ * All costs and K come from the machine's cost table named by
+ * $MOCK_WALK_TABLE (see multibench-table), so that nothing here is
+ * specific to one machine or MPUGMP build. Pell walks (nqc > 1) still
+ * run for real.
  */
 #define MW_MAXT 256
 #define MW_MAXB 32
@@ -2969,6 +2971,47 @@ static t_mw mw_tab[MW_MAXT];
 static uint mw_count = 0;
 static bool mw_loaded = 0;
 
+/* prime test cost by bits: (pass rate, seconds) */
+typedef struct {
+    uint nb;
+    double bits[MW_MAXB], v[MW_MAXB][2];
+} t_mw1;
+static t_mw1 mw_P;
+
+/* scalars, all times in seconds */
+typedef struct {
+    char *name;
+    double v;
+    bool seen;
+    bool is_time;
+} t_mwc;
+static t_mwc mw_C[] = {
+    { "loop0", 0, 0, 1 },       /* linear walk per ati */
+    { "looptest", 0, 0, 1 },    /* linear walk per inverse test */
+    { "sqsetup", 0, 0, 1 },     /* fixed-power walk per walk */
+    { "sqloop0", 0, 0, 1 },     /* fixed-power walk per root */
+    { "sqtest", 0, 0, 1 },      /* fixed-power walk per inverse test */
+    { "kprime", 0, 0, 0 },      /* P(prime) = kprime / (bits ln 2) */
+    { "ksquare", 0, 0, 0 },     /* likewise for a fixed power's root */
+    { "cprime", 0, 0, 1 },      /* leaf loop per prime */
+};
+enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
+        MWC_KPRIME, MWC_KSQUARE, MWC_CPRIME, MWC_COUNT };
+#define MWC(i) (mw_C[i].v)
+
+static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
+    if (tp->nb == MW_MAXB)
+        fail("MOCK_WALK: table too large");
+    tp->bits[tp->nb] = bits;
+    tp->v[tp->nb][0] = v0;
+    tp->v[tp->nb][1] = v1;
+    ++tp->nb;
+}
+
+/* The table is the output of multibench-table: lines starting with a
+ * digit are test_multi() rows "t e bits F rej dec pend pass prep run";
+ * others are "C name value" or "P bits F pass us". Times in the file
+ * are in microseconds. */
 static void mw_load(void) {
     mw_loaded = 1;
     char *fn = getenv("MOCK_WALK_TABLE");
@@ -2977,10 +3020,25 @@ static void mw_load(void) {
     FILE *fp = fopen(fn, "r");
     if (!fp)
         fail("MOCK_WALK: %s: %s", fn, strerror(errno));
-    uint t, e, b, F;
-    double v[6];
-    while (fscanf(fp, "%u %u %u %u %lf %lf %lf %lf %lf %lf", &t, &e, &b, &F,
-            &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) == 10) {
+    char line[256], name[32];
+    while (fgets(line, sizeof(line), fp)) {
+        uint t, e, b, F;
+        double v[6];
+        if (sscanf(line, "C %31s %lf", name, &v[0]) == 2) {
+            for (uint i = 0; i < MWC_COUNT; ++i)
+                if (strcmp(name, mw_C[i].name) == 0) {
+                    mw_C[i].v = mw_C[i].is_time ? v[0] * 1e-6 : v[0];
+                    mw_C[i].seen = 1;
+                }
+            continue;
+        }
+        if (sscanf(line, "P %u %u %lf %lf", &b, &F, &v[0], &v[1]) == 4) {
+            mw_add1(&mw_P, b, v[0], v[1] * 1e-6);
+            continue;
+        }
+        if (sscanf(line, "%u %u %u %u %lf %lf %lf %lf %lf %lf", &t, &e, &b,
+                &F, &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 10)
+            continue;
         uint i;
         for (i = 0; i < mw_count; ++i)
             if (mw_tab[i].t == t && mw_tab[i].e == e)
@@ -2999,6 +3057,28 @@ static void mw_load(void) {
         memcpy(mp->v[mp->nb++], v, sizeof(v));
     }
     fclose(fp);
+    for (uint i = 0; i < MWC_COUNT; ++i)
+        if (!mw_C[i].seen)
+            fail("MOCK_WALK: %s: no value for C %s", fn, mw_C[i].name);
+    if (!mw_P.nb)
+        fail("MOCK_WALK: %s: need P rows", fn);
+}
+
+/* interpolate a one-dimensional table at bits, geometrically for
+ * positive values */
+static double mw_interp1(t_mw1 *tp, double bits, uint k) {
+    if (!mw_loaded)
+        mw_load();
+    if (bits <= tp->bits[0])
+        return tp->v[0][k];
+    if (bits >= tp->bits[tp->nb - 1])
+        return tp->v[tp->nb - 1][k];
+    uint j = 1;
+    while (bits > tp->bits[j])
+        ++j;
+    double f = (bits - tp->bits[j - 1]) / (tp->bits[j] - tp->bits[j - 1]);
+    double a = tp->v[j - 1][k], b = tp->v[j][k];
+    return (a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a);
 }
 
 /* interpolate the table at (t, e, bits); rows are in increasing bits */
@@ -3033,8 +3113,17 @@ static bool mw_lookup(uint t, uint e, double bits, double out[6]) {
 }
 
 /* exact inverse-filter pass rate: per distinct modulus m, the fraction
- * of residues mod m not excluded */
-static double mw_pinv(t_mod *inv, uint inv_count) {
+ * of residues mod m not excluded; if tests is non-NULL, also set it to
+ * the expected number of entries tested per candidate */
+static double mw_pinv(t_mod *inv, uint inv_count, double *tests) {
+    if (tests) {
+        double reach = 1.0;
+        *tests = 0;
+        for (uint i = 0; i < inv_count; ++i) {
+            *tests += reach;
+            reach *= 1.0 - 1.0 / inv[i].m;
+        }
+    }
     double p = 1.0;
     for (uint i = 0; i < inv_count; ++i) {
         bool seen = 0;
@@ -3065,7 +3154,9 @@ static double mw_pinv(t_mod *inv, uint inv_count) {
  * loop resumes, the remaining primes up to its cap are replaced by
  * c_prime each plus their walks, whose size scales as (p0/p)^(x-1). If
  * the first child recurses, or does anything not yet modelled, the loop
- * runs normally.
+ * runs normally. With $MOCK_LEAF_OFF set, leaf loops are identified but
+ * not stubbed, so that comparing the two gives c_prime (the count of
+ * primes stubbed is reported at the end of the run).
  */
 #define ML_MAX 256
 #define ML_PENDING 1
@@ -3074,7 +3165,8 @@ static double mw_pinv(t_mod *inv, uint inv_count) {
 static uint ml_state[ML_MAX];
 static double ml_iter_cost[ML_MAX], ml_r0[ML_MAX];
 static ulong ml_p0[ML_MAX];
-double g_ml_c_prime = 0.57e-6;
+double g_ml_primes = 0;     /* primes stubbed, for calibrating cprime */
+bool g_ml_off = 0;          /* $MOCK_LEAF_OFF: leave leaf loops real */
 
 static double ml_li(double x) {
     if (x < 2)
@@ -3087,7 +3179,9 @@ static double ml_li(double x) {
 static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
     if (limp <= p)
         return 0;
-    double s = x - 1, cost = g_ml_c_prime * (ml_li(limp) - ml_li(p));
+    double np = ml_li(limp) - ml_li(p);
+    double s = x - 1, cost = MWC(MWC_CPRIME) * np;
+    g_ml_primes += np;
     double sum = 0, step = pow(2.0, 0.125);
     for (double lo = p; lo < limp; lo *= step) {
         double hi = lo * step;
@@ -3105,11 +3199,14 @@ static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
  * C_p + P_prime * C_m, over the need_prime and need_other positions */
 static double mw_tail(mpz_t **q, uint *t, uint *need_prime, uint npc,
         uint *need_other, uint noc) {
+    if (!mw_loaded)
+        mw_load();
     double zb = log2(mpz_get_d(zmax));
-    double pprime = 1.0;
+    double pprime = 1.0, cp = 0;
     for (uint i = 0; i < npc; ++i) {
         double b = zb - log2(mpz_get_d(*q[need_prime[i]]));
-        double pp = 4.8 / ((b < 1 ? 1 : b) * M_LN2);
+        cp += pprime * mw_interp1(&mw_P, b, 1);
+        double pp = MWC(MWC_KPRIME) / ((b < 1 ? 1 : b) * M_LN2);
         pprime *= (pp < 1) ? pp : 1;
     }
     double cm = 0, survive = 1, ladder = 0;
@@ -3126,7 +3223,7 @@ static double mw_tail(mpz_t **q, uint *t, uint *need_prime, uint npc,
         ladder += (m[0] < 1 ? m[2] / (1 - m[0]) : 0) * m[5];
     }
     cm += survive * ladder;
-    return (npc ? 1.0e-6 : 0.1e-6) + pprime * cm;
+    return cp + pprime * cm;
 }
 #endif
 
@@ -3163,6 +3260,8 @@ static double mw_tail(mpz_t **q, uint *t, uint *need_prime, uint npc,
  *       whether the square's tau is a prime power (tau_prime_test()),
  *       and log2 of the root limit. For S walks ninv counts inverse
  *       passes, nprime/tprime cover test_zprimes() only.
+ *       Last, for both, the expected number of inverse-filter entries
+ *       tested per iteration.
  *   B, BP, BS: batch-level estimator inputs, see gs_batch_record()
  *   F lvl oldp outer ok inner dt
  *       one per run_flip_pqsq() call: the flip point, outer primes tried
@@ -3200,6 +3299,7 @@ static double gs_pinv_pred, gs_pprime_pred; /* model predictions, see walk_v */
 static ulong gs_sq_iter, gs_n_sq;
 static double gs_t_sq, gs_rbits;
 static double gs_sq_pinv_pred;      /* inverse pass rate over root residues */
+static double gs_tests_pred;        /* inverse entries tested per iteration */
 static uint gs_rc, gs_xi, gs_pp;
 static double gs_rec_t0[GS_MAXLEVEL];
 static ulong gs_rec_np[GS_MAXLEVEL];
@@ -3415,6 +3515,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
         /* predicted inverse-filter pass rate: per distinct modulus m, the
          * fraction of residues mod m not excluded (entries for the same m
          * from different positions may coincide) */
+        gs_tests_pred = 0;
+        double reach = 1.0;
+        for (uint i = 0; i < inv_count; ++i) {
+            gs_tests_pred += reach;
+            reach *= 1.0 - 1.0 / inv[i].m;
+        }
         gs_pinv_pred = 1.0;
         for (uint i = 0; i < inv_count; ++i) {
             bool seen = 0;
@@ -3513,18 +3619,20 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #ifdef MOCK_WALK
     if (nqc < 2) {
         double tail = mw_tail(q, t, need_prime, npc, need_other, noc);
-        double pinv = mw_pinv(inv, inv_count);
+        double tests;
+        double pinv = mw_pinv(inv, inv_count, &tests);
         double cost;
         if (nqc == 0) {
             double iters = mpz_get_d(Z(wv_end)) - mpz_get_d(Z(wv_ati)) + 1;
             if (iters < 0)
                 iters = 0;
-            cost = iters * (0.03e-6 + pinv * tail);
+            double loop = MWC(MWC_LOOP0) + tests * MWC(MWC_LOOPTEST);
+            cost = iters * (loop + pinv * tail);
 #ifdef MOCK_LEAF
             uint L = cur_level->level;
             if (L < ML_MAX && ml_state[L] == ML_PENDING) {
                 ml_state[L] = ML_LEAF;
-                ml_iter_cost[L] = 0.03e-6 + pinv * tail;
+                ml_iter_cost[L] = loop + pinv * tail;
                 ml_r0[L] = (mpz_get_d(zmax) - mpz_get_d(zmin))
                         / mpz_get_d(cur_level->aq);
                 ml_p0[L] = cur_level->p;
@@ -3548,8 +3656,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
             double rbits = log2(hi > 2 ? hi : 2);
             double csq, psq;
             if (divisors[ti].alldiv == 2) {
-                csq = 0.6e-6;
-                psq = 4.0 / (rbits * M_LN2);
+                csq = mw_interp1(&mw_P, rbits, 1);
+                psq = MWC(MWC_KSQUARE) / (rbits * M_LN2);
                 if (psq > 1)
                     psq = 1;
             } else {
@@ -3562,8 +3670,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
                     psq = 0.3;
                 }
             }
-            double setup = 2.5e-6 * (iters < 1 ? iters : 1);
-            cost = setup + iters * (0.16e-6 + pinv * (csq + psq * tail));
+            double setup = MWC(MWC_SQSETUP) * (iters < 1 ? iters : 1);
+            double loop = MWC(MWC_SQLOOP0) + tests * MWC(MWC_SQTEST);
+            cost = setup + iters * (loop + pinv * (csq + psq * tail));
         }
         g_mock_spent_s += cost;
         return;
@@ -3953,6 +4062,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
     gs_t_sq = gs_rbits = 0;
     gs_rc = gs_xi = gs_pp = 0;
     gs_sq_pinv_pred = 0;
+    gs_tests_pred = 0;
     double t0 = gs_now();
     walk_v_inner(cur_level, start);
     double dt = gs_now() - t0;
@@ -3960,12 +4070,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
      * minimum yet) */
     fprintf(gs_file(), "W %u %c %.0f %d %.9f %c %.0f %.0f"
             " %u %u %u %.1f %.1f %lu %lu %lu %.9f %.9f %.5g %.5g"
-            " %lu %lu %.9f %u %u %u %.1f %.5g\n",
+            " %lu %lu %.9f %u %u %u %.1f %.5g %.3f\n",
             cur_level->level, org, gs_ati, gs_nqc, dt, gs_cause, gs_rm,
             gs_raq, gs_inv, gs_npc, gs_noc, gs_pbits, gs_obits,
             gs_n_inv, gs_n_prime, gs_n_multi, gs_t_prime, gs_t_multi,
             gs_pinv_pred, gs_pprime_pred, gs_sq_iter, gs_n_sq, gs_t_sq,
-            gs_rc, gs_xi, gs_pp, gs_rbits, gs_sq_pinv_pred);
+            gs_rc, gs_xi, gs_pp, gs_rbits, gs_sq_pinv_pred, gs_tests_pred);
 }
 #endif
 
@@ -6743,7 +6853,7 @@ void recurse(e_is jump_continue) {
       continue_unforced:
         {
 #ifdef MOCK_LEAF
-            if (level < ML_MAX && ml_state[level] == ML_LEAF) {
+            if (level < ML_MAX && ml_state[level] == ML_LEAF && !g_ml_off) {
                 g_mock_spent_s += ml_stub_cost(level, cur_level->p,
                         cur_level->limp, cur_level->x);
                 ml_state[level] = 0;
@@ -6807,14 +6917,63 @@ void recurse(e_is jump_continue) {
  * target tau t and exponent multiplier e (default 1; the root of a fixed
  * power v = q.r^g is tested with e = g), runs test_multi_run() on those
  * prep leaves undecided, and reports the outcome fractions and mean
- * times.
+ * times. "prime,bits,count,F" instead measures a prime test on one
+ * value (as for a need_prime position or a fixed power's root). The
+ * walk loops' own costs are fitted from GATE_STATS runs instead (see
+ * multibench-table), since a synthetic loop misses too much of them.
  */
 static inline double mb_now(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
+/* random integer of the given bits coprime to every prime <= F */
+static void mb_random(mpz_t m, gmp_randstate_t rs, uint bits, uint F) {
+  regen:
+    mpz_urandomb(m, rs, bits - 1);
+    mpz_setbit(m, bits - 1);
+    for (uint p = 2; p <= F; ++p) {
+        bool prime = 1;
+        for (uint d = 2; d * d <= p; ++d)
+            if (p % d == 0) { prime = 0; break; }
+        if (prime && mpz_divisible_ui_p(m, p))
+            goto regen;
+    }
+}
+
+/* "prime,bits,count,F": test_primes() on a single value, as for a
+ * need_prime position */
+static void mb_prime(char *spec) {
+    uint bits, count, F;
+    if (sscanf(spec, "%u,%u,%u", &bits, &count, &F) != 3)
+        fail("MULTIBENCH: expected prime,bits,count,F");
+    gmp_randstate_t rs;
+    gmp_randinit_default(rs);
+    gmp_randseed_ui(rs, 2654435761UL + bits);
+    mpz_t m;
+    mpz_init(m);
+    ulong npass = 0;
+    double tt = 0;
+    for (uint i = 0; i < count; ++i) {
+        mb_random(m, rs, bits, F);
+        test_multi_reset();
+        double t0 = mb_now();
+        bool ok = test_prime_append(m, 0) && test_prime_run() == 0;
+        tt += mb_now() - t0;
+        if (ok)
+            ++npass;
+    }
+    printf("P %u %u %.5f %.4f\n", bits, F, (double)npass / count,
+            1e6 * tt / count);
+    mpz_clear(m);
+    gmp_randclear(rs);
+}
+
 void multibench(char *spec) {
+    /* start clean after any progress line */
+    printf("\n");
+    if (strncmp(spec, "prime,", 6) == 0)
+        return mb_prime(spec + 6);
     uint bits, t, count, F, e = 1;
     ulong seed = 1;
     if (sscanf(spec, "%u,%u,%u,%u,%lu,%u", &bits, &t, &count, &F, &seed, &e) < 4)
@@ -6829,16 +6988,7 @@ void multibench(char *spec) {
     ulong nfail = 0, ndecided = 0, npending = 0, npass = 0;
     double tprep_fail = 0, tprep_ok = 0, trun = 0;
     for (uint i = 0; i < count; ++i) {
-      regen:
-        mpz_urandomb(m, rs, bits - 1);
-        mpz_setbit(m, bits - 1);
-        for (uint p = 2; p <= F; ++p) {
-            bool prime = 1;
-            for (uint d = 2; d * d <= p; ++d)
-                if (p % d == 0) { prime = 0; break; }
-            if (prime && mpz_divisible_ui_p(m, p))
-                goto regen;
-        }
+        mb_random(m, rs, bits, F);
         test_multi_reset();
         double t0 = mb_now();
         bool ok = test_multi_append(m, 0, t, e);
@@ -7085,6 +7235,9 @@ int main(int argc, char **argv, char **envp) {
             check = 1;
     }
     prep_presquare();
+#ifdef MOCK_LEAF
+    g_ml_off = getenv("MOCK_LEAF_OFF") != NULL;
+#endif
 #ifdef MULTIBENCH
     if (getenv("MULTIBENCH")) {
         multibench(getenv("MULTIBENCH"));
@@ -7102,6 +7255,13 @@ int main(int argc, char **argv, char **envp) {
     if (jump != IS_FINISH && setjmp(jmp_finish) == 0)
         recurse(jump);
     keep_diag();
+#ifdef MOCK_WALK
+    report("368 mock %.3fs", g_mock_spent_s);
+#   ifdef MOCK_LEAF
+    report(", leaf primes %.0f", g_ml_primes);
+#   endif
+    report("\n");
+#endif
 
     if ((opt_alloc & 2) == 0) {
         double tz = utime();

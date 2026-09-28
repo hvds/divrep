@@ -4,14 +4,21 @@ use strict;
 use warnings;
 use Math::Prime::Util qw{ divisors factor_exp gcd };
 
-=head1 multibench-table: tabulate test_multi() cost and outcomes
+=head1 multibench-table: tabulate this machine's costs for the walk mocks
 
-  multibench-table [-c<pcoul>] [-b<bits,...>] n k F
+  multibench-table [-c<bench>] [-g<gatestats>] [-m<mock>] [-b<bits,...>]
+          [-o] n k F
 
-Runs a pcoul built with C<MULTIBENCH=1> (default F<./pcoul>) for each
-divisor t > 2 of n and each size in the bits grid, feeding
-test_multi_append() random integers coprime to all primes <= F, and
-prints one table line per case:
+Writes to stdout the cost table that a pcoul built with C<MOCK_WALK=1>
+(and C<MOCK_LEAF=1>) reads from C<$MOCK_WALK_TABLE>, so that the mocks
+carry no costs of their own: one table per machine, MPUGMP build, n
+and F. Times in the table are in microseconds. It needs three builds
+of pcoul, given by C<-c> (C<MULTIBENCH=1>, default F<./pcoul>), C<-g>
+(C<GATE_STATS=1>) and C<-m> (C<MOCK_WALK=1 MOCK_LEAF=1>).
+
+First, for each divisor t > 2 of n and each size in the bits grid, the
+bench pcoul feeds test_multi_append() random integers coprime to all
+primes <= F, giving one line per case:
 
   t e bits F rej dec pend pass prep_us run_us
 
@@ -20,36 +27,200 @@ t it is gcd(p - 1: p | t), as used for the root of a fixed power. The
 fractions are of inputs rejected in prep, fully decided in prep, and
 left pending for the ladder; I<pass> is the fraction of pending inputs
 the ladder accepts; the times are mean prep time per input and mean
-ladder time per pending input.
+ladder time per pending input. C<-o> skips these lines, giving only
+the costs below, which do not depend on n.
+
+Then the remaining costs:
+
+  P bits F pass us  a prime test (need_prime, or a fixed power's root)
+  C loop0 us        linear walk, per ati
+  C looptest us     linear walk, per inverse-filter entry tested
+  C sqsetup us      fixed-power walk, per walk
+  C sqloop0 us      fixed-power walk, per root
+  C sqtest us       fixed-power walk, per inverse-filter entry tested
+  C kprime K        P(prime) = K / (bits ln 2) after the inverse filter
+  C ksquare K       likewise for a fixed power's root
+  C cprime us       innermost recurse loop, per prime
+
+The walk loop costs are fitted by least squares to the walks of two
+calibration runs with the GATE_STATS pcoul (time outside the tests,
+against iterations, expected inverse entries tested and inverse-filter
+passes, the last absorbing the instrumentation's own clock reads).
+C<cprime> is found by timing a calibration batch with the mock pcoul,
+once with leaf loops stubbed and once with them run for real: the
+difference in real (unmocked) time over the number of primes stubbed.
+K is not measured.
 
 =cut
 
-my $pcoul = './pcoul';
+my($bench, $gstats, $mock, $only) = ('./pcoul', undef, undef, 0);
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 72, 80, 96, 112, 128);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
-    $pcoul = $1, next if $arg =~ /^-c(.+)$/;
+    $bench = $1, next if $arg =~ /^-c(.+)$/;
+    $gstats = $1, next if $arg =~ /^-g(.+)$/;
+    $mock = $1, next if $arg =~ /^-m(.+)$/;
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
+    $only = 1, next if $arg eq '-o';
     die "Unknown option '$arg'";
 }
-@ARGV == 3 or die "500 Usage: $0 [-c<pcoul>] [-b<bits,...>] n k F";
+@ARGV == 3 && $gstats && $mock
+        or die "500 Usage: $0 [-c<bench>] -g<gatestats> -m<mock> [-b<bits,...>] [-o] n k F";
 my($n, $k, $F) = @ARGV;
 
-for my $t (grep $_ > 2, divisors($n)) {
-    my $e = 1;
-    if ($t & 1) {
-        $e = 0;
-        $e = gcd($e, $_->[0] - 1) for factor_exp($t);
+# calibration runs: walks under a fixed power (nqc == 1), linear walks,
+# and a batch rich in leaf loops
+my @cal_sq = ('-x1e17', 18, 4);
+my @cal_lin = ('-j4', '-f5', '-g24', '-x393643805345636319',
+        '-I2^2.3 . 2.5^5 3 2^7 . 2.3^5 5', '-b8', 96, 8);
+my @cal_leaf = @cal_lin;
+
+my $tmp = "/tmp/multibench-table.$$";
+$| = 1;
+
+unless ($only) {
+    for my $t (grep $_ > 2, divisors($n)) {
+        my $e = 1;
+        if ($t & 1) {
+            $e = 0;
+            $e = gcd($e, $_->[0] - 1) for factor_exp($t);
+        }
+        for my $b (@bits) {
+            my $count = ($b <= 64) ? 5000 : ($b <= 80) ? 2000 : 500;
+            my($line) = grep /^MULTIBENCH /, bench("$b,$t,$count,$F,1,$e");
+            my @v = ($line // '') =~ m{
+                fail\ ([\d.]+)\ decided\ ([\d.]+)\ pending\ ([\d.]+)
+                \ \(pass\ ([\d.]+)\);\ prep\ ([\d.]+)us .* run\ ([\d.]+)us
+            }x or die "no result for t=$t bits=$b";
+            print join(' ', $t, $e, $b, $F, @v), "\n";
+        }
     }
-    for my $b (@bits) {
-        my $count = ($b <= 64) ? 5000 : ($b <= 80) ? 2000 : 500;
-        local $ENV{MULTIBENCH} = "$b,$t,$count,$F,1,$e";
-        my($line) = grep /^MULTIBENCH /, `'$pcoul' -X $n $k 2>&1`;
-        my @v = ($line // '') =~ m{
-            fail\ ([\d.]+)\ decided\ ([\d.]+)\ pending\ ([\d.]+)
-            \ \(pass\ ([\d.]+)\);\ prep\ ([\d.]+)us .* run\ ([\d.]+)us
-        }x or die "no result for t=$t bits=$b";
-        print join(' ', $t, $e, $b, $F, @v), "\n";
+}
+
+my @rest;
+for my $b (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128) {
+    push @rest, grep /^P /, bench("prime,$b,20000,$F");
+}
+push @rest, 'C kprime 4.8', 'C ksquare 4.0';
+my @lin = fit_walks('N', @cal_lin);
+push @rest, sprintf('C loop0 %.5f', $lin[0]),
+        sprintf('C looptest %.5f', $lin[1]);
+my @sq = fit_walks('S', @cal_sq);
+push @rest, sprintf('C sqsetup %.4f', $sq[0]),
+        sprintf('C sqloop0 %.5f', $sq[1]), sprintf('C sqtest %.5f', $sq[2]);
+push @rest, sprintf('C cprime %.4f', cprime());
+print "$_\n" for @rest;
+unlink $tmp;
+exit 0;
+
+sub quote {
+    my($s) = @_;
+    $s =~ s/'/'\\''/g;
+    return "'$s'";
+}
+
+sub bench {
+    my($spec) = @_;
+    local $ENV{MULTIBENCH} = $spec;
+    my @lines = grep /^(?:MULTIBENCH|P) /, `'$bench' -X $n $k 2>&1`;
+    @lines or die "no result for MULTIBENCH=$spec";
+    chomp @lines;
+    return @lines;
+}
+
+# Fit the walks of the given cause (N linear, S fixed power) from a
+# GATE_STATS run: returns microseconds per walk (S only), per iteration
+# and per inverse entry tested.
+sub fit_walks {
+    my($cause, @args) = @_;
+    local $ENV{GATE_STATS} = $tmp;
+    unlink $tmp;
+    my $out = `'$gstats' -X @{[ map quote($_), @args ]} 2>&1`;
+    $out =~ /^367 /m or die "no 367 line from $gstats @args";
+    open my $fh, '<', $tmp or die "$tmp: $!";
+    my @rows;
+    while (<$fh>) {
+        my @f = split;
+        next unless $f[0] eq 'W' && $f[6] eq $cause;
+        # time outside the tests
+        my $rest = $f[5] - $f[17] - $f[18];
+        if ($cause eq 'S') {
+            $rest -= $f[23];
+            push @rows, [ 1, $f[21], $f[21] * $f[29], $f[14], $rest ];
+        } else {
+            push @rows, [ $f[3], $f[3] * $f[29], $f[14], $rest ];
+        }
     }
+    close $fh;
+    @rows > 100 or die "too few $cause walks from $gstats @args";
+    my @c = lsq(\@rows);
+    pop @c;     # inverse-filter passes: instrumentation
+    return map 1e6 * $_, @c;
+}
+
+# Least squares for y = sum x_j b_j, rows [ x_1 .. x_m, y ]: normal
+# equations on scaled columns, Gaussian elimination with pivoting.
+sub lsq {
+    my($rows) = @_;
+    my $m = @{ $rows->[0] } - 1;
+    my @scale = (0) x $m;
+    for my $r (@$rows) {
+        $scale[$_] += $r->[$_] ** 2 for 0 .. $m - 1;
+    }
+    @scale = map { $_ > 0 ? sqrt($_) : 1 } @scale;
+    my(@A, @b);
+    for my $r (@$rows) {
+        my @x = map $r->[$_] / $scale[$_], 0 .. $m - 1;
+        for my $i (0 .. $m - 1) {
+            $b[$i] += $x[$i] * $r->[$m];
+            $A[$i][$_] += $x[$i] * $x[$_] for 0 .. $m - 1;
+        }
+    }
+    for my $i (0 .. $m - 1) {
+        my($p) = sort { abs($A[$b][$i]) <=> abs($A[$a][$i]) } $i .. $m - 1;
+        @A[$i, $p] = @A[$p, $i];
+        @b[$i, $p] = @b[$p, $i];
+        abs($A[$i][$i]) > 1e-12 or die "lsq: singular";
+        for my $j ($i + 1 .. $m - 1) {
+            my $f = $A[$j][$i] / $A[$i][$i];
+            $A[$j][$_] -= $f * $A[$i][$_] for $i .. $m - 1;
+            $b[$j] -= $f * $b[$i];
+        }
+    }
+    my @x;
+    for (my $i = $m - 1; $i >= 0; --$i) {
+        my $s = $b[$i];
+        $s -= $A[$i][$_] * $x[$_] for $i + 1 .. $m - 1;
+        $x[$i] = $s / $A[$i][$i];
+    }
+    return map $x[$_] / $scale[$_], 0 .. $m - 1;
+}
+
+sub cprime {
+    open my $fh, '>', $tmp or die "$tmp: $!";
+    print $fh "$_\n" for @rest, 'C cprime 0';
+    close $fh;
+    local $ENV{MOCK_WALK_TABLE} = $tmp;
+    my(%real, $primes);
+    for my $rep (1 .. 3) {
+        for my $off (1, 0) {
+            local $ENV{MOCK_LEAF_OFF};
+            if ($off) {
+                $ENV{MOCK_LEAF_OFF} = 1;
+            } else {
+                delete $ENV{MOCK_LEAF_OFF};
+            }
+            my $out = `'$mock' -X @{[ map quote($_), @cal_leaf ]} 2>&1`;
+            my($m, $p) = $out =~ /^368 mock ([\d.]+)s, leaf primes (\d+)/m
+                    or die "no 368 line from $mock";
+            my($t) = $out =~ /^367 .*\(([\d.]+)s\)/m
+                    or die "no 367 line from $mock";
+            my $r = $t - $m;
+            $real{$off} = $r if !defined($real{$off}) || $r < $real{$off};
+            $primes = $p unless $off;
+        }
+    }
+    $primes or die "calibration batch stubbed no leaf loops";
+    return 1e6 * ($real{1} - $real{0}) / $primes;
 }
