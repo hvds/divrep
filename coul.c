@@ -7705,6 +7705,22 @@ static void mb_prime(char *spec) {
     gmp_randclear(rs);
 }
 
+static int mb_dcmp(const void *a, const void *b) {
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
+/* the mean of the lowest 95% of count times, discarding outliers such as
+ * interrupted measurements */
+static double mb_trimmed(double *v, uint count) {
+    qsort(v, count, sizeof(double), mb_dcmp);
+    uint keep = count - count / 20;
+    double sum = 0;
+    for (uint i = 0; i < keep; ++i)
+        sum += v[i];
+    return sum / keep;
+}
+
 /* "scan,bits,count,t": the cost of tests that fail at a trial prime p,
  * for a range of p: test_multi() prep for tau t of a value whose first
  * factor is p^a with a + 1 not dividing t, and a prime test of a value
@@ -7718,9 +7734,12 @@ static void mb_scan(char *spec) {
     uint a = 1;
     while (t % (a + 1) == 0)
         ++a;
+    /* including both ends of each band of MPUG_054's batched trial
+     * division, within which the cost rises linearly */
     static const uint target[] = {
-        3, 5, 7, 11, 13, 17, 23, 31, 47, 101, 211, 503, 1009, 2003, 4001,
-        8009, 16001, 32003, 64007
+        3, 5, 7, 11, 13, 17, 23, 31, 47, 101, 211, 503, 997, 1009, 2003,
+        3989, 4001, 8009, 15991, 16001, 24001, 31991, 32003, 48017, 63997,
+        64007
     };
     gmp_randstate_t rs;
     gmp_randinit_default(rs);
@@ -7728,9 +7747,16 @@ static void mb_scan(char *spec) {
     mpz_t m;
     mpz_init(m);
     uint last = 0;
+    double *tms = malloc(count * sizeof(double));
+    double *tps = malloc(count * sizeof(double));
+    /* warm up: the first tests pay one-off setup */
+    for (uint i = 0; i < 100; ++i) {
+        mb_random(m, rs, bits, 3);
+        test_multi_reset();
+        test_multi_append(m, 0, t, 1);
+    }
     for (uint ti = 0; ti < sizeof(target) / sizeof(target[0]); ++ti) {
         uint p = target[ti];
-        double tm = 0, tp = 0;
         uint pb = (uint)ceil(a * log2(p));
         for (uint i = 0; i < count; ++i) {
             /* p^a times a cofactor with no factor up to p */
@@ -7740,7 +7766,7 @@ static void mb_scan(char *spec) {
             test_multi_reset();
             double t0 = mb_now();
             bool ok = test_multi_append(m, 0, t, 1);
-            tm += mb_now() - t0;
+            tms[i] = mb_now() - t0;
             if (ok)
                 goto done;
             mb_random(m, rs, bits > pb + 16 ? bits - (uint)log2(p) : 16, p);
@@ -7748,14 +7774,16 @@ static void mb_scan(char *spec) {
             test_multi_reset();
             t0 = mb_now();
             ok = test_prime_append(m, 0) && test_prime_run() == 0;
-            tp += mb_now() - t0;
+            tps[i] = mb_now() - t0;
         }
-        printf("S %u %u %.4f %.4f\n", bits, p, 1e6 * tm / count,
-                1e6 * tp / count);
+        printf("S %u %u %.4f %.4f\n", bits, p, 1e6 * mb_trimmed(tms, count),
+                1e6 * mb_trimmed(tps, count));
         last = p;
     }
   done:
     printf("L %u %u\n", bits, last);
+    free(tms);
+    free(tps);
     mpz_clear(m);
     gmp_randclear(rs);
 }
