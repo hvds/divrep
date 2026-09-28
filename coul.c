@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <time.h>
 #include <ctype.h>
+#include <setjmp.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 
@@ -254,6 +255,10 @@ uint opt_flake = 0; /* test less before printing candidates */
 uint opt_alloc = 0;
 int opt_batch_min = -1, opt_batch_max;
 int batch_alloc = 0;    /* index of forced-prime allocations */
+/* longjmp() here to end the search early, going on to the final reports:
+ * the implication is that we have searched everything we were asked to.
+ */
+jmp_buf jmp_finish;
 int last_batch_seen = -1;
 uint cur_batch_level = 0;   /* for disp_batch, best_fixed */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
@@ -727,7 +732,12 @@ void disp_batch(void) {
             uint l = strlen(diag_buf);
             sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
         }
-        report("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
+        if (opt_alloc)
+            /* with the batch's modulus, as a guide to its size */
+            report("203 %s [aq=%Zu] (%.2fs)\n",
+                    diag_buf, lp->aq, seconds(utime()));
+        else
+            report("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
     }
 }
 
@@ -4330,7 +4340,8 @@ bool apply_batch(
  * midp ("-W") here, and skip the rest (i.e. allocation of unforced
  * primes) if midp_only. Returns FALSE if there is nothing more to
  * do for this batch, TRUE if the program should continue with standard
- * allocation of unforced primes.
+ * allocation of unforced primes, and terminates via longjmp() if we've
+ * completed a requested subset of batches.
  * 'recover' is set at first entry when recovering to midway through
  * a walk_midp() call, so should jump back into that without duplicating
  * preceding work. If there is no midp recovery structure, we're just
@@ -4348,9 +4359,15 @@ bool process_batch(t_level *cur_level, bool recover) {
             if ((opt_alloc & 4) == 0
                 && opt_batch_min >= 0
                 && batch_id >= opt_batch_min
-                && batch_id <= opt_batch_max
-            )
+            ) {
+                /* past the last batch we want: stop */
+                if (batch_id > opt_batch_max)
+                    longjmp(jmp_finish, 1);
+                /* show it, with the time taken to reach it */
+                if (!debugB)
+                    disp_batch();
                 goto do_process;
+            }
             if (opt_batch_min < 0)
                 disp_batch();
             return 0;
@@ -5919,7 +5936,7 @@ int main(int argc, char **argv, char **envp) {
         apply_202(pend202);
         free(pend202);
     }
-    if (jump != IS_FINISH)
+    if (jump != IS_FINISH && setjmp(jmp_finish) == 0)
         recurse(jump);
     keep_diag();
 

@@ -195,7 +195,7 @@ if (1) {
         [qw{ -g1000 -x20000 -jp -b2 30 4 }],
         'b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)',
     );
-    expect_recurse_count(q{6x search is exhaustively correct, 30 4}, 14,
+    expect_recurse_count(q{6x search is exhaustively correct, 30 4}, 5,
         [qw{ -g1000 -x20000 -jp -b2 30 4 }]);
 
     expect_diag(q{6x pattern is identified and applied, 90 4}, 4,
@@ -221,7 +221,7 @@ if (1) {
     local $type = Type->new('o');
 
     expect_recover_recurse_count(q{recover 6x from its own diag point, 30 4},
-        10, ['305 b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)'],
+        1, ['305 b2: 2^4.5^2 . 2.3^4 . 6X(13,0,4)'],
         [qw{ -g1000 -x20000 -jp -b2 30 4 }]);
 
     expect_recover_recurse_count(q{recover 6x from its own diag point, 90 4},
@@ -241,7 +241,7 @@ if (1) {
     );
 
     expect_recover_recurse_count(q{recover flip from its own diag point, 36 4},
-        150, ['305 b7: 2^2.5^2 . 2.11^5 . F(2,23)'],
+        128, ['305 b7: 2^2.5^2 . 2.11^5 . F(2,23)'],
         [qw{ -j2 -x1e6 -b7 36 4 }]);
 
     # A candidate logged after the last 305 line can lower zmax enough that

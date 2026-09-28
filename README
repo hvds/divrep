@@ -195,11 +195,13 @@ and execution continues. The default is to stop execution at this point.
 
 If "-a" is specified, it will establish only each valid set of batch
 allocations of forced primes, and output those sets assigning an index
-to each one (for use by '-b' below).
+to each one (for use by '-b' below), along with its modulus aq used as
+a guide to its cost.
 
 If "-b100" is specified, it will find the set of batch allocations of
 forced primes with index 100, and run the normal calculations only
-over that batch.
+over that batch, stopping once it is done. You can also specify
+a contiguous range of batches such as "-b100:200".
 
 If "-j1" is specified, it will use "strategy 1" when determining the
 next position to which to allocate another prime power (default
