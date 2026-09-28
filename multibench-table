@@ -41,14 +41,20 @@ Then the remaining costs:
   C kprime K        P(prime) = K / (bits ln 2) after the inverse filter
   C ksquare K       likewise for a fixed power's root
   C cprime us       innermost recurse loop, per prime
+  C cprimesq us     likewise, for loops walking a fixed power
+  C w1siter us      walk_1_set(), per prime
+  C w1scheck us     walk_1_set(), per prime reaching the tests
 
 The walk loop costs are fitted by least squares to the walks of two
 calibration runs with the GATE_STATS pcoul (time outside the tests,
 against iterations, expected inverse entries tested and inverse-filter
-passes, the last absorbing the instrumentation's own clock reads).
-C<cprime> is found by timing a calibration batch with the mock pcoul,
-once with leaf loops stubbed and once with them run for real: the
-difference in real (unmocked) time over the number of primes stubbed.
+passes, the last absorbing the instrumentation's own clock reads), and
+the walk_1_set() costs likewise to its calls in one of those and a
+third run.
+C<cprime> and C<cprimesq> are each found by timing a calibration batch
+with the mock pcoul, once with leaf loops stubbed and once with them run
+for real: the difference in real (unmocked) time over the number of
+primes stubbed.
 K is not measured.
 
 =cut
@@ -75,6 +81,10 @@ my @cal_sq = ('-x1e17', 18, 4);
 my @cal_lin = ('-j4', '-f5', '-g24', '-x393643805345636319',
         '-I2^2.3 . 2.5^5 3 2^7 . 2.3^5 5', '-b8', 96, 8);
 my @cal_leaf = @cal_lin;
+# and one rich in leaf loops walking a fixed power
+my @cal_leafsq = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b1', 18, 4);
+# walk_1_set() with every prime reaching the tests
+my @cal_w1s = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b3', 18, 4);
 
 my $tmp = "/tmp/multibench-table.$$";
 $| = 1;
@@ -103,13 +113,19 @@ for my $b (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128)
     push @rest, grep /^P /, bench("prime,$b,20000,$F");
 }
 push @rest, 'C kprime 4.8', 'C ksquare 4.0';
-my @lin = fit_walks('N', @cal_lin);
+my @log_lin = gate_log(@cal_lin);
+my @log_sq = gate_log(@cal_sq);
+my @lin = fit_walks('N', @log_lin);
 push @rest, sprintf('C loop0 %.5f', $lin[0]),
         sprintf('C looptest %.5f', $lin[1]);
-my @sq = fit_walks('S', @cal_sq);
+my @sq = fit_walks('S', @log_sq);
 push @rest, sprintf('C sqsetup %.4f', $sq[0]),
         sprintf('C sqloop0 %.5f', $sq[1]), sprintf('C sqtest %.5f', $sq[2]);
-push @rest, sprintf('C cprime %.4f', cprime());
+my @w1s = fit_w1s(@log_sq, gate_log(@cal_w1s));
+push @rest, sprintf('C w1siter %.5f', $w1s[0]),
+        sprintf('C w1scheck %.5f', $w1s[1]);
+push @rest, sprintf('C cprime %.4f', cprime('leaf', @cal_leaf)),
+        sprintf('C cprimesq %.4f', cprime('sq', @cal_leafsq));
 print "$_\n" for @rest;
 unlink $tmp;
 exit 0;
@@ -129,19 +145,28 @@ sub bench {
     return @lines;
 }
 
-# Fit the walks of the given cause (N linear, S fixed power) from a
-# GATE_STATS run: returns microseconds per walk (S only), per iteration
-# and per inverse entry tested.
-sub fit_walks {
-    my($cause, @args) = @_;
+# Run the GATE_STATS pcoul, and return its W and V records, split
+sub gate_log {
+    my(@args) = @_;
     local $ENV{GATE_STATS} = $tmp;
     unlink $tmp;
     my $out = `'$gstats' -X @{[ map quote($_), @args ]} 2>&1`;
     $out =~ /^367 /m or die "no 367 line from $gstats @args";
     open my $fh, '<', $tmp or die "$tmp: $!";
+    my @recs = map [ split ], grep /^[WV] /, <$fh>;
+    close $fh;
+    unlink $tmp;
+    return @recs;
+}
+
+# Fit the walks of the given cause (N linear, S fixed power) from
+# GATE_STATS records: returns microseconds per walk (S only), per
+# iteration and per inverse entry tested.
+sub fit_walks {
+    my($cause, @recs) = @_;
     my @rows;
-    while (<$fh>) {
-        my @f = split;
+    for (@recs) {
+        my @f = @$_;
         next unless $f[0] eq 'W' && $f[6] eq $cause;
         # time outside the tests
         my $rest = $f[5] - $f[17] - $f[18];
@@ -152,11 +177,41 @@ sub fit_walks {
             push @rows, [ $f[3], $f[3] * $f[29], $f[14], $rest ];
         }
     }
-    close $fh;
-    @rows > 100 or die "too few $cause walks from $gstats @args";
-    my @c = lsq(\@rows);
+    @rows > 100 or die "too few $cause walks to fit";
+    my @c = lsq_nonneg(\@rows);
     pop @c;     # inverse-filter passes: instrumentation
     return map 1e6 * $_, @c;
+}
+
+# Fit walk_1_set() calls from GATE_STATS V records: returns microseconds
+# per prime and per prime reaching the tests.
+sub fit_w1s {
+    my(@recs) = @_;
+    my @rows = map [ $_->[4], $_->[5], $_->[8] - $_->[6] - $_->[7] ],
+            grep $_->[0] eq 'V', @recs;
+    (grep $_->[1] < $_->[0], @rows) && (grep $_->[1] > 0, @rows)
+            or die "walk_1_set() calls too uniform to fit";
+    return map 1e6 * $_, lsq_nonneg(\@rows);
+}
+
+# As lsq(), but a coefficient that comes out negative (where columns are
+# nearly collinear) is fixed at zero and the rest refitted.
+sub lsq_nonneg {
+    my($rows) = @_;
+    my $m = @{ $rows->[0] } - 1;
+    my @keep = (0 .. $m - 1);
+    while (1) {
+        my @c = lsq([ map [ @$_[@keep, $m] ], @$rows ]);
+        my @neg = grep $c[$_] < 0, 0 .. $#c;
+        if (!@neg) {
+            my @full = (0) x $m;
+            @full[@keep] = @c;
+            return @full;
+        }
+        my %drop = map +($keep[$_] => 1), @neg;
+        @keep = grep !$drop{$_}, @keep;
+        @keep or die "lsq_nonneg: no columns left";
+    }
 }
 
 # Least squares for y = sum x_j b_j, rows [ x_1 .. x_m, y ]: normal
@@ -197,9 +252,14 @@ sub lsq {
     return map $x[$_] / $scale[$_], 0 .. $m - 1;
 }
 
+# The cost per prime stubbed of the leaf loops of the given kind ("leaf"
+# for linear walks, "sq" for fixed powers), from a calibration batch run
+# with and without MOCK_LEAF_OFF: the difference in real (unmocked) time
+# over the number of primes stubbed.
 sub cprime {
+    my($kind, @args) = @_;
     open my $fh, '>', $tmp or die "$tmp: $!";
-    print $fh "$_\n" for @rest, 'C cprime 0';
+    print $fh "$_\n" for @rest, 'C cprime 0', 'C cprimesq 0';
     close $fh;
     local $ENV{MOCK_WALK_TABLE} = $tmp;
     my(%real, $primes);
@@ -211,16 +271,17 @@ sub cprime {
             } else {
                 delete $ENV{MOCK_LEAF_OFF};
             }
-            my $out = `'$mock' -X @{[ map quote($_), @cal_leaf ]} 2>&1`;
-            my($m, $p) = $out =~ /^368 mock ([\d.]+)s, leaf primes (\d+)/m
+            my $out = `'$mock' -X @{[ map quote($_), @args ]} 2>&1`;
+            my($m, $pl, $ps) = $out
+                    =~ /^368 mock ([\d.]+)s, leaf primes (\d+), sq primes (\d+)/m
                     or die "no 368 line from $mock";
             my($t) = $out =~ /^367 .*\(([\d.]+)s\)/m
                     or die "no 367 line from $mock";
             my $r = $t - $m;
             $real{$off} = $r if !defined($real{$off}) || $r < $real{$off};
-            $primes = $p unless $off;
+            $primes = ($kind eq 'sq') ? $ps : $pl unless $off;
         }
     }
-    $primes or die "calibration batch stubbed no leaf loops";
+    $primes or die "calibration batch stubbed no $kind loops";
     return 1e6 * ($real{1} - $real{0}) / $primes;
 }
