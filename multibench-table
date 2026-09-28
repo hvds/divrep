@@ -45,6 +45,8 @@ C<-M> gives only these lines (and needs only the bench pcoul).
 Then the remaining costs:
 
   P bits F pass us  a prime test of a value with no factor up to F = L
+  R bits us us      the primality test prep makes when only a prime is
+                    left to find, on the same inputs and on composites
   S, L              as above
   C loop0 us        linear walk, per ati
   C looptest us     linear walk, per inverse-filter entry tested
@@ -146,7 +148,7 @@ unless ($only eq 'other') {
 exit 0 if $only eq 'multi';
 my @rest;
 for my $b (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128) {
-    push @rest, grep /^P /, bench("prime,$b,20000," . trial_limit($b));
+    push @rest, grep /^[PR] /, bench("prime,$b,20000," . trial_limit($b));
 }
 push @rest, @scan;
 my @log_lin = gate_log(@cal_lin);
@@ -175,7 +177,7 @@ sub quote {
 sub bench {
     my($spec) = @_;
     local $ENV{MULTIBENCH} = $spec;
-    my @lines = grep /^(?:MULTIBENCH|[PCSL]) /, `'$bench' -X $n $k 2>&1`;
+    my @lines = grep /^(?:MULTIBENCH|[PRCSL]) /, `'$bench' -X $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;
     return @lines;
