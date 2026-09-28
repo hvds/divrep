@@ -2951,7 +2951,14 @@ int inv_comparator(const void *va, const void *vb) {
  * $MOCK_WALK_TABLE (see multibench-table), so that nothing here is
  * specific to one machine or MPUGMP build. Pell walks (nqc > 1) still
  * run for real.
+ *
+ * walk_1_set() runs for real over its first MW_W1S_PREFIX primes, but
+ * with each surviving prime's tests replaced by their expected cost;
+ * the rest of its primes are then charged per prime, plus the prefix's
+ * rate of survivors times the cost of the checks and tests at the range's
+ * geometric midpoint.
  */
+#define MW_W1S_PREFIX 10000
 #define MW_MAXT 256
 #define MW_MAXB 32
 typedef struct {
@@ -2985,9 +2992,13 @@ static t_mwc mw_C[] = {
     { "kprime", 0, 0, 0 },      /* P(prime) = kprime / (bits ln 2) */
     { "ksquare", 0, 0, 0 },     /* likewise for a fixed power's root */
     { "cprime", 0, 0, 1 },      /* leaf loop per prime */
+    { "cprimesq", 0, 0, 1 },    /* likewise, with a fixed-power walk */
+    { "w1siter", 0, 0, 1 },     /* walk_1_set() per prime */
+    { "w1scheck", 0, 0, 1 },    /* walk_1_set() per prime passing mod check */
 };
 enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
-        MWC_KPRIME, MWC_KSQUARE, MWC_CPRIME, MWC_COUNT };
+        MWC_KPRIME, MWC_KSQUARE, MWC_CPRIME, MWC_CPRIMESQ, MWC_W1SITER,
+        MWC_W1SCHECK, MWC_COUNT };
 #define MWC(i) (mw_C[i].v)
 
 static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
@@ -3103,6 +3114,14 @@ static bool mw_lookup(uint t, uint e, double bits, double out[6]) {
     return 0;
 }
 
+/* the logarithmic integral, for counting primes */
+static double mw_li(double x) {
+    if (x < 2)
+        return 0;
+    double l = log(x);
+    return x / l * (1 + 1 / l + 2 / (l * l));
+}
+
 /* exact inverse-filter pass rate: per distinct modulus m, the fraction
  * of residues mod m not excluded; if tests is non-NULL, also set it to
  * the expected number of entries tested per candidate */
@@ -3145,32 +3164,39 @@ static double mw_pinv(t_mod *inv, uint inv_count, double *tests) {
  * loop resumes, the remaining primes up to its cap are replaced by
  * c_prime each plus their walks, whose size scales as (p0/p)^(x-1). If
  * the first child recurses, or does anything not yet modelled, the loop
- * runs normally. With $MOCK_LEAF_OFF set, leaf loops are identified but
- * not stubbed, so that comparing the two gives c_prime (the count of
- * primes stubbed is reported at the end of the run).
+ * runs normally.
+ * If instead the first child walks a fixed power (nqc == 1), whose cost
+ * varies too irregularly with p to integrate, the loop is sampled: above
+ * ML_SQ_PMIN (so that the cost changes little across a stride) every
+ * ML_STRIDE-th prime runs normally, and each prime in between is only
+ * iterated, and charged c_prime_sq plus the walk cost of the last prime
+ * run. If a sampled child recurses, the loop reverts to running normally.
+ * With $MOCK_LEAF_OFF set, leaf loops are identified but not stubbed,
+ * so that comparing the two gives c_prime and c_prime_sq (the counts of
+ * primes stubbed are reported at the end of the run).
  */
 #define ML_MAX 256
 #define ML_PENDING 1
 #define ML_LEAF 2
 #define ML_NOT 3
+#define ML_SQ 4
+#define ML_STRIDE 16
+#define ML_SQ_PMIN 65536
 static uint ml_state[ML_MAX];
 static double ml_iter_cost[ML_MAX], ml_r0[ML_MAX];
 static ulong ml_p0[ML_MAX];
+static ulong ml_count[ML_MAX];      /* ML_SQ: primes seen */
+static double ml_walk[ML_MAX];      /* ML_SQ: walk cost of last prime run */
 double g_ml_primes = 0;     /* primes stubbed, for calibrating cprime */
+double g_ml_primes_sq = 0;  /* likewise, for cprime_sq */
 bool g_ml_off = 0;          /* $MOCK_LEAF_OFF: leave leaf loops real */
 
-static double ml_li(double x) {
-    if (x < 2)
-        return 0;
-    double l = log(x);
-    return x / l * (1 + 1 / l + 2 / (l * l));
-}
 
 /* the cost of the rest of a leaf loop at level lvl, after prime p */
 static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
     if (limp <= p)
         return 0;
-    double np = ml_li(limp) - ml_li(p);
+    double np = mw_li(limp) - mw_li(p);
     double s = x - 1, cost = MWC(MWC_CPRIME) * np;
     g_ml_primes += np;
     double sum = 0, step = pow(2.0, 0.125);
@@ -3178,7 +3204,7 @@ static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
         double hi = lo * step;
         if (hi > limp)
             hi = limp;
-        double n = ml_li(hi) - ml_li(lo);
+        double n = mw_li(hi) - mw_li(lo);
         if (n > 0)
             sum += n * pow(ml_p0[lvl] / sqrt(lo * hi), s);
     }
@@ -3187,12 +3213,12 @@ static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
 #endif
 
 /* expected cost after the inverse filter and any fixed power's own test:
- * C_p + P_prime * C_m, over the need_prime and need_other positions */
-static double mw_tail(mpz_t **q, uint *t, uint *need_prime, uint npc,
-        uint *need_other, uint noc) {
+ * C_p + P_prime * C_m, over the need_prime and need_other positions, for
+ * candidates of zb bits */
+static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
+        uint npc, uint *need_other, uint noc) {
     if (!mw_loaded)
         mw_load();
-    double zb = log2(mpz_get_d(zmax));
     double pprime = 1.0, cp = 0;
     for (uint i = 0; i < npc; ++i) {
         double b = zb - log2(mpz_get_d(*q[need_prime[i]]));
@@ -3261,6 +3287,10 @@ static double mw_tail(mpz_t **q, uint *t, uint *need_prime, uint npc,
  *   X lvl vlevel dt
  *       one per walk_6x() call (STRATEGY_6X): the allocation count at
  *       v_{sq0-2} and wall time
+ *   V lvl vi x primes pass tprime tmulti dt
+ *       one per walk_1_set() call: primes iterated, how many passed the
+ *       modular and divisibility checks to reach the tests, time inside
+ *       test_1primes() and test_1multi(), and wall time
  *   P lvl tried dt
  *       one per walk_midp() call (-W): (p, vi, x) combinations tried and
  *       wall time of the whole midp phase for the batch at lvl
@@ -3281,6 +3311,8 @@ static double gs_rm, gs_raq;    /* log2(m / zmax), log2(aq / zmax) */
 static uint gs_inv, gs_npc, gs_noc;
 static ulong gs_mp_tried;           /* walk_midp(): (p, vi, x) tried */
 static ulong gs_w1s_primes;         /* walk_1_set(): primes iterated */
+static ulong gs_w1_pass;            /* walk_1_set(): primes reaching tests */
+static double gs_w1_tprime, gs_w1_tmulti;   /* walk_1_set(): test times */
 static double gs_pbits, gs_obits;   /* mean residual bits, prime/other */
 static ulong gs_n_inv, gs_n_prime, gs_n_multi;
 static double gs_t_prime, gs_t_multi;   /* time inside test_primes/test_multi */
@@ -3609,7 +3641,8 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #endif
 #ifdef MOCK_WALK
     if (nqc < 2) {
-        double tail = mw_tail(q, t, need_prime, npc, need_other, noc);
+        double tail = mw_tail(log2(mpz_get_d(zmax)), q, t, need_prime, npc,
+                need_other, noc);
         double tests;
         double pinv = mw_pinv(inv, inv_count, &tests);
         double cost;
@@ -3631,9 +3664,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #endif
         } else {
 #ifdef MOCK_LEAF
-            if (cur_level->level < ML_MAX
-                    && ml_state[cur_level->level] == ML_PENDING)
-                ml_state[cur_level->level] = ML_NOT;
+            uint L = cur_level->level;
+            if (L < ML_MAX && ml_state[L] == ML_PENDING) {
+                ml_state[L] = ML_SQ;
+                ml_count[L] = 1;
+                ml_walk[L] = 0;
+            }
 #endif
             uint sqi = need_square[0];
             uint ti = t[sqi];
@@ -3664,6 +3700,10 @@ void walk_v(t_level *cur_level, mpz_t start) {
             double setup = MWC(MWC_SQSETUP) * (iters < 1 ? iters : 1);
             double loop = MWC(MWC_SQLOOP0) + tests * MWC(MWC_SQTEST);
             cost = setup + iters * (loop + pinv * (csq + psq * tail));
+#ifdef MOCK_LEAF
+            if (L < ML_MAX && ml_state[L] == ML_SQ)
+                ml_walk[L] += cost;
+#endif
         }
         g_mock_spent_s += cost;
         return;
@@ -4182,6 +4222,9 @@ void walk_1(t_level *cur_level, uint vi) {
 /* test a set of cases where v_i will have all divisors accounted for:
  * v_i = q_i . p^{x-1} for primes p with plow < p <= phigh.
  */
+#ifdef GATE_STATS
+#   define walk_1_set walk_1_set_inner
+#endif
 void walk_1_set(
     t_level *prev_level, t_level *cur_level,
     uint vi, ulong plow, ulong phigh, uint x
@@ -4252,6 +4295,12 @@ void walk_1_set(
 #ifdef VERBOSE
     ulong w1s_tried = 0;
 #endif
+#ifdef MOCK_WALK
+    mpz_t *mw_q[k];
+    for (uint vj = 0; vj < k; ++vj)
+        mw_q[vj] = &value[vj].alloc[cur_vlevel[vj] - 1].q;
+    ulong mw_primes = 0, mw_pass = 0;
+#endif
     while (1) {
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh) {
@@ -4260,6 +4309,19 @@ void walk_1_set(
 #endif
             break;
         }
+#ifdef MOCK_WALK
+        if (++mw_primes > MW_W1S_PREFIX) {
+            /* charge the rest, p..phigh, at the prefix's rates */
+            double rem = mw_li(phigh) - mw_li(p) + 1;
+            double pm = sqrt((double)p * phigh);
+            double vb = log2(mpz_get_d(aip->q)) + (x - 1) * log2(pm);
+            double rate = (double)mw_pass / MW_W1S_PREFIX;
+            g_mock_spent_s += rem * (MWC(MWC_W1SITER) + rate
+                    * (MWC(MWC_W1SCHECK) + mw_tail(vb, mw_q, t, need_prime,
+                        npc, need_other, noc)));
+            break;
+        }
+#endif
 #ifdef VERBOSE
         ++w1s_tried;
 #endif
@@ -4312,6 +4374,30 @@ void walk_1_set(
             mpz_set(wv_o[vj], Z(w1_j));
         }
         ++countwi;
+#ifdef MOCK_WALK
+        ++mw_pass;
+        g_mock_spent_s += mw_tail(log2(mpz_get_d(Z(w1_v))), mw_q, t,
+                need_prime, npc, need_other, noc);
+        continue;
+#endif
+#ifdef GATE_STATS
+        ++gs_w1_pass;
+        double gs_t0 = gs_now();
+        bool gs_okp = test_1primes(need_prime, npc);
+        double gs_t1 = gs_now();
+        gs_w1_tprime += gs_t1 - gs_t0;
+        if (!gs_okp)
+            goto reject_this_one;
+        oc_t = t;
+        qsort(need_other, noc, sizeof(uint), &other_comparator);
+        bool gs_okm = test_1multi(need_other, noc, t, walk_1_failure);
+        gs_w1_tmulti += gs_now() - gs_t1;
+        if (!gs_okm)
+            goto reject_this_one;
+        if (candidate(Z(w1_v)))
+            return;
+        continue;
+#endif
         if (!test_1primes(need_prime, npc))
             goto reject_this_one;
         oc_t = t;
@@ -4335,6 +4421,22 @@ void walk_1_set(
     }
     return;
 }
+#ifdef GATE_STATS
+#   undef walk_1_set
+void walk_1_set(
+    t_level *prev_level, t_level *cur_level,
+    uint vi, ulong plow, ulong phigh, uint x
+) {
+    ulong primes = gs_w1s_primes;
+    gs_w1_pass = 0;
+    gs_w1_tprime = gs_w1_tmulti = 0;
+    double t0 = gs_now();
+    walk_1_set_inner(prev_level, cur_level, vi, plow, phigh, x);
+    fprintf(gs_file(), "V %u %u %u %lu %lu %.9f %.9f %.9f\n",
+            cur_level->level, vi, x, gs_w1s_primes - primes, gs_w1_pass,
+            gs_w1_tprime, gs_w1_tmulti, gs_now() - t0);
+}
+#endif
 
 /* When some v_j is known to be of the form m.z^g, we keep a running set
  * of possible values of z: z == ((rq + i)/q_j)^{ 1/g } mod aq/q_j.
@@ -6795,7 +6897,8 @@ void recurse(e_is jump_continue) {
                 if (level < ML_MAX)
                     ml_state[level] = ML_PENDING;
                 if (level >= 1 && level - 1 < ML_MAX
-                        && ml_state[level - 1] == ML_PENDING)
+                        && (ml_state[level - 1] == ML_PENDING
+                            || ml_state[level - 1] == ML_SQ))
                     ml_state[level - 1] = ML_NOT;
 #endif
                 ;
@@ -6863,6 +6966,16 @@ void recurse(e_is jump_continue) {
             ulong p = prime_iterator_next(&cur_level->piter);
             if (p > cur_level->limp)
                 goto continue_unforced_x;
+#ifdef MOCK_LEAF
+            if (level < ML_MAX && ml_state[level] == ML_SQ && !g_ml_off) {
+                if (p > ML_SQ_PMIN && ml_count[level]++ % ML_STRIDE) {
+                    g_mock_spent_s += MWC(MWC_CPRIMESQ) + ml_walk[level];
+                    ++g_ml_primes_sq;
+                    goto redo_unforced;
+                }
+                ml_walk[level] = 0;
+            }
+#endif
 #ifdef GATE_STATS
             if (level < GS_MAXLEVEL && gs_rec_open[level]) {
                 ++gs_rec_np[level];
@@ -7246,7 +7359,7 @@ int main(int argc, char **argv, char **envp) {
 #ifdef MOCK_WALK
     report("368 mock %.3fs", g_mock_spent_s);
 #   ifdef MOCK_LEAF
-    report(", leaf primes %.0f", g_ml_primes);
+    report(", leaf primes %.0f, sq primes %.0f", g_ml_primes, g_ml_primes_sq);
 #   endif
     report("\n");
 #endif
