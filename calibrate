@@ -27,7 +27,8 @@ and whether a fixed power is present, and I<samples> batches (default 3)
 are taken from each stratum, evenly spread through it. Each setting is
 run on each sampled batch with C<-b>, and the prediction for the full
 run is the sum over strata of the stratum's batch count times the mean
-time of its samples. Since every setting is timed on the same batches,
+time of its samples. The report gives the standard error of each
+prediction and, more usefully, of its difference from the best setting. Since every setting is timed on the same batches,
 comparisons between settings are much more precise than the absolute
 predictions.
 
@@ -128,9 +129,25 @@ if (@settings) {
 }
 
 my @rank = sort { $pred{$a} <=> $pred{$b} } keys %pred;
-print "\nPredicted CPU seconds for the full run:\n";
-printf "  %12.0f%s %s\n", $pred{$_}, $late{$_} ? '+' : ' ', $_ for @rank;
+print "\nPredicted CPU seconds for the full run, with standard error; and"
+        . " the\ndifference from the best setting with the same -f, with"
+        . " its standard error:\n";
+my %bestf;
+for my $s (@rank) {
+    my($f) = $s =~ /^-f(\d+)/;
+    my $b = $bestf{$f} //= $s;
+    printf "  %12.0f%s +- %-10.3g", $pred{$s}, $late{$s} ? '+' : ' ',
+            se($s);
+    if ($b eq $s) {
+        printf " %24s", '';
+    } else {
+        printf " %+12.3g +- %-9.3g", $pred{$s} - $pred{$b}, se($s, $b);
+    }
+    print " $s\n";
+}
 print "  (+: some runs timed out, so this is a lower bound)\n" if %late;
+print "  (standard errors omit strata with a single sample)\n"
+        if grep @{ $_->{ids} } == 1, map @$_, values %strata;
 print "\nBy stratum (log10 X, s = fixed power; batches: seconds):\n";
 my @show = @rank[0 .. ($#rank < 2 ? $#rank : 2)];
 for my $s (@show) {
@@ -197,14 +214,39 @@ sub stratify {
     return @st;
 }
 
+sub time_of {
+    my($s, $id) = @_;
+    my($t) = $done{ckey($s, $id)} =~ /^([\d.]+)/;
+    return $t;
+}
+
 sub mean {
     my($s, $st) = @_;
     my $sum = 0;
-    for (@{ $st->{ids} }) {
-        my($t) = $done{ckey($s, $_)} =~ /^([\d.]+)/;
-        $sum += $t;
-    }
+    $sum += time_of($s, $_) for @{ $st->{ids} };
     return $sum / @{ $st->{ids} };
+}
+
+# Standard error of the prediction for setting s, or with base of the
+# difference s - base (the same batches, so usually much smaller): per
+# stratum N^2 var / m (1 - m / N) over m samples of N, summed.
+sub se {
+    my($s, $base) = @_;
+    my($f) = $s =~ /^-f(\d+)/;
+    my $v = 0;
+    for my $st (@{ $strata{$f} }) {
+        my @y = map {
+            time_of($s, $_) - ($base ? time_of($base, $_) : 0)
+        } @{ $st->{ids} };
+        my($m, $N) = (scalar @y, $st->{count});
+        next if $m < 2;
+        my $mean = 0;
+        $mean += $_ / $m for @y;
+        my $var = 0;
+        $var += ($_ - $mean) ** 2 / ($m - 1) for @y;
+        $v += $N * $N * $var / $m * (1 - $m / $N);
+    }
+    return sqrt($v);
 }
 
 # run the setting over every sampled batch; return the prediction
