@@ -7,39 +7,50 @@ use Math::Prime::Util qw{ divisors factor_exp gcd };
 =head1 multibench-table: tabulate this machine's costs for the walk mocks
 
   multibench-table [-c<bench>] [-g<gatestats>] [-m<mock>] [-b<bits,...>]
-          [-o] n k F
+          [-o | -M] n k
 
 Writes to stdout the cost table that a pcoul built with C<MOCK_WALK=1>
 (and C<MOCK_LEAF=1>) reads from C<$MOCK_WALK_TABLE>, so that the mocks
-carry no costs of their own: one table per machine, MPUGMP build, n
-and F. Times in the table are in microseconds. It needs three builds
-of pcoul, given by C<-c> (C<MULTIBENCH=1>, default F<./pcoul>), C<-g>
+carry no costs of their own: one table per machine, MPUGMP build and
+n. Times in the table are in microseconds. It needs three builds of
+pcoul, given by C<-c> (C<MULTIBENCH=1>, default F<./pcoul>), C<-g>
 (C<GATE_STATS=1>) and C<-m> (C<MOCK_WALK=1 MOCK_LEAF=1>).
 
-First, for each divisor t > 2 of n and each size in the bits grid, the
-bench pcoul feeds test_multi_append() random integers coprime to all
-primes <= F, giving one line per case:
+The mock models the trial division stage of each test itself, since
+how often the values a walk tests are divisible by each trial prime
+depends strongly on the walk. So the bench pcoul first finds the trial
+division limit L for each size (it changes at 80 bits in some builds),
+and the cost of a test that fails at each of a range of trial primes,
+giving lines:
+
+  S bits p prep_us prime_us
+  L bits L
+
+Then for each divisor t > 2 of n and each size in the bits grid, it
+feeds test_multi_append() random integers with no factor up to L,
+giving one line per case:
 
   t e bits F rej dec pend pass prep_us run_us
 
-For even t the exponent multiplier e is 1 (a need_other value); for odd
-t it is gcd(p - 1: p | t), as used for the root of a fixed power. The
-fractions are of inputs rejected in prep, fully decided in prep, and
-left pending for the ladder; I<pass> is the fraction of pending inputs
-the ladder accepts; the times are mean prep time per input and mean
-ladder time per pending input. C<-o> skips these lines, giving only
-the costs below, which do not depend on n.
+where F is that L. Each t has a row with exponent multiplier e = 1 (a
+need_other value, or what is left of one after trial division), and
+each odd t also rows for each e = gcd(p - 1: p | t') for odd t' | n, as
+used for the root of a fixed power (and what is left of it). The fractions are of inputs rejected in prep, fully
+decided in prep, and left pending for the ladder; I<pass> is the
+fraction of pending inputs the ladder accepts; the times are mean prep
+time per input and mean ladder time per pending input. C<-o> skips
+these lines, giving only the costs below, which do not depend on n;
+C<-M> gives only these lines (and needs only the bench pcoul).
 
 Then the remaining costs:
 
-  P bits F pass us  a prime test (need_prime, or a fixed power's root)
+  P bits F pass us  a prime test of a value with no factor up to F = L
+  S, L              as above
   C loop0 us        linear walk, per ati
   C looptest us     linear walk, per inverse-filter entry tested
   C sqsetup us      fixed-power walk, per walk
   C sqloop0 us      fixed-power walk, per root
   C sqtest us       fixed-power walk, per inverse-filter entry tested
-  C kprime K        P(prime) = K / (bits ln 2) after the inverse filter
-  C ksquare K       likewise for a fixed power's root
   C cprime us       innermost recurse loop, per prime
   C cprimesq us     likewise, for loops walking a fixed power
   C w1siter us      walk_1_set(), per prime
@@ -55,11 +66,11 @@ C<cprime> and C<cprimesq> are each found by timing a calibration batch
 with the mock pcoul, once with leaf loops stubbed and once with them run
 for real: the difference in real (unmocked) time over the number of
 primes stubbed.
-K is not measured.
+
 
 =cut
 
-my($bench, $gstats, $mock, $only) = ('./pcoul', undef, undef, 0);
+my($bench, $gstats, $mock, $only) = ('./pcoul', undef, undef, '');
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 72, 80, 96, 112, 128);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
@@ -68,12 +79,13 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $gstats = $1, next if $arg =~ /^-g(.+)$/;
     $mock = $1, next if $arg =~ /^-m(.+)$/;
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
-    $only = 1, next if $arg eq '-o';
+    $only = 'other', next if $arg eq '-o';
+    $only = 'multi', next if $arg eq '-M';
     die "Unknown option '$arg'";
 }
-@ARGV == 3 && $gstats && $mock
-        or die "500 Usage: $0 [-c<bench>] -g<gatestats> -m<mock> [-b<bits,...>] [-o] n k F";
-my($n, $k, $F) = @ARGV;
+@ARGV == 2 && (($gstats && $mock) || $only eq 'multi')
+        or die "500 Usage: $0 [-c<bench>] -g<gatestats> -m<mock> [-b<bits,...>] [-o | -M] n k";
+my($n, $k) = @ARGV;
 
 # calibration runs: walks under a fixed power (nqc == 1), linear walks,
 # and a batch rich in leaf loops
@@ -89,15 +101,38 @@ my @cal_w1s = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b3', 18, 4);
 my $tmp = "/tmp/multibench-table.$$";
 $| = 1;
 
-unless ($only) {
-    for my $t (grep $_ > 2, divisors($n)) {
-        my $e = 1;
-        if ($t & 1) {
-            $e = 0;
-            $e = gcd($e, $_->[0] - 1) for factor_exp($t);
-        }
+# Trial division: its limit L by size, and the cost of failing at each
+# trial prime, at a range of sizes including those around 80 bits, where
+# the limit changes. The
+# test_multi() and prime test rows are for inputs with no trial factor,
+# so each uses the L for its size.
+# (an even t, since for odd t prep first checks for a square)
+my $tscan = (grep $_ > 2 && !($_ & 1), divisors($n))[0] // 2;
+my @scan = map bench("scan,$_,2000,$tscan"), 24, 40, 56, 80, 81;
+my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } @scan;
+sub trial_limit {
+    my($bits) = @_;
+    my($near) = sort { abs($a - $bits) <=> abs($b - $bits) } keys %L;
+    return $L{$near};
+}
+
+unless ($only eq 'other') {
+    # e for the root of each odd t: its trial division leaves any odd
+    # divisor of t with the same e
+    my %E;
+    for my $t (grep $_ > 2 && ($_ & 1), divisors($n)) {
+        my $e = 0;
+        $e = gcd($e, $_->[0] - 1) for factor_exp($t);
+        $E{$e} = 1;
+    }
+    for my $te (map {
+        my $t = $_;
+        ([ $t, 1 ], ($t & 1) ? (map [ $t, $_ ], sort { $a <=> $b } keys %E) : ())
+    } grep $_ > 2, divisors($n)) {
+        my($t, $e) = @$te;
         for my $b (@bits) {
             my $count = ($b <= 64) ? 5000 : ($b <= 80) ? 2000 : 500;
+            my $F = trial_limit($b);
             my($line) = grep /^MULTIBENCH /, bench("$b,$t,$count,$F,1,$e");
             my @v = ($line // '') =~ m{
                 fail\ ([\d.]+)\ decided\ ([\d.]+)\ pending\ ([\d.]+)
@@ -108,11 +143,12 @@ unless ($only) {
     }
 }
 
+exit 0 if $only eq 'multi';
 my @rest;
 for my $b (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128) {
-    push @rest, grep /^P /, bench("prime,$b,20000,$F");
+    push @rest, grep /^P /, bench("prime,$b,20000," . trial_limit($b));
 }
-push @rest, 'C kprime 4.8', 'C ksquare 4.0';
+push @rest, @scan;
 my @log_lin = gate_log(@cal_lin);
 my @log_sq = gate_log(@cal_sq);
 my @lin = fit_walks('N', @log_lin);
@@ -139,7 +175,7 @@ sub quote {
 sub bench {
     my($spec) = @_;
     local $ENV{MULTIBENCH} = $spec;
-    my @lines = grep /^(?:MULTIBENCH|P) /, `'$bench' -X $n $k 2>&1`;
+    my @lines = grep /^(?:MULTIBENCH|[PCSL]) /, `'$bench' -X $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;
     return @lines;
@@ -273,7 +309,7 @@ sub cprime {
             }
             my $out = `'$mock' -X @{[ map quote($_), @args ]} 2>&1`;
             my($m, $pl, $ps) = $out
-                    =~ /^368 mock ([\d.]+)s, leaf primes (\d+), sq primes (\d+)/m
+                    =~ /^368 mock ([\d.]+)s \(overhead [\d.]+s\), leaf primes (\d+), sq primes (\d+)/m
                     or die "no 368 line from $mock";
             my($t) = $out =~ /^367 .*\(([\d.]+)s\)/m
                     or die "no 367 line from $mock";
