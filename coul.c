@@ -4021,8 +4021,16 @@ static void mw_lad_slots(uint t, uint e, double b, double *c, double *a,
     t_mwlad *lp = mw_lad_for(b);
     if (!lp)
         return;
+    /* the rungs this run uses at this size: with -o<flake>, none from
+     * QS (rung 24) on above the flake size, the values that reach it
+     * going to the failure handler once the rest are done, at no cost
+     * modelled here
+     */
+    ulong mask = mw_lmask(mw_nbits(b));
     for (uint j = 0; j < lp->nr; ++j) {
         uint r = lp->rung[j];
+        if (r >= 64 || !(mask & (1UL << r)))
+            continue;
         double pab, prs, Es = 0, As = 0;
         uint t2;
         mw_lad_outcome(t, e, lp->cprime[j], &pab, &prs, &t2);
