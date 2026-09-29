@@ -3015,6 +3015,27 @@ typedef struct {
     double bits[MW_MAXB], v[MW_MAXB][2];
 } t_mw1;
 static t_mw1 mw_P, mw_R;
+/* the factoring ladder of tau_multi_run() on a composite of the given
+ * bits with no factor up to L, from the "G" rows: for each rung that
+ * applies at that size, the fraction of values reaching it without a
+ * factor found, the mean cost of an attempt, the fraction of attempts
+ * finding a factor, and for those the mean bits of the factor and the
+ * fraction whose cofactor is prime
+ */
+#define MW_NSLOT 48     /* > TM_MAX */
+#define MW_MAXLR 16     /* rungs per size */
+#define MW_MAXLAD 64    /* sizes */
+typedef struct {
+    uint bits, nr;
+    uint rung[MW_MAXLR];
+    double reach[MW_MAXLR], cost[MW_MAXLR], hit[MW_MAXLR],
+            fbits[MW_MAXLR], cprime[MW_MAXLR];
+} t_mwlad;
+static t_mwlad mw_lad[MW_MAXLAD];
+static uint mw_nlad = 0;
+extern ulong *tmfbl;
+extern uint tmfb_maxb;
+extern ulong tmfb_lim;
 
 /* scalars, all times in seconds */
 typedef struct {
@@ -3092,6 +3113,30 @@ static void mw_load(void) {
                     mw_C[i].v = mw_C[i].is_time ? v[0] * 1e-6 : v[0];
                     mw_C[i].seen = 1;
                 }
+            continue;
+        }
+        uint r;
+        if (sscanf(line, "G %u %u %lf %lf %lf %lf %lf", &b, &r, &v[0],
+                &v[1], &v[2], &v[3], &v[4]) == 7 && r > 0) {
+            uint i;
+            for (i = 0; i < mw_nlad; ++i)
+                if (mw_lad[i].bits == b)
+                    break;
+            if (i == mw_nlad) {
+                if (mw_nlad == MW_MAXLAD)
+                    fail("MOCK_WALK: too many G sizes");
+                mw_lad[mw_nlad++] = (t_mwlad){ .bits = b, .nr = 0 };
+            }
+            t_mwlad *lp = &mw_lad[i];
+            if (lp->nr == MW_MAXLR)
+                fail("MOCK_WALK: too many G rungs at %u bits", b);
+            uint j = lp->nr++;
+            lp->rung[j] = r;
+            lp->reach[j] = v[0];
+            lp->cost[j] = v[1] * 1e-6;
+            lp->hit[j] = v[2];
+            lp->fbits[j] = v[3];
+            lp->cprime[j] = v[4];
             continue;
         }
         if (sscanf(line, "P %u %u %lf %lf", &b, &F, &v[0], &v[1]) == 4) {
@@ -3869,7 +3914,168 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
  * of passing the ladder, and the ladder's time if pending */
 typedef struct {
     double prep, rej, dec, pend, pass, run;
+    /* with G rows: for the value if pending (weighted by the chance it
+     * is), the expected cost at each rung of tau_multi_run() and the
+     * chance of it aborting the call there; and its likeliest tau and
+     * size, for the order of the pending values
+     */
+    double lc[MW_NSLOT], la[MW_NSLOT];
+    uint lt;
+    double lb;
 } t_mwtest;
+
+static inline ulong mw_lmask(uint b) {
+    return (b <= tmfb_maxb) ? tmfbl[b] : tmfb_lim;
+}
+
+/* the G size for a value of b bits: the nearest with the same rungs,
+ * else the nearest
+ */
+static t_mwlad *mw_lad_for(double b) {
+    ulong m = mw_lmask((uint)(b + 0.5));
+    t_mwlad *best = NULL, *bestm = NULL;
+    for (uint i = 0; i < mw_nlad; ++i) {
+        t_mwlad *lp = &mw_lad[i];
+        double d = fabs(lp->bits - b);
+        if (mw_lmask(lp->bits) == m
+                && (!bestm || d < fabs(bestm->bits - b)))
+            bestm = lp;
+        if (!best || d < fabs(best->bits - b))
+            best = lp;
+    }
+    return bestm ? bestm : best;
+}
+
+/* What follows a factor found in a value tested for tau(n^e) = t, as in
+ * tau_multi_run(), given the chance cp that the cofactor is prime: the
+ * chance of aborting the call, and of going on to test the cofactor for
+ * tau t2 (the rest completes the value). A factor almost always divides
+ * just once, contributing e + 1.
+ */
+static void mw_lad_outcome(uint t, uint e, double cp, double *pab,
+        double *prs, uint *t2) {
+    uint u = t / (e + 1);
+    *prs = 0;
+    *t2 = 0;
+    if (t % (e + 1) || u == 1 || (u & 1)) {
+        *pab = 1;
+        return;
+    }
+    if (u == 2) {
+        *pab = 1 - cp;      /* the cofactor must be prime */
+        return;
+    }
+    *pab = cp;              /* the cofactor must not be prime */
+    *prs = 1 - cp;
+    *t2 = u;
+}
+
+static void mw_lad_standalone(uint t, uint e, double b, double *E,
+        double *A);
+
+/* Add to c[] and a[], scaled by w, the expected cost at each rung and
+ * the chance of aborting there for a value of b bits tested for
+ * tau(n^e) = t. Going on to test a cofactor restarts the ladder for
+ * that value alone, which is counted at the rung that found the factor.
+ */
+static void mw_lad_slots(uint t, uint e, double b, double *c, double *a,
+        double w) {
+    t_mwlad *lp = mw_lad_for(b);
+    if (!lp)
+        return;
+    for (uint j = 0; j < lp->nr; ++j) {
+        uint r = lp->rung[j];
+        double pab, prs, Es = 0, As = 0;
+        uint t2;
+        mw_lad_outcome(t, e, lp->cprime[j], &pab, &prs, &t2);
+        double b2 = b - lp->fbits[j];
+        if (prs > 0 && b2 >= 2)
+            mw_lad_standalone(t2, e, b2, &Es, &As);
+        else
+            pab += prs, prs = 0;
+        double h = lp->reach[j] * lp->hit[j];
+        /* unless the factor already rules it out, the cofactor gets a
+         * primality test, or for odd tau is_taux(), which is quick to
+         * reject a non-square: charged as a composite
+         */
+        uint u = (t % (e + 1)) ? 0 : t / (e + 1);
+        double ct = (u < 2 || b2 < 2) ? 0
+                : mw_ptest(b2, (u & 1) ? 0 : lp->cprime[j]);
+        c[r] += w * (lp->reach[j] * lp->cost[j] + h * (ct + prs * Es));
+        a[r] += w * h * (pab + prs * As);
+    }
+}
+
+/* the expected cost and chance of aborting for a value tested alone */
+#define MW_LMEMO 1024
+typedef struct {
+    uint t, e, bq;
+    double E, A;
+} t_mwlmemo;
+static t_mwlmemo mw_lmemo[MW_LMEMO];
+static void mw_lad_standalone(uint t, uint e, double b, double *E,
+        double *A) {
+    uint bq = (uint)(b * 4 + 0.5);
+    uint h = (t * 2654435761U ^ e * 40503U ^ bq * 69069U) % MW_LMEMO;
+    t_mwlmemo *mp = &mw_lmemo[h];
+    if (mp->t == t && mp->e == e && mp->bq == bq) {
+        *E = mp->E;
+        *A = mp->A;
+        return;
+    }
+    double c[MW_NSLOT] = { 0 }, a[MW_NSLOT] = { 0 };
+    mw_lad_slots(t, e, b, c, a, 1);
+    double sc = 0, sa = 0;
+    for (uint r = 0; r < MW_NSLOT; ++r) {
+        sc += c[r];
+        sa += a[r];
+    }
+    *mp = (t_mwlmemo){ .t = t, .e = e, .bq = bq, .E = sc, .A = sa };
+    *E = sc;
+    *A = sa;
+}
+
+/* The expected cost of tau_multi_run() on n pending values, in the
+ * order it sorts them, from each one's cost and chance of aborting at
+ * each rung: it runs each rung over the values in turn, stopping at the
+ * first abort, so a value's cost at rung r counts only if no value
+ * before it has aborted by rung r, nor any after it before rung r.
+ */
+static double mw_lad_interleave(uint n, t_mwtest **m) {
+    double F[n], Fr[n], total = 0;
+    for (uint k = 0; k < n; ++k)
+        F[k] = 0;
+    for (uint r = 0; r < MW_NSLOT; ++r) {
+        for (uint k = 0; k < n; ++k) {
+            Fr[k] = F[k] + m[k]->la[r];
+            if (Fr[k] > 1)
+                Fr[k] = 1;
+        }
+        for (uint j = 0; j < n; ++j) {
+            if (m[j]->lc[r] == 0)
+                continue;
+            double surv = 1;
+            for (uint k = 0; k < n; ++k)
+                if (k != j)
+                    surv *= 1 - (k < j ? Fr[k] : F[k]);
+            total += m[j]->lc[r] * surv;
+        }
+        for (uint k = 0; k < n; ++k)
+            F[k] = Fr[k];
+    }
+    return total;
+}
+
+/* the order in which tau_multi_run() sorts the pending values */
+static int mw_lad_cmp(const void *va, const void *vb) {
+    const t_mwtest *a = *(t_mwtest *const *)va, *b = *(t_mwtest *const *)vb;
+    uint at2 = a->lt ^ (a->lt - 1), bt2 = b->lt ^ (b->lt - 1);
+    if (at2 != bt2)
+        return at2 < bt2 ? -1 : 1;
+    if (a->lt != b->lt)
+        return a->lt < b->lt ? -1 : 1;
+    return (a->lb > b->lb) - (a->lb < b->lb);
+}
 
 /* the test of position vj's value, of tau t with exponent multiplier e
  * and about 'bits' bits: trial division as above, then the table for
@@ -3879,7 +4085,9 @@ static void mw_other(t_mwtest *out, t_mwwalk *wk, uint vj, uint t, uint e,
     t_mwtrial *tr = mw_trial(wk, vj, t, e, bits, 0, excl, nexcl);
     *out = (t_mwtest){ .prep = tr->rejcost + tr->passcost, .rej = tr->rej,
             .dec = tr->pass };
-    double pend_run = 0, pend_pass = 0;
+    double pend_run = 0, pend_pass = 0, lbest = 0;
+    out->lt = t;
+    out->lb = bits;
     for (uint s = 2; s <= t; ++s) {
         double w = tr->w[s];
         if (w == 0)
@@ -3909,6 +4117,14 @@ static void mw_other(t_mwtest *out, t_mwwalk *wk, uint vj, uint t, uint e,
         out->pend += w * m[2];
         pend_pass += w * m[2] * m[3];
         pend_run += w * m[2] * m[5];
+        if (mw_nlad && w * m[2] > 0) {
+            mw_lad_slots(s, e, b, out->lc, out->la, w * m[2]);
+            if (w * m[2] > lbest) {
+                lbest = w * m[2];
+                out->lt = s;
+                out->lb = b;
+            }
+        }
     }
     out->pass = out->pend > 0 ? pend_pass / out->pend : 0;
     out->run = out->pend > 0 ? pend_run / out->pend : 0;
@@ -3990,15 +4206,33 @@ static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
     }
     cp += pprep * ladder_p;
     double pprime = pprep * lsurv;
+    /* as test_multi(): each position's prep in turn until one fails, then
+     * the ladder over those left pending; with G rows, as it runs
+     * (mw_lad_interleave()), else as the sum of their ladder costs alone
+     */
     double cm = 0, survive = 1, ladder = 0;
+    t_mwtest mo[noc], *mp[noc];
     for (uint i = 0; i < noc; ++i) {
         uint vi = need_other[i];
-        t_mwtest m;
-        mw_other(&m, wk, vi, t[vi], 1, zb - log2(mpz_get_d(*q[vi])),
+        t_mwtest *m = &mo[i];
+        mp[i] = m;
+        mw_other(m, wk, vi, t[vi], 1, zb - log2(mpz_get_d(*q[vi])),
                 excl, nexcl);
-        cm += survive * m.prep;
-        survive *= 1 - m.rej;
-        ladder += (m.rej < 1 ? m.pend / (1 - m.rej) : 0) * m.run;
+        cm += survive * m->prep;
+        survive *= 1 - m->rej;
+        ladder += (m->rej < 1 ? m->pend / (1 - m->rej) : 0) * m->run;
+        if (mw_nlad) {
+            /* given that it passed the prep */
+            double sc = m->rej < 1 ? 1 / (1 - m->rej) : 0;
+            for (uint r = 0; r < MW_NSLOT; ++r) {
+                m->lc[r] *= sc;
+                m->la[r] *= sc;
+            }
+        }
+    }
+    if (mw_nlad && noc) {
+        qsort(mp, noc, sizeof(mp[0]), &mw_lad_cmp);
+        ladder = mw_lad_interleave(noc, mp);
     }
     cm += survive * ladder;
     return cp + pprime * cm;
