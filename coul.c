@@ -80,6 +80,7 @@ typedef enum {
     w1_m, w1_mr,
     lp_x, lp_mint, lp_mint2,    /* limit_p */
     r_walk,                     /* recurse */
+    mr_t,                       /* MOCK_LEAF rejects */
 
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
@@ -3041,10 +3042,11 @@ static t_mwc mw_C[] = {
     { "cprimesq", 0, 0, 1 },    /* likewise, with a fixed-power walk */
     { "w1siter", 0, 0, 1 },     /* walk_1_set() per prime */
     { "w1scheck", 0, 0, 1 },    /* walk_1_set() per prime passing mod check */
+    { "creject", 0, 0, 1 },     /* apply_single() failing on rq > zmax */
 };
 enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
         MWC_CPRIME, MWC_CPRIMESQ, MWC_W1SITER,
-        MWC_W1SCHECK, MWC_COUNT };
+        MWC_W1SCHECK, MWC_CREJECT, MWC_COUNT };
 #define MWC(i) (mw_C[i].v)
 
 static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
@@ -3330,6 +3332,90 @@ static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
     }
     return cost + ml_iter_cost[lvl] * ml_r0[lvl] * sum;
 }
+
+/* MOCK_LEAF also stubs the unforced primes that apply_single() would
+ * reject only on rq > zmax (CHECK_OVERFLOW), which in deep recursion
+ * can be almost all of them, each costing a full update_chinese(). With
+ * r = prev->rq < a = prev->aq, the new rq is r + a.t for t the least
+ * solution of r + a.t == -i (mod p^(x-1)), so it is rejected just when
+ * t > T = floor((zmax - r) / a); for odd p with p^(x-1) < 2^63 that is
+ * found in single words, and a rejected prime is charged c_reject in
+ * place of the real work. Anything else runs normally. With
+ * $MOCK_REJECT_OFF set, nothing is stubbed, so that comparing the two
+ * gives c_reject (the count of primes stubbed is reported at the end);
+ * with $MOCK_REJECT_CHECK set, each prime stubbed is also checked with
+ * apply_single(), failing if it is accepted.
+ */
+#define MR_UNKNOWN 0
+#define MR_TEST 1       /* test against mr_T */
+#define MR_ALL 2        /* r > zmax: every prime is rejected */
+#define MR_NONE 3       /* nothing to stub */
+static uint mr_state[ML_MAX];
+static ulong mr_T[ML_MAX];
+static uint mr_seen[ML_MAX];    /* seen_best when mr_T was found */
+double g_mr_rejects = 0;        /* primes stubbed as rejected */
+double g_mr_tries = 0;          /* primes reaching the test */
+bool g_mr_off = 0;              /* $MOCK_REJECT_OFF: leave rejects real */
+bool g_mr_check = 0;            /* $MOCK_REJECT_CHECK: verify each one */
+
+/* inverse of a mod m, or 0 if there is none */
+static ulong mr_invert(ulong a, ulong m) {
+    long t0 = 0, t1 = 1;
+    ulong r0 = m, r1 = a % m;
+    while (r1) {
+        ulong q = r0 / r1, r2 = r0 - q * r1;
+        long t2 = t0 - (long)q * t1;
+        r0 = r1; r1 = r2;
+        t0 = t1; t1 = t2;
+    }
+    if (r0 != 1)
+        return 0;
+    return (t0 < 0) ? (ulong)(t0 + (long)m) : (ulong)t0;
+}
+
+static void mr_setup(uint lvl, t_level *prev) {
+    mr_seen[lvl] = seen_best;
+    mr_state[lvl] = MR_NONE;
+    if (mpz_cmp(prev->rq, prev->aq) >= 0)
+        return;
+    mpz_sub(Z(mr_t), zmax, prev->rq);
+    if (mpz_sgn(Z(mr_t)) < 0) {
+        mr_state[lvl] = MR_ALL;
+        return;
+    }
+    mpz_fdiv_q(Z(mr_t), Z(mr_t), prev->aq);
+    if (mpz_fits_ulong_p(Z(mr_t))) {
+        mr_T[lvl] = mpz_get_ui(Z(mr_t));
+        mr_state[lvl] = MR_TEST;
+    }
+}
+
+/* TRUE if apply_single(prev, cur, vi, p, x) would fail on rq > zmax */
+static bool mr_reject(uint lvl, t_level *prev, uint vi, ulong p, uint x) {
+    if (mr_state[lvl] == MR_UNKNOWN || mr_seen[lvl] != seen_best)
+        mr_setup(lvl, prev);
+    ++g_mr_tries;
+    if (mr_state[lvl] == MR_NONE)
+        return 0;
+    if (mr_state[lvl] == MR_ALL)
+        return 1;
+    if (p == 2 || x < 2)
+        return 0;
+    ulong px = p;
+    for (uint i = 2; i < x; ++i) {
+        if (px > (1UL << 62) / p)
+            return 0;
+        px *= p;
+    }
+    if (px - 1 <= mr_T[lvl])
+        return 0;
+    ulong ai = mr_invert(mpz_fdiv_ui(prev->aq, px), px);
+    if (ai == 0)
+        return 0;
+    ulong r = mpz_fdiv_ui(prev->rq, px);
+    ulong c = (2 * px - (TYPE_OFFSET(vi) % px) - r) % px;
+    return (ulong)((unsigned __int128)c * ai % px) > mr_T[lvl];
+}
 #endif
 
 #ifdef MOCK_WALK
@@ -3340,6 +3426,7 @@ void mock_report(void) {
 #   ifdef MOCK_LEAF
     report(", leaf primes %.0f, sq primes %.0f, strided %.0f", g_ml_primes,
             g_ml_primes_sq, g_ml_strided);
+    report(", rejects %.0f of %.0f", g_mr_rejects, g_mr_tries);
 #   endif
     report("\n");
 }
@@ -7603,6 +7690,7 @@ void recurse(e_is jump_continue) {
               case PUX_DO_THIS_X:
 #ifdef MOCK_LEAF
                 if (level < ML_MAX) {
+                    mr_state[level] = MR_UNKNOWN;
                     ml_state[level] = ML_PENDING;
                     ml_count[level] = 0;
                     ml_samp[level] = ml_have[level] = 0;
@@ -7724,6 +7812,21 @@ void recurse(e_is jump_continue) {
                 for (uint li = 1; li < level; ++li)
                     if (p == levels[li].p && levels[li].x > 1)
                         goto redo_unforced;
+#if defined(MOCK_LEAF) && defined(CHECK_OVERFLOW)
+            if (level < ML_MAX && !g_mr_off && mr_reject(level, prev_level,
+                    cur_level->vi, p, cur_level->x)) {
+                if (g_mr_check && apply_single(prev_level, cur_level,
+                        cur_level->vi, p, cur_level->x))
+                    fail("MOCK_REJECT_CHECK: %lu at level %u accepted",
+                            p, level);
+                cur_level->p = p;
+                g_mock_spent_s += MWC(MWC_CREJECT);
+                ++g_mr_rejects;
+                if (need_work)
+                    diag_plain(cur_level);
+                goto redo_unforced;
+            }
+#endif
             /* note: this returns 0 if t=1 */
             if (!apply_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x
@@ -8212,6 +8315,8 @@ int main(int argc, char **argv, char **envp) {
     prep_presquare();
 #ifdef MOCK_LEAF
     g_ml_off = getenv("MOCK_LEAF_OFF") != NULL;
+    g_mr_off = getenv("MOCK_REJECT_OFF") != NULL;
+    g_mr_check = getenv("MOCK_REJECT_CHECK") != NULL;
 #endif
 #ifdef MULTIBENCH
     if (getenv("MULTIBENCH")) {
