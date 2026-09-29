@@ -228,7 +228,7 @@ bool chinese_ppow_shared(
  * that s may be any value == the residue (mod m). rp must not be any
  * of the inputs, and is the only mpz_t written.
  */
-static void chinese_ppow_zai(
+void chinese_ppow_zai(
     mpz_t rp, mpz_t r, mpz_t a, mpz_t m, mpz_t s, mpz_t ai
 ) {
     mpz_sub(rp, s, r);

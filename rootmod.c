@@ -39,7 +39,7 @@ typedef enum {
     arm_a,
     armkp_m, armkp_px,
     armpp_px, armpp_a,
-    armc_n, armc_inv,
+    armc_inv,
     arzpp_px,
     armppr_a, armppr_z, armppr_px, armppr_px2, armppr_pxm, armppr_t,
     earmpp_t, earmpp_t1, earmpp_t2, earmpp_g,
@@ -155,38 +155,41 @@ uint valuation(mpz_t result, mpz_t base, ulong p) {
     return e;
 }
 
-/* Given coprime n1, n2 and results arrays r1 (constant rm_base) and r2,
- * such that elements of r1 and r2 are kth roots of some a (mod n1) and
- * (mod n2) respectively, updates rm_base to be a new list of the kth
- * roots of a mod (n1 * n2).
- * The hand-rolled CRT here can be faster than chinese() by taking
- * advantage of the required coprimality.
+/* Given n1 = p^e and n2 coprime to it, and results arrays r1 (constant
+ * rm_base) and r2, such that elements of r1 and r2 are kth roots of some
+ * a (mod n1) and (mod n2) respectively, updates rm_base to be a new list
+ * of the kth roots of a mod (n1 * n2).
  */
-void _allrootmod_cprod(e_results e2, mpz_t n1, mpz_t n2) {
+void _allrootmod_cprod(e_results e2, ulong p, mpz_t n1, mpz_t n2) {
     t_results *r = &ra[rm_base];
     t_results *r1 = &ra[armc_r1];
     t_results *r2 = &ra[e2];
     _swapz_r(armc_r1);
     resize_results(r, r1->count * r2->count);
 
-    mpz_mul(Z(armc_n), n1, n2);
-    if (!mpz_invert(Z(armc_inv), n1, n2))
+    if (mpz_cmp_ui(n1, 1UL << 62) < 0) {
+        ulong m = mpz_get_ui(n1);
+        ulong ai = ppow_invert(mpz_fdiv_ui(n2, m), p, m);
+        if (ai == 0)
+            fail("_allrootmod_cprod(%Zu, %Zu) has no inverse\n", n1, n2);
+        for (uint i1 = 0; i1 < r1->count; ++i1) {
+            ulong s = mpz_get_ui(r1->r[i1]);
+            for (uint i2 = 0; i2 < r2->count; ++i2) {
+                chinese_ppow_ai(Z(rm_r), r2->r[i2], n2, m, s, ai);
+                save_base(Z(rm_r));
+            }
+        }
+        return;
+    }
+    if (!mpz_invert(Z(armc_inv), n2, n1))
         fail("_allrootmod_cprod(%Zu, %Zu) has no inverse\n", n1, n2);
     for (uint i1 = 0; i1 < r1->count; ++i1) {
-        mpz_t *z1 = &r1->r[i1];
         for (uint i2 = 0; i2 < r2->count; ++i2) {
-            mpz_t *z2 = &r2->r[i2];
-            /* save z1 + n1 * ((inv * (z2 - z1)) % n2)) % n */
-            mpz_sub(Z(rm_r), *z2, *z1);
-            mpz_mul(Z(rm_r), Z(rm_r), Z(armc_inv));
-            mpz_mod(Z(rm_r), Z(rm_r), n2);
-            mpz_mul(Z(rm_r), Z(rm_r), n1);
-            mpz_mod(Z(rm_r), Z(rm_r), Z(armc_n));
-            mpz_add(Z(rm_r), Z(rm_r), *z1);
+            chinese_ppow_zai(Z(rm_r), r2->r[i2], n2, n1, r1->r[i1],
+                    Z(armc_inv));
             save_base(Z(rm_r));
         }
     }
-    return;
 }
 
 /* "Tonelli-Shanks kth roots alternate version"
@@ -516,7 +519,7 @@ void _allrootmod_kprime(mpz_t a, uint k, mpz_t n, t_lpow *nf, uint nfc) {
         if (r->count == 0)
             goto armkp_abort;
         if (nfi > 0)
-            _allrootmod_cprod(armkp_base, Z(armkp_px), Z(armkp_m));
+            _allrootmod_cprod(armkp_base, p, Z(armkp_px), Z(armkp_m));
         mpz_mul(Z(armkp_m), Z(armkp_m), Z(armkp_px));
     }
     resize_results(stash, stash->count + r->count);
@@ -701,7 +704,7 @@ void zroot_extend(uint new_level, uint old_level, mpz_t n,
                 break;
         }
     }
-    _allrootmod_cprod(E_RESULTS_MAX + old_level, px, n);
+    _allrootmod_cprod(E_RESULTS_MAX + old_level, p, px, n);
   extend_done:
     _swap_r(E_RESULTS_MAX + new_level);
 }
