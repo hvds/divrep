@@ -1192,10 +1192,27 @@ typedef struct {
     double w, none;
 } t_mbl;
 
+/* QS (rung MBL_QS) always finds a factor, at a cost that depends only
+ * on the size, but that is large: 12s at 207 bits, 39s at 223, 387s at
+ * 255. So for built inputs, whose factors are known, it is run on at
+ * most MBL_QSCAP of them per size, the rest charged the mean of those,
+ * and credited with finding the smallest factor; the mock takes its
+ * cost from the "qs" bench's rows instead where it has them. The rungs
+ * after it are then never reached (QS failing was 5% at 144 bits).
+ */
+#define MBL_QS 24
+#define MBL_QSCAP 1
+typedef struct {
+    uint n, cap;
+    double t;
+    uint fbits;     /* of the input's smallest factor, if known */
+    bool cprime;    /* whether the rest is prime, if known */
+} t_mblqs;
+
 /* run the ladder on tm->n alone to the first factor, adding to st
  * with weight w
  */
-static void mbl_run(t_mbl *st, t_tm *tm, mpz_t cof, double w) {
+static void mbl_run(t_mbl *st, t_tm *tm, mpz_t cof, double w, t_mblqs *qs) {
     uint bits = mpz_sizeinbase(tm->n, 2);
     tm->t = 4;
     tm->e = 1;
@@ -1208,10 +1225,23 @@ static void mbl_run(t_mbl *st, t_tm *tm, mpz_t cof, double w) {
         if (!(tm->bits & (1UL << i)))
             continue;
         st->reach[i] += w;
+        if (i == MBL_QS && qs && qs->fbits && qs->n >= qs->cap) {
+            st->cost[i] += w * qs->t / qs->n;
+            st->hit[i] += w;
+            st->fbits[i] += w * qs->fbits;
+            if (qs->cprime)
+                st->cprime[i] += w;
+            return;
+        }
         double t0 = mbl_now();
         bool ok = (*tmfa[i])(tm);
         mpz_t *f = ok ? tm_factor(tm) : NULL;
-        st->cost[i] += w * (mbl_now() - t0);
+        double dt = mbl_now() - t0;
+        st->cost[i] += w * dt;
+        if (i == MBL_QS && qs) {
+            ++qs->n;
+            qs->t += dt;
+        }
         if (!ok)
             continue;
         st->hit[i] += w;
@@ -1317,15 +1347,18 @@ static double mbb_uniform(gmp_randstate_t rs) {
 /* Multiply into n a random integer near e^L with no prime factor below
  * e^a, factor by factor: prime with chance 1 / (u omega(u)), u = L / a,
  * else its smallest factor from the density above and the rest likewise.
+ * Returns the number of prime factors.
  */
-static void mbb_rough(mpz_t n, gmp_randstate_t rs, double L, double a,
+static uint mbb_rough(mpz_t n, gmp_randstate_t rs, double L, double a,
         mpz_t p, mpz_t tmp) {
+    uint np = 0;
     while (1) {
         double u = L / a;
+        ++np;
         if (u < 2 || mbb_uniform(rs) * u * mbb_omega(u) < 1) {
             mbb_prime(p, rs, L, tmp);
             mpz_mul(n, n, p);
-            return;
+            return np;
         }
         t_mbbs d;
         mbb_sinit(&d, L, a);
@@ -1336,6 +1369,46 @@ static void mbb_rough(mpz_t n, gmp_randstate_t rs, double L, double a,
         L -= ls;
         a = ls;
     }
+}
+
+/* "qs,bits,count": the cost of QS (rung MBL_QS) alone on count
+ * products of two random primes of about half the bits each, for rows
+ * "Q bits us fail". Its parameters step with the decimal digits of the
+ * input (see _GMP_simpqs()), so the costs do too.
+ */
+void mb_qs(uint bits, uint count) {
+    gmp_randstate_t rs;
+    gmp_randinit_default(rs);
+    gmp_randseed_ui(rs, 40503UL + 11 * bits);
+    mpz_t p;
+    mpz_init(p);
+    t_tm tm;
+    mpz_init(tm.n);
+    double t = 0;
+    uint fail = 0;
+    for (uint c = 0; c < count; ++c) {
+        do {
+            mpz_urandomb(p, rs, bits / 2 - 1);
+            mpz_setbit(p, bits / 2 - 1);
+            _GMP_next_prime(p);
+            mpz_urandomb(tm.n, rs, bits - bits / 2 - 1);
+            mpz_setbit(tm.n, bits - bits / 2 - 1);
+            mpz_setbit(tm.n, bits - bits / 2 - 2);
+            _GMP_next_prime(tm.n);
+            mpz_mul(tm.n, tm.n, p);
+        } while (mpz_sizeinbase(tm.n, 2) != bits);
+        tm.t = 4;
+        tm.e = 1;
+        tm.B1 = 0;
+        double t0 = mbl_now();
+        if (!(*tmfa[MBL_QS])(&tm))
+            ++fail;
+        t += mbl_now() - t0;
+    }
+    printf("Q %u %.1f %.4f\n", bits, 1e6 * t / count, (double)fail / count);
+    mpz_clear(p);
+    mpz_clear(tm.n);
+    gmp_randclear(rs);
 }
 
 void mb_ladder(uint bits, uint count, uint F, double alpha) {
@@ -1356,8 +1429,10 @@ void mb_ladder(uint bits, uint count, uint F, double alpha) {
     tm.tlim = F;
     if (alpha > 0 && !mbb_om)
         mbb_init();
+    t_mblqs qs = { .n = 0, .cap = MBL_QSCAP, .t = 0 };
     for (uint c = 0; c < count; ++c) {
         double w = 1;
+        qs.fbits = 0;
         if (alpha > 0) {
             /* a composite of about bits bits: its smallest factor from
              * the mixture, the rest with no factor below that */
@@ -1375,7 +1450,8 @@ void mb_ladder(uint bits, uint count, uint F, double alpha) {
                 double f = mbb_sdens(&d, ls);
                 w = f / (alpha * f + (1 - alpha) / (d.b - d.a));
                 mpz_set(tm.n, p);
-                mbb_rough(tm.n, rs, L - ls, ls, p, tmp);
+                qs.fbits = mpz_sizeinbase(p, 2);
+                qs.cprime = mbb_rough(tm.n, rs, L - ls, ls, p, tmp) == 1;
             } while (mpz_perfect_power_p(tm.n));
         } else {
             do {
@@ -1385,7 +1461,7 @@ void mb_ladder(uint bits, uint count, uint F, double alpha) {
             } while (mpz_cmp_ui(g, 1) != 0 || mpz_probab_prime_p(tm.n, 1)
                     || mpz_perfect_power_p(tm.n));
         }
-        mbl_run(&st, &tm, cof, w);
+        mbl_run(&st, &tm, cof, w, &qs);
     }
     for (uint i = TM_INIT; i < TM_MAX; ++i)
         if (st.reach[i] > 0)

@@ -96,25 +96,39 @@ integers with no factor below L) with probability 0.3, else uniformly
 in log, each weighted by the ratio of the densities: the same expected
 results, with many more of the inputs that alone reach the costly high
 rungs. (At 72 bits, where both can be run at length, built and random
-inputs agree to within sampling error.) Above 191 bits there are no G
+inputs agree to within sampling error.) Above 255 bits there are no G
 rows unless C<-f> is given; the mock uses the largest.
+
+QS always finds a factor, at a cost set by the size alone but large
+(12s at 207 bits, 39s at 223, 387s at 255), so it runs on only the
+first built input that reaches it at each size, the rest charged the
+same and credited with the input's smallest factor. Sizes run up to 255 bits
+(60 inputs each above 191). The mock takes the cost of QS instead from
+rows
+
+  Q bits us fail
+
+timing QS alone on a few products of two primes of half the size (5
+below 200 bits, 2 below 230, then 1), every 3 bits from 100 to 262 (or
+the flake size), since its parameters (see _GMP_simpqs()) step with
+each decimal digit. Without C<-f> the QS and ladder rows above 230 bits
+take over an hour here.
 
 With C<-f>I<flake>, the table is for runs with C<-o>I<flake>: the ladder
 is benched under the same option, which drops the rungs from QS on for
 values above I<flake> bits (the failure handler then logs what is left,
-to be factored separately), and sizes above 191 bits are added up to
-511 (60 inputs each up to 255 bits, 30 to 299, 12 above: each input's
-costliest rung is then a single ECM rung, 2.5s per attempt at 207
-bits, 31s at 299, more above; so the largest are rough). The mock also
-drops those rungs itself when run with C<-o>, but can only price the
-sizes the table has.
+to be factored separately), and sizes above I<flake> are added up to
+511 (30 inputs at 277-299, 12 above: each input's costliest rung is then
+a single ECM rung, 31s per attempt at 299 bits and more above, so these
+are rough). The mock also drops those rungs itself when run with
+C<-o>, but can only price the sizes the table has.
 
 None of these depends on what the value is being tested for, so the
 mock derives the effect of a factor found on a test for tau(n^e) = t,
 including restarting the ladder on the cofactor, and interleaves the
 pending values of a call as tau_multi_run() does. The sizes are the
 ends and some interior points of the size brackets in tmfb[] in
-F<coultau.c>, which choose the rungs used, up to 191 bits.
+F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 
 
 =cut
@@ -190,14 +204,17 @@ my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 65, 72,
 # composites with no factor up to 64007 to find
 my @ladder_bits = (36, 40, 44, 48, 52, 53, 56, 58, 60, 63, 64, 68, 72, 76,
         77, 80, 84, 88, 89, 92, 96, 99, 104, 112, 120, 126, 127, 136, 144,
-        152, 159, 176, 191);
-# with -f, beyond the reach of QS: the larger brackets end at 223, 255,
-# 299, 511
-push @ladder_bits, grep $_ > $flake, (207, 223, 239, 255, 277, 299, 400,
-        511) if $flake;
+        152, 159, 176, 191, 207, 223, 239, 255);
+# with -f, sizes where QS is not used: the larger brackets end at 299, 511
+push @ladder_bits, grep $_ > $flake, (277, 299, 400, 511) if $flake;
+# QS alone, every 3 bits (about each decimal digit, by which its
+# parameters step) from where the ladder first uses it, to 262 bits
+# or the flake size
+my @qs_bits = grep !$flake || $_ <= $flake, map 100 + 3 * $_, 0 .. 54;
 my($done, $total) = (0, scalar @scan_bits);
 $total += @te * @bits unless $only eq 'other';
-$total += @prime_bits + @ladder_bits + 3 + 18 unless $only eq 'multi';
+$total += @prime_bits + @ladder_bits + @qs_bits + 3 + 18
+        unless $only eq 'multi';
 
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
@@ -248,6 +265,10 @@ for my $b (@ladder_bits) {
     push @rest, grep /^G /, bench("ladder,$b,$count," . trial_limit($b)
             . $alpha, $flake ? "-o$flake" : ());
 }
+for my $b (@qs_bits) {
+    my $count = ($b < 200) ? 5 : ($b < 230) ? 2 : 1;
+    push @rest, grep /^Q /, bench("qs,$b,$count");
+}
 push @rest, @scan;
 my @log_lin = gate_log(@cal_lin);
 my @log_sq = gate_log(@cal_sq);
@@ -290,7 +311,7 @@ sub bench {
     my($spec, @opt) = @_;
     local $ENV{MULTIBENCH} = $spec;
     progress("MULTIBENCH=$spec");
-    my @lines = grep /^(?:MULTIBENCH|[PRCSLG]) /,
+    my @lines = grep /^(?:MULTIBENCH|[PRCSLGQ]) /,
             `'$bench' -X @opt $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;

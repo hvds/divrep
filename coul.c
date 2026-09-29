@@ -2982,7 +2982,7 @@ int inv_comparator(const void *va, const void *vb) {
 #define MW_W1S_PREFIX 10000
 #define MW_W1S_SAMPLE 8
 #define MW_MAXT 256
-#define MW_MAXB 32
+#define MW_MAXB 64
 typedef struct {
     uint t, e, nb;
     double bits[MW_MAXB], v[MW_MAXB][6];   /* rej dec pend pass prep run */
@@ -3015,6 +3015,10 @@ typedef struct {
     double bits[MW_MAXB], v[MW_MAXB][2];
 } t_mw1;
 static t_mw1 mw_P, mw_R;
+/* the "Q bits us fail" rows: QS alone (rung 24), whose cost depends
+ * only on the size, stepping with its parameters by decimal digits
+ */
+static t_mw1 mw_Q;
 /* the factoring ladder of tau_multi_run() on a composite of the given
  * bits with no factor up to L, from the "G" rows: for each rung that
  * applies at that size, the fraction of values reaching it without a
@@ -3171,6 +3175,10 @@ static void mw_load(void) {
         }
         if (sscanf(line, "P %u %u %lf %lf", &b, &F, &v[0], &v[1]) == 4) {
             mw_add1(&mw_P, b, v[0], v[1] * 1e-6);
+            continue;
+        }
+        if (sscanf(line, "Q %u %lf %lf", &b, &v[0], &v[1]) == 3) {
+            mw_add1(&mw_Q, b, v[0] * 1e-6, v[1]);
             continue;
         }
         if (sscanf(line, "R %u %lf %lf", &b, &v[0], &v[1]) == 3) {
@@ -4040,6 +4048,8 @@ static void mw_lad_slots(uint t, uint e, double b, double *c, double *a,
         else
             pab += prs, prs = 0;
         double h = lp->reach[j] * lp->hit[j];
+        double cost = (r == 24 && mw_Q.nb) ? mw_interp1(&mw_Q, b, 0)
+                : lp->cost[j];
         /* unless the factor already rules it out, the cofactor gets a
          * primality test, or for odd tau is_taux(), which is quick to
          * reject a non-square: charged as a composite
@@ -4047,7 +4057,7 @@ static void mw_lad_slots(uint t, uint e, double b, double *c, double *a,
         uint u = (t % (e + 1)) ? 0 : t / (e + 1);
         double ct = (u < 2 || b2 < 2) ? 0
                 : mw_ptest(b2, (u & 1) ? 0 : lp->cprime[j]);
-        c[r] += w * (lp->reach[j] * lp->cost[j] + h * (ct + prs * Es));
+        c[r] += w * (lp->reach[j] * cost + h * (ct + prs * Es));
         a[r] += w * h * (pab + prs * As);
     }
 }
@@ -8182,8 +8192,8 @@ void recurse(e_is jump_continue) {
  * times. "prime,bits,count,F" instead measures a prime test on one
  * value (as for a need_prime position or a fixed power's root), and
  * "scan,bits,count,t" the cost of tests that fail at a trial prime, and
- * "ladder,bits,count,F[,alpha]" the factoring ladder (mb_ladder() in
- * coultau.c). The
+ * "ladder,bits,count,F[,alpha]" the factoring ladder and "qs,bits,count"
+ * QS alone (mb_ladder(), mb_qs() in coultau.c). The
  * walk loops' own costs are fitted from GATE_STATS runs instead (see
  * multibench-table), since a synthetic loop misses too much of them.
  */
@@ -8386,6 +8396,13 @@ void multibench(char *spec) {
         if (sscanf(spec + 7, "%u,%u,%u,%lf", &bits, &count, &F, &alpha) < 3)
             fail("MULTIBENCH: expected ladder,bits,count,F[,alpha]");
         return mb_ladder(bits, count, F, alpha);
+    }
+    if (strncmp(spec, "qs,", 3) == 0) {
+        extern void mb_qs(uint bits, uint count);
+        uint bits, count;
+        if (sscanf(spec + 3, "%u,%u", &bits, &count) != 2)
+            fail("MULTIBENCH: expected qs,bits,count");
+        return mb_qs(bits, count);
     }
     uint bits, t, count, F, e = 1;
     ulong seed = 1;
