@@ -2993,6 +2993,8 @@ typedef struct {
     uint bits, L, ns;
     uint p[MW_MAXS];
     double prep[MW_MAXS], prime[MW_MAXS];
+    double extra[MW_MAXS];  /* extra prep cost of a factor found at p that
+                             * does not end prep */
     double KL;      /* prod p / (p - 1) over the trial primes */
 } t_mwscan;
 static t_mwscan mw_scan[8];
@@ -3093,12 +3095,15 @@ static void mw_load(void) {
             continue;
         }
         uint p;
-        if (sscanf(line, "S %u %u %lf %lf", &b, &p, &v[0], &v[1]) == 4) {
+        int nf = sscanf(line, "S %u %u %lf %lf %lf", &b, &p, &v[0], &v[1],
+                &v[2]);
+        if (nf >= 4) {
             t_mwscan *sp = mw_scan_for(b, 1);
             if (sp->ns == MW_MAXS)
                 fail("MOCK_WALK: too many S rows");
             sp->p[sp->ns] = p;
             sp->prep[sp->ns] = v[0] * 1e-6;
+            sp->extra[sp->ns] = (nf == 5 && v[2] > 0) ? v[2] * 1e-6 : 0;
             sp->prime[sp->ns++] = v[1] * 1e-6;
             continue;
         }
@@ -3432,6 +3437,7 @@ typedef struct {
     uint t;
     double rej, rejcost;
     double pass, passcost;  /* completed within trial division */
+    double *ec;             /* extra scan cost carried by each survivor */
     double Kend;            /* prod q / (q - 1) over the trial primes used:
                              * a survivor of b bits is prime with
                              * probability Kend / (b ln 2) */
@@ -3476,9 +3482,10 @@ static void mw_generic(double *val, uint p, t_mwwalk *wk, uint vj) {
     mw_geometric(val, p, (double)N / den);
 }
 
-/* the cost of a test that fails at trial prime p, interpolated */
-static double mw_scan_cost(t_mwscan *sc, uint p, bool prime) {
-    double *cv = prime ? sc->prime : sc->prep;
+/* the cost of a test that fails at trial prime p, interpolated; or with
+ * which = 2 the extra cost of a factor found there that does not end it */
+static double mw_scan_cost(t_mwscan *sc, uint p, uint which) {
+    double *cv = (which == 2) ? sc->extra : which ? sc->prime : sc->prep;
     if (p <= sc->p[0])
         return cv[0];
     for (uint i = 1; i < sc->ns; ++i)
@@ -3548,9 +3555,9 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
     } else if (*slot && (*slot)->key == key && (*slot)->t == t)
         return *slot;
 
-    double w[t + 1], w2[t + 1], rb[t + 1], rb2[t + 1];
+    double w[t + 1], w2[t + 1], rb[t + 1], rb2[t + 1], ec[t + 1], ec2[t + 1];
     for (uint i = 0; i <= t; ++i)
-        w[i] = rb[i] = 0;
+        w[i] = rb[i] = ec[i] = 0;
     w[t] = 1;
     double rej = 0, rejcost = 0, pass = 0, passcost = 0;
     /* trial division goes up to sqrt(value) if that is below L, and is
@@ -3591,18 +3598,23 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
         if (val[0] >= 1)
             continue;
         double cost = mw_scan_cost(sc, p, prime);
+        double extra = mw_scan_cost(sc, p, 2);
         double lp = log2(p);
         for (uint x = 0; x <= t; ++x)
-            w2[x] = rb2[x] = 0;
+            w2[x] = rb2[x] = ec2[x] = 0;
         for (uint x = 2; x <= t; ++x) {
             if (w[x] == 0)
                 continue;
             w2[x] += w[x] * val[0];
             rb2[x] += rb[x] * val[0];
+            ec2[x] += ec[x] * val[0];
             for (uint a = 1; a < MW_MAXV; ++a) {
                 double y = w[x] * val[a];
                 if (y == 0)
                     continue;
+                /* the extra cost of earlier factors found on this path */
+                double yec = ec[x] * val[a];
+                rejcost += yec;     /* (or passcost: see below) */
                 uint et = a * e + 1;
                 if (x / et == 1 && x % et == 0) {
                     /* all of tau found: passes if nothing is left, which
@@ -3611,7 +3623,8 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
                     double left = bits - rb[x] / w[x] - a * lp;
                     if (left < lp) {
                         pass += y;
-                        passcost += y * cost;
+                        passcost += y * cost + yec;
+                        rejcost -= yec;
                     } else {
                         rej += y;
                         rejcost += y * cost;
@@ -3627,18 +3640,23 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
                         pp = 1;
                     double lb = left < 1 ? 1 : left;
                     pass += y * pp;
-                    passcost += y * pp * (cost + mw_interp1(&mw_R, lb, 0));
+                    passcost += y * pp * (cost + mw_interp1(&mw_R, lb, 0))
+                            + pp * yec;
+                    rejcost -= pp * yec;
                     rej += y * (1 - pp);
                     rejcost += y * (1 - pp)
                             * (cost + mw_interp1(&mw_R, lb, 1));
                 } else {
+                    rejcost -= yec;
                     w2[x / et] += y;
                     rb2[x / et] += rb[x] * val[a] + y * a * lp;
+                    ec2[x / et] += yec + y * extra;
                 }
             }
         }
         memcpy(w, w2, sizeof(w));
         memcpy(rb, rb2, sizeof(rb));
+        memcpy(ec, ec2, sizeof(ec));
     }
     /* Survivors go to the table at the size left: when trial division
      * was complete (to sqrt(value) below L), what is left is 1 or a
@@ -3653,10 +3671,12 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
         if (r) {
             free(r->w);
             free(r->rb);
+            free(r->ec);
         } else
             r = malloc(sizeof(t_mwtrial));
         r->w = malloc((t + 1) * sizeof(double));
         r->rb = malloc((t + 1) * sizeof(double));
+        r->ec = malloc((t + 1) * sizeof(double));
     }
     r->key = key;
     r->t = t;
@@ -3668,6 +3688,7 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
     for (uint x = 0; x <= t; ++x) {
         r->w[x] = w[x];
         r->rb[x] = w[x] > 0 ? rb[x] / w[x] : 0;
+        r->ec[x] = w[x] > 0 ? ec[x] / w[x] : 0;
     }
     if (slot)
         *slot = r;
@@ -3697,9 +3718,9 @@ static void mw_other(t_mwtest *out, t_mwwalk *wk, uint vj, uint t, uint e,
         double b = bits - tr->rb[s];
         if (b < 1)
             b = 1;
+        out->prep += w * tr->ec[s];
         if (s == 2) {
             /* the rest must be prime */
-            t_mwscan *sc = mw_scan_for((uint)bits, 0);
             double pp = tr->Kend / (b * M_LN2);
             if (pp > 1)
                 pp = 1;
@@ -7730,16 +7751,22 @@ static double mb_trimmed(double *v, uint count) {
     return sum / keep;
 }
 
-/* "scan,bits,count,t": the cost of tests that fail at a trial prime p,
- * for a range of p: test_multi() prep for tau t of a value whose first
+/* "scan,bits,count,t[,t2]": the cost of tests that fail at a trial prime
+ * p, for a range of p: test_multi() prep for tau t of a value whose first
  * factor is p^a with a + 1 not dividing t, and a prime test of a value
- * whose first factor is p; one line "S bits p prep_us prime_us" per p,
- * up to the trial division limit, and then "L bits p" giving that limit
- * (the last p for which prep still finds the factor) */
+ * whose first factor is p; with t2, also the extra cost to prep for tau
+ * t2 of finding a factor p that does not end it (with batched trial
+ * division, a linear scan of its band up to p), relative to finding one
+ * at the first trial prime; one line "S bits p prep_us
+ * prime_us [extra_us]" per p, up to the trial division limit, and then
+ * "L bits p" giving that limit (the last p for which prep still finds the
+ * factor) */
 static void mb_scan(char *spec) {
-    uint bits, count, t;
-    if (sscanf(spec, "%u,%u,%u", &bits, &count, &t) != 3)
-        fail("MULTIBENCH: expected scan,bits,count,t");
+    uint bits, count, t, t2 = 0;
+    if (sscanf(spec, "%u,%u,%u,%u", &bits, &count, &t, &t2) < 3)
+        fail("MULTIBENCH: expected scan,bits,count,t[,t2]");
+    if (t2 && (t2 & 1 || t2 < 6))
+        fail("MULTIBENCH: scan needs even t2 >= 6");
     uint a = 1;
     while (t % (a + 1) == 0)
         ++a;
@@ -7758,6 +7785,10 @@ static void mb_scan(char *spec) {
     uint last = 0;
     double *tms = malloc(count * sizeof(double));
     double *tps = malloc(count * sizeof(double));
+    double *txs = malloc(count * sizeof(double));
+    /* the base for extra: a factor at the first trial prime, which costs
+     * no extra scanning, and leaves the same work to follow */
+    double base = 0;
     /* warm up: the first tests pay one-off setup */
     for (uint i = 0; i < 100; ++i) {
         mb_random(m, rs, bits, 3);
@@ -7784,15 +7815,35 @@ static void mb_scan(char *spec) {
             t0 = mb_now();
             ok = test_prime_append(m, 0) && test_prime_run() == 0;
             tps[i] = mb_now() - t0;
+            if (t2) {
+                /* p times a cofactor with no factor up to the largest
+                 * limit: prep finds p, continues, and fails or passes as
+                 * for the base */
+                mb_random(m, rs, bits > (uint)log2(p) + 16
+                        ? bits - (uint)log2(p) : 16, 64007);
+                mpz_mul_ui(m, m, p);
+                test_multi_reset();
+                t0 = mb_now();
+                test_multi_append(m, 0, t2, 1);
+                txs[i] = mb_now() - t0;
+            }
         }
-        printf("S %u %u %.4f %.4f\n", bits, p, 1e6 * mb_trimmed(tms, count),
+        printf("S %u %u %.4f %.4f", bits, p, 1e6 * mb_trimmed(tms, count),
                 1e6 * mb_trimmed(tps, count));
+        if (t2) {
+            double tx = mb_trimmed(txs, count);
+            if (ti == 0)
+                base = tx;
+            printf(" %.4f", 1e6 * (tx - base));
+        }
+        printf("\n");
         last = p;
     }
   done:
     printf("L %u %u\n", bits, last);
     free(tms);
     free(tps);
+    free(txs);
     mpz_clear(m);
     gmp_randclear(rs);
 }

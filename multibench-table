@@ -20,10 +20,11 @@ The mock models the trial division stage of each test itself, since
 how often the values a walk tests are divisible by each trial prime
 depends strongly on the walk. So the bench pcoul first finds the trial
 division limit L for each size (it changes at 80 bits in some builds),
-and the cost of a test that fails at each of a range of trial primes,
+the cost of a test that fails at each of a range of trial primes, and
+the extra cost of a factor found there that does not end the test,
 giving lines:
 
-  S bits p prep_us prime_us
+  S bits p prep_us prime_us [extra_us]
   L bits L
 
 Then for each divisor t > 2 of n and each size in the bits grid, it
@@ -110,7 +111,11 @@ $| = 1;
 # so each uses the L for its size.
 # (an even t, since for odd t prep first checks for a square)
 my $tscan = (grep $_ > 2 && !($_ & 1), divisors($n))[0] // 2;
-my @scan = map bench("scan,$_,2000,$tscan"), 24, 40, 56, 80, 81;
+# and an even t whose half is not 2, for the extra cost of a factor that
+# does not end prep
+my $tx = (grep $_ >= 6 && !($_ & 1), divisors($n))[0];
+my @scan = map bench("scan,$_,2000,$tscan" . ($tx ? ",$tx" : '')),
+        24, 40, 56, 80, 81;
 my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } @scan;
 sub trial_limit {
     my($bits) = @_;
