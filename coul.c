@@ -3900,12 +3900,15 @@ static void mw_other(t_mwtest *out, t_mwwalk *wk, uint vj, uint t, uint e,
 
 /* The expected cost after the inverse filter and any fixed power's own
  * test: C_p + P_prime * C_m, over the need_prime and need_other positions,
- * for candidates of zb bits, from the walk wk. For a linear walk,
- * positions that must be prime exclude the residues making them
- * divisible by a small prime from the values reaching the later tests.
+ * for candidates of zb bits, from the walk wk. For a linear walk, the
+ * residues of ati that the inverse filter inv[] skips (making a position
+ * divisible again by a prime allocated there), and those that make a
+ * position that must be prime divisible by a small prime, are excluded
+ * from the values reaching the later tests.
  */
 static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
-        uint npc, uint *need_other, uint noc, t_mwwalk *wk) {
+        uint npc, uint *need_other, uint noc, t_mwwalk *wk,
+        t_mod *inv, uint inv_count) {
     if (!mw_loaded)
         mw_load();
     uint nsmall = 0;
@@ -3918,6 +3921,9 @@ static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
         if (wk->kind != MWK_LINEAR)
             continue;
         uint p = mw_tp[i];
+        for (uint j = 0; j < inv_count; ++j)
+            if (inv[j].m == p && nexcl[i] < MW_MAXEXCL)
+                excl[i][nexcl[i]++] = inv[j].v;
         for (uint j = 0; j < npc; ++j) {
             uint vj = need_prime[j];
             ulong r = small_divmod(wv_o[vj], wv_qq[vj], p);
@@ -4409,7 +4415,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         else
             mw_walk_init(&wk, MWK_LINEAR, mw_alloc, k, 0, 0);
         double tail = mw_tail(log2(mpz_get_d(zmax)), q, t, need_prime, npc,
-                need_other, noc, &wk);
+                need_other, noc, &wk, inv, inv_count);
         double tests;
         double pinv = mw_pinv(inv, inv_count, &tests);
         double cost;
@@ -5165,7 +5171,7 @@ void walk_1_set(
         if ((mw_pass - 1) % MW_W1S_SAMPLE == 0) {
             double mo0 = mw_clock();
             mw_tailsum += mw_tail(log2(mpz_get_d(Z(w1_v))), mw_q, t,
-                    need_prime, npc, need_other, noc, &mw_wk);
+                    need_prime, npc, need_other, noc, &mw_wk, NULL, 0);
             ++mw_nsample;
             g_mock_overhead_s += mw_clock() - mo0 + g_mw_read;
         }
