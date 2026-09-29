@@ -4189,6 +4189,18 @@ void walk_midp(t_level *prev_level, bool recover) {
 
     while (midppc) {
         p = prime_iterator_prev(&cur_level->piter);
+
+        /* If p is already allocated must still prune any completed powers,
+         * skipping only the apply.
+         */
+        bool used = 0;
+        if (p <= prev_level->maxp)
+            for (uint li = 1; li <= prev_level->level; ++li)
+                if (p == levels[li].p && levels[li].x > 1) {
+                    used = 1;
+                    break;
+                }
+
         for (mi = 0; mi < midppc; ++mi) {
           redo_mi:
             mp = &midpp[mi];
@@ -4204,6 +4216,8 @@ void walk_midp(t_level *prev_level, bool recover) {
                 }
                 continue;
             }
+            if (used)
+                continue;
             vi = mp->vi;
             x = mp->x;
             if (apply_single(prev_level, cur_level, vi, p, x)) {
