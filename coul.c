@@ -3043,10 +3043,11 @@ static t_mwc mw_C[] = {
     { "w1siter", 0, 0, 1 },     /* walk_1_set() per prime */
     { "w1scheck", 0, 0, 1 },    /* walk_1_set() per prime passing mod check */
     { "creject", 0, 0, 1 },     /* apply_single() failing on rq > zmax */
+    { "ctail", 0, 0, 1 },       /* rest of a loop of rejects, per prime */
 };
 enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
         MWC_CPRIME, MWC_CPRIMESQ, MWC_W1SITER,
-        MWC_W1SCHECK, MWC_CREJECT, MWC_COUNT };
+        MWC_W1SCHECK, MWC_CREJECT, MWC_CTAIL, MWC_COUNT };
 #define MWC(i) (mw_C[i].v)
 
 static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
@@ -3345,11 +3346,20 @@ static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
  * gives c_reject (the count of primes stubbed is reported at the end);
  * with $MOCK_REJECT_CHECK set, each prime stubbed is also checked with
  * apply_single(), failing if it is accepted.
+ * Since t is roughly uniform mod p^(x-1), a prime passes with chance
+ * about (T + 1) / p^(x-1), so for x >= 3 the rest of the loop from p
+ * expects S <= (T + 1) / ((x - 2) p^(x-2) log p) survivors. Once S is
+ * below MR_TAIL_EPS, the loop is ended and its remaining primes are
+ * charged c_reject + c_tail each (c_tail being the cost of the loop
+ * itself and of the test above), dropping the few survivors expected:
+ * the bias is at most S times the cost of a survivor. With
+ * $MOCK_TAIL_OFF set, such loops run to the end, giving c_tail.
  */
 #define MR_UNKNOWN 0
 #define MR_TEST 1       /* test against mr_T */
 #define MR_ALL 2        /* r > zmax: every prime is rejected */
 #define MR_NONE 3       /* nothing to stub */
+#define MR_TAIL_EPS 0.01
 static uint mr_state[ML_MAX];
 static ulong mr_T[ML_MAX];
 static uint mr_seen[ML_MAX];    /* seen_best when mr_T was found */
@@ -3357,9 +3367,26 @@ double g_mr_rejects = 0;        /* primes stubbed as rejected */
 double g_mr_tries = 0;          /* primes reaching the test */
 bool g_mr_off = 0;              /* $MOCK_REJECT_OFF: leave rejects real */
 bool g_mr_check = 0;            /* $MOCK_REJECT_CHECK: verify each one */
+double g_mr_tail = 0;           /* primes stubbed in loop tails */
+bool g_mr_tail_off = 0;         /* $MOCK_TAIL_OFF: run loop tails */
 
 /* inverse of a mod m, or 0 if there is none */
 static ulong mr_invert(ulong a, ulong m) {
+    if (m < (1UL << 32)) {
+        uint t0 = 0, t1 = 1, r0 = m, r1 = a % m;
+        bool neg = 0;
+        /* track |t| with alternating signs */
+        while (r1) {
+            uint q = r0 / r1, r2 = r0 - q * r1;
+            uint t2 = t0 + q * t1;
+            r0 = r1; r1 = r2;
+            t0 = t1; t1 = t2;
+            neg = !neg;
+        }
+        if (r0 != 1)
+            return 0;
+        return neg ? t0 : m - t0;
+    }
     long t0 = 0, t1 = 1;
     ulong r0 = m, r1 = a % m;
     while (r1) {
@@ -3409,12 +3436,45 @@ static bool mr_reject(uint lvl, t_level *prev, uint vi, ulong p, uint x) {
     }
     if (px - 1 <= mr_T[lvl])
         return 0;
-    ulong ai = mr_invert(mpz_fdiv_ui(prev->aq, px), px);
+    ulong ap = mpz_fdiv_ui(prev->aq, px), ai;
+    if (px == p) {
+        ai = mr_invert(ap, px);
+    } else {
+        /* invert mod p, then Newton steps i <- i(2 - a.i) up to p^(x-1) */
+        if (p >= (1UL << 32))
+            return 0;
+        ai = mr_invert(ap % p, p);
+        for (ulong pm = p; ai && pm < px; ) {
+            pm = (pm > px / pm) ? px : pm * pm;
+            ulong ax = (ulong)((unsigned __int128)ap * ai % px);
+            ai = (ulong)((unsigned __int128)ai * ((2 + px - ax) % px) % px);
+        }
+    }
     if (ai == 0)
         return 0;
     ulong r = mpz_fdiv_ui(prev->rq, px);
     ulong c = (2 * px - (TYPE_OFFSET(vi) % px) - r) % px;
     return (ulong)((unsigned __int128)c * ai % px) > mr_T[lvl];
+}
+
+/* TRUE if the rest of the loop at lvl from p is stubbed as rejects;
+ * must follow mr_reject() for the same level */
+static bool mr_tail(uint lvl, ulong p, ulong limp, uint x) {
+    if (mr_state[lvl] == MR_TEST) {
+        if (x < 3)
+            return 0;
+        double S = (mr_T[lvl] + 1.0)
+                / ((x - 2) * pow((double)p, x - 2) * log((double)p));
+        if (S >= MR_TAIL_EPS)
+            return 0;
+    } else if (mr_state[lvl] != MR_ALL)
+        return 0;
+    double np = mw_li(limp) - mw_li(p) + 1;
+    if (np < 1)
+        np = 1;
+    g_mr_tail += np;
+    g_mock_spent_s += np * (MWC(MWC_CREJECT) + MWC(MWC_CTAIL));
+    return 1;
 }
 #endif
 
@@ -3426,7 +3486,8 @@ void mock_report(void) {
 #   ifdef MOCK_LEAF
     report(", leaf primes %.0f, sq primes %.0f, strided %.0f", g_ml_primes,
             g_ml_primes_sq, g_ml_strided);
-    report(", rejects %.0f of %.0f", g_mr_rejects, g_mr_tries);
+    report(", rejects %.0f of %.0f, tail %.0f", g_mr_rejects, g_mr_tries,
+            g_mr_tail);
 #   endif
     report("\n");
 }
@@ -7831,6 +7892,11 @@ void recurse(e_is jump_continue) {
 #if defined(MOCK_LEAF) && defined(CHECK_OVERFLOW)
             if (level < ML_MAX && !g_mr_off && mr_reject(level, prev_level,
                     cur_level->vi, p, cur_level->x)) {
+                if (!g_mr_tail_off && !g_mr_check
+                        && mr_tail(level, p, cur_level->limp, cur_level->x)) {
+                    cur_level->p = p;
+                    goto continue_unforced_x;
+                }
                 if (g_mr_check && apply_single(prev_level, cur_level,
                         cur_level->vi, p, cur_level->x))
                     fail("MOCK_REJECT_CHECK: %lu at level %u accepted",
@@ -8333,6 +8399,7 @@ int main(int argc, char **argv, char **envp) {
     g_ml_off = getenv("MOCK_LEAF_OFF") != NULL;
     g_mr_off = getenv("MOCK_REJECT_OFF") != NULL;
     g_mr_check = getenv("MOCK_REJECT_CHECK") != NULL;
+    g_mr_tail_off = getenv("MOCK_TAIL_OFF") != NULL;
 #endif
 #ifdef MOCK_WALK
     mw_clock_init();

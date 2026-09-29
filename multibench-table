@@ -63,6 +63,7 @@ Then the remaining costs:
   C w1siter us      walk_1_set(), per prime
   C w1scheck us     walk_1_set(), per prime reaching the tests
   C creject us      recurse loop, per prime rejected on rq > zmax
+  C ctail us        likewise, extra per prime in the stubbed end of a loop
 
 The walk loop costs are fitted by least squares to the walks of two
 calibration runs with the GATE_STATS pcoul (time outside the tests,
@@ -75,7 +76,8 @@ with the mock pcoul, once with leaf loops stubbed and once with them run
 for real: the difference in real (unmocked) time over the number of
 primes stubbed. C<creject> likewise, from a batch of D(162, 3) deep
 enough that almost every prime its recursion tries is rejected on
-rq > zmax, timed with those rejections stubbed and real.
+rq > zmax, timed with those rejections stubbed and real, and C<ctail>
+from the same batch with the ends of such loops stubbed and run.
 
 
 =cut
@@ -141,7 +143,7 @@ my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80,
         96, 112, 128);
 my($done, $total) = (0, scalar @scan_bits);
 $total += @te * @bits unless $only eq 'other';
-$total += @prime_bits + 3 + 18 unless $only eq 'multi';
+$total += @prime_bits + 3 + 24 unless $only eq 'multi';
 
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
@@ -197,6 +199,7 @@ push @rest, sprintf('C w1siter %.5f', $w1s[0]),
 push @rest, sprintf('C cprime %.4f', cprime('leaf', @cal_leaf)),
         sprintf('C cprimesq %.4f', cprime('sq', @cal_leafsq));
 push @rest, sprintf('C creject %.4f', cprime('rej', @cal_rej));
+push @rest, sprintf('C ctail %.4f', cprime('tail', @cal_rej));
 print $out "$_\n" for @rest;
 finish();
 
@@ -340,18 +343,23 @@ sub lsq {
 
 # The cost per prime stubbed of the given kind ("leaf" for leaf loops
 # with linear walks, "sq" for those with fixed powers, "rej" for primes
-# rejected on rq > zmax), from a calibration batch run with and without
-# MOCK_LEAF_OFF (MOCK_REJECT_OFF for "rej"): the difference in real
-# (unmocked) time over the number of primes stubbed. Leaf loops are
-# calibrated with rejects left real, since the real loops include them.
+# rejected on rq > zmax, "tail" for the ends of loops of such rejects),
+# from a calibration batch run with and without MOCK_LEAF_OFF
+# (MOCK_REJECT_OFF, MOCK_TAIL_OFF): the difference in real (unmocked)
+# time over the number of primes stubbed. Leaf loops are calibrated
+# with rejects left real, since the real loops include them, and
+# rejects with loop tails left to run.
 sub cprime {
     my($kind, @args) = @_;
-    my $var = ($kind eq 'rej') ? 'MOCK_REJECT_OFF' : 'MOCK_LEAF_OFF';
+    my $var = { leaf => 'MOCK_LEAF_OFF', sq => 'MOCK_LEAF_OFF',
+            rej => 'MOCK_REJECT_OFF', tail => 'MOCK_TAIL_OFF' }->{$kind};
     open my $fh, '>', $tmp or die "$tmp: $!";
-    print $fh "$_\n" for @rest, 'C cprime 0', 'C cprimesq 0', 'C creject 0';
+    print $fh "$_\n" for @rest, map "C $_ 0",
+            grep !(grep /^C $_ /, @rest), qw{ cprime cprimesq creject ctail };
     close $fh;
     local $ENV{MOCK_WALK_TABLE} = $tmp;
-    local $ENV{MOCK_REJECT_OFF} = 1;
+    local $ENV{MOCK_REJECT_OFF} = 1 unless $kind eq 'tail';
+    local $ENV{MOCK_TAIL_OFF} = 1;
     my(%real, $primes);
     for my $rep (1 .. 3) {
         for my $off (1, 0) {
@@ -363,14 +371,14 @@ sub cprime {
             }
             progress("mock @args" . ($off ? " ($kind off)" : ''));
             my $out = `'$mock' -X @{[ map quote($_), @args ]} 2>&1`;
-            my($m, $pl, $ps, $pr) = $out
-                    =~ /^368 mock ([\d.]+)s \(overhead [\d.]+s\), leaf primes (\d+), sq primes (\d+), strided \d+, rejects (\d+)/m
+            my($m, $pl, $ps, $pr, $pt) = $out
+                    =~ /^368 mock ([\d.]+)s \(overhead [\d.]+s\), leaf primes (\d+), sq primes (\d+), strided \d+, rejects (\d+) of \d+, tail (\d+)/m
                     or die "no 368 line from $mock";
             my($t) = $out =~ /^367 .*\(([\d.]+)s\)/m
                     or die "no 367 line from $mock";
             my $r = $t - $m;
             $real{$off} = $r if !defined($real{$off}) || $r < $real{$off};
-            $primes = { leaf => $pl, sq => $ps, rej => $pr }->{$kind}
+            $primes = { leaf => $pl, sq => $ps, rej => $pr, tail => $pt }->{$kind}
                     unless $off;
         }
     }
