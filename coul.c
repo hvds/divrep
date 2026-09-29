@@ -3635,6 +3635,27 @@ static double mw_scan_cost(t_mwscan *sc, uint p, uint which) {
     return cv[sc->ns - 1];
 }
 
+/* MPUGMP's primality_pretest() takes a gcd with the primes below
+ * MW_PRETEST_LIM (BGCD_NEXTPRIME) for values up to 300 bits, the last
+ * of them MW_PRETEST_LAST
+ */
+#define MW_PRETEST_LIM 1009
+#define MW_PRETEST_LAST 997
+
+/* The cost of a prime test (BPSW) of a value that passed the pretest,
+ * of b bits and prime with probability r: the P rows give the mean over
+ * values with no factor up to L, prime with probability P.pass, and the
+ * R rows the cost on composites, from which the cost on primes follows.
+ */
+static double mw_ptest(double b, double r) {
+    double pass = mw_interp1(&mw_P, b, 0), mean = mw_interp1(&mw_P, b, 1);
+    double comp = mw_interp1(&mw_R, b, 1);
+    double prime = (pass > 0) ? (mean - (1 - pass) * comp) / pass : mean;
+    if (prime < comp)
+        prime = comp;
+    return r * prime + (1 - r) * comp;
+}
+
 /* the trial division part of the test of position vj's value for tau t
  * with exponent multiplier e; with prime set, the costs are those of a
  * prime test */
@@ -3706,11 +3727,15 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
     w[t] = 1;
     double rej = 0, rejcost = 0, pass = 0, passcost = 0;
     /* trial division goes up to sqrt(value) if that is below L, and is
-     * then complete */
-    double lim = (bits < 62) ? sqrt(pow(2.0, bits)) : sc->L;
-    bool complete = (lim < sc->L);
+     * then complete; a prime test's pretest (primality_pretest()) only
+     * takes a gcd with the primes below MW_PRETEST_LIM, leaving the rest
+     * to BPSW
+     */
+    double L = prime ? MW_PRETEST_LIM : sc->L;
+    double lim = (bits < 62) ? sqrt(pow(2.0, bits)) : L;
+    bool complete = (lim < L);
     if (!complete)
-        lim = sc->L;
+        lim = L;
     uint lastp = 2;
     double Kp = 1;      /* prod q / (q - 1) over the trial primes so far */
     for (uint i = 0; i < mw_ntp && mw_tp[i] <= lim; ++i) {
@@ -3914,16 +3939,20 @@ static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
     uint nsmall = 0;
     while (nsmall < mw_ntp && mw_tp[nsmall] <= 47)
         ++nsmall;
+    /* the inverse filter's exclusions come first, so that nexcl_inv[]
+     * gives them alone, for the positions that must be prime
+     */
     ulong excl[nsmall][MW_MAXEXCL];
-    uint nexcl[nsmall];
+    uint nexcl[nsmall], nexcl_inv[nsmall];
     for (uint i = 0; i < nsmall; ++i) {
-        nexcl[i] = 0;
+        nexcl[i] = nexcl_inv[i] = 0;
         if (wk->kind != MWK_LINEAR)
             continue;
         uint p = mw_tp[i];
         for (uint j = 0; j < inv_count; ++j)
             if (inv[j].m == p && nexcl[i] < MW_MAXEXCL)
                 excl[i][nexcl[i]++] = inv[j].v;
+        nexcl_inv[i] = nexcl[i];
         for (uint j = 0; j < npc; ++j) {
             uint vj = need_prime[j];
             ulong r = small_divmod(wv_o[vj], wv_qq[vj], p);
@@ -3933,23 +3962,43 @@ static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
                 excl[i][nexcl[i]++] = r ? p - r : 0;
         }
     }
-    double pprime = 1.0, cp = 0;
+    /* as test_primes(): each position's prep (the pretest) in turn until
+     * one fails, then for those left pending, the prime tests in turn
+     * until one fails; the P and R rows include the pretest, which for a
+     * value passing it is paid in the prep, so is moved there
+     */
+    double pprep = 1.0, cp = 0, lf[npc], lr[npc], lc[npc];
     for (uint i = 0; i < npc; ++i) {
         uint vi = need_prime[i];
         double b = zb - log2(mpz_get_d(*q[vi]));
         if (b < 1)
             b = 1;
-        /* those with a trial factor fail early */
-        t_mwtrial *tr = mw_trial(wk, vi, 2, 1, b, 1, NULL, NULL);
+        t_mwtrial *tr = mw_trial(wk, vi, 2, 1, b, 1,
+                wk->kind == MWK_LINEAR ? excl : NULL, nexcl_inv);
         double pc = tr->w[2];
         double bb = b - tr->rb[2];
         if (bb < 1)
             bb = 1;
-        cp += pprime * (tr->rejcost + tr->passcost
-                + pc * mw_interp1(&mw_P, bb, 1));
-        double pp = tr->pass + pc * tr->Kend / (bb * M_LN2);
-        pprime *= (pp < 1) ? pp : 1;
+        double pre = mw_scan_cost(mw_scan_for((uint)b, 0),
+                MW_PRETEST_LAST, 1);
+        cp += pprep * (tr->rejcost + tr->passcost + pc * pre);
+        double ok = tr->pass + pc;
+        lf[i] = ok > 0 ? pc / ok : 0;
+        lr[i] = tr->Kend / (bb * M_LN2);
+        if (lr[i] > 1)
+            lr[i] = 1;
+        lc[i] = mw_ptest(bb, lr[i]) - pre;
+        if (lc[i] < 0)
+            lc[i] = 0;
+        pprep *= ok;
     }
+    double lsurv = 1, ladder_p = 0;
+    for (uint i = 0; i < npc; ++i) {
+        ladder_p += lsurv * lf[i] * lc[i];
+        lsurv *= 1 - lf[i] + lf[i] * lr[i];
+    }
+    cp += pprep * ladder_p;
+    double pprime = pprep * lsurv;
     double cm = 0, survive = 1, ladder = 0;
     for (uint i = 0; i < noc; ++i) {
         uint vi = need_other[i];
@@ -4465,12 +4514,11 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 double b = rbits - tr->rb[2];
                 if (b < 1)
                     b = 1;
-                csq = tr->rejcost + tr->passcost
-                        + tr->w[2] * mw_interp1(&mw_P, b, 1);
-                psq = tr->pass + tr->w[2]
-                        * tr->Kend / (b * M_LN2);
-                if (psq > 1)
-                    psq = 1;
+                double r = tr->Kend / (b * M_LN2);
+                if (r > 1)
+                    r = 1;
+                csq = tr->rejcost + tr->passcost + tr->w[2] * mw_ptest(b, r);
+                psq = tr->pass + tr->w[2] * r;
             } else {
                 /* the root's own test, with no information on its
                  * divisibility */
@@ -8061,6 +8109,13 @@ void multibench(char *spec) {
         return mb_prime(spec + 6);
     if (strncmp(spec, "scan,", 5) == 0)
         return mb_scan(spec + 5);
+    if (strncmp(spec, "ladder,", 7) == 0) {
+        extern void mb_ladder(uint bits, uint count, uint F);
+        uint bits, count, F;
+        if (sscanf(spec + 7, "%u,%u,%u", &bits, &count, &F) != 3)
+            fail("MULTIBENCH: expected ladder,bits,count,F");
+        return mb_ladder(bits, count, F);
+    }
     uint bits, t, count, F, e = 1;
     ulong seed = 1;
     if (sscanf(spec, "%u,%u,%u,%u,%lu,%u", &bits, &t, &count, &F, &seed, &e) < 4)
