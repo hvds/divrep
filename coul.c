@@ -3452,16 +3452,18 @@ void mock_report(void) {
 
 #define MW_MAXEXCL 16
 
-/* Process CPU time, to measure (and discount) the mock's own overhead,
- * and time stride samples. CPU time is unaffected by other load, but
- * CLOCK_PROCESS_CPUTIME_ID is a system call (~0.25us here), and the code
- * after it runs slower: a stride sample of a single child costing
- * ~0.3us measured ~0.4us even after discounting the read, hence
- * ML_BLOCK.
+/* CPU time, to measure (and discount) the mock's own overhead, and
+ * time stride samples; CPU time is unaffected by other load. Not
+ * CLOCK_PROCESS_CPUTIME_ID: while a CPU-time timer is armed (as the
+ * diag and log timers are, see init_time()), Linux samples the process
+ * clock from the thread group's cputimer, which advances only at
+ * scheduler ticks (4ms here), so almost every interval read as 0 or
+ * one tick. The thread clock stays precise, and pcoul has one thread.
+ * It is a system call (~0.25us here).
  */
 static inline double mw_clock(void) {
     struct timespec ts;
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
