@@ -9,7 +9,7 @@ use H::Diag qw{ diag keep_diag };
 =head1 multibench-table: tabulate this machine's costs for the walk mocks
 
   multibench-table [-c<bench>] [-g<gatestats>] [-m<mock>] [-b<bits,...>]
-          [-o | -M] [-w<file>] n k
+          [-f<flake>] [-o | -M] [-w<file>] n k
 
 Writes to stdout, or to I<file> with C<-w> (when progress is shown on
 stdout as runs done / total), the cost table that a pcoul built with
@@ -97,7 +97,17 @@ in log, each weighted by the ratio of the densities: the same expected
 results, with many more of the inputs that alone reach the costly high
 rungs. (At 72 bits, where both can be run at length, built and random
 inputs agree to within sampling error.) Above 191 bits there are no G
-rows yet; the mock uses the largest.
+rows unless C<-f> is given; the mock uses the largest.
+
+With C<-f>I<flake>, the table is for runs with C<-o>I<flake>: the ladder
+is benched under the same option, which drops the rungs from QS on for
+values above I<flake> bits (the failure handler then logs what is left,
+to be factored separately), and sizes above 191 bits are added up to
+511 (60 inputs each up to 255 bits, 30 to 299, 12 above: each input's
+costliest rung is then a single ECM rung, 2.5s per attempt at 207
+bits, 31s at 299, more above; so the largest are rough). The mock also
+drops those rungs itself when run with C<-o>, but can only price the
+sizes the table has.
 
 None of these depends on what the value is being tested for, so the
 mock derives the effect of a factor found on a test for tau(n^e) = t,
@@ -109,7 +119,8 @@ F<coultau.c>, which choose the rungs used, up to 191 bits.
 
 =cut
 
-my($bench, $gstats, $mock, $only, $outfile) = ('./pcoul', undef, undef, '');
+my($bench, $gstats, $mock, $only, $outfile, $flake)
+        = ('./pcoul', undef, undef, '', undef, 0);
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
@@ -121,6 +132,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $gstats = $1, next if $arg =~ /^-g(.+)$/;
     $mock = $1, next if $arg =~ /^-m(.+)$/;
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
+    $flake = $1, next if $arg =~ /^-f(\d+)$/;
     $only = 'other', next if $arg eq '-o';
     $only = 'multi', next if $arg eq '-M';
     $outfile = $1, next if $arg =~ /^-w(.+)$/;
@@ -179,6 +191,10 @@ my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 65, 72,
 my @ladder_bits = (36, 40, 44, 48, 52, 53, 56, 58, 60, 63, 64, 68, 72, 76,
         77, 80, 84, 88, 89, 92, 96, 99, 104, 112, 120, 126, 127, 136, 144,
         152, 159, 176, 191);
+# with -f, beyond the reach of QS: the larger brackets end at 223, 255,
+# 299, 511
+push @ladder_bits, grep $_ > $flake, (207, 223, 239, 255, 277, 299, 400,
+        511) if $flake;
 my($done, $total) = (0, scalar @scan_bits);
 $total += @te * @bits unless $only eq 'other';
 $total += @prime_bits + @ladder_bits + 3 + 18 unless $only eq 'multi';
@@ -228,8 +244,9 @@ for my $b (@ladder_bits) {
     # from 100 bits, inputs built with their smallest factor oversampled
     # at large sizes, for the rare costly rungs
     my $alpha = ($b < 100) ? '' : ',0.3';
-    push @rest, grep /^G /,
-            bench("ladder,$b,$count," . trial_limit($b) . $alpha);
+    $count = ($b <= 255) ? 60 : ($b <= 299) ? 30 : 12 if $b > 191;
+    push @rest, grep /^G /, bench("ladder,$b,$count," . trial_limit($b)
+            . $alpha, $flake ? "-o$flake" : ());
 }
 push @rest, @scan;
 my @log_lin = gate_log(@cal_lin);
@@ -270,10 +287,11 @@ sub quote {
 }
 
 sub bench {
-    my($spec) = @_;
+    my($spec, @opt) = @_;
     local $ENV{MULTIBENCH} = $spec;
     progress("MULTIBENCH=$spec");
-    my @lines = grep /^(?:MULTIBENCH|[PRCSLG]) /, `'$bench' -X $n $k 2>&1`;
+    my @lines = grep /^(?:MULTIBENCH|[PRCSLG]) /,
+            `'$bench' -X @opt $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;
     return @lines;
