@@ -85,6 +85,17 @@ ifdef MULTIBENCH
     DEFINES += -DMULTIBENCH
 endif
 # Calibration-only stub of walk_v() (MOCK_WALK_TABLE env var), see coul.c
+# experimental: children of a loop walk once one has (see coul.c)
+ifdef WALK_FROM
+    DEFINES += -DWALK_FROM
+endif
+ifdef WALK_FROM_CHECK
+    DEFINES += -DWALK_FROM -DWALK_FROM_CHECK
+endif
+# experimental: walk-or-recurse gate by estimated cost (see coul.c)
+ifdef COST_GATE
+    DEFINES += -DCOST_GATE
+endif
 ifdef MOCK_WALK
     DEFINES += -DMOCK_WALK
 endif
