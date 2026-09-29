@@ -1196,6 +1196,7 @@ void done(void) {
     mpz_clear(best);
     done_pell();
     done_zrootmod();
+    done_coulfact();
     done_stats();
     done_tau();
     _GMP_destroy();
@@ -1284,6 +1285,7 @@ void init_pre(void) {
     init_randstate(1);
     /* we may do this again after options handled, to select real seed */
 
+    init_coulfact();
     init_pell();
     t0 = utime();
     mpz_init_set_ui(zmin, 0);
@@ -3617,26 +3619,40 @@ bool update_residues(t_level *old, t_level *new,
     return 1;
 }
 
-bool update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
-    mpz_t zarray[4];
-    mpz_t *pxp = PARAM_TO_PTR(px);
-    mpz_set_si(Z(uc_minusvi), -(long)TYPE_OFFSET(vi));
-
-    /* v_0 == -i (mod 2^e) can be upgraded to v_0 = 2^e - i (mod 2^{e + 1}) */
-    if (mpz_even_p(px)) {
-        mpz_add(Z(uc_minusvi), Z(uc_minusvi), px);
-        mpz_mul_2exp(Z(uc_px), px, 1);
-        pxp = ZP(uc_px);
+/* Combine v_0 == -i (mod px) for the allocation of px = p^{x-1} at v_i
+ * with old->rq, old->aq into new->rq, new->aq; returns FALSE if they
+ * are inconsistent. p usually does not divide old->aq, but it may via
+ * a modfix, a 2^0 tail (apply_null()) or a clashing -I pattern.
+ */
+bool update_chinese(t_level *old, t_level *new, uint vi, ulong p, mpz_t px) {
+    ulong off = TYPE_OFFSET(vi);
+    /* chinese_ppow() needs 2px < 2^62 for simple_invert() */
+    if (mpz_cmp_ui(px, 1UL << 61) < 0) {
+        ulong m = mpz_get_ui(px), s;
+        if (m & 1) {
+            s = off % m;
+            if (s)
+                s = m - s;
+        } else {
+            /* v_0 == -i (mod 2^e) can be upgraded to
+             * v_0 == 2^e - i (mod 2^{e + 1})
+             */
+            s = (m + 2 * m - off % (2 * m)) % (2 * m);
+            m *= 2;
+        }
+        return chinese_ppow(new->rq, new->aq, old->rq, old->aq, p, m, s);
     }
-
-    /* TODO: write a custom chinese() */
-    memcpy(&zarray[0], old->rq, sizeof(mpz_t));
-    memcpy(&zarray[1], Z(uc_minusvi), sizeof(mpz_t));
-    memcpy(&zarray[2], old->aq, sizeof(mpz_t));
-    memcpy(&zarray[3], *pxp, sizeof(mpz_t));
-    if (chinese(new->rq, new->aq, &zarray[0], &zarray[2], 2))
-        return 1;
-    return 0;
+    /* px > off, so px - off is -i (mod px), and 2^e - i as above
+     * (mod 2^{e + 1}) for p = 2
+     */
+    mpz_sub_ui(Z(uc_minusvi), px, off);
+    if (p == 2) {
+        mpz_mul_2exp(Z(uc_px), px, 1);
+        return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p,
+                Z(uc_px), Z(uc_minusvi));
+    }
+    return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p,
+            px, Z(uc_minusvi));
 }
 
 /* Allocate p^{x-1} to v_{vi}. Returns FALSE if it is invalid.
@@ -3738,7 +3754,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
     cur->have_min = prev->have_min || (minp[x - 1] && p > minp[x - 1]);
     mpz_ui_pow_ui(px, p, x - 1);
-    if (!update_chinese(prev, cur, vi, px))
+    if (!update_chinese(prev, cur, vi, p, px))
         return 0;
 
 #ifdef CHECK_OVERFLOW
@@ -3794,7 +3810,7 @@ bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     mpz_ui_pow_ui(px, p, x - 1);
     /* this is wasted effort if x does not divide v_i.t, but we need it
      * for the alloc_square() calculation */
-    if (!update_chinese(prev, cur, vi, px))
+    if (!update_chinese(prev, cur, vi, p, px))
         return 0;
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
