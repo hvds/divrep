@@ -3441,6 +3441,17 @@ static inline double mw_clock(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
+/* The CPU time of one mw_clock() (~0.25us here: it is a system call),
+ * which is itself overhead: an interval between two reads includes
+ * about one read's worth, and about one more falls outside it. */
+double g_mw_read = 0;
+static void mw_clock_init(void) {
+    double t0 = mw_clock(), t1 = t0;
+    for (uint i = 0; i < 1000; ++i)
+        t1 = mw_clock();
+    g_mw_read = (t1 - t0) / 1000;
+}
+
 static inline ulong mw_mulmod(ulong a, ulong b, ulong m) {
     return (ulong)((unsigned __int128)a * b % m);
 }
@@ -4484,7 +4495,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #endif
         }
         g_mock_spent_s += cost;
-        g_mock_overhead_s += mw_clock() - mo0;
+        g_mock_overhead_s += mw_clock() - mo0 + g_mw_read;
         return;
     }
 #endif
@@ -5167,7 +5178,7 @@ void walk_1_set(
             mw_tailsum += mw_tail(log2(mpz_get_d(Z(w1_v))), mw_q, t,
                     need_prime, npc, need_other, noc, &mw_wk);
             ++mw_nsample;
-            g_mock_overhead_s += mw_clock() - mo0;
+            g_mock_overhead_s += mw_clock() - mo0 + g_mw_read;
         }
         g_mock_spent_s += mw_tailsum / mw_nsample;
         continue;
@@ -7776,11 +7787,15 @@ void recurse(e_is jump_continue) {
             }
             if (level < ML_MAX && ml_state[level] == ML_NOT && !g_ml_off) {
                 /* the child just finished was a sample: take its cost, real
-                 * and mocked, less the mock's own overhead */
+                 * and mocked, less the mock's own overhead (including the
+                 * clock reads bracketing it) */
                 if (ml_samp[level]) {
-                    ml_cost[level] = (mw_clock() - ml_t0[level])
+                    ml_cost[level] = (mw_clock() - ml_t0[level]) - g_mw_read
                             - (g_mock_overhead_s - ml_ov0[level])
                             + (g_mock_spent_s - ml_m0[level]);
+                    if (ml_cost[level] < 0)
+                        ml_cost[level] = 0;
+                    g_mock_overhead_s += g_mw_read;
                     ml_samp[level] = 0;
                     ml_have[level] = 1;
                 }
@@ -7791,6 +7806,7 @@ void recurse(e_is jump_continue) {
                         goto redo_unforced;
                     }
                     ml_samp[level] = 1;
+                    g_mock_overhead_s += g_mw_read;
                     ml_t0[level] = mw_clock();
                     ml_ov0[level] = g_mock_overhead_s;
                     ml_m0[level] = g_mock_spent_s;
@@ -8317,6 +8333,9 @@ int main(int argc, char **argv, char **envp) {
     g_ml_off = getenv("MOCK_LEAF_OFF") != NULL;
     g_mr_off = getenv("MOCK_REJECT_OFF") != NULL;
     g_mr_check = getenv("MOCK_REJECT_CHECK") != NULL;
+#endif
+#ifdef MOCK_WALK
+    mw_clock_init();
 #endif
 #ifdef MULTIBENCH
     if (getenv("MULTIBENCH")) {
