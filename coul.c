@@ -3287,6 +3287,12 @@ static double mw_pinv(t_mod *inv, uint inv_count, double *tests) {
  * ML_STRIDE-th prime runs normally, and each prime in between is only
  * iterated, and charged c_prime_sq plus the walk cost of the last prime
  * run. If a sampled child recurses, the loop reverts to running normally.
+ * Loops above the leaves (ML_NOT) are strided likewise above ML_SQ_PMIN:
+ * of each ML_STRIDE * ML_BLOCK primes the first ML_BLOCK run normally,
+ * timed together (real time, and mock cost charged within them), and
+ * each of the rest is charged their mean. Timing a block rather than a
+ * single child spreads the cost of the clock reads, and whatever they
+ * slow down, over ML_BLOCK children.
  * With $MOCK_LEAF_OFF set, leaf loops are identified but not stubbed,
  * so that comparing the two gives c_prime and c_prime_sq (the counts of
  * primes stubbed are reported at the end of the run).
@@ -3297,16 +3303,19 @@ static double mw_pinv(t_mod *inv, uint inv_count, double *tests) {
 #define ML_NOT 3
 #define ML_SQ 4
 #define ML_STRIDE 16
+#define ML_BLOCK 8
 #define ML_SQ_PMIN 65536
 static uint ml_state[ML_MAX];
 static double ml_iter_cost[ML_MAX], ml_r0[ML_MAX];
 static ulong ml_p0[ML_MAX];
 static ulong ml_count[ML_MAX];      /* ML_SQ: primes seen */
 static double ml_walk[ML_MAX];      /* ML_SQ: walk cost of last prime run */
-/* striding other loops: whether a sampled child is running, when it
- * started (CPU, mock overhead and mock cost so far), and the cost of the
- * last complete one */
+/* striding other loops: whether a sample block is running and how many
+ * of its children have finished, when it started (clock, mock overhead
+ * and mock cost so far), and the mean cost of the last complete block
+ */
 static bool ml_samp[ML_MAX], ml_have[ML_MAX];
+static uint ml_nsamp[ML_MAX];
 static double ml_t0[ML_MAX], ml_ov0[ML_MAX], ml_m0[ML_MAX], ml_cost[ML_MAX];
 double g_ml_strided = 0;    /* primes skipped by striding */
 double g_ml_primes = 0;     /* primes stubbed, for calibrating cprime */
@@ -3407,16 +3416,22 @@ void mock_report(void) {
 
 #define MW_MAXEXCL 16
 
-/* process CPU time, to measure (and discount) the mock's own overhead */
+/* Process CPU time, to measure (and discount) the mock's own overhead,
+ * and time stride samples. CPU time is unaffected by other load, but
+ * CLOCK_PROCESS_CPUTIME_ID is a system call (~0.25us here), and the code
+ * after it runs slower: a stride sample of a single child costing
+ * ~0.3us measured ~0.4us even after discounting the read, hence
+ * ML_BLOCK.
+ */
 static inline double mw_clock(void) {
     struct timespec ts;
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-/* The CPU time of one mw_clock() (~0.25us here: it is a system call),
- * which is itself overhead: an interval between two reads includes
- * about one read's worth, and about one more falls outside it.
+/* The CPU time of one mw_clock(), which is itself overhead: an interval
+ * between two reads includes about one read's worth, and about one more
+ * falls outside it.
  */
 double g_mw_read = 0;
 static void mw_clock_init(void) {
@@ -7767,13 +7782,15 @@ void recurse(e_is jump_continue) {
                 ml_walk[level] = 0;
             }
             if (level < ML_MAX && ml_state[level] == ML_NOT && !g_ml_off) {
-                /* the child just finished was a sample: take its cost, real
-                 * and mocked, less the mock's own overhead (including the
-                 * clock reads bracketing it) */
-                if (ml_samp[level]) {
-                    ml_cost[level] = (mw_clock() - ml_t0[level]) - g_mw_read
+                /* the child just finished was in a sample block: when the
+                 * block is complete, take its mean cost, real and mocked,
+                 * less the mock's own overhead (including the clock reads
+                 * bracketing it)
+                 */
+                if (ml_samp[level] && ++ml_nsamp[level] == ML_BLOCK) {
+                    ml_cost[level] = ((mw_clock() - ml_t0[level]) - g_mw_read
                             - (g_mock_overhead_s - ml_ov0[level])
-                            + (g_mock_spent_s - ml_m0[level]);
+                            + (g_mock_spent_s - ml_m0[level])) / ML_BLOCK;
                     if (ml_cost[level] < 0)
                         ml_cost[level] = 0;
                     g_mock_overhead_s += g_mw_read;
@@ -7781,16 +7798,20 @@ void recurse(e_is jump_continue) {
                     ml_have[level] = 1;
                 }
                 if (p > ML_SQ_PMIN) {
-                    if (ml_have[level] && ml_count[level]++ % ML_STRIDE) {
+                    ulong pos = ml_count[level]++ % (ML_STRIDE * ML_BLOCK);
+                    if (ml_have[level] && pos >= ML_BLOCK) {
                         g_mock_spent_s += ml_cost[level];
                         ++g_ml_strided;
                         goto redo_unforced;
                     }
-                    ml_samp[level] = 1;
-                    g_mock_overhead_s += g_mw_read;
-                    ml_t0[level] = mw_clock();
-                    ml_ov0[level] = g_mock_overhead_s;
-                    ml_m0[level] = g_mock_spent_s;
+                    if (!ml_samp[level]) {
+                        ml_samp[level] = 1;
+                        ml_nsamp[level] = 0;
+                        g_mock_overhead_s += g_mw_read;
+                        ml_t0[level] = mw_clock();
+                        ml_ov0[level] = g_mock_overhead_s;
+                        ml_m0[level] = g_mock_spent_s;
+                    }
                 }
             }
 #endif
