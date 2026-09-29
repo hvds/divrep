@@ -176,6 +176,28 @@ static inline void level_setp(t_level *lp, ulong p) {
     prime_iterator_setprime(&lp->piter, p);
 }
 
+#ifdef WALK_FROM
+/* WALK_FROM (experimental): once a child of an unforced loop walks by
+ * the gate, later children (larger p) are assumed to walk too, and do
+ * so without best_v() or the gate. With WALK_FROM_CHECK they go through
+ * both as usual, and the outcomes are counted instead.
+ */
+ulong wf_short = 0, wf_ok = 0, wf_okother = 0, wf_badrec = 0, wf_badother = 0,
+        wf_badflip = 0;
+bool wf_pending = 0;
+static inline void wf_note(bool walked, bool gate) {
+    if (!wf_pending)
+        return;
+    wf_pending = 0;
+    if (!walked)
+        ++wf_badrec;
+    else if (gate)
+        ++wf_ok;
+    else
+        ++wf_okother;
+}
+#endif
+
 /* list of some small primes, at least enough for one per allocation,
  * and a reverse lookup */
 #define MAX_NSPRIMES 32767      /* indexed and counted by short */
@@ -4535,6 +4557,10 @@ static double gs_square_pinv(t_mod *inv, uint inv_count, t_results *xr,
 static
 #else
 #   define GS_ORIGIN(c)
+#   ifdef COST_GATE
+#       define walk_v walk_v_inner
+static
+#   endif
 #endif
 void walk_v(t_level *cur_level, mpz_t start) {
 #ifdef SQONLY
@@ -5189,6 +5215,132 @@ void walk_v(t_level *cur_level, mpz_t start) {
     if (would_fail)
         fail("TODO: walk_v.end > 2^64");
 }
+#ifdef COST_GATE
+/* COST_GATE (experimental): the walk-or-recurse gate by estimated cost
+ * rather than gain. The cost of a linear walk per iteration is learnt
+ * per level from a sample of the walks made (by thread CPU time), and a
+ * walk is also charged CG_SETUP; recursing is charged CG_APPLY per prime
+ * tried, and the walks of the children as if they all walk.
+ */
+#   define CG_MAXL 64
+#   define CG_SETUP 2e-6
+#   define CG_APPLY 0.2e-6
+#   define CG_DEFIT 400e-9
+double cg_t[2][CG_MAXL], cg_i[2][CG_MAXL], cg_scale = 1;
+uint cg_n[2][CG_MAXL];
+/* the iterations of a walk at the node lv, as the gate estimates them:
+ * Z / aq for a linear walk; for one with a fixed square (power g) at
+ * sq0, rc roots per aq / q_sq window up to (Z / q_sq)^{1/g}; -1 for
+ * several squares (a Pell equation, not modelled)
+ */
+static double cg_iters(t_level *lv) {
+    if (lv->have_square > 1)
+        return -1;
+    double z = mpz_get_d(zmax);
+    if (!lv->have_square)
+        return z / mpz_get_d(lv->aq);
+    uint sql = cur_vlevel[sq0];
+    uint g = sqg[sql - 1];
+    double q = mpz_get_d(value[sq0].alloc[sql - 1].q);
+    return pow(z / q, 1.0 / g) * q * res_array(lv->level)->count
+            / mpz_get_d(lv->aq);
+}
+ulong cg_nwalk = 0, cg_nrec = 0;
+static inline double cg_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+#   ifndef GATE_STATS
+#       undef walk_v
+void walk_v(t_level *cur_level, mpz_t start) {
+    static uint ctr = 0;
+    uint L = cur_level->level;
+    if (cur_level->have_square > 1 || L >= CG_MAXL || (++ctr & 7)) {
+        walk_v_inner(cur_level, start);
+        return;
+    }
+    uint sq = cur_level->have_square;
+    double za = cg_iters(cur_level);
+    double t0 = cg_now();
+    walk_v_inner(cur_level, start);
+    cg_t[sq][L] += cg_now() - t0 - CG_SETUP;
+    cg_i[sq][L] += za;
+    ++cg_n[sq][L];
+}
+#   endif
+/* the cost per iteration of a walk at level L */
+static double cg_cit(uint sq, uint L) {
+    double *t = cg_t[sq], *i = cg_i[sq];
+    uint *n = cg_n[sq];
+    for (uint d = 0; d < CG_MAXL; ++d) {
+        if (L + d < CG_MAXL && n[L + d] >= 8 && i[L + d] > 0)
+            return t[L + d] > 0 ? t[L + d] / i[L + d] : CG_DEFIT;
+        if (d <= L && n[L - d] >= 8 && i[L - d] > 0)
+            return t[L - d] > 0 ? t[L - d] / i[L - d] : CG_DEFIT;
+    }
+    return CG_DEFIT;
+}
+static double cg_li(double x) {
+    if (x < 2)
+        return 0;
+    double l = log(x);
+    return x / l * (1 + 1 / l + 2 / (l * l));
+}
+/* sum over primes q in [lo, hi] of q^-s, as the integral of t^-s / ln t,
+ * by Simpson's rule in ln t
+ */
+static double cg_psum(double lo, double hi, double s) {
+    if (hi <= lo)
+        return 0;
+    if (lo < 2)
+        lo = 2;
+    double a = log(lo), b = log(hi), h = (b - a) / 16, sum = 0;
+    for (uint i = 0; i <= 16; ++i) {
+        double y = a + i * h;
+        double f = exp(y * (1 - s)) / y;
+        sum += f * ((i == 0 || i == 16) ? 1 : (i & 1) ? 4 : 2);
+    }
+    return sum * h / 3;
+}
+/* walk the node at prev_level now, rather than loop over p^{x-1} for p
+ * in [p, cap] at the next level with every child walking?
+ */
+static bool cg_decide(t_level *prev_level, ulong p, ulong cap, uint x,
+        uint vi) {
+    if (cap < p)
+        return 0;
+    uint L = prev_level->level, sq = prev_level->have_square;
+    double za = cg_iters(prev_level);
+    double ci = cg_cit(sq, L), ci1 = cg_cit(sq, L + 1);
+    double W = CG_SETUP + ci * za;
+    /* quick answer when the walk costs less than just trying the primes */
+    double np = cg_li((double)cap) - cg_li((double)p) + 1;
+    if (W < np * CG_APPLY * cg_scale) {
+        ++cg_nwalk;
+        return 1;
+    }
+    /* a child's walk is smaller by p^{x-1}, or with a fixed square
+     * allocated the prime itself, by p^{(x-1)/g}
+     */
+    double s = x - 1;
+    if (sq && vi == sq0)
+        s /= sqg[cur_vlevel[sq0] - 1];
+    double a = (p < 2) ? 2 : p, b = cap;
+    double q1 = pow(za, 1 / s);
+    double mA = (q1 < b) ? q1 : b, mB = (q1 > a) ? q1 : a;
+    double nA = (mA > a) ? cg_li(mA) - cg_li(a) : 0;
+    double sA = cg_psum(a, mA, s), sB = cg_psum(mB, b, s);
+    double R = np * CG_APPLY + nA * CG_SETUP
+            + ci1 * za * sA + (CG_SETUP + ci1) * za * sB;
+    bool walk = W < R * cg_scale;
+    if (walk)
+        ++cg_nwalk;
+    else
+        ++cg_nrec;
+    return walk;
+}
+#endif
 #ifdef GATE_STATS
 #   undef walk_v
 void walk_v(t_level *cur_level, mpz_t start) {
@@ -7280,6 +7432,9 @@ e_pux prep_unforced_x(
     limp = limit_p(cur_level, vi, x, nextt);
     if (limp == 0) {
         /* force walk */
+#ifdef WALK_FROM
+        wf_note(1, 0);
+#endif
         GS_ORIGIN('F');
 #ifdef SQONLY
         if (prev_level->have_square)
@@ -7377,9 +7532,23 @@ e_pux prep_unforced_x(
     if (gs_walk)
         GS_ORIGIN('G');
 #endif
-    if (mpz_fits_ulong_p(Z(r_walk))
-        && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p)
-    ) {
+    bool do_walk = mpz_fits_ulong_p(Z(r_walk))
+            && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p);
+#ifdef COST_GATE
+    /* not yet for a fixed square: its children may complete a second
+     * square (a Pell equation, nearly free) or flip, which the one-level
+     * estimate does not know, and it lost 12-40% on D(18,4) and D(90,4)
+     */
+    if (!prev_level->have_square)
+        do_walk = cg_decide(prev_level, p, cap, x, vi);
+#endif
+    if (do_walk) {
+#ifdef WALK_FROM
+        wf_note(1, 1);
+        if (!prev_level->is_forced && !prev_level->walk_from
+                && prev_level->level > 0)
+            prev_level->walk_from = prev_level->p;
+#endif
 #ifdef SQONLY
         if (prev_level->have_square)
             walk_v(prev_level, Z(zero));
@@ -7405,8 +7574,18 @@ e_pux prep_unforced_x(
         }
     }
 #endif
+#ifdef WALK_FROM
+    wf_note(0, 1);
+#endif
   force_unforced:
     level_setp(cur_level, p);
+#ifdef WALK_FROM
+    /* hands off a loop whose children can flip: t = 2q^2 allocating
+     * p^{q-1}, whose child can take the same position with t = 2q,
+     * where run_flip_pqsq() takes over the rest of this loop
+     */
+    cur_level->walk_from = (ti == 2 * x * x) ? ~0UL : 0;
+#endif
     cur_level->x = x;
     cur_level->limp = limp;
     cur_level->max_at = seen_best;
@@ -7948,6 +8127,23 @@ void recurse(e_is jump_continue) {
              * or gets set to 0 on the tail of a batch */
             /* cur_level->is_forced = 0; */
 
+#ifdef WALK_FROM
+            if (wf_pending)
+                ++wf_badother;
+            wf_pending = 0;
+            if (!prev_level->is_forced && prev_level->walk_from
+                    && prev_level->p >= prev_level->walk_from) {
+#   ifdef WALK_FROM_CHECK
+                wf_pending = 1;
+                ++wf_short;
+#   else
+                ++wf_short;
+                GS_ORIGIN('G');
+                walk_v(prev_level, Z(zero));
+                goto derecurse;
+#   endif
+            }
+#endif
             if (cur_level->next_best)
                 goto walk_now;
             uint vi = best_v(cur_level);
@@ -7979,6 +8175,9 @@ void recurse(e_is jump_continue) {
                     if (!prev_level->is_forced)
                         cur_level->next_best = 1;
                   walk_now:
+#ifdef WALK_FROM
+                    wf_note(1, 0);
+#endif
                     GS_ORIGIN('B');
 #ifdef SQONLY
                     if (prev_level->have_square)
@@ -8015,6 +8214,12 @@ void recurse(e_is jump_continue) {
               case PUX_NOTHING_TO_DO:
                 goto derecurse;
               case PUX_FLIP_PQSQ:
+#ifdef WALK_FROM
+                if (wf_pending) {
+                    ++wf_badflip;
+                    wf_pending = 0;
+                }
+#endif
                 run_flip_pqsq(cur_level->vi);
                 goto derecurse;
               case PUX_SKIP_THIS_X:
@@ -8665,6 +8870,10 @@ int main(int argc, char **argv, char **envp) {
             check = 1;
     }
     prep_presquare();
+#ifdef COST_GATE
+    if (getenv("CG_SCALE"))
+        cg_scale = atof(getenv("CG_SCALE"));
+#endif
 #ifdef MOCK_LEAF
     g_ml_off = getenv("MOCK_LEAF_OFF") != NULL;
     g_mr_tail_off = getenv("MOCK_TAIL_OFF") != NULL;
@@ -8693,6 +8902,23 @@ int main(int argc, char **argv, char **envp) {
     mock_report();
 #endif
 
+#ifdef COST_GATE
+    report("369 cost_gate: walk %lu recurse %lu; ns/iter by level:", cg_nwalk,
+            cg_nrec);
+    for (uint sq = 0; sq < 2; ++sq)
+        for (uint L = 0; L < CG_MAXL; ++L)
+            if (cg_n[sq][L])
+                report(" %s%u:%.0f(%u)", sq ? "s" : "", L,
+                        1e9 * cg_t[sq][L] / cg_i[sq][L], cg_n[sq][L]);
+    report("\n");
+#endif
+#ifdef WALK_FROM
+    if (wf_pending)
+        ++wf_badother;
+    report("369 walk_from: short %lu ok %lu okother %lu badrec %lu badother %lu"
+            " badflip %lu\n", wf_short, wf_ok, wf_okother, wf_badrec,
+            wf_badother, wf_badflip);
+#endif
     if ((opt_alloc & 2) == 0) {
         double tz = utime();
         report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)",

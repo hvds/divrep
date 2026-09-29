@@ -47,6 +47,7 @@ typedef struct s_level {
     bool next_best; /* vi is known stable result of best_v() */
     bool unsorted;  /* this level is not where best_v() would put it */
     uint choice_strategy;   /* the strategy in force when vi was chosen */
+    ulong walk_from;    /* WALK_FROM: children of this loop walk from p */
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;
