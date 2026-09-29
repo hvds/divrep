@@ -2,7 +2,10 @@
 BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
 use strict;
 use warnings;
+use lib 'lib';
 use Math::Prime::Util qw{ prev_prime };
+use POSIX qw{ WNOHANG };
+use H::Diag qw{ diag keep_diag };
 
 =head1 calibrate: choose pcoul options for a full run by sampling batches
 
@@ -40,7 +43,9 @@ vary one option at a time over its list, keeping the best, until no
 change improves on it. A C<-W> value may include its own C<-Wx>
 options, separated by C<+>, eg C<-W100000+-Wx0^1>; "0" means no -W.
 
-A run that exceeds C<-T> seconds (default 600) of real time is killed,
+While it runs, a progress line shows the setting being evaluated, how
+many of its batches are done, and the batches running with their
+elapsed times. A run that exceeds C<-T> seconds (default 600) of real time is killed,
 and counts as that many seconds, making the prediction a lower bound
 (shown with "+"). Heavy batches can take a long time even mocked, so
 C<-T> should be generous. Results are appended to the cache file (C<-o>,
@@ -261,13 +266,16 @@ sub evaluate {
     $total += $_->{count} * mean($s, $_) for @{ $strata{$f} };
     $late{$s} = 1 if grep /\+$/, map $done{ckey($s, $_)},
             map @{ $_->{ids} }, @{ $strata{$f} };
+    keep_diag();
     printf "%12.0f%s %s\n", $total, $late{$s} ? '+' : ' ', $s;
     return $pred{$s} = $total;
 }
 
+# Run the setting on the given batches, -P at a time, showing progress
 sub run_all {
     my($s, @ids) = @_;
     my %running;
+    my($ndone, $ntotal) = (0, scalar @ids);
     while (@ids || %running) {
         while (@ids && keys(%running) < $jobs) {
             my $id = shift @ids;
@@ -279,10 +287,20 @@ sub run_all {
                 exit 0;
             }
             close $w;
-            $running{$pid} = [ $id, $r ];
+            $running{$pid} = [ $id, $r, time() ];
         }
-        my $pid = waitpid(-1, 0);
+        my $pid = waitpid(-1, WNOHANG);
+        if ($pid <= 0) {
+            my $now = time();
+            diag(sprintf '%s: %u / %u done, running %s', $s, $ndone, $ntotal,
+                    join ', ', map sprintf('b%u (%s)', $_->[0],
+                        hms($now - $_->[2])),
+                    sort { $a->[0] <=> $b->[0] } values %running);
+            sleep 1;
+            next;
+        }
         my $e = delete $running{$pid} or next;
+        ++$ndone;
         my($id, $r) = @$e;
         my $t = <$r>;
         chomp $t;
@@ -302,6 +320,11 @@ sub run_one {
     my($t1) = $out =~ /^367 .*\(([\d.]+)s\)/m;
     return "$tlimit+" unless defined $t1;
     return $t1 - ($t0 // 0);
+}
+
+sub hms {
+    my($t) = @_;
+    return sprintf '%u:%02u:%02u', $t / 3600, ($t / 60) % 60, $t % 60;
 }
 
 sub quote {
