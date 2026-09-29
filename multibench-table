@@ -2,14 +2,18 @@
 BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
 use strict;
 use warnings;
+use lib 'lib';
 use Math::Prime::Util qw{ divisors factor_exp gcd };
+use H::Diag qw{ diag keep_diag };
 
 =head1 multibench-table: tabulate this machine's costs for the walk mocks
 
   multibench-table [-c<bench>] [-g<gatestats>] [-m<mock>] [-b<bits,...>]
-          [-o | -M] n k
+          [-o | -M] [-w<file>] n k
 
-Writes to stdout the cost table that a pcoul built with C<MOCK_WALK=1>
+Writes to stdout, or to I<file> with C<-w> (when progress is shown on
+stdout as runs done / total), the cost table that a pcoul built with
+C<MOCK_WALK=1>
 (and C<MOCK_LEAF=1>) reads from C<$MOCK_WALK_TABLE>, so that the mocks
 carry no costs of their own: one table per machine, MPUGMP build and
 n. Times in the table are in microseconds. It needs three builds of
@@ -73,7 +77,7 @@ primes stubbed.
 
 =cut
 
-my($bench, $gstats, $mock, $only) = ('./pcoul', undef, undef, '');
+my($bench, $gstats, $mock, $only, $outfile) = ('./pcoul', undef, undef, '');
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 72, 80, 96, 112, 128);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
@@ -84,11 +88,18 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
     $only = 'other', next if $arg eq '-o';
     $only = 'multi', next if $arg eq '-M';
+    $outfile = $1, next if $arg =~ /^-w(.+)$/;
     die "Unknown option '$arg'";
 }
 @ARGV == 2 && (($gstats && $mock) || $only eq 'multi')
-        or die "500 Usage: $0 [-c<bench>] -g<gatestats> -m<mock> [-b<bits,...>] [-o | -M] n k";
+        or die "500 Usage: $0 [-c<bench>] -g<gatestats> -m<mock> [-b<bits,...>] [-o | -M] [-w<file>] n k";
 my($n, $k) = @ARGV;
+my $out = \*STDOUT;
+if (defined $outfile) {
+    open(my $fh, '>', $outfile) or die "$outfile: $!";
+    $fh->autoflush(1);
+    $out = $fh;
+}
 
 # calibration runs: walks under a fixed power (nqc == 1), linear walks,
 # and a batch rich in leaf loops
@@ -104,18 +115,39 @@ my @cal_w1s = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b3', 18, 4);
 my $tmp = "/tmp/multibench-table.$$";
 $| = 1;
 
+# the test_multi() rows: t for each divisor t > 2 of n with e = 1, and
+# for odd t also with each e for the root of an odd t (whose trial
+# division leaves any odd divisor of t with the same e)
+my %E;
+for my $t (grep $_ > 2 && ($_ & 1), divisors($n)) {
+    my $e = 0;
+    $e = gcd($e, $_->[0] - 1) for factor_exp($t);
+    $E{$e} = 1;
+}
+my @te = map {
+    my $t = $_;
+    ([ $t, 1 ], ($t & 1) ? (map [ $t, $_ ], sort { $a <=> $b } keys %E) : ())
+} grep $_ > 2, divisors($n);
+
+# progress: the number of pcoul runs to make
+my @scan_bits = (24, 40, 56, 80, 81);
+my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80,
+        96, 112, 128);
+my($done, $total) = (0, scalar @scan_bits);
+$total += @te * @bits unless $only eq 'other';
+$total += @prime_bits + 3 + 12 unless $only eq 'multi';
+
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
-# the limit changes. The
-# test_multi() and prime test rows are for inputs with no trial factor,
-# so each uses the L for its size.
+# the limit changes. The test_multi() and prime test rows are for inputs
+# with no trial factor, so each uses the L for its size.
 # (an even t, since for odd t prep first checks for a square)
 my $tscan = (grep $_ > 2 && !($_ & 1), divisors($n))[0] // 2;
 # and an even t whose half is not 2, for the extra cost of a factor that
 # does not end prep
 my $tx = (grep $_ >= 6 && !($_ & 1), divisors($n))[0];
 my @scan = map bench("scan,$_,2000,$tscan" . ($tx ? ",$tx" : '')),
-        24, 40, 56, 80, 81;
+        @scan_bits;
 my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } @scan;
 sub trial_limit {
     my($bits) = @_;
@@ -124,18 +156,7 @@ sub trial_limit {
 }
 
 unless ($only eq 'other') {
-    # e for the root of each odd t: its trial division leaves any odd
-    # divisor of t with the same e
-    my %E;
-    for my $t (grep $_ > 2 && ($_ & 1), divisors($n)) {
-        my $e = 0;
-        $e = gcd($e, $_->[0] - 1) for factor_exp($t);
-        $E{$e} = 1;
-    }
-    for my $te (map {
-        my $t = $_;
-        ([ $t, 1 ], ($t & 1) ? (map [ $t, $_ ], sort { $a <=> $b } keys %E) : ())
-    } grep $_ > 2, divisors($n)) {
+    for my $te (@te) {
         my($t, $e) = @$te;
         for my $b (@bits) {
             my $count = ($b <= 64) ? 5000 : ($b <= 80) ? 2000 : 500;
@@ -145,14 +166,14 @@ unless ($only eq 'other') {
                 fail\ ([\d.]+)\ decided\ ([\d.]+)\ pending\ ([\d.]+)
                 \ \(pass\ ([\d.]+)\);\ prep\ ([\d.]+)us .* run\ ([\d.]+)us
             }x or die "no result for t=$t bits=$b";
-            print join(' ', $t, $e, $b, $F, @v), "\n";
+            print $out join(' ', $t, $e, $b, $F, @v), "\n";
         }
     }
 }
 
-exit 0 if $only eq 'multi';
+finish() if $only eq 'multi';
 my @rest;
-for my $b (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80, 96, 112, 128) {
+for my $b (@prime_bits) {
     push @rest, grep /^[PR] /, bench("prime,$b,20000," . trial_limit($b));
 }
 push @rest, @scan;
@@ -169,9 +190,22 @@ push @rest, sprintf('C w1siter %.5f', $w1s[0]),
         sprintf('C w1scheck %.5f', $w1s[1]);
 push @rest, sprintf('C cprime %.4f', cprime('leaf', @cal_leaf)),
         sprintf('C cprimesq %.4f', cprime('sq', @cal_leafsq));
-print "$_\n" for @rest;
-unlink $tmp;
-exit 0;
+print $out "$_\n" for @rest;
+finish();
+
+sub finish {
+    keep_diag() if defined $outfile;
+    close $out if defined $outfile;
+    unlink $tmp;
+    exit 0;
+}
+
+# count a pcoul run, showing progress when writing to a file
+sub progress {
+    my($what) = @_;
+    ++$done;
+    diag("$done / $total: $what") if defined $outfile;
+}
 
 sub quote {
     my($s) = @_;
@@ -182,6 +216,7 @@ sub quote {
 sub bench {
     my($spec) = @_;
     local $ENV{MULTIBENCH} = $spec;
+    progress("MULTIBENCH=$spec");
     my @lines = grep /^(?:MULTIBENCH|[PRCSL]) /, `'$bench' -X $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;
@@ -193,6 +228,7 @@ sub gate_log {
     my(@args) = @_;
     local $ENV{GATE_STATS} = $tmp;
     unlink $tmp;
+    progress("GATE_STATS @args");
     my $out = `'$gstats' -X @{[ map quote($_), @args ]} 2>&1`;
     $out =~ /^367 /m or die "no 367 line from $gstats @args";
     open my $fh, '<', $tmp or die "$tmp: $!";
@@ -314,6 +350,7 @@ sub cprime {
             } else {
                 delete $ENV{MOCK_LEAF_OFF};
             }
+            progress("mock @args" . ($off ? ' (leaf off)' : ''));
             my $out = `'$mock' -X @{[ map quote($_), @args ]} 2>&1`;
             my($m, $pl, $ps) = $out
                     =~ /^368 mock ([\d.]+)s \(overhead [\d.]+s\), leaf primes (\d+), sq primes (\d+)/m
