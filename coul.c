@@ -3295,6 +3295,12 @@ static double ml_iter_cost[ML_MAX], ml_r0[ML_MAX];
 static ulong ml_p0[ML_MAX];
 static ulong ml_count[ML_MAX];      /* ML_SQ: primes seen */
 static double ml_walk[ML_MAX];      /* ML_SQ: walk cost of last prime run */
+/* striding other loops: whether a sampled child is running, when it
+ * started (CPU, mock overhead and mock cost so far), and the cost of the
+ * last complete one */
+static bool ml_samp[ML_MAX], ml_have[ML_MAX];
+static double ml_t0[ML_MAX], ml_ov0[ML_MAX], ml_m0[ML_MAX], ml_cost[ML_MAX];
+double g_ml_strided = 0;    /* primes skipped by striding */
 double g_ml_primes = 0;     /* primes stubbed, for calibrating cprime */
 double g_ml_primes_sq = 0;  /* likewise, for cprime_sq */
 bool g_ml_off = 0;          /* $MOCK_LEAF_OFF: leave leaf loops real */
@@ -7577,8 +7583,11 @@ void recurse(e_is jump_continue) {
                 goto continue_unforced_x;
               case PUX_DO_THIS_X:
 #ifdef MOCK_LEAF
-                if (level < ML_MAX)
+                if (level < ML_MAX) {
                     ml_state[level] = ML_PENDING;
+                    ml_count[level] = 0;
+                    ml_samp[level] = ml_have[level] = 0;
+                }
                 if (level >= 1 && level - 1 < ML_MAX
                         && (ml_state[level - 1] == ML_PENDING
                             || ml_state[level - 1] == ML_SQ))
@@ -7657,6 +7666,28 @@ void recurse(e_is jump_continue) {
                     goto redo_unforced;
                 }
                 ml_walk[level] = 0;
+            }
+            if (level < ML_MAX && ml_state[level] == ML_NOT && !g_ml_off) {
+                /* the child just finished was a sample: take its cost, real
+                 * and mocked, less the mock's own overhead */
+                if (ml_samp[level]) {
+                    ml_cost[level] = (mw_clock() - ml_t0[level])
+                            - (g_mock_overhead_s - ml_ov0[level])
+                            + (g_mock_spent_s - ml_m0[level]);
+                    ml_samp[level] = 0;
+                    ml_have[level] = 1;
+                }
+                if (p > ML_SQ_PMIN) {
+                    if (ml_have[level] && ml_count[level]++ % ML_STRIDE) {
+                        g_mock_spent_s += ml_cost[level];
+                        ++g_ml_strided;
+                        goto redo_unforced;
+                    }
+                    ml_samp[level] = 1;
+                    ml_t0[level] = mw_clock();
+                    ml_ov0[level] = g_mock_overhead_s;
+                    ml_m0[level] = g_mock_spent_s;
+                }
             }
 #endif
 #ifdef GATE_STATS
@@ -8184,7 +8215,8 @@ int main(int argc, char **argv, char **envp) {
     report("368 mock %.3fs (overhead %.3fs)", g_mock_spent_s,
             g_mock_overhead_s);
 #   ifdef MOCK_LEAF
-    report(", leaf primes %.0f, sq primes %.0f", g_ml_primes, g_ml_primes_sq);
+    report(", leaf primes %.0f, sq primes %.0f, strided %.0f", g_ml_primes,
+            g_ml_primes_sq, g_ml_strided);
 #   endif
     report("\n");
 #endif
