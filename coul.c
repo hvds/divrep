@@ -3329,6 +3329,10 @@ static inline double mw_clock(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
+static inline ulong mw_mulmod(ulong a, ulong b, ulong m) {
+    return (ulong)((unsigned __int128)a * b % m);
+}
+
 /* The distribution of the valuation of a value at p, for a value
  * qq.ati + o over the ati that reach the tests, or of o itself if qq is
  * NULL: val[a] for a < MW_MAXV (the tail beyond is dropped). excl lists
@@ -3340,19 +3344,28 @@ static void mw_valuation(double *val, uint p, mpz_t o, mpz_t *qq,
         ulong *excl, uint nexcl) {
     for (uint a = 0; a < MW_MAXV; ++a)
         val[a] = 0;
-    uint a0 = 0, b0 = 0;
-    mpz_set(mw_tmp, o);
-    while (a0 < MW_MAXV - 1 && mpz_divisible_ui_p(mw_tmp, p)) {
-        mpz_divexact_ui(mw_tmp, mw_tmp, p);
+    /* valuations up to MW_MAXV - 1 from residues mod p^m */
+    ulong pm = 1;
+    uint m = 0;
+    while (m < MW_MAXV - 1 && pm <= (1UL << 62) / p) {
+        pm *= p;
+        ++m;
+    }
+    ulong ro = mpz_fdiv_ui(o, pm), x = ro;
+    uint a0 = 0;
+    while (a0 < m && x % p == 0) {
+        x /= p;
         ++a0;
     }
     if (!qq) {
         val[a0] = 1;
         return;
     }
-    mpz_set(mw_tmp, *qq);
-    while (b0 < MW_MAXV - 1 && mpz_divisible_ui_p(mw_tmp, p)) {
-        mpz_divexact_ui(mw_tmp, mw_tmp, p);
+    ulong rq = mpz_fdiv_ui(*qq, pm);
+    uint b0 = 0;
+    x = rq;
+    while (b0 < m && x % p == 0) {
+        x /= p;
         ++b0;
     }
     double d;       /* probability that p^b0 divides, then 1/p for each more */
@@ -3363,8 +3376,9 @@ static void mw_valuation(double *val, uint p, mpz_t o, mpz_t *qq,
         }
         d = 1;
     } else {
-        ulong r = small_divmod(o, *qq, p);
-        r = r ? p - r : 0;      /* the ati residue making p divide */
+        /* the ati residue making p divide: -o / qq (mod p) */
+        ulong r = mw_mulmod(ro % p, simple_invert(rq % p, p), p);
+        r = r ? p - r : 0;
         uint ne = 0;
         bool hit = 0;
         for (uint i = 0; i < nexcl; ++i) {
@@ -3399,9 +3413,6 @@ static void mw_geometric(double *val, uint p, double d) {
     }
 }
 
-static inline ulong mw_mulmod(ulong a, ulong b, ulong m) {
-    return (ulong)((unsigned __int128)a * b % m);
-}
 
 static ulong mw_powmod(ulong b, ulong e, ulong m) {
     ulong r = 1;
@@ -3455,10 +3466,18 @@ typedef struct {
 #define MW_CACHE (1 << 16)
 static t_mwtrial *mw_cache[MW_CACHE];
 
+/* hash n bytes into h, a word at a time */
 static inline ulong mw_hash(ulong h, const void *p, size_t n) {
     const unsigned char *c = p;
-    for (size_t i = 0; i < n; ++i)
-        h = (h ^ c[i]) * 0x100000001b3UL;
+    while (n) {
+        ulong v = 0;
+        size_t m = n < sizeof(v) ? n : sizeof(v);
+        memcpy(&v, c, m);
+        h = (h ^ v) * 0x9e3779b97f4a7c15UL;
+        h ^= h >> 29;
+        c += m;
+        n -= m;
+    }
     return h;
 }
 
@@ -3510,10 +3529,10 @@ static double mw_scan_cost(t_mwscan *sc, uint p, uint which) {
 static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
         double bits, bool prime, ulong excl[][MW_MAXEXCL], uint *nexcl) {
     t_mwscan *sc = mw_scan_for((uint)bits, 0);
-    /* special primes: the small ones, whose valuations may be known
-     * exactly or be modified by exclusions; larger allocated primes are
-     * treated as generic, an error of O(1/p), since keying on them would
-     * defeat the cache */
+    /* special primes: the small ones whose valuations are known exactly
+     * (allocated ones, or all for exact values) or modified by exclusions;
+     * larger allocated primes are treated as generic, an error of O(1/p),
+     * since keying on them would defeat the cache */
     uint nspecial = 0;
     uint sp[16];
     double sval[16][MW_MAXV];
@@ -3544,11 +3563,11 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
                 mw_geometric(sval[nspecial], p, 0);
             } else if (wk->kind == MWK_EXACT)
                 mw_valuation(sval[nspecial], p, wv_o[vj], NULL, NULL, 0);
-            else if (alloc || wk->kind == MWK_LINEAR)
+            else if (alloc || (excl && nexcl[i]))
                 mw_valuation(sval[nspecial], p, wv_o[vj], &wv_qq[vj],
                         excl ? excl[i] : NULL, excl ? nexcl[i] : 0);
             else
-                mw_generic(sval[nspecial], p, wk, vj);
+                continue;   /* generic, decided by the rest of the key */
             sp[nspecial++] = p;
         }
         key = mw_hash(key, sp, nspecial * sizeof(sp[0]));
@@ -3567,6 +3586,11 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
     double w[t + 1], w2[t + 1], rb[t + 1], rb2[t + 1], ec[t + 1], ec2[t + 1];
     for (uint i = 0; i <= t; ++i)
         w[i] = rb[i] = ec[i] = 0;
+    /* the states are the divisors of t from 2 up */
+    uint nd = 0, dv[t];
+    for (uint x = 2; x <= t; ++x)
+        if (t % x == 0)
+            dv[nd++] = x;
     w[t] = 1;
     double rej = 0, rejcost = 0, pass = 0, passcost = 0;
     /* trial division goes up to sqrt(value) if that is below L, and is
@@ -3609,9 +3633,12 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
         double cost = mw_scan_cost(sc, p, prime);
         double extra = mw_scan_cost(sc, p, 2);
         double lp = log2(p);
-        for (uint x = 0; x <= t; ++x)
+        for (uint di = 0; di < nd; ++di) {
+            uint x = dv[di];
             w2[x] = rb2[x] = ec2[x] = 0;
-        for (uint x = 2; x <= t; ++x) {
+        }
+        for (uint di = 0; di < nd; ++di) {
+            uint x = dv[di];
             if (w[x] == 0)
                 continue;
             w2[x] += w[x] * val[0];
@@ -3621,6 +3648,8 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
                 double y = w[x] * val[a];
                 if (y == 0)
                     continue;
+                if (y < 1e-15)
+                    break;      /* the rest fall geometrically */
                 /* the extra cost of earlier factors found on this path */
                 double yec = ec[x] * val[a];
                 rejcost += yec;     /* (or passcost: see below) */
@@ -3663,9 +3692,12 @@ static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
                 }
             }
         }
-        memcpy(w, w2, sizeof(w));
-        memcpy(rb, rb2, sizeof(rb));
-        memcpy(ec, ec2, sizeof(ec));
+        for (uint di = 0; di < nd; ++di) {
+            uint x = dv[di];
+            w[x] = w2[x];
+            rb[x] = rb2[x];
+            ec[x] = ec2[x];
+        }
     }
     /* Survivors go to the table at the size left: when trial division
      * was complete (to sqrt(value) below L), what is left is 1 or a
