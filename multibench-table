@@ -64,6 +64,9 @@ Then the remaining costs:
   C w1scheck us     walk_1_set(), per prime reaching the tests
   C ctail us        recurse loop, per prime in the stubbed end of a
                     loop whose primes are almost all rejected on rq > zmax
+  G bits rung reach us hit fbits cprime
+                    the factoring ladder of tau_multi_run()
+  G bits 0 none     likewise, the fraction for which it found no factor
 
 The walk loop costs are fitted by least squares to the walks of two
 calibration runs with the GATE_STATS pcoul (time outside the tests,
@@ -78,6 +81,19 @@ primes stubbed. C<ctail> likewise, from a batch of D(162, 3) deep
 enough that almost every prime its recursion tries is rejected on
 rq > zmax, timed with the ends of such loops stubbed and run (and leaf
 loops run for real in both, so that none of those primes is strided).
+
+The G rows come from running the ladder on random composites of the
+given size with no factor up to L, each alone and stopping at the
+first factor found: per rung, the fraction of inputs reaching it, the
+mean cost of an attempt there (including splitting a composite factor
+found), the fraction of attempts finding a factor, and for those the
+mean size of the prime factor and the fraction whose cofactor is prime.
+None of these depends on what the value is being tested for, so the
+mock derives the effect of a factor found on a test for tau(n^e) = t,
+including restarting the ladder on the cofactor, and interleaves the
+pending values of a call as tau_multi_run() does. The sizes are the
+ends and some interior points of the size brackets in tmfb[] in
+F<coultau.c>, which choose the rungs used, up to 159 bits.
 
 
 =cut
@@ -141,9 +157,15 @@ my @te = map {
 my @scan_bits = (24, 40, 56, 80, 81);
 my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80,
         96, 112, 128);
+# the ladder: the size brackets of tmfb[] in coultau.c end at 53, 58, 63,
+# 64, 72, 77, 89, 99, 126, 127, 159; at 32 bits there are too few
+# composites with no factor up to 64007 to find
+my @ladder_bits = (36, 40, 44, 48, 52, 53, 56, 58, 60, 63, 64, 68, 72, 76,
+        77, 80, 84, 88, 89, 92, 96, 99, 104, 112, 120, 126, 127, 136, 144,
+        152, 159);
 my($done, $total) = (0, scalar @scan_bits);
 $total += @te * @bits unless $only eq 'other';
-$total += @prime_bits + 3 + 18 unless $only eq 'multi';
+$total += @prime_bits + @ladder_bits + 3 + 18 unless $only eq 'multi';
 
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
@@ -183,6 +205,11 @@ finish() if $only eq 'multi';
 my @rest;
 for my $b (@prime_bits) {
     push @rest, grep /^[PR] /, bench("prime,$b,20000," . trial_limit($b));
+}
+for my $b (@ladder_bits) {
+    my $count = ($b <= 64) ? 3000 : ($b <= 99) ? 1500 : ($b <= 127) ? 400
+            : 150;
+    push @rest, grep /^G /, bench("ladder,$b,$count," . trial_limit($b));
 }
 push @rest, @scan;
 my @log_lin = gate_log(@cal_lin);
@@ -226,7 +253,7 @@ sub bench {
     my($spec) = @_;
     local $ENV{MULTIBENCH} = $spec;
     progress("MULTIBENCH=$spec");
-    my @lines = grep /^(?:MULTIBENCH|[PRCSL]) /, `'$bench' -X $n $k 2>&1`;
+    my @lines = grep /^(?:MULTIBENCH|[PRCSLG]) /, `'$bench' -X $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;
     return @lines;

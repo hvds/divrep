@@ -1164,6 +1164,91 @@ mpz_t *tm_factor(t_tm *tm) {
     return &tmf;
 }
 
+#ifdef MULTIBENCH
+/* "ladder,bits,count,F" (see multibench() in coul.c): the factoring
+ * ladder of tau_multi_run() on count random composites of the given bits
+ * with no factor up to F, each alone and stopping at the first factor
+ * found, for rows "G bits rung reach us hit fbits cprime": the fraction
+ * of inputs reaching the rung, the mean cost of an attempt there
+ * (including splitting a composite factor), the fraction of attempts
+ * finding a factor, and for those the mean bits of the prime factor and
+ * the fraction whose cofactor is prime. A last row "G bits 0 none" gives
+ * the fraction for which no rung found a factor.
+ */
+static inline double mbl_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+void mb_ladder(uint bits, uint count, uint F) {
+    gmp_randstate_t rs;
+    gmp_randinit_default(rs);
+    gmp_randseed_ui(rs, 2654435761UL + 7 * bits);
+    mpz_t prim, g, cof;
+    mpz_init(prim);
+    mpz_init(g);
+    mpz_init(cof);
+    mpz_primorial_ui(prim, F);
+    double reach[TM_MAX], cost[TM_MAX], hit[TM_MAX], fbits[TM_MAX],
+            cprime[TM_MAX];
+    for (uint i = 0; i < TM_MAX; ++i)
+        reach[i] = cost[i] = hit[i] = fbits[i] = cprime[i] = 0;
+    uint none = 0;
+    t_tm tm;
+    mpz_init(tm.n);
+    for (uint c = 0; c < count; ++c) {
+        do {
+            mpz_urandomb(tm.n, rs, bits - 1);
+            mpz_setbit(tm.n, bits - 1);
+            mpz_gcd(g, prim, tm.n);
+        } while (mpz_cmp_ui(g, 1) != 0 || mpz_probab_prime_p(tm.n, 1)
+                || mpz_perfect_power_p(tm.n));
+        tm.t = 4;
+        tm.e = 1;
+        tm.vi = 0;
+        tm.B1 = 0;
+        tm.tlim = F;
+        tm.state = TM_INIT;
+        tm.bits = _find_tmfb(bits);
+        bool found = 0;
+        for (uint i = TM_INIT; i < TM_MAX; ++i) {
+            if (!(tm.bits & (1UL << i)))
+                continue;
+            ++reach[i];
+            double t0 = mbl_now();
+            bool ok = (*tmfa[i])(&tm);
+            mpz_t *f = ok ? tm_factor(&tm) : NULL;
+            cost[i] += mbl_now() - t0;
+            if (!ok)
+                continue;
+            ++hit[i];
+            fbits[i] += mpz_sizeinbase(*f, 2);
+            mpz_set(cof, tm.n);
+            while (mpz_divisible_p(cof, *f))
+                mpz_divexact(cof, cof, *f);
+            if (mpz_cmp_ui(cof, 1) > 0 && _GMP_is_prob_prime(cof))
+                ++cprime[i];
+            found = 1;
+            break;
+        }
+        if (!found)
+            ++none;
+    }
+    for (uint i = TM_INIT; i < TM_MAX; ++i)
+        if (reach[i] > 0)
+            printf("G %u %u %.6f %.4f %.6f %.2f %.4f\n", bits, i,
+                    reach[i] / count, 1e6 * cost[i] / reach[i],
+                    hit[i] / reach[i], hit[i] ? fbits[i] / hit[i] : 0,
+                    hit[i] ? cprime[i] / hit[i] : 0);
+    printf("G %u 0 %.6f\n", bits, (double)none / count);
+    mpz_clear(tm.n);
+    mpz_clear(prim);
+    mpz_clear(g);
+    mpz_clear(cof);
+    gmp_randclear(rs);
+}
+#endif
+
 #ifdef LADDER_STATS
 /* Ground-truth instrumentation for coulmock.c's MOCK_LADDER model:
  * per-rung attempt/success counts and wall time, plus whole-call
