@@ -8173,7 +8173,9 @@ void recurse(e_is jump_continue) {
  * prep leaves undecided, and reports the outcome fractions and mean
  * times. "prime,bits,count,F" instead measures a prime test on one
  * value (as for a need_prime position or a fixed power's root), and
- * "scan,bits,count,t" the cost of tests that fail at a trial prime. The
+ * "scan,bits,count,t" the cost of tests that fail at a trial prime, and
+ * "ladder,bits,count,F[,alpha]" the factoring ladder (mb_ladder() in
+ * coultau.c). The
  * walk loops' own costs are fitted from GATE_STATS runs instead (see
  * multibench-table), since a synthetic loop misses too much of them.
  */
@@ -8370,11 +8372,12 @@ void multibench(char *spec) {
     if (strncmp(spec, "scan,", 5) == 0)
         return mb_scan(spec + 5);
     if (strncmp(spec, "ladder,", 7) == 0) {
-        extern void mb_ladder(uint bits, uint count, uint F);
+        extern void mb_ladder(uint bits, uint count, uint F, double alpha);
         uint bits, count, F;
-        if (sscanf(spec + 7, "%u,%u,%u", &bits, &count, &F) != 3)
-            fail("MULTIBENCH: expected ladder,bits,count,F");
-        return mb_ladder(bits, count, F);
+        double alpha = 0;
+        if (sscanf(spec + 7, "%u,%u,%u,%lf", &bits, &count, &F, &alpha) < 3)
+            fail("MULTIBENCH: expected ladder,bits,count,F[,alpha]");
+        return mb_ladder(bits, count, F, alpha);
     }
     uint bits, t, count, F, e = 1;
     ulong seed = 1;

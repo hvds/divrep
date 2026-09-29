@@ -1163,86 +1163,244 @@ mpz_t *tm_factor(t_tm *tm) {
 }
 
 #ifdef MULTIBENCH
-/* "ladder,bits,count,F" (see multibench() in coul.c): the factoring
- * ladder of tau_multi_run() on count random composites of the given bits
- * with no factor up to F, each alone and stopping at the first factor
- * found, for rows "G bits rung reach us hit fbits cprime": the fraction
- * of inputs reaching the rung, the mean cost of an attempt there
- * (including splitting a composite factor), the fraction of attempts
- * finding a factor, and for those the mean bits of the prime factor and
- * the fraction whose cofactor is prime. A last row "G bits 0 none" gives
- * the fraction for which no rung found a factor.
+/* "ladder,bits,count,F[,alpha]" (see multibench() in coul.c): the
+ * factoring ladder of tau_multi_run() on count composites of the given
+ * bits with no factor up to F, each alone and stopping at the first
+ * factor found, for rows "G bits rung reach us hit fbits cprime": the
+ * fraction of inputs reaching the rung, the mean cost of an attempt
+ * there (including splitting a composite factor), the fraction of
+ * attempts finding a factor, and for those the mean bits of the prime
+ * factor and the fraction whose cofactor is prime. A last row
+ * "G bits 0 none" gives the fraction for which no rung found a factor.
+ *
+ * Without alpha, the inputs are random. With alpha, they are built from
+ * their factors (mbl_build()), with the smallest factor's size taken
+ * from its true distribution with probability alpha, else uniformly in
+ * log, and each weighted by the ratio of the densities: the same
+ * expected results, but with far more of the inputs whose smallest
+ * factor is large, which alone reach the costly high rungs.
  */
 static inline double mbl_now(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
-void mb_ladder(uint bits, uint count, uint F) {
+
+typedef struct {
+    double reach[TM_MAX], cost[TM_MAX], hit[TM_MAX], fbits[TM_MAX],
+            cprime[TM_MAX];
+    double w, none;
+} t_mbl;
+
+/* run the ladder on tm->n alone to the first factor, adding to st
+ * with weight w
+ */
+static void mbl_run(t_mbl *st, t_tm *tm, mpz_t cof, double w) {
+    uint bits = mpz_sizeinbase(tm->n, 2);
+    tm->t = 4;
+    tm->e = 1;
+    tm->vi = 0;
+    tm->B1 = 0;
+    tm->state = TM_INIT;
+    tm->bits = _find_tmfb(bits);
+    st->w += w;
+    for (uint i = TM_INIT; i < TM_MAX; ++i) {
+        if (!(tm->bits & (1UL << i)))
+            continue;
+        st->reach[i] += w;
+        double t0 = mbl_now();
+        bool ok = (*tmfa[i])(tm);
+        mpz_t *f = ok ? tm_factor(tm) : NULL;
+        st->cost[i] += w * (mbl_now() - t0);
+        if (!ok)
+            continue;
+        st->hit[i] += w;
+        st->fbits[i] += w * mpz_sizeinbase(*f, 2);
+        mpz_set(cof, tm->n);
+        while (mpz_divisible_p(cof, *f))
+            mpz_divexact(cof, cof, *f);
+        if (mpz_cmp_ui(cof, 1) > 0 && _GMP_is_prob_prime(cof))
+            st->cprime[i] += w;
+        return;
+    }
+    st->none += w;
+}
+
+/* Buchstab's function omega(u) for u >= 1, from u omega(u) = 1 for
+ * u <= 2 and (u omega(u))' = omega(u - 1), tabulated at steps of MBB_H:
+ * of the integers near x with no prime factor below y = x^(1/u), there
+ * are about x omega(u) / ln y per unit
+ */
+#define MBB_H 0.001
+#define MBB_UMAX 64.0
+static double *mbb_om = NULL;
+static uint mbb_n;
+static void mbb_init(void) {
+    uint k = (uint)(1 / MBB_H + 0.5);
+    mbb_n = (uint)((MBB_UMAX - 1) / MBB_H) + 2;
+    mbb_om = malloc(mbb_n * sizeof(double));
+    double uw = 1;
+    for (uint i = 0; i < mbb_n; ++i) {
+        if (i > k)
+            uw += MBB_H * (mbb_om[i - 1 - k] + mbb_om[i - k]) / 2;
+        mbb_om[i] = uw / (1 + i * MBB_H);
+    }
+}
+static double mbb_omega(double u) {
+    if (u < 1)
+        return 0;
+    double x = (u - 1) / MBB_H;
+    uint i = (uint)x;
+    if (i + 1 >= mbb_n)
+        return mbb_om[mbb_n - 1];
+    return mbb_om[i] + (x - i) * (mbb_om[i + 1] - mbb_om[i]);
+}
+
+/* The density of the log s of the smallest prime factor of a composite
+ * near e^L with no prime factor below e^a: the integers with smallest
+ * factor p are p times one with none below p, and there are about
+ * e^s ds / s primes in ds, so it goes as omega((L - s) / s) / s^2 for
+ * a <= s <= L / 2. Tabulated as a cumulative distribution over MBB_NS
+ * steps, for sampling.
+ */
+#define MBB_NS 2000
+typedef struct {
+    double a, b, L, cdf[MBB_NS + 1];
+} t_mbbs;
+static void mbb_sinit(t_mbbs *d, double L, double a) {
+    d->L = L;
+    d->a = a;
+    d->b = L / 2;
+    double h = (d->b - d->a) / MBB_NS, prev = 0;
+    d->cdf[0] = 0;
+    for (uint i = 1; i <= MBB_NS; ++i) {
+        double s = d->a + i * h;
+        double f = mbb_omega((L - s) / s) / (s * s);
+        d->cdf[i] = d->cdf[i - 1] + h * (prev + f) / 2;
+        prev = f;
+    }
+}
+/* the density at s, normalized */
+static double mbb_sdens(t_mbbs *d, double s) {
+    return mbb_omega((d->L - s) / s) / (s * s) / d->cdf[MBB_NS];
+}
+static double mbb_sample(t_mbbs *d, double r) {
+    double v = r * d->cdf[MBB_NS];
+    uint lo = 0, hi = MBB_NS;
+    while (hi - lo > 1) {
+        uint mid = (lo + hi) / 2;
+        if (d->cdf[mid] < v)
+            lo = mid;
+        else
+            hi = mid;
+    }
+    double c0 = d->cdf[lo], c1 = d->cdf[hi];
+    double f = (c1 > c0) ? (v - c0) / (c1 - c0) : 0;
+    return d->a + (lo + f) * (d->b - d->a) / MBB_NS;
+}
+
+/* a random prime of about e^s */
+static void mbb_prime(mpz_t p, gmp_randstate_t rs, double s, mpz_t tmp) {
+    mpz_set_d(p, exp(s));
+    uint b = mpz_sizeinbase(p, 2);
+    if (b > 52) {
+        mpz_urandomb(tmp, rs, b - 52);
+        mpz_add(p, p, tmp);
+    }
+    _GMP_next_prime(p);
+}
+
+static double mbb_uniform(gmp_randstate_t rs) {
+    return (double)gmp_urandomb_ui(rs, 53) / 9007199254740992.0;
+}
+
+/* Multiply into n a random integer near e^L with no prime factor below
+ * e^a, factor by factor: prime with chance 1 / (u omega(u)), u = L / a,
+ * else its smallest factor from the density above and the rest likewise.
+ */
+static void mbb_rough(mpz_t n, gmp_randstate_t rs, double L, double a,
+        mpz_t p, mpz_t tmp) {
+    while (1) {
+        double u = L / a;
+        if (u < 2 || mbb_uniform(rs) * u * mbb_omega(u) < 1) {
+            mbb_prime(p, rs, L, tmp);
+            mpz_mul(n, n, p);
+            return;
+        }
+        t_mbbs d;
+        mbb_sinit(&d, L, a);
+        double s = mbb_sample(&d, mbb_uniform(rs));
+        mbb_prime(p, rs, s, tmp);
+        mpz_mul(n, n, p);
+        double ls = log(mpz_get_d(p));
+        L -= ls;
+        a = ls;
+    }
+}
+
+void mb_ladder(uint bits, uint count, uint F, double alpha) {
     gmp_randstate_t rs;
     gmp_randinit_default(rs);
     gmp_randseed_ui(rs, 2654435761UL + 7 * bits);
-    mpz_t prim, g, cof;
+    mpz_t prim, g, cof, p, tmp;
     mpz_init(prim);
     mpz_init(g);
     mpz_init(cof);
+    mpz_init(p);
+    mpz_init(tmp);
     mpz_primorial_ui(prim, F);
-    double reach[TM_MAX], cost[TM_MAX], hit[TM_MAX], fbits[TM_MAX],
-            cprime[TM_MAX];
-    for (uint i = 0; i < TM_MAX; ++i)
-        reach[i] = cost[i] = hit[i] = fbits[i] = cprime[i] = 0;
-    uint none = 0;
+    t_mbl st;
+    memset(&st, 0, sizeof(st));
     t_tm tm;
     mpz_init(tm.n);
+    tm.tlim = F;
+    if (alpha > 0 && !mbb_om)
+        mbb_init();
     for (uint c = 0; c < count; ++c) {
-        do {
-            mpz_urandomb(tm.n, rs, bits - 1);
-            mpz_setbit(tm.n, bits - 1);
-            mpz_gcd(g, prim, tm.n);
-        } while (mpz_cmp_ui(g, 1) != 0 || mpz_probab_prime_p(tm.n, 1)
-                || mpz_perfect_power_p(tm.n));
-        tm.t = 4;
-        tm.e = 1;
-        tm.vi = 0;
-        tm.B1 = 0;
-        tm.tlim = F;
-        tm.state = TM_INIT;
-        tm.bits = _find_tmfb(bits);
-        bool found = 0;
-        for (uint i = TM_INIT; i < TM_MAX; ++i) {
-            if (!(tm.bits & (1UL << i)))
-                continue;
-            ++reach[i];
-            double t0 = mbl_now();
-            bool ok = (*tmfa[i])(&tm);
-            mpz_t *f = ok ? tm_factor(&tm) : NULL;
-            cost[i] += mbl_now() - t0;
-            if (!ok)
-                continue;
-            ++hit[i];
-            fbits[i] += mpz_sizeinbase(*f, 2);
-            mpz_set(cof, tm.n);
-            while (mpz_divisible_p(cof, *f))
-                mpz_divexact(cof, cof, *f);
-            if (mpz_cmp_ui(cof, 1) > 0 && _GMP_is_prob_prime(cof))
-                ++cprime[i];
-            found = 1;
-            break;
+        double w = 1;
+        if (alpha > 0) {
+            /* a composite of about bits bits: its smallest factor from
+             * the mixture, the rest with no factor below that */
+            double L = log(2) * (bits - 1) + log(1 + mbb_uniform(rs));
+            t_mbbs d;
+            mbb_sinit(&d, L, log(F));
+            do {
+                double s = (mbb_uniform(rs) < alpha)
+                        ? mbb_sample(&d, mbb_uniform(rs))
+                        : d.a + mbb_uniform(rs) * (d.b - d.a);
+                mbb_prime(p, rs, s, tmp);
+                double ls = log(mpz_get_d(p));
+                if (ls > d.b)
+                    continue;
+                double f = mbb_sdens(&d, ls);
+                w = f / (alpha * f + (1 - alpha) / (d.b - d.a));
+                mpz_set(tm.n, p);
+                mbb_rough(tm.n, rs, L - ls, ls, p, tmp);
+            } while (mpz_perfect_power_p(tm.n));
+        } else {
+            do {
+                mpz_urandomb(tm.n, rs, bits - 1);
+                mpz_setbit(tm.n, bits - 1);
+                mpz_gcd(g, prim, tm.n);
+            } while (mpz_cmp_ui(g, 1) != 0 || mpz_probab_prime_p(tm.n, 1)
+                    || mpz_perfect_power_p(tm.n));
         }
-        if (!found)
-            ++none;
+        mbl_run(&st, &tm, cof, w);
     }
     for (uint i = TM_INIT; i < TM_MAX; ++i)
-        if (reach[i] > 0)
+        if (st.reach[i] > 0)
             printf("G %u %u %.6f %.4f %.6f %.2f %.4f\n", bits, i,
-                    reach[i] / count, 1e6 * cost[i] / reach[i],
-                    hit[i] / reach[i], hit[i] ? fbits[i] / hit[i] : 0,
-                    hit[i] ? cprime[i] / hit[i] : 0);
-    printf("G %u 0 %.6f\n", bits, (double)none / count);
+                    st.reach[i] / st.w, 1e6 * st.cost[i] / st.reach[i],
+                    st.hit[i] / st.reach[i],
+                    st.hit[i] ? st.fbits[i] / st.hit[i] : 0,
+                    st.hit[i] ? st.cprime[i] / st.hit[i] : 0);
+    printf("G %u 0 %.6f\n", bits, st.none / st.w);
     mpz_clear(tm.n);
     mpz_clear(prim);
     mpz_clear(g);
     mpz_clear(cof);
+    mpz_clear(p);
+    mpz_clear(tmp);
     gmp_randclear(rs);
 }
 #endif

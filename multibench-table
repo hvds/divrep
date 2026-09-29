@@ -90,12 +90,21 @@ first factor found: per rung, the fraction of inputs reaching it, the
 mean cost of an attempt there (including splitting a composite factor
 found), the fraction of attempts finding a factor, and for those the
 mean size of the prime factor and the fraction whose cofactor is prime.
+From 100 bits the inputs are instead built from their factors, the
+smallest from the distribution Buchstab's function gives (for
+integers with no factor below L) with probability 0.3, else uniformly
+in log, each weighted by the ratio of the densities: the same expected
+results, with many more of the inputs that alone reach the costly high
+rungs. (At 72 bits, where both can be run at length, built and random
+inputs agree to within sampling error.) Above 191 bits there are no G
+rows yet; the mock uses the largest.
+
 None of these depends on what the value is being tested for, so the
 mock derives the effect of a factor found on a test for tau(n^e) = t,
 including restarting the ladder on the cofactor, and interleaves the
 pending values of a call as tau_multi_run() does. The sizes are the
 ends and some interior points of the size brackets in tmfb[] in
-F<coultau.c>, which choose the rungs used, up to 159 bits.
+F<coultau.c>, which choose the rungs used, up to 191 bits.
 
 
 =cut
@@ -165,11 +174,11 @@ my @scan_bits = (24, 40, 56, 64, 72, 80, 81, 128, 136);
 my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 65, 72,
         80, 96, 112, 128, 129);
 # the ladder: the size brackets of tmfb[] in coultau.c end at 53, 58, 63,
-# 64, 72, 77, 89, 99, 126, 127, 159; at 32 bits there are too few
+# 64, 72, 77, 89, 99, 126, 127, 159, 191; at 32 bits there are too few
 # composites with no factor up to 64007 to find
 my @ladder_bits = (36, 40, 44, 48, 52, 53, 56, 58, 60, 63, 64, 68, 72, 76,
         77, 80, 84, 88, 89, 92, 96, 99, 104, 112, 120, 126, 127, 136, 144,
-        152, 159);
+        152, 159, 176, 191);
 my($done, $total) = (0, scalar @scan_bits);
 $total += @te * @bits unless $only eq 'other';
 $total += @prime_bits + @ladder_bits + 3 + 18 unless $only eq 'multi';
@@ -214,9 +223,13 @@ for my $b (@prime_bits) {
     push @rest, grep /^[PR] /, bench("prime,$b,20000," . trial_limit($b));
 }
 for my $b (@ladder_bits) {
-    my $count = ($b <= 64) ? 3000 : ($b <= 99) ? 1500 : ($b <= 127) ? 400
+    my $count = ($b <= 64) ? 3000 : ($b <= 99) ? 1500 : ($b <= 159) ? 400
             : 150;
-    push @rest, grep /^G /, bench("ladder,$b,$count," . trial_limit($b));
+    # from 100 bits, inputs built with their smallest factor oversampled
+    # at large sizes, for the rare costly rungs
+    my $alpha = ($b < 100) ? '' : ',0.3';
+    push @rest, grep /^G /,
+            bench("ladder,$b,$count," . trial_limit($b) . $alpha);
 }
 push @rest, @scan;
 my @log_lin = gate_log(@cal_lin);
