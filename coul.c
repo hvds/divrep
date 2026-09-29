@@ -665,6 +665,9 @@ void report(char *format, ...) {
 
 /* CPU time the mocks spend computing costs, not part of what they model */
 double g_mock_overhead_s = 0;
+#ifdef MOCK_WALK
+void mock_report(void);
+#endif
 
 double seconds(double t1) {
     return (t1 - t0) + g_mock_spent_s - g_mock_overhead_s;
@@ -808,6 +811,9 @@ void diag_any(t_level *cur_level, bool need_disp) {
             if (seconds(t1 - t0) >= death_delay) {
                 keep_diag();
                 report("301 Timeout after %.2fs\n", seconds(t1));
+#ifdef MOCK_WALK
+                mock_report();
+#endif
                 fail_silent();
             }
     }
@@ -3323,6 +3329,19 @@ static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
             sum += n * pow(ml_p0[lvl] / sqrt(lo * hi), s);
     }
     return cost + ml_iter_cost[lvl] * ml_r0[lvl] * sum;
+}
+#endif
+
+#ifdef MOCK_WALK
+/* what the mocks stubbed, at the end of a run or on -Ld timeout */
+void mock_report(void) {
+    report("368 mock %.3fs (overhead %.3fs)", g_mock_spent_s,
+            g_mock_overhead_s);
+#   ifdef MOCK_LEAF
+    report(", leaf primes %.0f, sq primes %.0f, strided %.0f", g_ml_primes,
+            g_ml_primes_sq, g_ml_strided);
+#   endif
+    report("\n");
 }
 #endif
 
@@ -8212,13 +8231,7 @@ int main(int argc, char **argv, char **envp) {
         recurse(jump);
     keep_diag();
 #ifdef MOCK_WALK
-    report("368 mock %.3fs (overhead %.3fs)", g_mock_spent_s,
-            g_mock_overhead_s);
-#   ifdef MOCK_LEAF
-    report(", leaf primes %.0f, sq primes %.0f, strided %.0f", g_ml_primes,
-            g_ml_primes_sq, g_ml_strided);
-#   endif
-    report("\n");
+    mock_report();
 #endif
 
     if ((opt_alloc & 2) == 0) {
