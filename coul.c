@@ -3013,7 +3013,7 @@ typedef struct {
                              * does not end prep */
     double KL;      /* prod p / (p - 1) over the trial primes */
 } t_mwscan;
-static t_mwscan mw_scan[8];
+static t_mwscan mw_scan[16];
 static uint mw_nscan = 0;
 static uint *mw_tp = NULL, mw_ntp = 0;  /* primes up to the largest L */
 static mpz_t mw_tmp;
@@ -3079,17 +3079,47 @@ static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
     ++tp->nb;
 }
 
-/* the trial division data for values of the given size: that with the
- * nearest bits, or with create set a new set for exactly these bits */
-static t_mwscan *mw_scan_for(uint bits, bool create) {
-    t_mwscan *best = NULL;
+/* The table's sizes are bit counts, where the mock has log2 of a value:
+ * mw_bx() gives the size to look up, lg + 1/2 (values of b bits have
+ * mean log2 about b - 1/2), kept within the sizes of as many limbs as
+ * the value has, since costs step up with each limb.
+ */
+static inline uint mw_limbs(uint bits) {
+    return (bits + 63) / 64;
+}
+static inline uint mw_nbits(double lg) {
+    return (lg < 0) ? 1 : (uint)lg + 1;
+}
+static inline double mw_bx(double lg) {
+    uint L = mw_limbs(mw_nbits(lg));
+    double x = lg + 0.5, lo = 64.0 * (L - 1) + 1, hi = 64.0 * L;
+    return (x < lo) ? lo : (x > hi) ? hi : x;
+}
+
+/* The trial division costs for a value with log2 lg: those of the
+ * nearest size with as many limbs, else of the nearest size. With
+ * create, those for exactly the given size (a bit count), made if new.
+ */
+static t_mwscan *mw_scan_find(double lg, bool create) {
+    uint bits = create ? (uint)lg : mw_nbits(lg);
+    double x = mw_bx(lg);
+    t_mwscan *best = NULL, *bestl = NULL;
     for (uint i = 0; i < mw_nscan; ++i) {
         t_mwscan *sp = &mw_scan[i];
-        if (create ? sp->bits == bits
-                : (!best || abs((int)sp->bits - (int)bits)
-                        < abs((int)best->bits - (int)bits)))
+        if (create) {
+            if (sp->bits == bits)
+                best = sp;
+            continue;
+        }
+        double d = fabs(sp->bits - x);
+        if (!best || d < fabs(best->bits - x))
             best = sp;
+        if (mw_limbs(sp->bits) == mw_limbs(bits)
+                && (!bestl || d < fabs(bestl->bits - x)))
+            bestl = sp;
     }
+    if (bestl)
+        return bestl;
     if (create && !best) {
         if (mw_nscan == sizeof(mw_scan) / sizeof(mw_scan[0]))
             fail("MOCK_WALK: too many trial division sizes");
@@ -3160,7 +3190,7 @@ static void mw_load(void) {
         int nf = sscanf(line, "S %u %u %lf %lf %lf", &b, &p, &v[0], &v[1],
                 &v[2]);
         if (nf >= 4) {
-            t_mwscan *sp = mw_scan_for(b, 1);
+            t_mwscan *sp = mw_scan_find(b, 1);
             if (sp->ns == MW_MAXS)
                 fail("MOCK_WALK: too many S rows");
             sp->p[sp->ns] = p;
@@ -3170,7 +3200,7 @@ static void mw_load(void) {
             continue;
         }
         if (sscanf(line, "L %u %u", &b, &p) == 2) {
-            mw_scan_for(b, 1)->L = p;
+            mw_scan_find(b, 1)->L = p;
             continue;
         }
         if (sscanf(line, "%u %u %u %u %lf %lf %lf %lf %lf %lf", &t, &e, &b,
@@ -3227,11 +3257,13 @@ static void mw_load(void) {
     }
 }
 
-/* interpolate a one-dimensional table at bits, geometrically for
- * positive values */
-static double mw_interp1(t_mw1 *tp, double bits, uint k) {
+/* interpolate a one-dimensional table for a value of log2 lg (see
+ * mw_bx()), geometrically for positive values
+ */
+static double mw_interp1(t_mw1 *tp, double lg, uint k) {
     if (!mw_loaded)
         mw_load();
+    double bits = mw_bx(lg);
     if (bits <= tp->bits[0])
         return tp->v[0][k];
     if (bits >= tp->bits[tp->nb - 1])
@@ -3244,10 +3276,13 @@ static double mw_interp1(t_mw1 *tp, double bits, uint k) {
     return (a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a);
 }
 
-/* interpolate the table at (t, e, bits); rows are in increasing bits */
-static bool mw_lookup(uint t, uint e, double bits, double out[6]) {
+/* interpolate the table at (t, e) for a value of log2 lg (see mw_bx());
+ * rows are in increasing bits
+ */
+static bool mw_lookup(uint t, uint e, double lg, double out[6]) {
     if (!mw_loaded)
         mw_load();
+    double bits = mw_bx(lg);
     for (uint i = 0; i < mw_count; ++i) {
         t_mw *mp = &mw_tab[i];
         if (mp->t != t || mp->e != e)
@@ -3708,7 +3743,7 @@ static double mw_ptest(double b, double r) {
  * prime test */
 static t_mwtrial *mw_trial(t_mwwalk *wk, uint vj, uint t, uint e,
         double bits, bool prime, ulong excl[][MW_MAXEXCL], uint *nexcl) {
-    t_mwscan *sc = mw_scan_for((uint)bits, 0);
+    t_mwscan *sc = mw_scan_find(bits, 0);
     /* special primes: the small ones whose valuations are known exactly
      * (allocated ones, or all for exact values) or modified by exclusions;
      * larger allocated primes are treated as generic, an error of O(1/p),
@@ -3942,8 +3977,9 @@ static inline ulong mw_lmask(uint b) {
 /* the G size for a value of b bits: the nearest with the same rungs,
  * else the nearest
  */
-static t_mwlad *mw_lad_for(double b) {
-    ulong m = mw_lmask((uint)(b + 0.5));
+static t_mwlad *mw_lad_for(double lg) {
+    ulong m = mw_lmask(mw_nbits(lg));
+    double b = mw_bx(lg);
     t_mwlad *best = NULL, *bestm = NULL;
     for (uint i = 0; i < mw_nlad; ++i) {
         t_mwlad *lp = &mw_lad[i];
@@ -4197,7 +4233,7 @@ static double mw_tail(double zb, mpz_t **q, uint *t, uint *need_prime,
         double bb = b - tr->rb[2];
         if (bb < 1)
             bb = 1;
-        double pre = mw_scan_cost(mw_scan_for((uint)b, 0),
+        double pre = mw_scan_cost(mw_scan_find(b, 0),
                 MW_PRETEST_LAST, 1);
         cp += pprep * (tr->rejcost + tr->passcost + pc * pre);
         double ok = tr->pass + pc;

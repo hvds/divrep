@@ -25,8 +25,10 @@ how often the values a walk tests are divisible by each trial prime
 depends strongly on the walk. So the bench pcoul first finds the trial
 division limit L for each size (it changes at 80 bits in some builds),
 the cost of a test that fails at each of a range of trial primes, and
-the extra cost of a factor found there that does not end the test,
-giving lines:
+the extra cost of a factor found there that does not end the test, at
+sizes either side of the limb boundaries at 64 and 128 bits, since the
+costs step up with each limb (the mock uses the nearest size with as
+many limbs), giving lines:
 
   S bits p prep_us prime_us [extra_us]
   L bits L
@@ -99,7 +101,10 @@ F<coultau.c>, which choose the rungs used, up to 159 bits.
 =cut
 
 my($bench, $gstats, $mock, $only, $outfile) = ('./pcoul', undef, undef, '');
-my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 72, 80, 96, 112, 128);
+# (with sizes either side of the limb boundaries at 64 and 128 bits,
+# where costs step up)
+my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
+        96, 112, 128, 129);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
@@ -154,9 +159,11 @@ my @te = map {
 } grep $_ > 2, divisors($n);
 
 # progress: the number of pcoul runs to make
-my @scan_bits = (24, 40, 56, 80, 81);
-my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 72, 80,
-        96, 112, 128);
+# (the mock takes trial division costs from the nearest scan size with
+# as many limbs)
+my @scan_bits = (24, 40, 56, 64, 72, 80, 81, 128, 136);
+my @prime_bits = (16, 18, 20, 21, 22, 24, 28, 32, 40, 48, 56, 64, 65, 72,
+        80, 96, 112, 128, 129);
 # the ladder: the size brackets of tmfb[] in coultau.c end at 53, 58, 63,
 # 64, 72, 77, 89, 99, 126, 127, 159; at 32 bits there are too few
 # composites with no factor up to 64007 to find
