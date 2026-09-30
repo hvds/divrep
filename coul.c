@@ -325,6 +325,10 @@ bool log_full = 0;  /* show prefinal result for harness */
 ulong randseed = 1; /* for ECM, etc */
 bool vt100 = 0;     /* update window title with VT100 escape sequences */
 
+/* From an expanded (315) line, forced[li] is 1 + the position of the
+ * allocation made at level li, or 0 if none is shown (as for a forced
+ * prime's p^0 tail); force is 1 + the highest level shown.
+ */
 typedef struct s_recover {
     uint force;
     uint *forced;
@@ -1331,9 +1335,10 @@ void resolve_expanded(t_recover *fp) {
     }
     for (uint fi = 0; fi < fp->force; ++fi) {
         uint vi = fp->forced[fi];
+        sp->forced[fi] = vi;
+        sp->force = fi + 1;
         if (vi == 0)
-            fail("panic: gap in expanded list of forced allocations");
-        sp->forced[sp->force++] = vi;
+            continue;   /* no allocation shown at this level */
         --vi;
         uint fj = flast[vi]--;
         uint sj = slast[vi]--;
@@ -1411,16 +1416,6 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         }
         /* reverse them, so we can pop as we allocate */
         reverse_fact(&stack->f[i]);
-    }
-    if (expanded) {
-        /* collapse any gaps in the forced list */
-        uint fj = 0;
-        for (uint fi = 0; fi < stack->force; ++fi) {
-            if (stack->forced[fi] == 0)
-                continue;
-            stack->forced[fj++] = stack->forced[fi];
-        }
-        stack->force = fj;
     }
     if (strncmp(s, " W(", 3) == 0) {
         s += 3;
@@ -5435,8 +5430,11 @@ e_is insert_stack(void) {
                 goto insert_check;
         }
 
-        /* insert any additional forced-order allocations */
-        for (uint vf = forcedp; vf < rstack->force; ++vf) {
+        /* insert any additional forced-order allocations, from the level
+         * the forced primes have reached (levels with none shown, such
+         * as a forced prime's p^0 tail, are gaps in the list)
+         */
+        for (uint vf = level; vf < rstack->force; ++vf) {
             uint vi = rstack->forced[vf];
             if (vi-- == 0)
                 continue;

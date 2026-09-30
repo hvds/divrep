@@ -332,6 +332,23 @@ if (1) {
 }
 
 if (1) {
+    # In an expanded line, a forced prime with a p^0 tail (here 3 in b3)
+    # shows no allocation for its level: the levels after it must still
+    # be reapplied in the order shown.
+    local $type = Type->new('o');
+    expect_recover(q{recover expanded line past a forced p^0 tail},
+        [qw{ -x1e14 12 4 }],
+        ['315 b3: 2^2(1) 53^2 2.79^2(4) 5^2(3) (0.00s)'],
+        'b3: 2^2 53^2 2.79^2 5^2: 0 / 28520',
+    );
+    expect_recover(q{recover expanded line ending past a forced p^0 tail},
+        [qw{ -x1e14 12 4 }],
+        ['315 b3: 2^2(1) . 2.79^2(4) 5^2(3) (0.00s)'],
+        'b3: 2^2 3^2 2.79^2 5^2',
+    );
+}
+
+if (1) {
     # A -I pattern or manually-constructed recovery line may indicate
     # that we've just allocated a complete batch, with no further progress.
     local $type = Type->new('o');
