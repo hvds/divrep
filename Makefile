@@ -11,7 +11,7 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   a2907ae3b7 (danaj master 2025-07-11)
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 39982f872b
-COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c coulmock.c
+COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
     coulvec.h
 
@@ -66,14 +66,6 @@ ifdef VERBOSE
 endif
 ifdef STUB_SQUARE_BRANCH
     DEFINES += -DSTUB_SQUARE_BRANCH
-endif
-ifdef MOCK_LADDER
-    DEFINES += -DMOCK_LADDER
-endif
-# Per-rung ground-truth timing of the real tau_multi_run(), for
-# validating MOCK_LADDER (prints LADDER_STATS lines at exit).
-ifdef LADDER_STATS
-    DEFINES += -DLADDER_STATS
 endif
 # Per-decision walk/recurse gate records, see coul.c (GATE_STATS env var
 # names the output file).
