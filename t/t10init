@@ -64,6 +64,8 @@ if (1) {
     # -ja2 chooses positions by cost
     expect_result(q{-ja2 find f(24,5)},
             '15537948', '', [qw{ -ja2 -x1e12 24 5 }]);
+    expect_result(q{-ja2 -j4 find f(24,5)},
+            '15537948', '', [qw{ -ja2 -j4 -x1e12 24 5 }]);
     # -ja1 below an -I pattern
     expect_result(q{-ja1 below a constraint for f(24,5)},
             '266624899224', '2^3.3 . 2 3^2 2^2', [qw{ -ja1 -x1e12 24 5 }]);
