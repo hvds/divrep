@@ -243,6 +243,15 @@ progress line each time. With "-d", it instead shows progress at every
 step on a new line (but only a single line for walk_v()). If "-d" is
 specified twice, a line is shown for each iteration of walk_v().
 
+In a build with VERBOSE=1, "-dv<bits>" selects instrumentation, as the
+sum of: 1 for a trace of the recursion, walks and factoring tests to
+stdout; 2 for records of each gate decision, recursion loop and walk
+(and more) to the file named by $GATE_STATS (default gate_stats.log);
+4 to add, with 2, the time spent in each stage of a walk's tests. See
+trace.h and trace.c. The default is none, and the build is then only a
+few percent slower than a normal one. The same build runs the
+benchmarks behind the cost tables of multibench-table (see bench.c).
+
 <n> and <k> are mandatory arguments, specifying that we want to search
 for D(n, k) (equivalently T(n/2, k) in the terminology of A292580).
 <n> must be a positive even integer; <k> must be a positive integer.

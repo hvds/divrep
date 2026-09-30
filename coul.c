@@ -27,6 +27,8 @@
 #include "coulvec.h"
 #include "assume.h"
 #include "mock.h"
+#include "trace.h"
+#include "bench.h"
 
 /* from MPUG */
 #include "factor.h"
@@ -448,36 +450,6 @@ typedef struct s_sizedstr {
 } t_sizedstr;
 
 uint tm_count = 0;
-static inline void test_multi_reset(void) {
-    tm_count = 0;
-}
-/* Note: test_multi_append() steals the input mpz_t */
-static inline bool test_multi_append(mpz_t n, uint vi, uint t, uint e) {
-    uint i = tm_count++;
-    t_tm *tm = &taum[i];
-    mpz_swap(tm->n, n);
-    tm->vi = vi;
-    tm->t = t;
-    tm->e = e;
-    return tau_multi_prep(i);
-}
-/* Note: test_prime_append() steals the input mpz_t */
-static inline bool test_prime_append(mpz_t n, uint vi) {
-    uint i = tm_count++;
-    t_tm *tm = &taum[i];
-    mpz_swap(tm->n, n);
-    tm->vi = vi;
-    tm->t = 2;
-    tm->e = 1;
-    return tau_prime_prep(i);
-}
-static inline uint test_prime_run(void) {
-    return tau_prime_run(tm_count);
-}
-static inline uint test_multi_run(tau_failure_handler tfh) {
-    return tau_multi_run(tm_count, tfh);
-}
-
 
 static inline char typename(void) {
 #if defined(TYPE_o)
@@ -2295,8 +2267,9 @@ bool alloc_square(t_level *cur, uint vi) {
     allzrootmod(stash_level, Z(asq_o), g, Z(asq_qq));
     t_results *rp = res_array(stash_level);
 #ifdef VERBOSE
-    gmp_printf("alloc_square vi=%u g=%u qq=%Zu count=%u\n",
-            vi, g, Z(asq_qq), rp->count);
+    if (VB(VB_TRACE))
+        gmp_printf("alloc_square vi=%u g=%u qq=%Zu count=%u\n",
+                vi, g, Z(asq_qq), rp->count);
 #endif
     if (rp->count == 0)
         return 0;
@@ -2767,7 +2740,8 @@ bool test_zprime(mpz_t qq, mpz_t o, mpz_t ati) {
 
 bool test_1primes(uint *need, uint nc) {
 #ifdef VERBOSE
-    gmp_printf("walk_1_call primes nc=%u\n", nc);
+    if (VB(VB_TRACE))
+        gmp_printf("walk_1_call primes nc=%u\n", nc);
 #endif
     uint good = 0;
     test_multi_reset();
@@ -2793,7 +2767,8 @@ bool test_1primes(uint *need, uint nc) {
 
 bool test_1multi(uint *need, uint nc, uint *t, tau_failure_handler tfh) {
 #ifdef VERBOSE
-    gmp_printf("walk_1_call other nc=%u\n", nc);
+    if (VB(VB_TRACE))
+        gmp_printf("walk_1_call other nc=%u\n", nc);
 #endif
     uint good = 0;
     test_multi_reset();
@@ -2956,201 +2931,6 @@ int inv_comparator(const void *va, const void *vb) {
 }
 
 
-#ifdef GATE_STATS
-/* Gate-calibration instrumentation (make GATE_STATS=1). Writes to the
- * file named by $GATE_STATS (default gate_stats.log), one line per event:
- *   G lvl vi x ti p cap rw sq dec
- *       one per walk/recurse gate decision in prep_unforced_x(): rw is
- *       r_walk (gain applied), sq prev_level->have_square, dec W or R
- *   R lvl np dt t
- *       closes a gate R decision: primes tried at that level, wall
- *       time of the whole subtree (nested R and walks included), and
- *       the time since the first record
- *   C lvl thr t
- *       an open R decision's loop first tried a prime p > thr, at time
- *       t; with the matching R record this bounds the time a -W<thr>
- *       run would have moved to walk_midp()
- *   W lvl org ati nqc dt cause rm raq inv npc noc pbits obits
- *     ninv nprime nmulti tprime tmulti pinv_pred pprime_pred
- *       one per walk_v() call. org: G=gate, F=forced (limp==0), B=best_v
- *       walk_now, M=walk_midp(), O=other. cause: M/m no minimum yet (m: minp is 0),
- *       Z residue m > zmax, E range empty from the zmin side, N
- *       nonempty. rm/raq: bit-size of m and aq relative to zmax.
- *       The rest are for the nqc == 0 sweep only: inv[] count, number
- *       of need_prime / need_other positions and their mean residual
- *       bits; how many ati passed the inverse filter, test_primes() and
- *       test_multi(); time inside test_primes() and test_multi(); and
- *       model predictions of the inverse-filter pass rate (exact, from
- *       inv[]) and of the test_primes() pass rate (prod 4.8/(b ln 2)
- *       over need_prime residuals of b bits).
- *       Then, for nqc == 1 square walks (cause S): root iterations, how
- *       many passed the square position's own test (after the inverse
- *       filter) and time in that test, the residue count, root degree,
- *       whether the square's tau is a prime power (tau_prime_test()),
- *       and log2 of the root limit. For S walks ninv counts inverse
- *       passes, nprime/tprime cover test_zprimes() only.
- *       Last, for both, the expected number of inverse-filter entries
- *       tested per iteration.
- *   F lvl oldp outer ok inner dt
- *       one per run_flip_pqsq() call: the flip point, outer primes tried
- *       and accepted by apply_single(), primes iterated by its
- *       walk_1_set() calls, and wall time
- *   X lvl vlevel dt
- *       one per walk_6x() call (STRATEGY_6X): the allocation count at
- *       v_{sq0-2} and wall time
- *   V lvl vi x primes pass tprime tmulti dt
- *       one per walk_1_set() call: primes iterated, how many passed the
- *       modular and divisibility checks to reach the tests, time inside
- *       test_1primes() and test_1multi(), and wall time
- *   P lvl tried dt
- *       one per walk_midp() call (-W): (p, vi, x) combinations tried and
- *       wall time of the whole midp phase for the batch at lvl
- * The stage timing adds two clock_gettime() calls per inverse-filter
- * pass, inflating test_primes() time slightly; the log for a busy run
- * can reach GB, so use short runs or single -I/-b batches.
- */
-#define GS_MAXLEVEL 256
-static FILE *gs_fp;
-static char gs_origin = 'O';
-static double gs_ati;
-static int gs_nqc;
-static char gs_cause;       /* M/m: no minimum (m: minp 0), Z: m > zmax,
-                               E: range empty from the zmin side,
-                               N: nonempty range */
-static double gs_rm, gs_raq;    /* log2(m / zmax), log2(aq / zmax) */
-/* per-walk structure and stage pass counts (nqc == 0 sweep only) */
-static uint gs_inv, gs_npc, gs_noc;
-static ulong gs_mp_tried;           /* walk_midp(): (p, vi, x) tried */
-static ulong gs_w1s_primes;         /* walk_1_set(): primes iterated */
-static ulong gs_w1_pass;            /* walk_1_set(): primes reaching tests */
-static double gs_w1_tprime, gs_w1_tmulti;   /* walk_1_set(): test times */
-static double gs_pbits, gs_obits;   /* mean residual bits, prime/other */
-static ulong gs_n_inv, gs_n_prime, gs_n_multi;
-static double gs_t_prime, gs_t_multi;   /* time inside test_primes/test_multi */
-static double gs_pinv_pred, gs_pprime_pred; /* model predictions, see walk_v */
-/* nqc == 1 square walks: root iterations, passes of the square position's
- * own test, time in it, residue count, root degree, log2 of the root limit */
-static ulong gs_sq_iter, gs_n_sq;
-static double gs_t_sq, gs_rbits;
-static double gs_sq_pinv_pred;      /* inverse pass rate over root residues */
-static double gs_tests_pred;        /* inverse entries tested per iteration */
-static uint gs_rc, gs_xi, gs_pp;
-static double gs_rec_t0[GS_MAXLEVEL];
-static ulong gs_rec_np[GS_MAXLEVEL];
-static bool gs_rec_open[GS_MAXLEVEL];
-/* p thresholds for C records: when a recurse loop's p first exceeds
- * gs_thr[i], log the time, so the cost of the part of the search that a
- * -W<gs_thr[i]> run would move to walk_midp() can be measured */
-static const ulong gs_thr[] = {
-    1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000,
-    1000000, 2000000, 5000000, 10000000
-};
-#define GS_NTHR (sizeof(gs_thr) / sizeof(gs_thr[0]))
-static uint gs_thr_i[GS_MAXLEVEL];
-static double gs_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
-}
-static double gs_t_base = -1;
-static inline double gs_rel(void) {
-    double t = gs_now();
-    if (gs_t_base < 0)
-        gs_t_base = t;
-    return t - gs_t_base;
-}
-static void gs_close(void) {
-    if (gs_fp)
-        fclose(gs_fp);
-    gs_fp = NULL;
-}
-static FILE *gs_file(void) {
-    if (!gs_fp) {
-        const char *fn = getenv("GATE_STATS");
-        gs_fp = fopen(fn ? fn : "gate_stats.log", "w");
-        if (!gs_fp)
-            fail("GATE_STATS: cannot open output: %s", strerror(errno));
-        setvbuf(gs_fp, NULL, _IOFBF, 1 << 20);
-        atexit(gs_close);
-    }
-    return gs_fp;
-}
-static inline void gs_rec_end(uint lvl) {
-    if (lvl < GS_MAXLEVEL && gs_rec_open[lvl]) {
-        fprintf(gs_file(), "R %u %lu %.9f %.6f\n", lvl, gs_rec_np[lvl],
-                gs_now() - gs_rec_t0[lvl], gs_rel());
-        gs_rec_open[lvl] = 0;
-    }
-}
-/* Predicted inverse-filter pass rate for a square (or higher power)
- * walk. The walk visits r = r0 + j.qq for each of the root residues r0,
- * and tests ati = (r^g - o) / qq against inv[]; for a modulus m the
- * outcome depends on j mod m, so the pass rate is exact from enumerating
- * j for each r0 and each small m (r^g takes few values mod small m, so
- * ati is far from uniform), with 1 - excluded/m for large m. Returns -1
- * unless the walk is expected to make at least 1000 iterations.
- */
-static double gs_square_pinv(t_mod *inv, uint inv_count, t_results *xr,
-        mpz_t qq, mpz_t o, uint g, mpz_t endr) {
-    if (mpz_get_d(endr) / mpz_get_d(qq) * xr->count < 1000)
-        return -1;
-    ulong mods[256];
-    uint nm = 0;
-    for (uint i = 0; i < inv_count && nm < 256; ++i) {
-        uint j;
-        for (j = 0; j < nm; ++j)
-            if (mods[j] == inv[i].m)
-                break;
-        if (j == nm)
-            mods[nm++] = inv[i].m;
-    }
-    mpz_t M, t, u;
-    mpz_init(M); mpz_init(t); mpz_init(u);
-    uint nr = xr->count > 64 ? 64 : xr->count;
-    double sum = 0;
-    for (uint ri = 0; ri < nr; ++ri) {
-        mpz_t *r0 = &xr->r[ri * xr->count / nr];
-        double prod = 1;
-        for (uint mi = 0; mi < nm; ++mi) {
-            ulong m = mods[mi];
-            uint nex = 0;
-            for (uint i = 0; i < inv_count; ++i)
-                if (inv[i].m == m)
-                    ++nex;
-            if (m > 2000) {
-                prod *= 1.0 - (double)nex / m;
-                continue;
-            }
-            mpz_mul_ui(M, qq, m);
-            uint pass = 0;
-            for (ulong j = 0; j < m; ++j) {
-                mpz_mul_ui(t, qq, j);
-                mpz_add(t, t, *r0);
-                mpz_powm_ui(t, t, g, M);
-                mpz_sub(t, t, o);
-                mpz_mod(t, t, M);
-                mpz_fdiv_q(t, t, qq);
-                ulong a = mpz_get_ui(t);
-                bool excl = 0;
-                for (uint i = 0; i < inv_count; ++i)
-                    if (inv[i].m == m && inv[i].v == a) {
-                        excl = 1;
-                        break;
-                    }
-                if (!excl)
-                    ++pass;
-            }
-            prod *= (double)pass / m;
-        }
-        sum += prod;
-    }
-    mpz_clear(M); mpz_clear(t); mpz_clear(u);
-    return sum / nr;
-}
-#   define GS_ORIGIN(c) (gs_origin = (c))
-#else
-#   define GS_ORIGIN(c)
-#endif
 /* the walk itself: walk_v() wraps it (see walk_v_gr()) */
 #define walk_v walk_v_inner
 static void walk_v(t_level *cur_level, mpz_t start) {
@@ -3160,7 +2940,7 @@ static void walk_v(t_level *cur_level, mpz_t start) {
 #endif
     if (!cur_level->have_min) {
         ulong min = minp[cur_level->x - 1];
-#ifdef GATE_STATS
+#ifdef VERBOSE
         gs_cause = min ? 'M' : 'm';
 #endif
         if (min)
@@ -3183,7 +2963,7 @@ static void walk_v(t_level *cur_level, mpz_t start) {
 
     mpz_sub(Z(wv_end), zmax, *m);
     mpz_fdiv_q(Z(wv_end), Z(wv_end), *aq);
-#ifdef GATE_STATS
+#ifdef VERBOSE
     {
         double lz = mpz_sizeinbase(zmax, 2);
         gs_rm = mpz_sgn(*m) ? mpz_sizeinbase(*m, 2) - lz : -999;
@@ -3200,7 +2980,7 @@ static void walk_v(t_level *cur_level, mpz_t start) {
         mpz_sub(Z(wv_ati), zmin, *m);
         mpz_cdiv_q(Z(wv_ati), Z(wv_ati), *aq);
     }
-#ifdef GATE_STATS
+#ifdef VERBOSE
     gs_ati = mpz_get_d(Z(wv_end)) - mpz_get_d(Z(wv_ati)) + 1;
     gs_cause = (gs_ati > 0) ? 'N' : 'E';
 #endif
@@ -3233,56 +3013,11 @@ static void walk_v(t_level *cur_level, mpz_t start) {
             need_other[noc++] = vi;
     }
     g_q0 = q[0];
-#ifdef GATE_STATS
+#ifdef VERBOSE
     gs_nqc = nqc;
-    gs_inv = inv_count;
-    gs_npc = npc;
-    gs_noc = noc;
-    {
-        double zb = mpz_sizeinbase(zmax, 2), sp = 0, so = 0;
-        for (uint i = 0; i < npc; ++i)
-            sp += zb - mpz_sizeinbase(*q[need_prime[i]], 2);
-        for (uint i = 0; i < noc; ++i)
-            so += zb - mpz_sizeinbase(*q[need_other[i]], 2);
-        gs_pbits = npc ? sp / npc : 0;
-        gs_obits = noc ? so / noc : 0;
-        /* predicted inverse-filter pass rate: per distinct modulus m, the
-         * fraction of residues mod m not excluded (entries for the same m
-         * from different positions may coincide) */
-        gs_tests_pred = 0;
-        double reach = 1.0;
-        for (uint i = 0; i < inv_count; ++i) {
-            gs_tests_pred += reach;
-            reach *= 1.0 - 1.0 / inv[i].m;
-        }
-        gs_pinv_pred = 1.0;
-        for (uint i = 0; i < inv_count; ++i) {
-            bool seen = 0;
-            for (uint j = 0; j < i; ++j)
-                if (inv[j].m == inv[i].m) { seen = 1; break; }
-            if (seen)
-                continue;
-            uint distinct = 0;
-            for (uint j = i; j < inv_count; ++j) {
-                if (inv[j].m != inv[i].m)
-                    continue;
-                bool dup = 0;
-                for (uint l = i; l < j; ++l)
-                    if (inv[l].m == inv[j].m && inv[l].v == inv[j].v) { dup = 1; break; }
-                if (!dup)
-                    ++distinct;
-            }
-            gs_pinv_pred *= 1.0 - (double)distinct / inv[i].m;
-        }
-        /* predicted prime-stage pass rate: each need_prime residual of b
-         * bits is prime with probability ~ K / (b ln 2), K ~ 4.8 */
-        gs_pprime_pred = 1.0;
-        for (uint i = 0; i < npc; ++i) {
-            double b = zb - mpz_sizeinbase(*q[need_prime[i]], 2) + 0.5;
-            double pp = 4.8 / (b * 0.6931472);
-            gs_pprime_pred *= (pp < 1) ? pp : 1;
-        }
-    }
+    if (VB(VB_GATE))
+        gs_walk_setup(q, need_prime, npc, need_other, noc, inv, inv_count,
+                nqc);
 #endif
 
 #if 0
@@ -3294,17 +3029,20 @@ static void walk_v(t_level *cur_level, mpz_t start) {
 
 #ifdef VERBOSE
     g_walkv_call = ++g_walkv_call_ctr;
-    gmp_printf("walk_v_call id=%u ati_start=%Zu ati_end=%Zu nqc=%u inv=[",
-            g_walkv_call, Z(wv_ati), Z(wv_end), nqc);
-    for (uint i = 0; i < inv_count; ++i)
-        gmp_printf("%s%lu", i ? "," : "", inv[i].m);
-    gmp_printf("] need_prime=[");
-    for (uint i = 0; i < npc; ++i)
-        gmp_printf("%s%u", i ? "," : "", need_prime[i]);
-    gmp_printf("] need_other=[");
-    for (uint i = 0; i < noc; ++i)
-        gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i], t[need_other[i]]);
-    gmp_printf("]\n");
+    if (VB(VB_TRACE)) {
+        gmp_printf("walk_v_call id=%u ati_start=%Zu ati_end=%Zu nqc=%u inv=[",
+                g_walkv_call, Z(wv_ati), Z(wv_end), nqc);
+        for (uint i = 0; i < inv_count; ++i)
+            gmp_printf("%s%lu", i ? "," : "", inv[i].m);
+        gmp_printf("] need_prime=[");
+        for (uint i = 0; i < npc; ++i)
+            gmp_printf("%s%u", i ? "," : "", need_prime[i]);
+        gmp_printf("] need_other=[");
+        for (uint i = 0; i < noc; ++i)
+            gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i],
+                    t[need_other[i]]);
+        gmp_printf("]\n");
+    }
 #endif
 
 #ifdef STUB_SQUARE_BRANCH
@@ -3545,14 +3283,16 @@ static void walk_v(t_level *cur_level, mpz_t start) {
         bool tester = (mpz_cmp(Z(wv_qqnext), Z(wv_endr)) > 0);
         if (check)
             cvec_prep_test(cx0, m, aq);
-#ifdef GATE_STATS
+#ifdef VERBOSE
         gs_cause = 'S';
         gs_rc = xr->count;
         gs_xi = xi;
         gs_pp = prime_power;
-        gs_rbits = log2(mpz_get_d(Z(wv_endr)) + 1);
-        gs_sq_pinv_pred = gs_square_pinv(inv, inv_count, xr, *qqi, *oi, xi,
-                Z(wv_endr));
+        if (VB(VB_GATE)) {
+            gs_rbits = log2(mpz_get_d(Z(wv_endr)) + 1);
+            gs_sq_pinv_pred = gs_square_pinv(inv, inv_count, xr, *qqi, *oi,
+                    xi, Z(wv_endr));
+        }
 #endif
 
         while (1) {
@@ -3560,9 +3300,7 @@ static void walk_v(t_level *cur_level, mpz_t start) {
             if (tester && mpz_cmp(Z(wv_r), Z(wv_endr)) > 0)
                 return;
             ++countwi;
-#ifdef GATE_STATS
-            ++gs_sq_iter;
-#endif
+            GS_INC(gs_sq_iter);
             mpz_pow_ui(Z(wv_rx), Z(wv_r), xi);
             mpz_sub(Z(wv_ati), Z(wv_rx), *oi);
             /* this could be divexact, since we know the roots are valid,
@@ -3577,62 +3315,32 @@ static void walk_v(t_level *cur_level, mpz_t start) {
                 if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
                     goto next_sqati;
             }
-#ifdef GATE_STATS
-            ++gs_n_inv;
-            double gs_ts0 = gs_now();
-            bool gs_sqok;
-            test_multi_reset();
-            if (prime_power)
-                gs_sqok = tau_prime_test(Z(wv_r));
-            else
-                gs_sqok = test_multi_append(Z(wv_r), sqi, ti, xi);
-            double gs_ts1 = gs_now();
-            gs_t_sq += gs_ts1 - gs_ts0;
-            if (!gs_sqok) {
-                if (prime_power)
-                    TRACK_BAD(0, sqi);
-                else
-                    TRACK_BAD(0, sqi);
-                goto next_sqati;
-            }
-            if (prime_power)
-                TRACK_GOOD(0, sqi);
-            ++gs_n_sq;
-            bool gs_okp = test_zprimes(need_prime, npc, Z(wv_ati));
-            double gs_ts2 = gs_now();
-            gs_t_prime += gs_ts2 - gs_ts1;
-            if (!gs_okp)
-                goto next_sqati;
-            ++gs_n_prime;
-            bool gs_okm = test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure);
-            gs_t_multi += gs_now() - gs_ts2;
-            if (!gs_okm)
-                goto next_sqati;
-            ++gs_n_multi;
-            goto gs_sq_candidate;
-#endif
 
+            GS_INC(gs_n_inv);
             test_multi_reset();
             /* note: test_multi_append() steals Z(wv_r) */
             if (prime_power) {
-                if (!tau_prime_test(Z(wv_r))) {
+                if (!GS_STAGE(gs_t_sq, tau_prime_test(Z(wv_r)))) {
                     TRACK_BAD(0, sqi);
                     goto next_sqati;
                 } else
                     TRACK_GOOD(0, sqi);
-            } else if (!test_multi_append(Z(wv_r), sqi, ti, xi)) {
+            } else if (!GS_STAGE(gs_t_sq,
+                    test_multi_append(Z(wv_r), sqi, ti, xi))) {
                 TRACK_BAD(0, sqi);
                 goto next_sqati;
             }
+            GS_INC(gs_n_sq);
 
-            if (!test_zprimes(need_prime, npc, Z(wv_ati)))
+            if (!GS_STAGE(gs_t_prime,
+                    test_zprimes(need_prime, npc, Z(wv_ati))))
                 goto next_sqati;
+            GS_INC(gs_n_prime);
             /* TODO: bail and print somewhere here if 'opt_print' */
-            if (!test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure))
+            if (!GS_STAGE(gs_t_multi, test_zmulti(need_other, noc,
+                    Z(wv_ati), t, walk_zv_failure)))
                 goto next_sqati;
-#ifdef GATE_STATS
-          gs_sq_candidate:
-#endif
+            GS_INC(gs_n_multi);
             /* have candidate: calculate and apply it */
             mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
             mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -3676,24 +3384,10 @@ static void walk_v(t_level *cur_level, mpz_t start) {
                 goto next_ati;
         }
 #ifdef VERBOSE
-        gmp_printf("prefilter_pass call=%u ati=%lu\n", g_walkv_call, ati);
+        if (VB(VB_TRACE))
+            gmp_printf("prefilter_pass call=%u ati=%lu\n", g_walkv_call, ati);
 #endif
-#ifdef GATE_STATS
-        ++gs_n_inv;
-        double gs_t0 = gs_now();
-        bool gs_okp = test_primes(need_prime, npc, ati);
-        double gs_t1 = gs_now();
-        gs_t_prime += gs_t1 - gs_t0;
-        if (!gs_okp)
-            goto next_ati;
-        ++gs_n_prime;
-        g_ati = ati;
-        bool gs_okm = test_multi(need_other, noc, ati, t, walk_v_failure);
-        gs_t_multi += gs_now() - gs_t1;
-        if (!gs_okm)
-            goto next_ati;
-        ++gs_n_multi;
-#else
+        GS_INC(gs_n_inv);
 #ifdef DEBUG_ALL
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -3702,13 +3396,15 @@ static void walk_v(t_level *cur_level, mpz_t start) {
         fflush(rfp);
 #endif
         /* note: we have no squares */
-        if (!test_primes(need_prime, npc, ati))
+        if (!GS_STAGE(gs_t_prime, test_primes(need_prime, npc, ati)))
             goto next_ati;
+        GS_INC(gs_n_prime);
         /* TODO: bail and print somewhere here if 'opt_print' */
         g_ati = ati;
-        if (!test_multi(need_other, noc, ati, t, walk_v_failure))
+        if (!GS_STAGE(gs_t_multi,
+                test_multi(need_other, noc, ati, t, walk_v_failure)))
             goto next_ati;
-#endif
+        GS_INC(gs_n_multi);
         /* have candidate: calculate and apply it */
         mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
         mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
@@ -3777,11 +3473,15 @@ static void walk_v_gr(t_level *cur_level, mpz_t start) {
     ++gr_n[L];
 }
 
-#ifndef GATE_STATS
 void walk_v(t_level *cur_level, mpz_t start) {
+#ifdef VERBOSE
+    if (VB(VB_GATE)) {
+        trace_walk_v(cur_level, start, walk_v_gr);
+        return;
+    }
+#endif
     walk_v_gr(cur_level, start);
 }
-#endif
 
 /* the cost per iteration of a walk at level L, from the nearest level
  * with enough samples
@@ -3854,44 +3554,11 @@ static bool gr_walk(t_level *prev_level, ulong p, ulong cap, uint x) {
     return W < gr_recurse(prev_level, p, cap, x);
 }
 
-#ifdef GATE_STATS
-void walk_v(t_level *cur_level, mpz_t start) {
-    char org = gs_origin;
-    gs_origin = 'O';
-    gs_ati = -1;
-    gs_nqc = -1;
-    gs_cause = '?';
-    gs_rm = gs_raq = 0;
-    gs_inv = gs_npc = gs_noc = 0;
-    gs_pbits = gs_obits = 0;
-    gs_n_inv = gs_n_prime = gs_n_multi = 0;
-    gs_t_prime = gs_t_multi = 0;
-    gs_pinv_pred = gs_pprime_pred = 0;
-    gs_sq_iter = gs_n_sq = 0;
-    gs_t_sq = gs_rbits = 0;
-    gs_rc = gs_xi = gs_pp = 0;
-    gs_sq_pinv_pred = 0;
-    gs_tests_pred = 0;
-    double t0 = gs_now();
-    walk_v_gr(cur_level, start);
-    double dt = gs_now() - t0;
-    /* ati == -1: returned before computing a range (empty, or no
-     * minimum yet) */
-    fprintf(gs_file(), "W %u %c %.0f %d %.9f %c %.0f %.0f"
-            " %u %u %u %.1f %.1f %lu %lu %lu %.9f %.9f %.5g %.5g"
-            " %lu %lu %.9f %u %u %u %.1f %.5g %.3f\n",
-            cur_level->level, org, gs_ati, gs_nqc, dt, gs_cause, gs_rm,
-            gs_raq, gs_inv, gs_npc, gs_noc, gs_pbits, gs_obits,
-            gs_n_inv, gs_n_prime, gs_n_multi, gs_t_prime, gs_t_multi,
-            gs_pinv_pred, gs_pprime_pred, gs_sq_iter, gs_n_sq, gs_t_sq,
-            gs_rc, gs_xi, gs_pp, gs_rbits, gs_sq_pinv_pred, gs_tests_pred);
-}
-#endif
-
 /* test the case where v_i has all divisors accounted for */
 void walk_1(t_level *cur_level, uint vi) {
 #ifdef VERBOSE
-    gmp_printf("walk_1 ENTRY vi=%u\n", vi);
+    if (VB(VB_TRACE))
+        gmp_printf("walk_1 ENTRY vi=%u\n", vi);
 #endif
 #ifdef SQONLY
     if (!cur_level->have_square)
@@ -3899,7 +3566,8 @@ void walk_1(t_level *cur_level, uint vi) {
 #endif
     if (!cur_level->have_min) {
 #ifdef VERBOSE
-        gmp_printf("walk_1 EARLY-RETURN !have_min\n");
+        if (VB(VB_TRACE))
+            gmp_printf("walk_1 EARLY-RETURN !have_min\n");
 #endif
         ulong min = minp[cur_level->x - 1];
         if (min)
@@ -3916,14 +3584,16 @@ void walk_1(t_level *cur_level, uint vi) {
 
     if (mpz_cmp(Z(w1_v), zmin) < 0) {
 #ifdef VERBOSE
-        gmp_printf("walk_1 EARLY-RETURN zmin\n");
+        if (VB(VB_TRACE))
+            gmp_printf("walk_1 EARLY-RETURN zmin\n");
 #endif
         return;
     }
     ++countw;
     if (check && !cvec_testv(cx0, Z(w1_v))) {
 #ifdef VERBOSE
-        gmp_printf("walk_1 EARLY-RETURN cvec\n");
+        if (VB(VB_TRACE))
+            gmp_printf("walk_1 EARLY-RETURN cvec\n");
 #endif
         return;
     }
@@ -3934,7 +3604,8 @@ void walk_1(t_level *cur_level, uint vi) {
     mpz_fdiv_r(Z(w1_r), Z(w1_v), cur_level->aq);
     if (mpz_cmp(Z(w1_r), cur_level->rq) != 0) {
 #ifdef VERBOSE
-        gmp_printf("walk_1 EARLY-RETURN mod-mismatch\n");
+        if (VB(VB_TRACE))
+            gmp_printf("walk_1 EARLY-RETURN mod-mismatch\n");
 #endif
         return;
     }
@@ -3956,7 +3627,8 @@ void walk_1(t_level *cur_level, uint vi) {
             mpz_gcd(Z(w1_r), Z(w1_j), ajp->q);
             if (mpz_cmp_ui(Z(w1_r), 1) != 0) {
 #ifdef VERBOSE
-                gmp_printf("walk_1 EARLY-RETURN gcd vj=%u\n", vj);
+                if (VB(VB_TRACE))
+                    gmp_printf("walk_1 EARLY-RETURN gcd vj=%u\n", vj);
 #endif
                 return;
             }
@@ -3965,7 +3637,8 @@ void walk_1(t_level *cur_level, uint vi) {
         if (t[vj] == 1) {
             if (mpz_cmp_ui(Z(w1_j), 1) != 0) {
 #ifdef VERBOSE
-                gmp_printf("walk_1 EARLY-RETURN t1-mismatch vj=%u\n", vj);
+                if (VB(VB_TRACE))
+                    gmp_printf("walk_1 EARLY-RETURN t1-mismatch vj=%u\n", vj);
 #endif
                 return;
             }
@@ -3983,13 +3656,16 @@ void walk_1(t_level *cur_level, uint vi) {
     qsort(need_other, noc, sizeof(uint), &other_comparator);
 #ifdef VERBOSE
     g_walkv_call = ++g_walkv_call_ctr;
-    gmp_printf("walk_1_call id=%u need_prime=[", g_walkv_call);
-    for (uint i = 0; i < npc; ++i)
-        gmp_printf("%s%u", i ? "," : "", need_prime[i]);
-    gmp_printf("] need_other=[");
-    for (uint i = 0; i < noc; ++i)
-        gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i], t[need_other[i]]);
-    gmp_printf("]\n");
+    if (VB(VB_TRACE)) {
+        gmp_printf("walk_1_call id=%u need_prime=[", g_walkv_call);
+        for (uint i = 0; i < npc; ++i)
+            gmp_printf("%s%u", i ? "," : "", need_prime[i]);
+        gmp_printf("] need_other=[");
+        for (uint i = 0; i < noc; ++i)
+            gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i],
+                    t[need_other[i]]);
+        gmp_printf("]\n");
+    }
 #endif
     if (!test_1multi(need_other, noc, t, walk_1_failure))
         return;
@@ -4000,8 +3676,9 @@ void walk_1(t_level *cur_level, uint vi) {
 /* test a set of cases where v_i will have all divisors accounted for:
  * v_i = q_i . p^{x-1} for primes p with plow < p <= phigh.
  */
-#ifdef GATE_STATS
+#ifdef VERBOSE
 #   define walk_1_set walk_1_set_inner
+static
 #endif
 void walk_1_set(
     t_level *prev_level, t_level *cur_level,
@@ -4011,8 +3688,9 @@ void walk_1_set(
     mock_leaf_w1s(prev_level->level);
 #endif
 #ifdef VERBOSE
-    gmp_printf("walk_1_set ENTRY vi=%u plow=%lu phigh=%lu x=%u\n",
-            vi, plow, phigh, x);
+    if (VB(VB_TRACE))
+        gmp_printf("walk_1_set ENTRY vi=%u plow=%lu phigh=%lu x=%u\n",
+                vi, plow, phigh, x);
 #endif
 #ifdef SQONLY
     if (!cur_level->have_square)
@@ -4079,7 +3757,8 @@ void walk_1_set(
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh) {
 #ifdef VERBOSE
-            gmp_printf("walk_1_set EXHAUSTED tried=%lu\n", w1s_tried);
+            if (VB(VB_TRACE))
+                gmp_printf("walk_1_set EXHAUSTED tried=%lu\n", w1s_tried);
 #endif
             break;
         }
@@ -4090,9 +3769,7 @@ void walk_1_set(
 #ifdef VERBOSE
         ++w1s_tried;
 #endif
-#ifdef GATE_STATS
-        ++gs_w1s_primes;
-#endif
+        GS_INC(gs_w1s_primes);
         if (p <= maxused) {
             bool used = 0;
             for (uint li = 1; li <= maxl; ++li)
@@ -4143,39 +3820,26 @@ void walk_1_set(
         mock_w1s_pass(Z(w1_v), t, need_prime, npc, need_other, noc);
         continue;
 #endif
-#ifdef GATE_STATS
-        ++gs_w1_pass;
-        double gs_t0 = gs_now();
-        bool gs_okp = test_1primes(need_prime, npc);
-        double gs_t1 = gs_now();
-        gs_w1_tprime += gs_t1 - gs_t0;
-        if (!gs_okp)
-            goto reject_this_one;
-        oc_t = t;
-        qsort(need_other, noc, sizeof(uint), &other_comparator);
-        bool gs_okm = test_1multi(need_other, noc, t, walk_1_failure);
-        gs_w1_tmulti += gs_now() - gs_t1;
-        if (!gs_okm)
-            goto reject_this_one;
-        if (candidate(Z(w1_v)))
-            return;
-        continue;
-#endif
-        if (!test_1primes(need_prime, npc))
+        GS_INC(gs_w1_pass);
+        if (!GS_STAGE(gs_w1_tprime, test_1primes(need_prime, npc)))
             goto reject_this_one;
         oc_t = t;
         qsort(need_other, noc, sizeof(uint), &other_comparator);
 #ifdef VERBOSE
         g_walkv_call = ++g_walkv_call_ctr;
-        gmp_printf("walk_1_set_call id=%u need_prime=[", g_walkv_call);
-        for (uint i = 0; i < npc; ++i)
-            gmp_printf("%s%u", i ? "," : "", need_prime[i]);
-        gmp_printf("] need_other=[");
-        for (uint i = 0; i < noc; ++i)
-            gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i], t[need_other[i]]);
-        gmp_printf("]\n");
+        if (VB(VB_TRACE)) {
+            gmp_printf("walk_1_set_call id=%u need_prime=[", g_walkv_call);
+            for (uint i = 0; i < npc; ++i)
+                gmp_printf("%s%u", i ? "," : "", need_prime[i]);
+            gmp_printf("] need_other=[");
+            for (uint i = 0; i < noc; ++i)
+                gmp_printf("%s(%u,t=%u)", i ? "," : "", need_other[i],
+                        t[need_other[i]]);
+            gmp_printf("]\n");
+        }
 #endif
-        if (!test_1multi(need_other, noc, t, walk_1_failure))
+        if (!GS_STAGE(gs_w1_tmulti,
+                test_1multi(need_other, noc, t, walk_1_failure)))
             goto reject_this_one;
         if (candidate(Z(w1_v)))
             return;
@@ -4184,20 +3848,17 @@ void walk_1_set(
     }
     return;
 }
-#ifdef GATE_STATS
+#ifdef VERBOSE
 #   undef walk_1_set
 void walk_1_set(
     t_level *prev_level, t_level *cur_level,
     uint vi, ulong plow, ulong phigh, uint x
 ) {
-    ulong primes = gs_w1s_primes;
-    gs_w1_pass = 0;
-    gs_w1_tprime = gs_w1_tmulti = 0;
-    double t0 = gs_now();
-    walk_1_set_inner(prev_level, cur_level, vi, plow, phigh, x);
-    fprintf(gs_file(), "V %u %u %u %lu %lu %.9f %.9f %.9f\n",
-            cur_level->level, vi, x, gs_w1s_primes - primes, gs_w1_pass,
-            gs_w1_tprime, gs_w1_tmulti, gs_now() - t0);
+    if (VB(VB_GATE))
+        trace_walk_1_set(prev_level, cur_level, vi, plow, phigh, x,
+                walk_1_set_inner);
+    else
+        walk_1_set_inner(prev_level, cur_level, vi, plow, phigh, x);
 }
 #endif
 
@@ -4899,8 +4560,8 @@ void walk_midp(t_level *prev_level, bool recover) {
     in_midp = 1;
     cur_level->is_forced = 0;
     midppc = 0;
-#ifdef GATE_STATS
-    double gs_mp_t0 = gs_now();
+#ifdef VERBOSE
+    double gs_mp_t0 = VB(VB_GATE) ? gs_now() : 0;
     gs_mp_tried = 0;
 #endif
     prep_midp(cur_level);
@@ -4973,9 +4634,7 @@ void walk_midp(t_level *prev_level, bool recover) {
                 continue;
             vi = mp->vi;
             x = mp->x;
-#ifdef GATE_STATS
-            ++gs_mp_tried;
-#endif
+            GS_INC(gs_mp_tried);
             if (apply_single(prev_level, cur_level, vi, p, x)) {
                 if (need_work)
                     diag_plain(cur_level);
@@ -4989,9 +4648,10 @@ void walk_midp(t_level *prev_level, bool recover) {
     }
   walk_midp_done:
     in_midp = 0;
-#ifdef GATE_STATS
-    fprintf(gs_file(), "P %u %lu %.9f\n", prev_level->level, gs_mp_tried,
-            gs_now() - gs_mp_t0);
+#ifdef VERBOSE
+    if (VB(VB_GATE))
+        fprintf(gs_file(), "P %u %lu %.9f\n", prev_level->level,
+                gs_mp_tried, gs_now() - gs_mp_t0);
 #endif
 }
 
@@ -5851,15 +5511,11 @@ e_pux prep_unforced_x(
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
     }
     ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
-#ifdef GATE_STATS
-    bool gs_walk = mpz_fits_ulong_p(Z(r_walk))
-        && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p);
-    fprintf(gs_file(), "G %u %u %u %u %lu %u %.6g %u %c\n",
-            (uint)(cur_level - levels), vi, x, ti, p, cap,
-            mpz_get_d(Z(r_walk)), prev_level->have_square,
-            gs_walk ? 'W' : 'R');
-    if (gs_walk)
-        GS_ORIGIN('G');
+#ifdef VERBOSE
+    if (VB(VB_GATE))
+        gs_gate(cur_level - levels, vi, x, ti, p, cap, mpz_get_d(Z(r_walk)),
+                prev_level->have_square, mpz_fits_ulong_p(Z(r_walk))
+                    && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p));
 #endif
     bool do_walk = mpz_fits_ulong_p(Z(r_walk))
             && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p);
@@ -5885,20 +5541,9 @@ e_pux prep_unforced_x(
 #endif
         return PUX_NOTHING_TO_DO;
     }
-#ifdef GATE_STATS
-    {
-        uint lvl = cur_level - levels;
-        if (lvl < GS_MAXLEVEL) {
-            gs_rec_end(lvl);    /* improve_max recompute: restart timing */
-            gs_rec_t0[lvl] = gs_now();
-            gs_rec_np[lvl] = 0;
-            gs_rec_open[lvl] = 1;
-            uint ti = 0;
-            while (ti < GS_NTHR && gs_thr[ti] < p)
-                ++ti;
-            gs_thr_i[lvl] = ti;
-        }
-    }
+#ifdef VERBOSE
+    if (VB(VB_GATE))
+        gs_rec_start(cur_level - levels, p);
 #endif
 #ifdef WALK_FROM
     wf_note(0, 1);
@@ -6328,8 +5973,8 @@ void run_flip_pqsq(uint vi) {
     in_flip = 1;
     flip_vi = vi;
     flip_oldp = oldp;
-#ifdef GATE_STATS
-    double gs_f_t0 = gs_now();
+#ifdef VERBOSE
+    double gs_f_t0 = VB(VB_GATE) ? gs_now() : 0;
     ulong gs_f_w1 = gs_w1s_primes, gs_f_outer = 0, gs_f_ok = 0;
 #endif
     prev_level->x = 0;      /* hide entry from level[] walkers */
@@ -6358,17 +6003,13 @@ void run_flip_pqsq(uint vi) {
             for (uint li = 1; li < level; ++li)
                 if (p == levels[li].p && levels[li].x > 1)
                     goto redo_flip;
-#ifdef GATE_STATS
-        ++gs_f_outer;
-#endif
+        GS_INC(gs_f_outer);
         /* Failure most likely means it does not leave a valid square;
          * we pass the grandparent as prev_level to reflect our notional
          * deallocation of prev_level. */
         if (!apply_single(anc_level, cur_level, vi, p, xl))
             continue;
-#ifdef GATE_STATS
-        ++gs_f_ok;
-#endif
+        GS_INC(gs_f_ok);
         ap = &vp->alloc[cur_vlevel[vi] - 1];
         if (need_work)
             diag_plain(cur_level);
@@ -6390,9 +6031,11 @@ void run_flip_pqsq(uint vi) {
     prev_level->x = xs;
     ++cur_vlevel[vi];
     in_flip = 0;
-#ifdef GATE_STATS
-    fprintf(gs_file(), "F %u %lu %lu %lu %lu %.9f\n", level, oldp, gs_f_outer,
-            gs_f_ok, gs_w1s_primes - gs_f_w1, gs_now() - gs_f_t0);
+#ifdef VERBOSE
+    if (VB(VB_GATE))
+        fprintf(gs_file(), "F %u %lu %lu %lu %lu %.9f\n", level, oldp,
+                gs_f_outer, gs_f_ok, gs_w1s_primes - gs_f_w1,
+                gs_now() - gs_f_t0);
 #endif
 }
 
@@ -6481,17 +6124,16 @@ void recurse(e_is jump_continue) {
                     fail("panic: unknown best_v() result %u (k=%u)", vi, k);
                   case BV_6X - BV_SPECIAL:
                     /* ready for a walk */
-#ifdef GATE_STATS
-                  {
-                    double gs_t0 = gs_now();
-                    uint gs_vl = cur_vlevel[cur_level->vi];
-                    walk_6x(cur_level->vi);
-                    fprintf(gs_file(), "X %u %u %.9f\n", level, gs_vl,
-                            gs_now() - gs_t0);
-                  }
-#else
-                    walk_6x(cur_level->vi);
+#ifdef VERBOSE
+                    if (VB(VB_GATE)) {
+                        double gs_t0 = gs_now();
+                        uint gs_vl = cur_vlevel[cur_level->vi];
+                        walk_6x(cur_level->vi);
+                        fprintf(gs_file(), "X %u %u %.9f\n", level, gs_vl,
+                                gs_now() - gs_t0);
+                    } else
 #endif
+                    walk_6x(cur_level->vi);
                     goto derecurse;
                   case BV_NEXTX - BV_SPECIAL:
                     /* nothing left to do for this x */
@@ -6528,8 +6170,9 @@ void recurse(e_is jump_continue) {
             goto have_unforced_x;
         }
       continue_unforced_x:
-#ifdef GATE_STATS
-        gs_rec_end(level);
+#ifdef VERBOSE
+        if (VB(VB_GATE))
+            gs_rec_end(level);
 #endif
         ++cur_level->di;
       have_unforced_x:
@@ -6626,16 +6269,9 @@ void recurse(e_is jump_continue) {
                 goto continue_unforced_x;
             }
 #endif
-#ifdef GATE_STATS
-            if (level < GS_MAXLEVEL && gs_rec_open[level]) {
-                ++gs_rec_np[level];
-                while (gs_thr_i[level] < GS_NTHR
-                        && p > gs_thr[gs_thr_i[level]]) {
-                    fprintf(gs_file(), "C %u %lu %.6f\n", level,
-                            gs_thr[gs_thr_i[level]], gs_rel());
-                    ++gs_thr_i[level];
-                }
-            }
+#ifdef VERBOSE
+            if (VB(VB_GATE))
+                gs_rec_prime(level, p);
 #endif
             if (p <= prev_level->maxp)
                 for (uint li = 1; li < level; ++li)
@@ -6657,281 +6293,6 @@ void recurse(e_is jump_continue) {
         }
     }
 }
-
-#ifdef MULTIBENCH
-/* Calibration benchmark for test_multi(), the costliest stage of a walk
- * (make MULTIBENCH=1; see calibration notes). With MULTIBENCH set to
- * "bits,t,count,F[,seed[,e]]" in the environment, pcoul initialises as usual
- * for its n and k, then feeds test_multi_append() (tau_multi_prep())
- * count random integers of the given bits, coprime to every prime <= F
- * (as the v_i / q_i a walk tests are coprime to the forced primes), with
- * target tau t and exponent multiplier e (default 1; the root of a fixed
- * power v = q.r^g is tested with e = g), runs test_multi_run() on those
- * prep leaves undecided, and reports the outcome fractions and mean
- * times. "prime,bits,count,F" instead measures a prime test on one
- * value (as for a need_prime position or a fixed power's root), and
- * "scan,bits,count,t" the cost of tests that fail at a trial prime, and
- * "ladder,bits,count,F[,alpha]" the factoring ladder and "qs,bits,count"
- * QS alone (mb_ladder(), mb_qs() in coultau.c). The
- * walk loops' own costs are fitted from GATE_STATS runs instead (see
- * multibench-table), since a synthetic loop misses too much of them.
- */
-static inline double mb_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
-}
-/* random integer of the given bits coprime to every prime <= F */
-static void mb_random(mpz_t m, gmp_randstate_t rs, uint bits, uint F) {
-    static mpz_t prim, g;
-    static uint primF = 0;
-    if (primF != F) {
-        if (!primF) {
-            mpz_init(prim);
-            mpz_init(g);
-        }
-        mpz_primorial_ui(prim, F);
-        primF = F;
-    }
-    do {
-        mpz_urandomb(m, rs, bits - 1);
-        mpz_setbit(m, bits - 1);
-        mpz_gcd(g, prim, m);
-    } while (mpz_cmp_ui(g, 1) != 0);
-}
-
-/* "prime,bits,count,F": test_primes() on a single value, as for a
- * need_prime position ("P bits F pass us"), and the plain primality test
- * that tau_multi_prep() makes when only a prime is left to find, on the
- * same inputs and on composites with no factor up to 47 ("R bits us us") */
-static volatile ulong mb_sink;
-
-static void mb_prime(char *spec) {
-    uint bits, count, F;
-    if (sscanf(spec, "%u,%u,%u", &bits, &count, &F) != 3)
-        fail("MULTIBENCH: expected prime,bits,count,F");
-    gmp_randstate_t rs;
-    gmp_randinit_default(rs);
-    gmp_randseed_ui(rs, 2654435761UL + bits);
-    mpz_t m;
-    mpz_init(m);
-    ulong npass = 0;
-    double tt = 0, tr = 0;
-    for (uint i = 0; i < count; ++i) {
-        mb_random(m, rs, bits, F);
-        double t0 = mb_now();
-        mb_sink ^= _GMP_is_prob_prime(m);
-        tr += mb_now() - t0;
-        test_multi_reset();
-        t0 = mb_now();
-        bool ok = test_prime_append(m, 0) && test_prime_run() == 0;
-        tt += mb_now() - t0;
-        if (ok)
-            ++npass;
-    }
-    printf("P %u %u %.5f %.4f\n", bits, F, (double)npass / count,
-            1e6 * tt / count);
-    /* and on composites with no small factor */
-    double tc = 0;
-    uint nc = 0;
-    while (nc < count / 4) {
-        mb_random(m, rs, bits, 47);
-        if (mpz_probab_prime_p(m, 1))
-            continue;
-        double t0 = mb_now();
-        mb_sink ^= _GMP_is_prob_prime(m);
-        tc += mb_now() - t0;
-        ++nc;
-    }
-    printf("R %u %.4f %.4f\n", bits, 1e6 * tr / count, 1e6 * tc / nc);
-    mpz_clear(m);
-    gmp_randclear(rs);
-}
-
-static int mb_dcmp(const void *a, const void *b) {
-    double x = *(const double *)a, y = *(const double *)b;
-    return (x > y) - (x < y);
-}
-
-/* the mean of the lowest 95% of count times, discarding outliers such as
- * interrupted measurements */
-static double mb_trimmed(double *v, uint count) {
-    qsort(v, count, sizeof(double), mb_dcmp);
-    uint keep = count - count / 20;
-    double sum = 0;
-    for (uint i = 0; i < keep; ++i)
-        sum += v[i];
-    return sum / keep;
-}
-
-/* "scan,bits,count,t[,t2]": the cost of tests that fail at a trial prime
- * p, for a range of p: test_multi() prep for tau t of a value whose first
- * factor is p^a with a + 1 not dividing t, and a prime test of a value
- * whose first factor is p; with t2, also the extra cost to prep for tau
- * t2 of finding a factor p that does not end it (with batched trial
- * division, a linear scan of its band up to p), relative to finding one
- * at the first trial prime; one line "S bits p prep_us
- * prime_us [extra_us]" per p, up to the trial division limit, and then
- * "L bits p" giving that limit (the last p for which prep still finds the
- * factor) */
-static void mb_scan(char *spec) {
-    uint bits, count, t, t2 = 0;
-    if (sscanf(spec, "%u,%u,%u,%u", &bits, &count, &t, &t2) < 3)
-        fail("MULTIBENCH: expected scan,bits,count,t[,t2]");
-    if (t2 && (t2 & 1 || t2 < 6))
-        fail("MULTIBENCH: scan needs even t2 >= 6");
-    uint a = 1;
-    while (t % (a + 1) == 0)
-        ++a;
-    /* including both ends of each band of MPUG_054's batched trial
-     * division, within which the cost rises linearly */
-    static const uint target[] = {
-        3, 5, 7, 11, 13, 17, 23, 31, 47, 101, 211, 503, 997, 1009, 2003,
-        3989, 4001, 8009, 15991, 16001, 24001, 31991, 32003, 48017, 63997,
-        64007
-    };
-    gmp_randstate_t rs;
-    gmp_randinit_default(rs);
-    gmp_randseed_ui(rs, 31337 + bits);
-    mpz_t m;
-    mpz_init(m);
-    uint last = 0;
-    double *tms = malloc(count * sizeof(double));
-    double *tps = malloc(count * sizeof(double));
-    double *txs = malloc(count * sizeof(double));
-    /* the base for extra: a factor at the first trial prime, which costs
-     * no extra scanning, and leaves the same work to follow */
-    double base = 0;
-    /* warm up: the first tests pay one-off setup */
-    for (uint i = 0; i < 100; ++i) {
-        mb_random(m, rs, bits, 3);
-        test_multi_reset();
-        test_multi_append(m, 0, t, 1);
-    }
-    for (uint ti = 0; ti < sizeof(target) / sizeof(target[0]); ++ti) {
-        uint p = target[ti];
-        uint pb = (uint)ceil(a * log2(p));
-        for (uint i = 0; i < count; ++i) {
-            /* p^a times a cofactor with no factor up to p */
-            mb_random(m, rs, bits > pb + 16 ? bits - pb : 16, p);
-            for (uint j = 0; j < a; ++j)
-                mpz_mul_ui(m, m, p);
-            test_multi_reset();
-            double t0 = mb_now();
-            bool ok = test_multi_append(m, 0, t, 1);
-            tms[i] = mb_now() - t0;
-            if (ok)
-                goto done;
-            mb_random(m, rs, bits > pb + 16 ? bits - (uint)log2(p) : 16, p);
-            mpz_mul_ui(m, m, p);
-            test_multi_reset();
-            t0 = mb_now();
-            ok = test_prime_append(m, 0) && test_prime_run() == 0;
-            tps[i] = mb_now() - t0;
-            if (t2) {
-                /* p times a cofactor with no factor up to the largest
-                 * limit: prep finds p, continues, and fails or passes as
-                 * for the base */
-                mb_random(m, rs, bits > (uint)log2(p) + 16
-                        ? bits - (uint)log2(p) : 16, 64007);
-                mpz_mul_ui(m, m, p);
-                test_multi_reset();
-                t0 = mb_now();
-                test_multi_append(m, 0, t2, 1);
-                txs[i] = mb_now() - t0;
-            }
-        }
-        printf("S %u %u %.4f %.4f", bits, p, 1e6 * mb_trimmed(tms, count),
-                1e6 * mb_trimmed(tps, count));
-        if (t2) {
-            double tx = mb_trimmed(txs, count);
-            if (ti == 0)
-                base = tx;
-            printf(" %.4f", 1e6 * (tx - base));
-        }
-        printf("\n");
-        last = p;
-    }
-  done:
-    printf("L %u %u\n", bits, last);
-    free(tms);
-    free(tps);
-    free(txs);
-    mpz_clear(m);
-    gmp_randclear(rs);
-}
-
-void multibench(char *spec) {
-    /* start clean after any progress line */
-    printf("\n");
-    if (strncmp(spec, "prime,", 6) == 0)
-        return mb_prime(spec + 6);
-    if (strncmp(spec, "scan,", 5) == 0)
-        return mb_scan(spec + 5);
-    if (strncmp(spec, "ladder,", 7) == 0) {
-        extern void mb_ladder(uint bits, uint count, uint F, double alpha);
-        uint bits, count, F;
-        double alpha = 0;
-        if (sscanf(spec + 7, "%u,%u,%u,%lf", &bits, &count, &F, &alpha) < 3)
-            fail("MULTIBENCH: expected ladder,bits,count,F[,alpha]");
-        return mb_ladder(bits, count, F, alpha);
-    }
-    if (strncmp(spec, "qs,", 3) == 0) {
-        extern void mb_qs(uint bits, uint count);
-        uint bits, count;
-        if (sscanf(spec + 3, "%u,%u", &bits, &count) != 2)
-            fail("MULTIBENCH: expected qs,bits,count");
-        return mb_qs(bits, count);
-    }
-    uint bits, t, count, F, e = 1;
-    ulong seed = 1;
-    if (sscanf(spec, "%u,%u,%u,%u,%lu,%u", &bits, &t, &count, &F, &seed, &e) < 4)
-        fail("MULTIBENCH: expected bits,t,count,F[,seed[,e]]");
-    if (t == 0 || n % t)
-        fail("MULTIBENCH: t=%u does not divide n=%u", t, n);
-    gmp_randstate_t rs;
-    gmp_randinit_default(rs);
-    gmp_randseed_ui(rs, seed * 2654435761UL + 1);
-    mpz_t m;
-    mpz_init(m);
-    ulong nfail = 0, ndecided = 0, npending = 0, npass = 0;
-    double tprep_fail = 0, tprep_ok = 0, trun = 0;
-    for (uint i = 0; i < count; ++i) {
-        mb_random(m, rs, bits, F);
-        test_multi_reset();
-        double t0 = mb_now();
-        bool ok = test_multi_append(m, 0, t, e);
-        double t1 = mb_now();
-        if (!ok) {
-            ++nfail;
-            tprep_fail += t1 - t0;
-            continue;
-        }
-        tprep_ok += t1 - t0;
-        if (taum[0].state == 0) {
-            ++ndecided;
-            continue;
-        }
-        ++npending;
-        uint remain = test_multi_run(NULL);
-        trun += mb_now() - t1;
-        if (remain == 0)
-            ++npass;
-    }
-    printf("MULTIBENCH n=%u bits=%u t=%u e=%u F=%u count=%u: fail %.4f decided %.4f"
-            " pending %.4f (pass %.4f); prep %.3fus (fail %.3fus, ok %.3fus);"
-            " run %.3fus per pending\n",
-            n, bits, t, e, F, count, (double)nfail / count,
-            (double)ndecided / count, (double)npending / count,
-            npending ? (double)npass / npending : 0,
-            1e6 * (tprep_fail + tprep_ok) / count,
-            nfail ? 1e6 * tprep_fail / nfail : 0,
-            (count - nfail) ? 1e6 * tprep_ok / (count - nfail) : 0,
-            npending ? 1e6 * trun / npending : 0);
-    mpz_clear(m);
-    gmp_randclear(rs);
-}
-#endif
 
 int main(int argc, char **argv, char **envp) {
     int i = 1;
@@ -7056,6 +6417,13 @@ int main(int argc, char **argv, char **envp) {
                 debugC = 1;
                 debugc = 1;
                 break;
+              case 'v':
+#ifdef VERBOSE
+                verbose = strtoul(&arg[3], NULL, 10);
+                break;
+#else
+                fail("-dv needs a VERBOSE build");
+#endif
               case 'm':
                 debugm = 1;
               case 'l':
@@ -7147,7 +6515,7 @@ int main(int argc, char **argv, char **envp) {
 #ifdef MOCK_WALK
     mock_init();
 #endif
-#ifdef MULTIBENCH
+#ifdef VERBOSE
     if (getenv("MULTIBENCH")) {
         multibench(getenv("MULTIBENCH"));
         return 0;

@@ -73,7 +73,7 @@ the leaf stubs (~5%) and striding (~3%). Mock runs vary ~4% run to run
 ### The cost table (multibench-table)
 
 One table per machine, MPUGMP build and n (`-f<flake>` for runs using
--o). Rows: C (per-operation constants fitted from GATE_STATS runs and
+-o). Rows: C (per-operation constants fitted from -dv6 runs and
 paired mock runs), S/L (trial division by size and prime), P/R (prime
 tests), test_multi() rows by t, e and size, G (the ladder per rung:
 reach, cost, hit rate, factor size, cofactor primality), Q (QS alone
@@ -109,11 +109,15 @@ beat the best gain tried within a few %, with no tuning; the user's
 
 ### Instrumentation
 
-- GATE_STATS: one record per gate decision, recursion subtree, walk,
-  walk_1_set(), flip and midp phase (see coul.c). Its clock reads
-  inflate walks (~10% on D(48,10)); use it for structure and ratios,
-  not absolute walk times.
-- MULTIBENCH: the benches behind the cost table (see multibench-table).
+A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
+(trace.h): 1 the trace, 2 the records, 4 stage timing.
+
+- -dv2: one record per gate decision, recursion subtree, walk,
+  walk_1_set(), flip and midp phase (trace.c). With -dv6 its clock
+  reads inflate walks (~10% on D(48,10)); use it for structure and
+  ratios, not absolute walk times.
+- $MULTIBENCH: the benches behind the cost table (bench.c, see
+  multibench-table).
 - WALK_FROM / WALK_FROM_CHECK (experimental): once a child of a loop
   walks, later children walk without the gate; the check mode found
   the gate monotone within a loop apart from flips.
