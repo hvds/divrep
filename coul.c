@@ -813,6 +813,20 @@ void diag_plain(t_level *cur_level) {
     diag_any(cur_level, 1);
 }
 
+/* Show progress with p^{x-1} at v_i, not (or no longer) applied: an
+ * allocation about to be tried, or one that failed. On recovery it is
+ * tried again, and may legitimately fail again.
+ */
+void diag_attempt(t_level *cur_level, uint vi, ulong p, uint x) {
+    uint vil = cur_vlevel[vi];
+    t_allocation *ap = &value[vi].alloc[vil];
+    ap->p = p;
+    ap->x = x;
+    ++cur_vlevel[vi];
+    diag_plain(cur_level);
+    --cur_vlevel[vi];
+}
+
 void diag_walk_v(t_level *cur_level, ulong ati, ulong end) {
     aux_sprintf(": %lu / %lu", ati, end);
     diag_any(cur_level, !(debugw && !debugW && ati));
@@ -3413,15 +3427,8 @@ void walk_1_set(
         /* Must diag before need_mod checks, which can reject a high
          * proportion of primes.
          */
-        if (need_work) {
-            /* temporarily make this prime power visible */
-            t_allocation *a2ip = &vip->alloc[vil];
-            a2ip->p = p;
-            a2ip->x = x;
-            ++cur_vlevel[vi];
-            diag_plain(cur_level);
-            --cur_vlevel[vi];
-        }
+        if (need_work)
+            diag_attempt(cur_level, vi, p, x);
         mpz_ui_pow_ui(Z(w1_v), p, x - 1);
         if (need_mod) {
             /* TODO: think about a more efficient approach when the modulus
@@ -5756,7 +5763,7 @@ void recurse(e_is jump_continue) {
                 prev_level, cur_level, cur_level->vi, p, cur_level->x
             )) {
                 if (need_work)
-                    diag_plain(cur_level);
+                    diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
                 /* not redo_unforced, we may have improved zmax */
                 goto continue_unforced;
             }

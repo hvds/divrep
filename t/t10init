@@ -314,6 +314,24 @@ if (1) {
 }
 
 if (1) {
+    # Progress may show an allocation that failed to apply (here 79^2 at
+    # v_2, given the candidates so far). Recovery should retry it and move
+    # on, not restart the loop.
+    local $type = Type->new('o');
+    expect_diag(q{progress shows a failed apply}, 488,
+        [qw{ -x1e12 24 5 }],
+        'b0: 2^5.3 5^2 2.79^2 3.7^2 2^2',
+    );
+    expect_recover(q{recover a failed apply, continuing the loop},
+        [qw{ -x1e12 24 5 }],
+        ['202 Candidate 4926769824 (0.00s)',
+         '202 Candidate 1048792224 (0.00s)',
+         '305 b0: 2^5.3 5^2 2.79^2 3.7^2 2^2 (0.00s)'],
+        'b0: 2^5.3 5^2 2.83^2 3.7^2 2^2',
+    );
+}
+
+if (1) {
     # A -I pattern or manually-constructed recovery line may indicate
     # that we've just allocated a complete batch, with no further progress.
     local $type = Type->new('o');
