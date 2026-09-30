@@ -3736,13 +3736,13 @@ static void walk_v(t_level *cur_level, mpz_t start) {
 /* -gr1: the gate decides whether to walk a node or recurse over its
  * next allocation by estimated cost rather than by gain, for nodes with
  * no fixed square, looking one level ahead. Walking now costs GR_SETUP
- * plus its Z/aq iterations at the cost per iteration learnt for its
- * level; recursing costs GR_APPLY per prime p tried, plus the walks of
- * the children as if every one walks: Z/(aq.p^{x-1}) iterations, or if
- * that is below 1, one iteration with that chance, the sums over primes
- * in closed form. At the leaf recursion that estimate is right
- * (actual/estimated 0.84-1.07 on D(96,8), D(48,10)); higher up it
- * overestimates recursion, but walking is dearer still there.
+ * plus its Z/aq iterations (Z = zmax - zmin) at the cost per iteration
+ * learnt for its level; recursing costs GR_APPLY per prime p tried, plus
+ * the walks of the children as if every one walks: Z/(aq.p^{x-1})
+ * iterations, or if that is below 1, one iteration with that chance, the
+ * sums over primes in closed form. At the leaf recursion that estimate
+ * is right (actual/estimated 0.84-1.07 on D(96,8), D(48,10)); higher up
+ * it overestimates recursion, but walking is dearer still there.
  * The cost per iteration is learnt per level from 1 in GR_SAMPLE of the
  * walks made, by thread CPU time (and in the mocks, what they model).
  */
@@ -3760,6 +3760,14 @@ static inline double gr_now(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
+/* the iterations of a linear walk at the node lv: the range walked
+ * over its modulus (the gain gate's r_walk has zmax alone without
+ * LARGE_MIN, but the walk covers zmin..zmax either way)
+ */
+static inline double gr_iters(t_level *lv) {
+    return (mpz_get_d(zmax) - mpz_get_d(zmin)) / mpz_get_d(lv->aq);
+}
+
 static void walk_v_gr(t_level *cur_level, mpz_t start) {
     static uint ctr = 0;
     uint L = cur_level->level;
@@ -3768,7 +3776,7 @@ static void walk_v_gr(t_level *cur_level, mpz_t start) {
         walk_v_inner(cur_level, start);
         return;
     }
-    double za = mpz_get_d(zmax) / mpz_get_d(cur_level->aq);
+    double za = gr_iters(cur_level);
     double m0 = g_mock_spent_s, o0 = g_mock_overhead_s;
     double t0 = gr_now();
     walk_v_inner(cur_level, start);
@@ -3829,7 +3837,7 @@ static double gr_psum(double lo, double hi, double s) {
  */
 static double gr_recurse(t_level *prev_level, ulong p, ulong cap, uint x) {
     uint L = prev_level->level;
-    double za = mpz_get_d(zmax) / mpz_get_d(prev_level->aq);
+    double za = gr_iters(prev_level);
     double ci = gr_cit(L + 1);
     double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
     double np = gr_li(b) - gr_li(a) + 1;
@@ -3848,7 +3856,7 @@ static bool gr_walk(t_level *prev_level, ulong p, ulong cap, uint x) {
     if (cap < p)
         return 0;
     uint L = prev_level->level;
-    double za = mpz_get_d(zmax) / mpz_get_d(prev_level->aq);
+    double za = gr_iters(prev_level);
     double W = GR_SETUP + gr_cit(L) * za;
     /* quick answer when the walk costs less than trying the primes */
     if (W < (gr_li(cap) - gr_li(p) + 1) * GR_APPLY)
@@ -5130,6 +5138,7 @@ bool apply_batch(
     }
     return 1;
 }
+
 
 #ifdef GATE_STATS
 /* B/BP records: the batch-level inputs of the per-batch cost estimator.
