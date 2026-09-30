@@ -48,7 +48,7 @@ typedef struct s_level {
     bool unsorted;  /* this level is not where best_v() would put it */
     uint choice_strategy;   /* the strategy in force when vi was chosen */
     ulong walk_from;    /* WALK_FROM: children of this loop walk from p */
-    double cg_t0, cg_rest;  /* COST_GATE: start time, estimated cost */
+    double cg_t0, cg_rest, cg_rW;   /* COST_GATE: start, estimates */
     double cg_lW, cg_lR, cg_lt0;    /* COST_GATE logging */
     ulong cg_lseq;
     uint vi;        /* allocation of p^x into v_i */
