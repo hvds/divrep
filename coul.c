@@ -5356,33 +5356,33 @@ typedef enum {
     PUX_DO_THIS_X
 } e_pux;
 
-/* Prepare to allocate p^{x-1} at v_i for a range of p. The p value passed
- * in is 0 for a fresh start, the last prime done when recalculating after
- * an improved maximum, or the prime that was in progress on recovery.
- *
- * Returns:
- *   PUX_NOTHING_TO_DO if nothing more to do at this level for any x;
- *   PUX_SKIP_THIS_X if nothing more to do for this x;
- *   PUX_DO_THIS_X if prepped for this x with work to do.
+/* The outcomes of x_range() */
+typedef enum {
+    XR_WALK = 0,    /* no p: the node must be walked */
+    XR_SKIP,        /* nothing to do for this x */
+    XR_FLIP,        /* nothing to do for this x, and the rest of the loop
+                     * above is best done by run_flip_pqsq() */
+    XR_WALK1,       /* the range is for walk_1_set(): v_i is then complete */
+    XR_RANGE        /* the range is for a loop of allocations */
+} e_xr;
+
+/* Find the primes p for which to allocate p^{x-1} at v_i below prev_level:
+ * those with *pp < p <= *limpp. On entry *pp is 0 for a fresh start (we
+ * choose the cursor), else the cursor (or a recovered p, in progress).
+ * This has no side effects, so can also be used to cost the choices.
  */
-e_pux prep_unforced_x(
-    t_level *prev_level, t_level *cur_level, ulong p, bool forced
+e_xr x_range(
+    t_level *prev_level, t_level *cur_level, uint vi, uint x,
+    ulong *pp, ulong *limpp
 ) {
-    uint ti = cur_level->ti;
-    uint x = divisors[ti].div[cur_level->di];
-    uint vi = cur_level->vi;
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
-    ulong limp = 0;
-    /* if part of an init_pattern, we don't care about the checks,
-     * we will never continue from this allocation */
-    if (forced)
-        goto force_unforced;
+    uint ti = ap->t;
+    uint nextt = ti / x;
+    ulong p = *pp;
 
     /* pick up any previous unforced x */
-    uint nextt = ti / x;
-    bool fresh = (p == 0);
     if (p == 0) {
         uint prevx = (ap->p > maxforce[vi]
 #ifdef TYPE_a
@@ -5399,32 +5399,23 @@ e_pux prep_unforced_x(
             if (x == prevx)
                 p = ap->p;      /* skip smaller p, we already did the reverse */
             else if (x < prevx && divisors[x].high == divisors[prevx].high)
-                return PUX_SKIP_THIS_X; /* we already did the reverse */
+                return XR_SKIP; /* we already did the reverse */
             else if (x > nextt && divisors[x].high == divisors[nextt].high)
                 /* skip this x, we already did any possible continuation in
                  * reverse. */
-                return PUX_SKIP_THIS_X;
+                return XR_SKIP;
             else
                 p = maxforce[vi];
         }
     } /* else we're continuing from known p */
+    *pp = p;
 
     /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > zmax + i */
-    limp = limit_p(cur_level, vi, x, nextt);
-    if (limp == 0) {
-        /* force walk */
-#ifdef WALK_FROM
-        wf_note(1, 0);
-#endif
-        GS_ORIGIN('F');
-#ifdef SQONLY
-        if (prev_level->have_square)
-            walk_v(prev_level, Z(zero));
-#else
-        walk_v(prev_level, Z(zero));
-#endif
-        return PUX_NOTHING_TO_DO;
-    } else if (limp < p) {
+    ulong limp = limit_p(cur_level, vi, x, nextt);
+    *limpp = limp;
+    if (limp == 0)
+        return XR_WALK;
+    if (limp < p) {
         if (nextt == 2 && prev_level->vi == vi) {
             uint prevx = (ap->p > maxforce[vi]
 #ifdef TYPE_a
@@ -5437,32 +5428,80 @@ e_pux prep_unforced_x(
              * the remainder, splitting as (2p, p) rather than (p, 2p).
              */
             if (x == prevx)
-                return PUX_FLIP_PQSQ;
+                return XR_FLIP;
         }
-        return PUX_SKIP_THIS_X; /* nothing to do here */
+        return XR_SKIP; /* nothing to do here */
     }
-    /* TODO: rather than diverting odd-prime-tau positions to a walk under
-     * need_maxp, consider handling them always via walk_1_set(), as the
-     * uncapped search does. That would mean not applying the maxp cap in
-     * limit_p() when nextt == 1 with t prime (so walk_1_set() covers every p
-     * itself, even under -W/-p), and removing the "skip prime powers when
-     * capped" checks from best_v0() .. best_v4() and best_fixed();
-     * prep_midp() skip would remain valid, and capped and uncapped runs
-     * would then choose positions identically. Correctness should be
-     * unaffected, but performance would change in both directions:
-     * walk_1_set() does a CRT check for every prime up to (zmax/q)^{1/(t-1)},
-     * while a square walk visits only the rc residue classes mod qq.
-     * Note also that the nextt == 1 path in prep_unforced_x() is taken
-     * before the gate, so walk_1_set() is never weighed against a walk.
-     * Ideally the cost model would make that choice, as the gate does
-     * for walk vs recurse.
-     * This probably needs more progress on calibration before we consider it.
-     */
-    if (nextt == 1) {
+    return (nextt == 1) ? XR_WALK1 : XR_RANGE;
+}
+
+/* Prepare to allocate p^{x-1} at v_i for a range of p. p is 0 for a
+ * fresh start (we choose the cursor), the cursor (the last p done) when
+ * recalculating after an improved maximum, or a recovered p, the one in
+ * progress when the recovery line was written.
+ *
+ * Returns:
+ *   PUX_NOTHING_TO_DO if nothing more to do at this level for any x;
+ *   PUX_SKIP_THIS_X if nothing more to do for this x;
+ *   PUX_DO_THIS_X if prepped for this x with work to do.
+ */
+e_pux prep_unforced_x(
+    t_level *prev_level, t_level *cur_level, ulong p, bool forced
+) {
+    uint ti = cur_level->ti;
+    uint x = divisors[ti].div[cur_level->di];
+    uint vi = cur_level->vi;
+    ulong limp = 0;
+    /* if part of an init_pattern, we don't care about the checks,
+     * we will never continue from this allocation */
+    if (forced)
+        goto force_unforced;
+
+    bool fresh = (p == 0);
+    switch (x_range(prev_level, cur_level, vi, x, &p, &limp)) {
+      case XR_WALK:
+        /* force walk */
+#ifdef WALK_FROM
+        wf_note(1, 0);
+#endif
+        GS_ORIGIN('F');
+#ifdef SQONLY
+        if (prev_level->have_square)
+            walk_v(prev_level, Z(zero));
+#else
+        walk_v(prev_level, Z(zero));
+#endif
+        return PUX_NOTHING_TO_DO;
+      case XR_SKIP:
+        return PUX_SKIP_THIS_X;
+      case XR_FLIP:
+        return PUX_FLIP_PQSQ;
+      case XR_WALK1:
+        /* TODO: rather than diverting odd-prime-tau positions to a walk
+         * under need_maxp, consider handling them always via walk_1_set(),
+         * as the uncapped search does. That would mean not applying the
+         * maxp cap in limit_p() when nextt == 1 with t prime (so
+         * walk_1_set() covers every p itself, even under -W/-p), and
+         * removing the "skip prime powers when capped" checks from
+         * best_v0() .. best_v4() and best_fixed(); prep_midp() skip would
+         * remain valid, and capped and uncapped runs would then choose
+         * positions identically. Correctness should be unaffected, but
+         * performance would change in both directions: walk_1_set() does
+         * a CRT check for every prime up to (zmax/q)^{1/(t-1)}, while a
+         * square walk visits only the rc residue classes mod qq.
+         * Note also that this path is taken before the gate, so
+         * walk_1_set() is never weighed against a walk. Ideally the cost
+         * model would make that choice, as the gate does for walk vs
+         * recurse.
+         * This probably needs more progress on calibration before we
+         * consider it.
+         */
         cur_level->have_min = prev_level->have_min;
         /* a recovered p is the one in progress, so still to try */
         walk_1_set(prev_level, cur_level, vi, fresh ? p : p - 1, limp, x);
         return PUX_SKIP_THIS_X;
+      case XR_RANGE:
+        break;
     }
 
     /* apply gain heuristics to decide whether to walk or recurse */
