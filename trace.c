@@ -59,6 +59,14 @@
  *   P lvl tried dt
  *       one per walk_midp() call (-W): (p, vi, x) combinations tried and
  *       wall time of the whole midp phase for the batch at lvl
+ *   J lvl strategy W sv sT best bT neval nblind level
+ *       (with -dv8 and -ja, to the same file) one per choice of position
+ *       at a node without a fixed square (see ja_choose()): the cost W
+ *       (us) of walking the node, the strategy's choice sv and its cost
+ *       sT (-1 if outside the model, when the choice stands), the choice
+ *       by cost best (-1 to walk) and its cost bT, the positions costed
+ *       and those outside the model, and the -ja level: only at -ja2 is
+ *       the choice made
  * The stage timing adds two clock_gettime() calls per inverse-filter
  * pass, inflating test_primes() time slightly; the log for a busy run
  * can reach GB, so use short runs or single -I/-b batches.

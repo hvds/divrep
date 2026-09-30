@@ -104,7 +104,7 @@ The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
       [-g<damp:gain>] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
-      [-j<strategy>] [-ja1] <n> <k>
+      [-j<strategy>] [-ja<level>] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
 you will usually invoke it as "pcoul" or as "pcoul.exe".
@@ -226,6 +226,15 @@ level with every resulting case walked, using the cost of a walk per
 iteration learnt during the run. The gain then applies only where a
 square is fixed, or where a flip may follow (tau 2q^2 for an odd prime
 q).
+"-ja2" also chooses the next position to which to allocate by
+estimated cost, instead of by the strategy, wherever no square is
+fixed: walking now is weighed against recursing over each eligible
+position, with every resulting case walked. The strategy remains the
+choice where the costs cannot be estimated (when a power allocated
+would leave a square, or a flip may follow), and is not supported with
+"-js" or "-j4". Since the choices then depend on costs learnt during
+the run, progress lines (315) mark each position chosen against the
+strategy, so that recovery can reproduce it.
 
 If "-I..." is specified, the argument should be a pattern of the same
 form as that generated for progress lines. All prime powers specified

@@ -9,6 +9,8 @@
  *                 file named by $GATE_STATS (see trace.c)
  *   VB_STAGE   4: with VB_GATE, the time inside each test stage of the
  *                 walks (two clock reads per candidate tested)
+ *   VB_CHOICE  8: with -ja, a J record of each choice of position by
+ *                 estimated cost, to the same file (see ja_choose())
  * The same build also runs the benches ($MULTIBENCH, see bench.c).
  */
 
@@ -21,6 +23,7 @@ extern uint verbose;
 #   define VB_TRACE 1
 #   define VB_GATE 2
 #   define VB_STAGE 4
+#   define VB_CHOICE 8
 #   define VB(bits) (verbose & (bits))
 
 #   define GS_MAXLEVEL 256
