@@ -173,7 +173,7 @@ static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
 static inline int ct_pretest(mpz_t n) {
     if (!VB(VB_TRACE))
         return primality_pretest(n);
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     int r = primality_pretest(n);
     gmp_printf("(%ld) pretest: %Zd %d\n", cgdiff(&cg_tp0), n, r);
     return r;
@@ -181,7 +181,7 @@ static inline int ct_pretest(mpz_t n) {
 static inline bool ct_bpsw(mpz_t n) {
     if (!VB(VB_TRACE))
         return _GMP_BPSW(n);
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_BPSW(n);
     gmp_printf("(%ld) bpsw: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
