@@ -227,7 +227,7 @@ ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
 ulong gain2 = 0;    /* as gain/antigain for squares */
 ulong antigain2 = 0;
-uint gr_depth = 0;  /* -gr<depth>: gate by estimated cost (see gr_walk()) */
+uint auto_level = 0;    /* -ja<level>: choices by estimated cost, see README */
 /* maxp[e] is the greatest prime we should attempt to allocate as power p^e;
  * minp[e] is the threshold that at least one allocated p^e should exceed
  * (else we can skip the walk); midp[e] is the additional threshold up to
@@ -2431,6 +2431,8 @@ void report_init(FILE *fp, char *prog) {
         } else
             fprintf(fp, " -j%u", strategy);
     }
+    if (auto_level)
+        fprintf(fp, " -ja%u", auto_level);
     if (opt_print) {
         fprintf(fp, " -o");
         if (opt_flake)
@@ -2467,8 +2469,6 @@ void report_init(FILE *fp, char *prog) {
         if (unforce_all > 1)
             fprintf(fp, "%u", unforce_all);
     }
-    if (gr_depth)
-        fprintf(fp, " -gr%u", gr_depth);
     if (gain > 1 || antigain > 1) {
         fprintf(fp, " -g");
         if (antigain > 1)
@@ -2564,15 +2564,6 @@ void set_minmax(char *s) {
 }
 
 void set_gain(char *s) {
-    if (*s == 'r') {
-        /* -gr<depth>: decide by estimated cost, looking <depth> levels
-         * ahead (so far only 1)
-         */
-        gr_depth = s[1] ? strtoul(&s[1], NULL, 10) : 0;
-        if (gr_depth != 1)
-            fail("-gr: only -gr1 is supported so far");
-        return;
-    }
     char *t = strchr(s, ':');
     if (t) {
         *t = 0;
@@ -3420,7 +3411,7 @@ static void walk_v(t_level *cur_level, mpz_t start) {
 }
 #undef walk_v
 
-/* -gr1: the gate decides whether to walk a node or recurse over its
+/* -ja1: the gate decides whether to walk a node or recurse over its
  * next allocation by estimated cost rather than by gain, for nodes with
  * no fixed square, looking one level ahead. Walking now costs GR_SETUP
  * plus its Z/aq iterations (Z = zmax - zmin) at the cost per iteration
@@ -3458,7 +3449,7 @@ static inline double gr_iters(t_level *lv) {
 static void walk_v_gr(t_level *cur_level, mpz_t start) {
     static uint ctr = 0;
     uint L = cur_level->level;
-    if (!gr_depth || cur_level->have_square || L >= GR_MAXL
+    if (!auto_level || cur_level->have_square || L >= GR_MAXL
             || (++ctr % GR_SAMPLE)) {
         walk_v_inner(cur_level, start);
         return;
@@ -3540,7 +3531,7 @@ static double gr_recurse(t_level *prev_level, ulong p, ulong cap, uint x) {
             + (GR_SETUP + ci) * za * gr_psum(mB, b, s);
 }
 
-/* -gr1: walk the node at prev_level now, rather than recurse over
+/* -ja1: walk the node at prev_level now, rather than recurse over
  * p^{x-1} for p in [p, cap]?
  */
 static bool gr_walk(t_level *prev_level, ulong p, ulong cap, uint x) {
@@ -5520,10 +5511,10 @@ e_pux prep_unforced_x(
 #endif
     bool do_walk = mpz_fits_ulong_p(Z(r_walk))
             && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p);
-    /* -gr1, except at a fixed square, or a loop whose children can flip
+    /* -ja1, except at a fixed square, or a loop whose children can flip
      * (t = 2q^2 allocating p^{q-1}), which keep the gain
      */
-    if (gr_depth && !prev_level->have_square && ti != 2 * x * x)
+    if (auto_level && !prev_level->have_square && ti != 2 * x * x)
         do_walk = gr_walk(prev_level, p, cap, x);
     if (do_walk && !reinject) {
 #ifdef WALK_FROM
@@ -5749,7 +5740,7 @@ static inline bool insert_float(
     cur_level->di = di;
 
     /* the recovery line shows this node recursed: honour that, rather
-     * than asking the gate again, so that -gr1 can be turned on or off
+     * than asking the gate again, so that -ja1 can be turned on or off
      * mid-run (with the same options, the gain alone would agree)
      */
     reinject = 1;
@@ -6448,7 +6439,12 @@ int main(int argc, char **argv, char **envp) {
         else if (arg[1] == 'j') {
             if (arg[2] == 'p')
                 defer_pell = 1;
-            else if (arg[2] == 's') {
+            else if (arg[2] == 'a') {
+                /* -ja<level>: automate choices by estimated cost */
+                auto_level = strtoul(&arg[3], NULL, 10);
+                if (auto_level != 1)
+                    fail("-ja: only -ja1 is supported so far");
+            } else if (arg[2] == 's') {
                 set_fixed_strategy(&arg[3]);
             } else {
                 strategy = strtoul(&arg[2], NULL, 10);

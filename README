@@ -103,8 +103,8 @@ RUN
 The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
-      [-g<damp:gain>] [-gr1] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
-      [-j<strategy>] <n> <k>
+      [-g<damp:gain>] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
+      [-j<strategy>] [-ja1] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
 you will usually invoke it as "pcoul" or as "pcoul.exe".
@@ -152,14 +152,6 @@ a lower gain means it spends more time in walk_v().  Also supports
 exponential notation (without decimal), so "-g13e6" is equivalent to
 "-g13000000". Fine-tuning the gain can make a big difference to runtime;
 default gain is 1.
-
-If "-gr1" is specified (experimental), that transition is instead
-decided by estimated cost wherever no square is fixed: walking now is
-weighed against recursing one more level with every resulting case
-walked, using the cost of a walk per iteration learnt during the run.
-The gain then applies only where a square is fixed,
-or where a flip may follow (tau 2q^2 for an odd prime q). The "1" is
-the depth of lookahead; only 1 is supported so far.
 
 If "-p50:100" is specified, it will allocate (see 'HOW IT WORKS' below)
 only powers of primes p < 100, and will allocate at least one power of
@@ -225,6 +217,15 @@ some position was a) unforced, and b) the square root of the remaining
 (even) tau, that position will automatically be picked.
 "-j1" is the default when n is divisible by at least two distinct odd
 primes; "-j0" is the default in all other cases.
+
+If "-ja1" is specified (experimental), choices are automated by
+estimated cost, to the level given; level 1 automates only the
+transition from recursion to walking (see "-g" above) wherever no
+square is fixed: walking now is weighed against recursing one more
+level with every resulting case walked, using the cost of a walk per
+iteration learnt during the run. The gain then applies only where a
+square is fixed, or where a flip may follow (tau 2q^2 for an odd prime
+q).
 
 If "-I..." is specified, the argument should be a pattern of the same
 form as that generated for progress lines. All prime powers specified

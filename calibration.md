@@ -96,7 +96,7 @@ coordinate search over -j, -g and -W. Since every setting runs on the
 same batches, differences between settings are far more precise than
 the absolute predictions.
 
-### -gr1 (runtime cost gate)
+### -ja1 (runtime cost gate)
 
 At a node with no fixed square (and not a flippable 2q^2 loop), walk
 or recurse is decided by estimated cost instead of gain: walking costs
@@ -107,7 +107,7 @@ tried (8 D(96,8), 3 of them at 10x zmax, and 5 D(48,10)) it matched or
 beat the best gain tried within a few %, with no tuning; the user's
 -g24 on D(96,8) was 20-35% slower than both. Recovery honours the
 recursion the recovery line shows, without asking the gate again, so
--gr1 can be turned on or off mid-run; tested by recovering D(12,4) and
+-ja1 can be turned on or off mid-run; tested by recovering D(12,4) and
 D(24,5) from 100 random log points, and in t/t10init.
 
 ### Instrumentation
@@ -127,10 +127,16 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
 
 ## To do
 
-1. best_v() by cost at the leaf recursion: for each eligible position,
-   the one-level recursion cost over its x values, with cheap bounds
-   to discard positions that cannot win. The -j strategies differ by
-   up to 40% per batch under -gr1, none winning everywhere.
+1. -ja2: best_v() by cost at the leaf recursion. Walking the node
+   costs W whichever position is chosen, and recursing some x then
+   walking is never better, so the choice is min(W, min_i T_i), T_i the
+   cost of recursing over every x of position i: W is an incumbent any
+   position must beat, and a lower bound on T_i (the primes tried, and
+   the child walks of its dominant x) discards most. Positions alike in
+   (t_i, q_i, first p) cost the same: take the least i. Positions with
+   an x the model cannot cost (making a square) stay with the -j
+   strategy. The -j strategies differ by up to 40% per batch under
+   -ja1, none winning everywhere.
    Recovery then needs care: insert_stack() replays the recovered
    allocations in best_v() order, which a cost-based choice need not
    reproduce; it could instead take the position holding the last
@@ -141,9 +147,9 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
    square (Pell, nearly free) or flips must be costed as such; the
    per-iteration cost of square walks varies too much between levels
    to borrow.
-4. -gr beyond depth 1, and -W decided per node by cost.
+4. Deeper lookahead (a further -ja level), and -W decided per node by cost.
 5. In calibrate: Neyman allocation of samples across strata and a
-   per-power (-Wx) search; with -gr1 the gain drops out of the search
+   per-power (-Wx) search; with -ja1 the gain drops out of the search
    for non-square batches.
 6. Mock accuracy: the leaf-stub shape in loops of mostly rejected
    primes; ctail varies by batch (0.187-0.229us per prime, no predictor
@@ -204,7 +210,7 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
   too slow for batches with huge X.
 - MOCK_LADDER (coulmock.c): a per-residual chain model of the ladder
   from Dickman's rho; superseded by the measured G rows.
-- For -gr1: fixed-square nodes with the same estimate (lost 12-40%), a
+- For -ja1: fixed-square nodes with the same estimate (lost 12-40%), a
   per-level correction learnt from timed recursions (wrong shape: the
   big recursions set it, the marginal ones suffer), and a two-level
   estimate (no gain over one level).
