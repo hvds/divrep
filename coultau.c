@@ -27,11 +27,15 @@ mpz_t simpqs_array[SIMPQS_SIZE];
 #define _GMP_ECM_FACTOR(n, f, b1, ncurves) \
      _GMP_ecm_factor_projective(n, f, b1, 0, ncurves)
 
+/* Avoid CLOCK_PROCESS_CPUTIME_ID, which is ratcheted by 300Hz scheduler
+ * ticks once coul.c:init_time() has armed its timers.
+ */
+#define CG_CLOCK CLOCK_THREAD_CPUTIME_ID
 struct timespec cg_tp0;
 struct timespec cg_tp1;
 #define GIG 1000000000
 static inline ulong cgdiff(struct timespec *t0) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp1);
+    clock_gettime(CG_CLOCK, &cg_tp1);
     return (cg_tp1.tv_sec - t0->tv_sec) * GIG
             + cg_tp1.tv_nsec - t0->tv_nsec;
 }
@@ -45,19 +49,19 @@ static inline ulong cgdiff(struct timespec *t0) {
 
 #ifdef VERBOSE
 static inline bool ct_prime(mpz_t n) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_is_prob_prime(n);
     gmp_printf("(%ld) p: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
 }
 static inline ulong ct_power(mpz_t n) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     ulong r = power_factor(n, n);
     gmp_printf("(%ld) pow: %Zd^%lu\n", cgdiff(&cg_tp0), n, r);
     return r;
 }
 static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_ECM_FACTOR(n, f, b1, curves);
     gmp_printf("(%ld) ecm: %Zu [%lu, %lu] %u",
             cgdiff(&cg_tp0), n, b1, curves, r);
@@ -67,7 +71,7 @@ static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
     return r;
 }
 static inline bool ct_pminus1(mpz_t n, mpz_t f, ulong b1, ulong b2) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_pminus1_factor(n, f, b1, b2);
     gmp_printf("(%ld) p-1: %Zu [%lu, %lu] %u", cgdiff(&cg_tp0), n, b1, b2, r);
     if (r)
@@ -76,7 +80,7 @@ static inline bool ct_pminus1(mpz_t n, mpz_t f, ulong b1, ulong b2) {
     return r;
 }
 static inline bool ct_tinyqs(mpz_t n, mpz_t f) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = tinyqs(n, f);
     gmp_printf("(%ld) tqs: %Zu %u", cgdiff(&cg_tp0), n, r);
     if (r)
@@ -85,7 +89,7 @@ static inline bool ct_tinyqs(mpz_t n, mpz_t f) {
     return r;
 }
 static inline bool ct_simpqs(mpz_t n, mpz_t *fa) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     int r = _GMP_simpqs(n, fa);
     gmp_printf("(%ld) sqs: %Zu %d", cgdiff(&cg_tp0), n, r);
     if (r)
@@ -94,7 +98,7 @@ static inline bool ct_simpqs(mpz_t n, mpz_t *fa) {
     return r;
 }
 static inline bool ct_holf(mpz_t n, mpz_t f, ulong rounds) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_holf_factor(n, f, rounds);
     gmp_printf("(%ld) hlf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
     if (r)
@@ -103,7 +107,7 @@ static inline bool ct_holf(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_squfof(mpz_t n, mpz_t f, ulong rounds) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = squfof126(n, f, rounds);
     gmp_printf("(%ld) sqf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
     if (r)
@@ -112,7 +116,7 @@ static inline bool ct_squfof(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = pbrent63(n, f, rounds);
     gmp_printf("(%ld) b63: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
     if (r)
@@ -121,7 +125,7 @@ static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_pbrent_factor(n, f, a, rounds);
     gmp_printf("(%ld) brent: %Zu [%lu, %lu] %d",
             cgdiff(&cg_tp0), n, a, rounds, r);
@@ -131,7 +135,7 @@ static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
     return r;
 }
 static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_cheb_factor(n, f, B, 0);
     gmp_printf("(%ld) cheb: %Zu [%lu] %d", cgdiff(&cg_tp0), n, B, r);
     if (r)
@@ -141,7 +145,7 @@ static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
 }
 extern int fs_trial(factor_state* fs);
 static inline bool ct_trial(factor_state *fs) {
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = fs_trial(fs);
     gmp_printf("(%ld) div: %Zu %d", cgdiff(&cg_tp0), fs->n, r);
     if (r)
@@ -806,7 +810,7 @@ bool tau_multi_prep(uint i) {
 
 #ifdef VERBOSE
     gmp_printf("tau_multi_prep t=%u e=%u (%u) %Zu\n", t, e, nbits, tm->n);
-    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
+    clock_gettime(CG_CLOCK, &cg_tp0);
 #endif
     if (t == 1) {
         dz("div: t=1");
