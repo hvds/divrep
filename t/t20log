@@ -1,0 +1,106 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+
+use Test::More;
+use File::Temp ();
+use lib 'lib';
+use Type;
+
+# Every progress line written to the log must be a usable recovery
+# point. With -dL, a 305 line is written at every progress report, and
+# we check in each case that:
+# - no prime appears at two positions it cannot both divide (for type o,
+#   p must divide the distance between them), nor twice at one position;
+# - no line loses its loop position - once a node's loop has shown a
+#   child allocation, a plain line showing the bare node again would
+#   make recovery restart that loop.
+# Progress may still show an allocation that then fails to apply, or
+# fails walk_1_set()'s checks. Recovery retries those, so that's fine.
+
+my $type = Type->new('o');
+my $prog = $type->prog('cul');
+if ($ENV{DEBUG}) {
+    $prog =~ s/pc/dpc/
+            or die "Could not munge program name '$prog'";
+}
+
+for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }]) {
+    my $fh = File::Temp->new;
+    my $path = $fh->filename;
+    $fh->close;
+    unlink $path;
+    system("$prog -r$path -dL100000000 @$args >/dev/null 2>&1");
+    open my $log, '<', $path or die "$path: $!";
+    my($lines, $invalid, $lost) = (0, 0, 0);
+    my(@invalid, @lost);
+    my($last, %shown);
+    while (<$log>) {
+        chomp;
+        next unless /^3[01]5 (b\S+: .*?)( \(|: \d+ \/| [WF6]\S*\()/;
+        my($s, $plain) = ($1, $2 eq ' (');
+        ++$lines;
+        my @pos = split / /, $s;
+        my $bid = shift @pos;
+        if (my $why = invalid(\@pos)) {
+            push @invalid, "$why: $_" if ++$invalid <= 3;
+        }
+        if ($plain && defined $last && $last ne $s && extends($last, $s)) {
+            push @lost, $_ if $shown{$s}++ && ++$lost <= 3;
+        }
+        $last = $s;
+    }
+    close $log;
+    ok($lines > 1000, "log has progress lines for @$args")
+            or diag("only $lines lines");
+    if (!is($invalid, 0, "no invalid progress lines for @$args")) {
+        diag($_) for @invalid;
+    }
+    if (!is($lost, 0,
+            "no progress lines losing their loop position for @$args")) {
+        diag($_) for @lost;
+    }
+}
+
+done_testing();
+exit 0;
+
+# returns a reason if the positions are inconsistent, else ''
+sub invalid {
+    my($pos) = @_;
+    my %at;
+    for my $i (0 .. $#$pos) {
+        my %here;
+        for my $f (split /\./, $pos->[$i]) {
+            next if $f eq '';
+            my($p) = $f =~ /^(\d+)/ or next;
+            return "$p twice at $i" if $here{$p}++;
+            push @{ $at{$p} }, $i;
+        }
+    }
+    for my $p (keys %at) {
+        my $i = $at{$p};
+        for my $a (0 .. $#$i) {
+            for my $b ($a + 1 .. $#$i) {
+                return "$p at $i->[$a] and $i->[$b]"
+                        if ($i->[$b] - $i->[$a]) % $p;
+            }
+        }
+    }
+    return '';
+}
+
+# true if line a extends line b: same batch, each position of b a prefix
+# of the same position of a
+sub extends {
+    my($a, $b) = @_;
+    my @a = split / /, $a;
+    my @b = split / /, $b;
+    return 0 unless @a == @b && $a[0] eq $b[0];
+    for my $i (1 .. $#b) {
+        next if $b[$i] eq '.';
+        return 0 unless index("$a[$i].", "$b[$i].") == 0;
+    }
+    return 1;
+}

@@ -108,6 +108,8 @@ sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h p
 
 test: pcoul pcaul pcrul
 	t/t10init
+	t/t20log
 
 dtest: dpcoul dpcaul dpcrul
 	DEBUG=1 t/t10init
+	DEBUG=1 t/t20log
