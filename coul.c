@@ -5236,6 +5236,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
 #   define CG_APPLY 0.2e-6
 #   define CG_DEFIT 400e-9
 double cg_t[2][CG_MAXL], cg_i[2][CG_MAXL], cg_scale = 1;
+uint cg_mode = 0, cg_log = 0;
+double cg_lastW = 0;
+ulong cg_lseq[CG_MAXL];
+/* recursions timed, against their estimates, by the level of the node */
+double cg_rt[2][CG_MAXL], cg_re[2][CG_MAXL], cg_last_R = 0;
+uint cg_rn[2][CG_MAXL];
 uint cg_n[2][CG_MAXL];
 /* the iterations of a walk at the node lv, as the gate estimates them:
  * Z / aq for a linear walk; for one with a fixed square (power g) at
@@ -5325,7 +5331,7 @@ static bool cg_decide(t_level *prev_level, ulong p, ulong cap, uint x,
     double W = CG_SETUP + ci * za;
     /* quick answer when the walk costs less than just trying the primes */
     double np = cg_li((double)cap) - cg_li((double)p) + 1;
-    if (W < np * CG_APPLY * cg_scale) {
+    if (W < np * CG_APPLY * cg_scale && !cg_log) {
         ++cg_nwalk;
         return 1;
     }
@@ -5342,6 +5348,11 @@ static bool cg_decide(t_level *prev_level, ulong p, ulong cap, uint x,
     double sA = cg_psum(a, mA, s), sB = cg_psum(mB, b, s);
     double R = np * CG_APPLY + nA * CG_SETUP
             + ci1 * za * sA + (CG_SETUP + ci1) * za * sB;
+    /* correct by what recursions from this level have actually cost */
+    if (L < CG_MAXL && cg_rn[sq][L] >= 8 && cg_re[sq][L] > 0)
+        R *= cg_rt[sq][L] / cg_re[sq][L];
+    cg_last_R = R;
+    cg_lastW = W;
     bool walk = W < R * cg_scale;
     if (walk)
         ++cg_nwalk;
@@ -7551,8 +7562,41 @@ e_pux prep_unforced_x(
      * square (a Pell equation, nearly free) or flip, which the one-level
      * estimate does not know, and it lost 12-40% on D(18,4) and D(90,4)
      */
-    if (!prev_level->have_square)
-        do_walk = cg_decide(prev_level, p, cap, x, vi);
+    {
+        /* children that stay as simple as this node: no new square
+         * (which would change the kind of walk, or give a Pell equation),
+         * and no flip
+         */
+        bool cg_simple = !((ti / x) & 1) && ti != 2 * x * x;
+        cg_last_R = 0;
+        bool use = !prev_level->have_square ? (cg_mode != 1 || cg_simple)
+                : (prev_level->have_square == 1 && cg_mode >= 2
+                    && (cg_simple || cg_mode == 3));
+        if (use || (cg_log && prev_level->level <= cg_log
+                && prev_level->have_square <= 1)) {
+            bool d = cg_decide(prev_level, p, cap, x, vi);
+            if (use)
+                do_walk = d;
+        }
+    }
+    uint cgL = prev_level->level;
+    if (cg_log && cgL <= cg_log && cgL < CG_MAXL
+            && prev_level->have_square <= 1) {
+        ulong seq = cg_lseq[cgL]++;
+        if (do_walk) {
+            double t0 = cg_now();
+            walk_v(prev_level, Z(zero));
+            fprintf(stderr, "N %u %lu %u %u %lu %lu W %.6g %.6g %.6g\n", cgL,
+                    seq, prev_level->have_square, x, p, (ulong)cap, cg_lastW,
+                    cg_last_R, cg_now() - t0);
+            return PUX_NOTHING_TO_DO;
+        }
+        cur_level->cg_lseq = seq + 1;
+        cur_level->cg_lW = cg_lastW;
+        cur_level->cg_lR = cg_last_R;
+        cur_level->cg_lt0 = cg_now();
+    } else
+        cur_level->cg_lseq = 0;
 #endif
     if (do_walk) {
 #ifdef WALK_FROM
@@ -7591,6 +7635,13 @@ e_pux prep_unforced_x(
 #endif
   force_unforced:
     level_setp(cur_level, p);
+#ifdef COST_GATE
+    cur_level->cg_t0 = 0;
+    if (!forced && cg_last_R > 0 && prev_level->have_square <= 1) {
+        cur_level->cg_rest = cg_last_R;
+        cur_level->cg_t0 = cg_now();
+    }
+#endif
 #ifdef WALK_FROM
     /* hands off a loop whose children can flip: t = 2q^2 allocating
      * p^{q-1}, whose child can take the same position with t = 2q,
@@ -8216,6 +8267,25 @@ void recurse(e_is jump_continue) {
       continue_unforced_x:
 #ifdef GATE_STATS
         gs_rec_end(level);
+#endif
+#ifdef COST_GATE
+        if (cur_level->cg_lseq) {
+            fprintf(stderr, "N %u %lu %u %u %lu %lu R %.6g %.6g %.6g\n",
+                    prev_level->level, cur_level->cg_lseq - 1,
+                    prev_level->have_square, cur_level->x, cur_level->p,
+                    cur_level->limp, cur_level->cg_lW, cur_level->cg_lR,
+                    cg_now() - cur_level->cg_lt0);
+            cur_level->cg_lseq = 0;
+        }
+        if (cur_level->cg_t0 > 0) {
+            uint L = prev_level->level, sq = prev_level->have_square;
+            if (L < CG_MAXL && sq <= 1) {
+                cg_rt[sq][L] += cg_now() - cur_level->cg_t0;
+                cg_re[sq][L] += cur_level->cg_rest;
+                ++cg_rn[sq][L];
+            }
+            cur_level->cg_t0 = 0;
+        }
 #endif
         ++cur_level->di;
       have_unforced_x:
@@ -8885,6 +8955,10 @@ int main(int argc, char **argv, char **envp) {
 #ifdef COST_GATE
     if (getenv("CG_SCALE"))
         cg_scale = atof(getenv("CG_SCALE"));
+    if (getenv("CG_MODE"))
+        cg_mode = atoi(getenv("CG_MODE"));
+    if (getenv("CG_LOG"))
+        cg_log = atoi(getenv("CG_LOG"));
 #endif
 #ifdef MOCK_LEAF
     g_ml_off = getenv("MOCK_LEAF_OFF") != NULL;
@@ -8922,6 +8996,12 @@ int main(int argc, char **argv, char **envp) {
             if (cg_n[sq][L])
                 report(" %s%u:%.0f(%u)", sq ? "s" : "", L,
                         1e9 * cg_t[sq][L] / cg_i[sq][L], cg_n[sq][L]);
+    report("; recurse actual/estimate:");
+    for (uint sq = 0; sq < 2; ++sq)
+        for (uint L = 0; L < CG_MAXL; ++L)
+            if (cg_rn[sq][L])
+                report(" %s%u:%.2f(%u)", sq ? "s" : "", L,
+                        cg_rt[sq][L] / cg_re[sq][L], cg_rn[sq][L]);
     report("\n");
 #endif
 #ifdef WALK_FROM
