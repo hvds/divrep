@@ -1107,13 +1107,10 @@ static inline ulong _find_tmfb(uint size) {
     return tmfb_lim;
 }
 
-/* Safety-checked accessor for tmfbl, for callers outside this file
- * (coulmock.c) that need the SAME bracket table rather than a
- * hand-copied duplicate that can silently drift out of sync (and, as
- * built the first time, missed the flake masking init_tmfbl() applies
- * above). Returns the pointer rather than exposing tmfbl/tmfb_maxb/
- * tmfb_lim as raw externs, so this can fail() cleanly if init_tmfbl()
- * hasn't run yet instead of the caller silently reading NULL/garbage. */
+/* The rung masks by size, as tau_multi_run() uses them (so including
+ * any flake masking from init_tmfbl()), for the mocks: the array by
+ * bits up to *out_maxb, and the mask beyond that in *out_lim.
+ */
 const ulong *get_tmfbl(uint *out_maxb, ulong *out_lim) {
     if (!tmfbl)
         fail("get_tmfbl: init_tmfbl() has not been called yet");
