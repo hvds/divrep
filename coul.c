@@ -5444,6 +5444,127 @@ e_xr x_range(
     return (nextt == 1) ? XR_WALK1 : XR_RANGE;
 }
 
+/* -ja2: the estimated cost of choosing position vi at the node at
+ * prev_level, recursing over every x of t_i with every resulting case
+ * walked, as for the -ja1 gate. Returns HUGE_VAL if some x would walk the
+ * node (so walking it now is cheaper), or stops early once past bound;
+ * sets *blind if some x is outside the model (making a square, or where
+ * the loop above may flip), when the result is meaningless.
+ */
+#define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
+static double ja_cost(
+    t_level *prev_level, t_level *cur_level, uint vi, double bound,
+    bool *blind
+) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    uint ti = ap->t;
+    t_divisors *dp = &divisors[ti];
+    double total = 0;
+    *blind = 0;
+    for (uint di = 0; di < dp->highdiv; ++di) {
+        uint x = dp->div[di];
+        uint nextt = ti / x;
+        ulong p = 0, limp;
+        switch (x_range(prev_level, cur_level, vi, x, &p, &limp)) {
+          case XR_WALK:
+            return HUGE_VAL;
+          case XR_SKIP:
+            continue;
+          case XR_FLIP:
+            *blind = 1;
+            return 0;
+          case XR_WALK1:
+            total += (gr_li(limp) - gr_li(p) + 1) * JA_W1S;
+            break;
+          case XR_RANGE: {
+            if (((nextt & 1) && !(ti & 1)) || ti == 2 * x * x) {
+                *blind = 1;
+                return 0;
+            }
+            ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+            if (cap > p)
+                total += gr_recurse(prev_level, p, cap, x);
+            break;
+          }
+        }
+        if (total >= bound)
+            return total;
+    }
+    return total;
+}
+
+/* true if positions vi and vj are alike, so cost the same */
+static inline bool ja_alike(uint vi, uint vj) {
+    t_allocation *ai = &value[vi].alloc[cur_vlevel[vi] - 1];
+    t_allocation *aj = &value[vj].alloc[cur_vlevel[vj] - 1];
+    return ai->t == aj->t && ai->p == aj->p && ai->x == aj->x
+            && maxforce[vi] == maxforce[vj] && mpz_cmp(ai->q, aj->q) == 0;
+}
+
+/* -ja2: given the strategy's choice sv of position at the node at
+ * prev_level, return the position to choose by estimated cost, or
+ * BV_WALK to walk the node now. Walking costs W whichever position is
+ * chosen, and recursing over some x then walking is never cheaper, so
+ * the choice is between walking and recursing over every x of some
+ * position: W is a bound any position must beat. On equal cost, the
+ * least position is chosen. Positions the model cannot cost stay
+ * unchosen, unless the strategy chose one, when its choice stands.
+ * With just -dv8 (and -ja1), it reports the choice without making it.
+ */
+uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
+    uint L = prev_level->level;
+    double W = GR_SETUP + gr_cit(L) * gr_iters(prev_level);
+    bool blind;
+    double sT = ja_cost(prev_level, cur_level, sv, HUGE_VAL, &blind);
+    uint best = sv, nblind = 0, neval = 1;
+    double bT = sT;
+    if (blind)
+        goto done;
+    if (W <= bT) {
+        best = BV_WALK;
+        bT = W;
+    }
+    for (uint vi = 0; vi < k; ++vi) {
+        if (vi == sv)
+            continue;
+        t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+        uint ti = ap->t;
+        /* eligible as for the strategies */
+        if (divisors[ti].high <= (highpow ? 1 : 2))
+            continue;
+        if (need_maxp && (ti & 1) && divisors[ti].alldiv == 2)
+            continue;
+        /* a position alike to one before it (or to the strategy's
+         * choice) cannot improve on it
+         */
+        bool seen = ja_alike(vi, sv);
+        for (uint vj = 0; !seen && vj < vi; ++vj)
+            if (ja_alike(vi, vj))
+                seen = 1;
+        if (seen)
+            continue;
+        ++neval;
+        double T = ja_cost(prev_level, cur_level, vi, bT, &blind);
+        if (blind) {
+            ++nblind;
+            continue;
+        }
+        if (T < bT || (T == bT && best < BV_SPECIAL && vi < best)) {
+            best = vi;
+            bT = T;
+        }
+    }
+  done:
+#ifdef VERBOSE
+    if (VB(VB_CHOICE))
+        fprintf(gs_file(), "J %u %u %.4g %u %.4g %d %.4g %u %u %u\n",
+                L, strategy, W * 1e6, sv, blind && best == sv ? -1.0
+                : sT * 1e6, best < BV_SPECIAL ? (int)best : -1, bT * 1e6,
+                neval, nblind, auto_level);
+#endif
+    return (auto_level >= 2) ? best : sv;
+}
+
 /* Prepare to allocate p^{x-1} at v_i for a range of p. p is 0 for a
  * fresh start (we choose the cursor), the cursor (the last p done) when
  * recalculating after an improved maximum, or a recovered p, the one in
@@ -6164,6 +6285,19 @@ void recurse(e_is jump_continue) {
             uint vi = best_v(cur_level);
             cur_level->choice_strategy = strategy;
             cur_level->unsorted = 0;
+            /* -ja2: choose by estimated cost (with -dv8, report the choice) */
+            if (vi < BV_SPECIAL && (auto_level >= 2
+#ifdef VERBOSE
+                        || (auto_level && VB(VB_CHOICE))
+#endif
+                    ) && !prev_level->have_square && !highpow
+                    && strategy != STRATEGY_6X && strategy != STRATEGY_FIXED) {
+                uint sv = vi;
+                vi = ja_choose(prev_level, cur_level, vi);
+                if (vi == BV_WALK)
+                    goto walk_now;  /* not stable, so not next_best */
+                cur_level->unsorted = (vi != sv);
+            }
             if (vi >= BV_SPECIAL) {
                 switch (vi - BV_SPECIAL) {
                   default:
@@ -6490,8 +6624,8 @@ int main(int argc, char **argv, char **envp) {
             else if (arg[2] == 'a') {
                 /* -ja<level>: automate choices by estimated cost */
                 auto_level = strtoul(&arg[3], NULL, 10);
-                if (auto_level != 1)
-                    fail("-ja: only -ja1 is supported so far");
+                if (auto_level < 1 || auto_level > 2)
+                    fail("-ja: only -ja1 and -ja2 are supported so far");
             } else if (arg[2] == 's') {
                 set_fixed_strategy(&arg[3]);
             } else {
@@ -6522,6 +6656,9 @@ int main(int argc, char **argv, char **envp) {
         fail("wrong number of arguments");
     if (force_all > k)
         fail("require force_all <= k");
+    /* -ja2 chooses positions, as -js does; -j4 chooses among others */
+    if (auto_level >= 2 && (strategy == STRATEGY_FIXED || strategy == 4))
+        fail("-ja2 is not supported with -js or -j4");
 
     init_post();
     if (opt_alloc & 2)

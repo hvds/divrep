@@ -61,6 +61,9 @@ if (1) {
             $result124b, '1 2 1 332', $args124);
     expect_result(q{constraint on 3 + sub-high for f(12,4)},
             $result124b, '. . 3 83', $args124);
+    # -ja2 chooses positions by cost
+    expect_result(q{-ja2 find f(24,5)},
+            '15537948', '', [qw{ -ja2 -x1e12 24 5 }]);
     # -ja1 below an -I pattern
     expect_result(q{-ja1 below a constraint for f(24,5)},
             '266624899224', '2^3.3 . 2 3^2 2^2', [qw{ -ja1 -x1e12 24 5 }]);
@@ -438,6 +441,13 @@ if (1) {
         ['202 Candidate 15537948 (0.10s)',
          '305 b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2'],
         'b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2',
+    );
+    # -ja2 marks in a 315 line only the levels whose position it chose
+    # against the strategy's, and the others are replayed by the strategy.
+    expect_recover(q{recover -ja2 from a partly expanded line},
+        [ '-ja2', qw{ -x1e14 12 4 } ],
+        ['315 b0: 2^2.3 229^2 2.19^2(4) 3.11^2(3) (0.01s)'],
+        'b0: 2^2.3 229^2 2.19^2 3.11^2: 0 / 1818',
     );
     expect_recover(q{recover a recursion, turning -ja1 off},
         $args245,

@@ -110,6 +110,23 @@ recursion the recovery line shows, without asking the gate again, so
 -ja1 can be turned on or off mid-run; tested by recovering D(12,4) and
 D(24,5) from 100 random log points, and in t/t10init.
 
+### -ja2 (choosing positions by cost)
+
+At a node with no fixed square, walking it costs W whichever position
+is chosen, and recursing over some x then walking is never better, so
+the choice is between walking and recursing over every x of some
+position (ja_choose()): W and the strategy's choice are incumbents, and
+other positions are costed (x_range() and the -ja1 estimate) until
+they pass the incumbent; positions alike in (t, q, last p, x,
+maxforce) cost the same. Where a position has an x the model cannot
+cost (leaving a square, or a flip), the strategy's choice stands. On
+four D(96,8) batches at the usual zmax, -ja2 matched the best of
+-j0..-j2 under -ja1 on each (whichever it falls back on), beat all of
+them on one by 20%, and took 26-45% less time than -j4 -g24. There,
+99% of its choices walk the node, and under 1% choose another
+position. Recovery: 315 lines mark only levels chosen against the
+strategy, the rest replayed by it.
+
 ### Instrumentation
 
 A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
@@ -127,21 +144,11 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
 
 ## To do
 
-1. -ja2: best_v() by cost at the leaf recursion. Walking the node
-   costs W whichever position is chosen, and recursing some x then
-   walking is never better, so the choice is min(W, min_i T_i), T_i the
-   cost of recursing over every x of position i: W is an incumbent any
-   position must beat, and a lower bound on T_i (the primes tried, and
-   the child walks of its dominant x) discards most. Positions alike in
-   (t_i, q_i, first p) cost the same: take the least i. Positions with
-   an x the model cannot cost (making a square) stay with the -j
-   strategy. The -j strategies differ by up to 40% per batch under
-   -ja1, none winning everywhere.
-   Recovery then needs care: insert_stack() replays the recovered
-   allocations in best_v() order, which a cost-based choice need not
-   reproduce; it could instead take the position holding the last
-   pending allocation as the one chosen (or rely on the expanded 315
-   form, as for -j4).
+1. -ja2 (done, experimental; see below): measure further, on
+   D(48,10) and on batches with squares (blind positions), and extend
+   the model to square-making x so fewer choices stay with the
+   strategy. On D(36,4) -j2 the strategy's choice was blind at 24% of
+   nodes, and -ja2 chose another position at 29%.
 2. With that, try "never walk a flippable loop".
 3. Fixed squares under the cost gate: a child that completes a second
    square (Pell, nearly free) or flips must be costed as such; the
