@@ -2,6 +2,7 @@
 
 #include "coul.h"
 #include "coultau.h"
+#include "trace.h"
 #include "factor.h"
 #include "gmp_main.h"
 #include "primality.h"
@@ -33,6 +34,9 @@ mpz_t simpqs_array[SIMPQS_SIZE];
 #define CG_CLOCK CLOCK_THREAD_CPUTIME_ID
 struct timespec cg_tp0;
 struct timespec cg_tp1;
+#ifdef VERBOSE
+uint verbose = 0;   /* -dv<bits>, see trace.h */
+#endif
 #define GIG 1000000000
 static inline ulong cgdiff(struct timespec *t0) {
     clock_gettime(CG_CLOCK, &cg_tp1);
@@ -41,7 +45,8 @@ static inline ulong cgdiff(struct timespec *t0) {
 }
 #ifdef VERBOSE
 #define dz(format, ...) do { \
-    gmp_printf("(%ld) " format "\n", cgdiff(&cg_tp0), ## __VA_ARGS__); \
+    if (VB(VB_TRACE)) \
+        gmp_printf("(%ld) " format "\n", cgdiff(&cg_tp0), ## __VA_ARGS__); \
 } while (0)
 #else
 #define dz(...) 1
@@ -49,18 +54,24 @@ static inline ulong cgdiff(struct timespec *t0) {
 
 #ifdef VERBOSE
 static inline bool ct_prime(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return _GMP_is_prob_prime(n);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_is_prob_prime(n);
     gmp_printf("(%ld) p: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
 }
 static inline ulong ct_power(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return power_factor(n, n);
     clock_gettime(CG_CLOCK, &cg_tp0);
     ulong r = power_factor(n, n);
     gmp_printf("(%ld) pow: %Zd^%lu\n", cgdiff(&cg_tp0), n, r);
     return r;
 }
 static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
+    if (!VB(VB_TRACE))
+        return _GMP_ECM_FACTOR(n, f, b1, curves);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_ECM_FACTOR(n, f, b1, curves);
     gmp_printf("(%ld) ecm: %Zu [%lu, %lu] %u",
@@ -71,6 +82,8 @@ static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
     return r;
 }
 static inline bool ct_pminus1(mpz_t n, mpz_t f, ulong b1, ulong b2) {
+    if (!VB(VB_TRACE))
+        return _GMP_pminus1_factor(n, f, b1, b2);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_pminus1_factor(n, f, b1, b2);
     gmp_printf("(%ld) p-1: %Zu [%lu, %lu] %u", cgdiff(&cg_tp0), n, b1, b2, r);
@@ -80,6 +93,8 @@ static inline bool ct_pminus1(mpz_t n, mpz_t f, ulong b1, ulong b2) {
     return r;
 }
 static inline bool ct_tinyqs(mpz_t n, mpz_t f) {
+    if (!VB(VB_TRACE))
+        return tinyqs(n, f);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = tinyqs(n, f);
     gmp_printf("(%ld) tqs: %Zu %u", cgdiff(&cg_tp0), n, r);
@@ -89,6 +104,8 @@ static inline bool ct_tinyqs(mpz_t n, mpz_t f) {
     return r;
 }
 static inline bool ct_simpqs(mpz_t n, mpz_t *fa) {
+    if (!VB(VB_TRACE))
+        return _GMP_simpqs(n, fa);
     clock_gettime(CG_CLOCK, &cg_tp0);
     int r = _GMP_simpqs(n, fa);
     gmp_printf("(%ld) sqs: %Zu %d", cgdiff(&cg_tp0), n, r);
@@ -98,6 +115,8 @@ static inline bool ct_simpqs(mpz_t n, mpz_t *fa) {
     return r;
 }
 static inline bool ct_holf(mpz_t n, mpz_t f, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return _GMP_holf_factor(n, f, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_holf_factor(n, f, rounds);
     gmp_printf("(%ld) hlf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
@@ -107,6 +126,8 @@ static inline bool ct_holf(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_squfof(mpz_t n, mpz_t f, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return squfof126(n, f, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = squfof126(n, f, rounds);
     gmp_printf("(%ld) sqf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
@@ -116,6 +137,8 @@ static inline bool ct_squfof(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return pbrent63(n, f, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = pbrent63(n, f, rounds);
     gmp_printf("(%ld) b63: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
@@ -125,6 +148,8 @@ static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return _GMP_pbrent_factor(n, f, a, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_pbrent_factor(n, f, a, rounds);
     gmp_printf("(%ld) brent: %Zu [%lu, %lu] %d",
@@ -135,6 +160,8 @@ static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
     return r;
 }
 static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
+    if (!VB(VB_TRACE))
+        return _GMP_cheb_factor(n, f, B, 0);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_cheb_factor(n, f, B, 0);
     gmp_printf("(%ld) cheb: %Zu [%lu] %d", cgdiff(&cg_tp0), n, B, r);
@@ -144,12 +171,16 @@ static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
     return r;
 }
 static inline int ct_pretest(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return primality_pretest(n);
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
     int r = primality_pretest(n);
     gmp_printf("(%ld) pretest: %Zd %d\n", cgdiff(&cg_tp0), n, r);
     return r;
 }
 static inline bool ct_bpsw(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return _GMP_BPSW(n);
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cg_tp0);
     bool r = _GMP_BPSW(n);
     gmp_printf("(%ld) bpsw: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
@@ -157,6 +188,8 @@ static inline bool ct_bpsw(mpz_t n) {
 }
 extern int fs_trial(factor_state* fs);
 static inline bool ct_trial(factor_state *fs) {
+    if (!VB(VB_TRACE))
+        return fs_trial(fs);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = fs_trial(fs);
     gmp_printf("(%ld) div: %Zu %d", cgdiff(&cg_tp0), fs->n, r);
@@ -687,7 +720,8 @@ int is_taux(mpz_t n, uint32_t k, uint32_t x) {
     factor_state fs;
 
 #ifdef VERBOSE
-    gmp_printf("is_taux t=%u (%u) %Zu^%u\n", k, mpz_sizeinbase(n, 2), n, x);
+    if (VB(VB_TRACE))
+        gmp_printf("is_taux t=%u (%u) %Zu^%u\n", k, mpz_sizeinbase(n, 2), n, x);
 #endif
     if (cmp < 0)
         return 0;
@@ -784,7 +818,8 @@ static inline bool prep_abort(t_tm *tm, bool result) {
  */
 bool tau_prime_test(mpz_t n) {
 #ifdef VERBOSE
-    gmp_printf("tau_prime_test %Zu\n", n);
+    if (VB(VB_TRACE))
+        gmp_printf("tau_prime_test %Zu\n", n);
 #endif
     int res = ct_pretest(n);
     if (res == 0)
@@ -796,7 +831,8 @@ bool tau_prime_test(mpz_t n) {
 
 bool tau_prime_prep(uint i) {
 #ifdef VERBOSE
-    gmp_printf("tau_prime_prep vi=%u %Zu\n", taum[i].vi, taum[i].n);
+    if (VB(VB_TRACE))
+        gmp_printf("tau_prime_prep vi=%u %Zu\n", taum[i].vi, taum[i].n);
 #endif
     /* FIXME: break this out further */
     int res = ct_pretest(taum[i].n);
@@ -843,9 +879,11 @@ bool tau_multi_prep(uint i) {
 
 #ifdef VERBOSE
     extern uint g_ati, g_walkv_call;
-    gmp_printf("tau_multi_prep vi=%u t=%u e=%u call=%u ati=%u (%u) %Zu\n",
-            tm->vi, t, e, g_walkv_call, g_ati, nbits, tm->n);
-    clock_gettime(CG_CLOCK, &cg_tp0);
+    if (VB(VB_TRACE))
+        gmp_printf("tau_multi_prep vi=%u t=%u e=%u call=%u ati=%u (%u) %Zu\n",
+                tm->vi, t, e, g_walkv_call, g_ati, nbits, tm->n);
+    if (VB(VB_TRACE))
+        clock_gettime(CG_CLOCK, &cg_tp0);
 #endif
     if (t == 1) {
         dz("div: t=1");
@@ -1036,7 +1074,6 @@ const t_tmf tmfa[] = {
 };
 #define TM_TERM 0
 /* leave room for possible power check at tmf_1() */
-#define TM_INIT 2
 #define TM_MAX (sizeof(tmfa) / sizeof(t_tmf))
 typedef struct s_tmf_bits {
     uint maxlen;
@@ -1113,6 +1150,17 @@ static inline ulong _find_tmfb(uint size) {
  * any flake masking from init_tmfbl()), for the mocks: the array by
  * bits up to *out_maxb, and the mask beyond that in *out_lim.
  */
+/* the ladder for the benches (bench.c) */
+uint tm_rungs(void) {
+    return TM_MAX;
+}
+bool tm_rung(uint i, t_tm *tm) {
+    return (*tmfa[i])(tm);
+}
+ulong tm_rungmask(uint bits) {
+    return _find_tmfb(bits);
+}
+
 const ulong *get_tmfbl(uint *out_maxb, ulong *out_lim) {
     if (!tmfbl)
         fail("get_tmfbl: init_tmfbl() has not been called yet");
@@ -1160,325 +1208,6 @@ mpz_t *tm_factor(t_tm *tm) {
     fs_clear(&fs);
     return &tmf;
 }
-
-#ifdef MULTIBENCH
-/* "ladder,bits,count,F[,alpha]" (see multibench() in coul.c): the
- * factoring ladder of tau_multi_run() on count composites of the given
- * bits with no factor up to F, each alone and stopping at the first
- * factor found, for rows "G bits rung reach us hit fbits cprime": the
- * fraction of inputs reaching the rung, the mean cost of an attempt
- * there (including splitting a composite factor), the fraction of
- * attempts finding a factor, and for those the mean bits of the prime
- * factor and the fraction whose cofactor is prime. A last row
- * "G bits 0 none" gives the fraction for which no rung found a factor.
- *
- * Without alpha, the inputs are random. With alpha, they are built from
- * their factors (mbl_build()), with the smallest factor's size taken
- * from its true distribution with probability alpha, else uniformly in
- * log, and each weighted by the ratio of the densities: the same
- * expected results, but with far more of the inputs whose smallest
- * factor is large, which alone reach the costly high rungs.
- */
-static inline double mbl_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
-}
-
-typedef struct {
-    double reach[TM_MAX], cost[TM_MAX], hit[TM_MAX], fbits[TM_MAX],
-            cprime[TM_MAX];
-    double w, none;
-} t_mbl;
-
-/* QS (rung MBL_QS) always finds a factor, at a cost that depends only
- * on the size, but that is large: 12s at 207 bits, 39s at 223, 387s at
- * 255. So for built inputs, whose factors are known, it is run on at
- * most MBL_QSCAP of them per size, the rest charged the mean of those,
- * and credited with finding the smallest factor; the mock takes its
- * cost from the "qs" bench's rows instead where it has them. The rungs
- * after it are then never reached (QS failing was 5% at 144 bits).
- */
-#define MBL_QS 24
-#define MBL_QSCAP 1
-typedef struct {
-    uint n, cap;
-    double t;
-    uint fbits;     /* of the input's smallest factor, if known */
-    bool cprime;    /* whether the rest is prime, if known */
-} t_mblqs;
-
-/* run the ladder on tm->n alone to the first factor, adding to st
- * with weight w
- */
-static void mbl_run(t_mbl *st, t_tm *tm, mpz_t cof, double w, t_mblqs *qs) {
-    uint bits = mpz_sizeinbase(tm->n, 2);
-    tm->t = 4;
-    tm->e = 1;
-    tm->vi = 0;
-    tm->B1 = 0;
-    tm->state = TM_INIT;
-    tm->bits = _find_tmfb(bits);
-    st->w += w;
-    for (uint i = TM_INIT; i < TM_MAX; ++i) {
-        if (!(tm->bits & (1UL << i)))
-            continue;
-        st->reach[i] += w;
-        if (i == MBL_QS && qs && qs->fbits && qs->n >= qs->cap) {
-            st->cost[i] += w * qs->t / qs->n;
-            st->hit[i] += w;
-            st->fbits[i] += w * qs->fbits;
-            if (qs->cprime)
-                st->cprime[i] += w;
-            return;
-        }
-        double t0 = mbl_now();
-        bool ok = (*tmfa[i])(tm);
-        mpz_t *f = ok ? tm_factor(tm) : NULL;
-        double dt = mbl_now() - t0;
-        st->cost[i] += w * dt;
-        if (i == MBL_QS && qs) {
-            ++qs->n;
-            qs->t += dt;
-        }
-        if (!ok)
-            continue;
-        st->hit[i] += w;
-        st->fbits[i] += w * mpz_sizeinbase(*f, 2);
-        mpz_set(cof, tm->n);
-        while (mpz_divisible_p(cof, *f))
-            mpz_divexact(cof, cof, *f);
-        if (mpz_cmp_ui(cof, 1) > 0 && _GMP_is_prob_prime(cof))
-            st->cprime[i] += w;
-        return;
-    }
-    st->none += w;
-}
-
-/* Buchstab's function omega(u) for u >= 1, from u omega(u) = 1 for
- * u <= 2 and (u omega(u))' = omega(u - 1), tabulated at steps of MBB_H:
- * of the integers near x with no prime factor below y = x^(1/u), there
- * are about x omega(u) / ln y per unit
- */
-#define MBB_H 0.001
-#define MBB_UMAX 64.0
-static double *mbb_om = NULL;
-static uint mbb_n;
-static void mbb_init(void) {
-    uint k = (uint)(1 / MBB_H + 0.5);
-    mbb_n = (uint)((MBB_UMAX - 1) / MBB_H) + 2;
-    mbb_om = malloc(mbb_n * sizeof(double));
-    double uw = 1;
-    for (uint i = 0; i < mbb_n; ++i) {
-        if (i > k)
-            uw += MBB_H * (mbb_om[i - 1 - k] + mbb_om[i - k]) / 2;
-        mbb_om[i] = uw / (1 + i * MBB_H);
-    }
-}
-static double mbb_omega(double u) {
-    if (u < 1)
-        return 0;
-    double x = (u - 1) / MBB_H;
-    uint i = (uint)x;
-    if (i + 1 >= mbb_n)
-        return mbb_om[mbb_n - 1];
-    return mbb_om[i] + (x - i) * (mbb_om[i + 1] - mbb_om[i]);
-}
-
-/* The density of the log s of the smallest prime factor of a composite
- * near e^L with no prime factor below e^a: the integers with smallest
- * factor p are p times one with none below p, and there are about
- * e^s ds / s primes in ds, so it goes as omega((L - s) / s) / s^2 for
- * a <= s <= L / 2. Tabulated as a cumulative distribution over MBB_NS
- * steps, for sampling.
- */
-#define MBB_NS 2000
-typedef struct {
-    double a, b, L, cdf[MBB_NS + 1];
-} t_mbbs;
-static void mbb_sinit(t_mbbs *d, double L, double a) {
-    d->L = L;
-    d->a = a;
-    d->b = L / 2;
-    double h = (d->b - d->a) / MBB_NS, prev = 0;
-    d->cdf[0] = 0;
-    for (uint i = 1; i <= MBB_NS; ++i) {
-        double s = d->a + i * h;
-        double f = mbb_omega((L - s) / s) / (s * s);
-        d->cdf[i] = d->cdf[i - 1] + h * (prev + f) / 2;
-        prev = f;
-    }
-}
-/* the density at s, normalized */
-static double mbb_sdens(t_mbbs *d, double s) {
-    return mbb_omega((d->L - s) / s) / (s * s) / d->cdf[MBB_NS];
-}
-static double mbb_sample(t_mbbs *d, double r) {
-    double v = r * d->cdf[MBB_NS];
-    uint lo = 0, hi = MBB_NS;
-    while (hi - lo > 1) {
-        uint mid = (lo + hi) / 2;
-        if (d->cdf[mid] < v)
-            lo = mid;
-        else
-            hi = mid;
-    }
-    double c0 = d->cdf[lo], c1 = d->cdf[hi];
-    double f = (c1 > c0) ? (v - c0) / (c1 - c0) : 0;
-    return d->a + (lo + f) * (d->b - d->a) / MBB_NS;
-}
-
-/* a random prime of about e^s */
-static void mbb_prime(mpz_t p, gmp_randstate_t rs, double s, mpz_t tmp) {
-    mpz_set_d(p, exp(s));
-    uint b = mpz_sizeinbase(p, 2);
-    if (b > 52) {
-        mpz_urandomb(tmp, rs, b - 52);
-        mpz_add(p, p, tmp);
-    }
-    _GMP_next_prime(p);
-}
-
-static double mbb_uniform(gmp_randstate_t rs) {
-    return (double)gmp_urandomb_ui(rs, 53) / 9007199254740992.0;
-}
-
-/* Multiply into n a random integer near e^L with no prime factor below
- * e^a, factor by factor: prime with chance 1 / (u omega(u)), u = L / a,
- * else its smallest factor from the density above and the rest likewise.
- * Returns the number of prime factors.
- */
-static uint mbb_rough(mpz_t n, gmp_randstate_t rs, double L, double a,
-        mpz_t p, mpz_t tmp) {
-    uint np = 0;
-    while (1) {
-        double u = L / a;
-        ++np;
-        if (u < 2 || mbb_uniform(rs) * u * mbb_omega(u) < 1) {
-            mbb_prime(p, rs, L, tmp);
-            mpz_mul(n, n, p);
-            return np;
-        }
-        t_mbbs d;
-        mbb_sinit(&d, L, a);
-        double s = mbb_sample(&d, mbb_uniform(rs));
-        mbb_prime(p, rs, s, tmp);
-        mpz_mul(n, n, p);
-        double ls = log(mpz_get_d(p));
-        L -= ls;
-        a = ls;
-    }
-}
-
-/* "qs,bits,count": the cost of QS (rung MBL_QS) alone on count
- * products of two random primes of about half the bits each, for rows
- * "Q bits us fail". Its parameters step with the decimal digits of the
- * input (see _GMP_simpqs()), so the costs do too.
- */
-void mb_qs(uint bits, uint count) {
-    gmp_randstate_t rs;
-    gmp_randinit_default(rs);
-    gmp_randseed_ui(rs, 40503UL + 11 * bits);
-    mpz_t p;
-    mpz_init(p);
-    t_tm tm;
-    mpz_init(tm.n);
-    double t = 0;
-    uint fail = 0;
-    for (uint c = 0; c < count; ++c) {
-        do {
-            mpz_urandomb(p, rs, bits / 2 - 1);
-            mpz_setbit(p, bits / 2 - 1);
-            _GMP_next_prime(p);
-            mpz_urandomb(tm.n, rs, bits - bits / 2 - 1);
-            mpz_setbit(tm.n, bits - bits / 2 - 1);
-            mpz_setbit(tm.n, bits - bits / 2 - 2);
-            _GMP_next_prime(tm.n);
-            mpz_mul(tm.n, tm.n, p);
-        } while (mpz_sizeinbase(tm.n, 2) != bits);
-        tm.t = 4;
-        tm.e = 1;
-        tm.B1 = 0;
-        double t0 = mbl_now();
-        if (!(*tmfa[MBL_QS])(&tm))
-            ++fail;
-        t += mbl_now() - t0;
-    }
-    printf("Q %u %.1f %.4f\n", bits, 1e6 * t / count, (double)fail / count);
-    mpz_clear(p);
-    mpz_clear(tm.n);
-    gmp_randclear(rs);
-}
-
-void mb_ladder(uint bits, uint count, uint F, double alpha) {
-    gmp_randstate_t rs;
-    gmp_randinit_default(rs);
-    gmp_randseed_ui(rs, 2654435761UL + 7 * bits);
-    mpz_t prim, g, cof, p, tmp;
-    mpz_init(prim);
-    mpz_init(g);
-    mpz_init(cof);
-    mpz_init(p);
-    mpz_init(tmp);
-    mpz_primorial_ui(prim, F);
-    t_mbl st;
-    memset(&st, 0, sizeof(st));
-    t_tm tm;
-    mpz_init(tm.n);
-    tm.tlim = F;
-    if (alpha > 0 && !mbb_om)
-        mbb_init();
-    t_mblqs qs = { .n = 0, .cap = MBL_QSCAP, .t = 0 };
-    for (uint c = 0; c < count; ++c) {
-        double w = 1;
-        qs.fbits = 0;
-        if (alpha > 0) {
-            /* a composite of about bits bits: its smallest factor from
-             * the mixture, the rest with no factor below that */
-            double L = log(2) * (bits - 1) + log(1 + mbb_uniform(rs));
-            t_mbbs d;
-            mbb_sinit(&d, L, log(F));
-            do {
-                double s = (mbb_uniform(rs) < alpha)
-                        ? mbb_sample(&d, mbb_uniform(rs))
-                        : d.a + mbb_uniform(rs) * (d.b - d.a);
-                mbb_prime(p, rs, s, tmp);
-                double ls = log(mpz_get_d(p));
-                if (ls > d.b)
-                    continue;
-                double f = mbb_sdens(&d, ls);
-                w = f / (alpha * f + (1 - alpha) / (d.b - d.a));
-                mpz_set(tm.n, p);
-                qs.fbits = mpz_sizeinbase(p, 2);
-                qs.cprime = mbb_rough(tm.n, rs, L - ls, ls, p, tmp) == 1;
-            } while (mpz_perfect_power_p(tm.n));
-        } else {
-            do {
-                mpz_urandomb(tm.n, rs, bits - 1);
-                mpz_setbit(tm.n, bits - 1);
-                mpz_gcd(g, prim, tm.n);
-            } while (mpz_cmp_ui(g, 1) != 0 || mpz_probab_prime_p(tm.n, 1)
-                    || mpz_perfect_power_p(tm.n));
-        }
-        mbl_run(&st, &tm, cof, w, &qs);
-    }
-    for (uint i = TM_INIT; i < TM_MAX; ++i)
-        if (st.reach[i] > 0)
-            printf("G %u %u %.6f %.4f %.6f %.2f %.4f\n", bits, i,
-                    st.reach[i] / st.w, 1e6 * st.cost[i] / st.reach[i],
-                    st.hit[i] / st.reach[i],
-                    st.hit[i] ? st.fbits[i] / st.hit[i] : 0,
-                    st.hit[i] ? st.cprime[i] / st.hit[i] : 0);
-    printf("G %u 0 %.6f\n", bits, st.none / st.w);
-    mpz_clear(tm.n);
-    mpz_clear(prim);
-    mpz_clear(g);
-    mpz_clear(cof);
-    mpz_clear(p);
-    mpz_clear(tmp);
-    gmp_randclear(rs);
-}
-#endif
 
 
 /* Returns the number of values still being tested at the point a failure

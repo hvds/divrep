@@ -12,9 +12,9 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
-    coulvec.c mock.c
+    coulvec.c mock.c trace.c bench.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
-    coulvec.h mock.h
+    coulvec.h mock.h trace.h bench.h coulint.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"
@@ -61,23 +61,14 @@ endif
 ifdef CHECK_OVERFLOW
     DEFINES += -DCHECK_OVERFLOW
 endif
-# Produces factorization debugging output to stdout.
+# Makes instrumentation available, selected at runtime with -dv<bits>
+# (see trace.h), and the benches (see bench.c).
 ifdef VERBOSE
     DEFINES += -DVERBOSE
 endif
 ifdef STUB_SQUARE_BRANCH
     DEFINES += -DSTUB_SQUARE_BRANCH
 endif
-# Per-decision walk/recurse gate records, see coul.c (GATE_STATS env var
-# names the output file).
-ifdef GATE_STATS
-    DEFINES += -DGATE_STATS
-endif
-# Calibration benchmark for test_multi() (MULTIBENCH env var), see coul.c
-ifdef MULTIBENCH
-    DEFINES += -DMULTIBENCH
-endif
-# Calibration-only stub of walk_v() (MOCK_WALK_TABLE env var), see coul.c
 # experimental: children of a loop walk once one has (see coul.c)
 ifdef WALK_FROM
     DEFINES += -DWALK_FROM
@@ -85,10 +76,11 @@ endif
 ifdef WALK_FROM_CHECK
     DEFINES += -DWALK_FROM -DWALK_FROM_CHECK
 endif
+# Calibration-only stub of walk_v() (MOCK_WALK_TABLE env var), see mock.c
 ifdef MOCK_WALK
     DEFINES += -DMOCK_WALK
 endif
-# with MOCK_WALK, also stub innermost recurse loops, see coul.c
+# with MOCK_WALK, also stub innermost recurse loops, see mock.c
 ifdef MOCK_LEAF
     DEFINES += -DMOCK_LEAF
 endif

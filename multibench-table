@@ -8,7 +8,7 @@ use H::Diag qw{ diag keep_diag };
 
 =head1 multibench-table: tabulate this machine's costs for the walk mocks
 
-  multibench-table [-c<bench>] [-g<gatestats>] [-m<mock>] [-b<bits,...>]
+  multibench-table [-v<verbose>] [-m<mock>] [-b<bits,...>]
           [-f<flake>] [-o | -M] [-w<file>] n k
 
 Writes to stdout, or to I<file> with C<-w> (when progress is shown on
@@ -16,13 +16,14 @@ stdout as runs done / total), the cost table that a pcoul built with
 C<MOCK_WALK=1>
 (and C<MOCK_LEAF=1>) reads from C<$MOCK_WALK_TABLE>, so that the mocks
 carry no costs of their own: one table per machine, MPUGMP build and
-n. Times in the table are in microseconds. It needs three builds of
-pcoul, given by C<-c> (C<MULTIBENCH=1>, default F<./pcoul>), C<-g>
-(C<GATE_STATS=1>) and C<-m> (C<MOCK_WALK=1 MOCK_LEAF=1>).
+n. Times in the table are in microseconds. It needs two builds of
+pcoul, given by C<-v> (C<VERBOSE=1>, default F<./pcoul>), which runs
+the benches and the instrumented calibration runs, and C<-m>
+(C<MOCK_WALK=1 MOCK_LEAF=1>).
 
 The mock models the trial division stage of each test itself, since
 how often the values a walk tests are divisible by each trial prime
-depends strongly on the walk. So the bench pcoul first finds the trial
+depends strongly on the walk. So the benches first finds the trial
 division limit L for each size (it changes at 80 bits in some builds),
 the cost of a test that fails at each of a range of trial primes, and
 the extra cost of a factor found there that does not end the test, at
@@ -47,7 +48,7 @@ decided in prep, and left pending for the ladder; I<pass> is the
 fraction of pending inputs the ladder accepts; the times are mean prep
 time per input and mean ladder time per pending input. C<-o> skips
 these lines, giving only the costs below, which do not depend on n;
-C<-M> gives only these lines (and needs only the bench pcoul).
+C<-M> gives only these lines (and needs only the C<-v> pcoul).
 
 Then the remaining costs:
 
@@ -71,7 +72,7 @@ Then the remaining costs:
   G bits 0 none     likewise, the fraction for which it found no factor
 
 The walk loop costs are fitted by least squares to the walks of two
-calibration runs with the GATE_STATS pcoul (time outside the tests,
+calibration runs with the C<-v> pcoul (at C<-dv6>) (time outside the tests,
 against iterations, expected inverse entries tested and inverse-filter
 passes, the last absorbing the instrumentation's own clock reads), and
 the walk_1_set() costs likewise to its calls in one of those and a
@@ -133,8 +134,8 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 
 =cut
 
-my($bench, $gstats, $mock, $only, $outfile, $flake)
-        = ('./pcoul', undef, undef, '', undef, 0);
+my($verbose, $mock, $only, $outfile, $flake)
+        = ('./pcoul', undef, '', undef, 0);
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
@@ -142,8 +143,7 @@ my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
-    $bench = $1, next if $arg =~ /^-c(.+)$/;
-    $gstats = $1, next if $arg =~ /^-g(.+)$/;
+    $verbose = $1, next if $arg =~ /^-v(.+)$/;
     $mock = $1, next if $arg =~ /^-m(.+)$/;
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
     $flake = $1, next if $arg =~ /^-f(\d+)$/;
@@ -152,8 +152,9 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $outfile = $1, next if $arg =~ /^-w(.+)$/;
     die "Unknown option '$arg'";
 }
-@ARGV == 2 && (($gstats && $mock) || $only eq 'multi')
-        or die "500 Usage: $0 [-c<bench>] -g<gatestats> -m<mock> [-b<bits,...>] [-o | -M] [-w<file>] n k";
+@ARGV == 2 && ($mock || $only eq 'multi')
+        or die "500 Usage: $0 [-v<verbose>] -m<mock> [-b<bits,...>]"
+                . " [-f<flake>] [-o | -M] [-w<file>] n k";
 my($n, $k) = @ARGV;
 my $out = \*STDOUT;
 if (defined $outfile) {
@@ -312,20 +313,21 @@ sub bench {
     local $ENV{MULTIBENCH} = $spec;
     progress("MULTIBENCH=$spec");
     my @lines = grep /^(?:MULTIBENCH|[PRCSLGQ]) /,
-            `'$bench' -X @opt $n $k 2>&1`;
+            `'$verbose' -X @opt $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;
     return @lines;
 }
 
-# Run the GATE_STATS pcoul, and return its W and V records, split
+# Run the VERBOSE pcoul with gate records and stage timing (-dv6), and
+# return its W and V records, split
 sub gate_log {
     my(@args) = @_;
     local $ENV{GATE_STATS} = $tmp;
     unlink $tmp;
-    progress("GATE_STATS @args");
-    my $out = `'$gstats' -X @{[ map quote($_), @args ]} 2>&1`;
-    $out =~ /^367 /m or die "no 367 line from $gstats @args";
+    progress("-dv6 @args");
+    my $out = `'$verbose' -X -dv6 @{[ map quote($_), @args ]} 2>&1`;
+    $out =~ /^367 /m or die "no 367 line from $verbose @args";
     open my $fh, '<', $tmp or die "$tmp: $!";
     my @recs = map [ split ], grep /^[WV] /, <$fh>;
     close $fh;
@@ -334,7 +336,7 @@ sub gate_log {
 }
 
 # Fit the walks of the given cause (N linear, S fixed power) from
-# GATE_STATS records: returns microseconds per walk (S only), per
+# -dv2 records: returns microseconds per walk (S only), per
 # iteration and per inverse entry tested.
 sub fit_walks {
     my($cause, @recs) = @_;
@@ -357,7 +359,7 @@ sub fit_walks {
     return map 1e6 * $_, @c;
 }
 
-# Fit walk_1_set() calls from GATE_STATS V records: returns microseconds
+# Fit walk_1_set() calls from V records: returns microseconds
 # per prime and per prime reaching the tests.
 sub fit_w1s {
     my(@recs) = @_;

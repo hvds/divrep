@@ -62,6 +62,15 @@ extern uint tau_multi_run(uint i, tau_failure_handler tfh);
 extern bool tau_prime_prep(uint i);
 extern uint tau_prime_run(uint first, uint count);
 extern bool tau_prime_test(mpz_t n);
+/* the ladder of factoring methods tau_multi_run() climbs: rungs
+ * TM_INIT..tm_rungs()-1, the mask of rungs tried at a size, running
+ * rung i on tm, and the factor a successful rung found
+ */
+#define TM_INIT 2
+extern uint tm_rungs(void);
+extern ulong tm_rungmask(uint bits);
+extern bool tm_rung(uint i, t_tm *tm);
+extern mpz_t *tm_factor(t_tm *tm);
 /* the ladder's rung masks by size, as used by tau_multi_run() */
 extern const ulong *get_tmfbl(uint *out_maxb, ulong *out_lim);
 
