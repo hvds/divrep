@@ -315,8 +315,8 @@ bool debugb = 0;    /* show batch id, if changed */
 bool debugB = 0;    /* show every batch id */
 bool debugf = 0;    /* show prepped sub-batches */
 bool debugt = 0;    /* show target_t() */
-bool debugv = 0;    /* show modular constraints */
-bool debugV = 0;    /* show more modular constraints */
+bool debugc = 0;    /* show modular constraints */
+bool debugC = 0;    /* show more modular constraints */
 bool debugm = 0;    /* track and show mintau results */
 bool debugL = 0;    /* force every diag to also write a 305/315 log line */
 uint debugL_count = 0;  /* debugL only for the first n iterations */
@@ -5865,12 +5865,12 @@ int main(int argc, char **argv, char **envp) {
               case 't':
                 debugt = 1;
                 break;
-              case 'v':
-                debugv = 1;
+              case 'c':
+                debugc = 1;
                 break;
-              case 'V':
-                debugV = 1;
-                debugv = 1;
+              case 'C':
+                debugC = 1;
+                debugc = 1;
                 break;
               case 'm':
                 debugm = 1;

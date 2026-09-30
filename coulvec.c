@@ -11,7 +11,7 @@
 #include "utility.h"
 
 /* FIXME: work out where these should be declared */
-extern bool debugv, debugV;
+extern bool debugc, debugC;
 static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
     return (mpz_t *)z;
 }
@@ -314,7 +314,7 @@ t_cvec *new_cvec(t_context *cx, uint m) {
                 uint jk = k * md + j;
                 if (TESTBIT(v, jk))
                     continue;
-                if (debugV)
+                if (debugC)
                     printf("init %u (mod %u) from %u (mod %u)\n",
                             jk, m, j, md);
                 SETBIT(v, jk);
@@ -364,7 +364,7 @@ void fix_cvec(t_context *cx, uint m, uint v) {
     mult_combine_ui(cx, m, v);
     cv->in_mult = 1;
 
-    if (debugv)
+    if (debugc)
         report("fix %u (mod %u) giving %Zu (mod %Zu)\n",
                 v, m, cx->mod_mult, cx->mult);
 
@@ -413,7 +413,7 @@ void suppress(t_context *cx, uint m, uint v, bool depend) {
         }
         if (depend) {
             if (TESTBIT(cm->vu, v)) {
-                if (debugV)
+                if (debugC)
                     printf("suppress %u (mod %u), now dependent\n", v, m);
                 CLRBIT(cm->vu, v);
                 --cm->unique_count;
@@ -423,12 +423,12 @@ void suppress(t_context *cx, uint m, uint v, bool depend) {
         } else {
             if (TESTBIT(cm->v, v))
                 continue;   /* no effect to propagate */
-            if (debugV)
+            if (debugC)
                 printf("suppress %u (mod %u), is independent\n", v, m);
             SETBIT(cm->vu, v);
             ++cm->unique_count;
         }
-        if (debugV)
+        if (debugC)
             printf("suppress %u (mod %u), is set\n", v, m);
         SETBIT(cm->v, v);
         ++cm->count;
@@ -466,7 +466,7 @@ void suppress(t_context *cx, uint m, uint v, bool depend) {
                 uint mdv = d * j + dv;
                 if (!TESTBIT(cm->vu, mdv))
                     continue;
-                if (debugV)
+                if (debugC)
                     printf("suppress %u (mod %u), propagate\n", mdv, m);
                 CLRBIT(cm->vu, mdv);
                 --cm->unique_count;
@@ -644,7 +644,7 @@ int cmp_potency(const void *va, const void *vb) {
  * is a multiple of ms.
  */
 void cvec_merge(t_context *cx, uint md, uint ms) {
-    if (debugv)
+    if (debugc)
         printf("pack %u into %u\n", ms, md);
     t_cvec *cvd = get_cvec(cx, md);
     t_cvec *cvs = get_cvec(cx, ms);
@@ -761,7 +761,7 @@ void cvec_pack(t_context *cx, uint chunksize, double minratio) {
             break;
         }
 
-    if (debugv)
+    if (debugc)
         dump_sc(cx);
 }
 
