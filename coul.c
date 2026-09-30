@@ -2415,7 +2415,7 @@ void report_init(FILE *fp, char *prog) {
 
     if (strategy) {
         if (strategy == STRATEGY_FIXED) {
-            fprintf(fp, "-js");
+            fprintf(fp, " -js");
             for (uint i = 0; i < fixed_level; ++i) {
                 if (i)
                     fprintf(fp, ",");
