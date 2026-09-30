@@ -3496,9 +3496,31 @@ static double gr_cit(uint L) {
     return GR_DEFIT;
 }
 
+/* the number of primes up to x: exact below GR_PIMAX, where the
+ * asymptotic estimate is poor (and not even increasing)
+ */
+#define GR_PIMAX 10000
+static uint *gr_pi = NULL;
 static double gr_li(double x) {
     if (x < 2)
         return 0;
+    if (x < GR_PIMAX) {
+        if (!gr_pi) {
+            gr_pi = calloc(GR_PIMAX, sizeof(uint));
+            char *comp = calloc(GR_PIMAX, 1);
+            uint c = 0;
+            for (uint i = 2; i < GR_PIMAX; ++i) {
+                if (!comp[i]) {
+                    ++c;
+                    for (uint j = i * i; j < GR_PIMAX; j += i)
+                        comp[j] = 1;
+                }
+                gr_pi[i] = c;
+            }
+            free(comp);
+        }
+        return gr_pi[(uint)x];
+    }
     double l = log(x);
     return x / l * (1 + 1 / l + 2 / (l * l));
 }
@@ -5452,6 +5474,7 @@ e_xr x_range(
  * the loop above may flip), when the result is meaningless.
  */
 #define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
+#define JA_W1T 1e-6         /* walk_1_set(), per prime reaching its tests */
 static double ja_cost(
     t_level *prev_level, t_level *cur_level, uint vi, double bound,
     bool *blind
@@ -5473,9 +5496,15 @@ static double ja_cost(
           case XR_FLIP:
             *blind = 1;
             return 0;
-          case XR_WALK1:
-            total += (gr_li(limp) - gr_li(p) + 1) * JA_W1S;
+          case XR_WALK1: {
+            /* about 1 in m of the primes pass the check mod m = aq / q_i
+             * to reach the tests
+             */
+            double m = mpz_get_d(prev_level->aq) / mpz_get_d(ap->q);
+            total += (gr_li(limp) - gr_li(p) + 1)
+                    * (JA_W1S + JA_W1T / (m < 1 ? 1 : m));
             break;
+          }
           case XR_RANGE: {
             if (((nextt & 1) && !(ti & 1)) || ti == 2 * x * x) {
                 *blind = 1;
@@ -6290,7 +6319,7 @@ void recurse(e_is jump_continue) {
 #ifdef VERBOSE
                         || (auto_level && VB(VB_CHOICE))
 #endif
-                    ) && !prev_level->have_square && !highpow
+                    ) && !prev_level->have_square
                     && strategy != STRATEGY_6X && strategy != STRATEGY_FIXED) {
                 uint sv = vi;
                 vi = ja_choose(prev_level, cur_level, vi);
@@ -6656,9 +6685,9 @@ int main(int argc, char **argv, char **envp) {
         fail("wrong number of arguments");
     if (force_all > k)
         fail("require force_all <= k");
-    /* -ja2 chooses positions, as -js does; -j4 chooses among others */
-    if (auto_level >= 2 && (strategy == STRATEGY_FIXED || strategy == 4))
-        fail("-ja2 is not supported with -js or -j4");
+    /* -ja2 chooses positions, as -js does */
+    if (auto_level >= 2 && strategy == STRATEGY_FIXED)
+        fail("-ja2 is not supported with -js");
 
     init_post();
     if (opt_alloc & 2)

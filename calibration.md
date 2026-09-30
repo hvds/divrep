@@ -149,6 +149,13 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
    the model to square-making x so fewer choices stay with the
    strategy. On D(36,4) -j2 the strategy's choice was blind at 24% of
    nodes, and -ja2 chose another position at 29%.
+   Known bias: the depth-1 estimate assumes every child walks, so high
+   in the tree it overestimates positions that would recurse, while a
+   walk_1_set() range is costed nearly exactly; -ja2 then prefers the
+   latter. It matters little at a fixed zmax, but badly when zmax falls
+   sharply mid-run (D(24,5) -j4 -x1e13: 0.82s against 0.22s). A fix
+   would cost a recursing position's children by the cheaper of walking
+   and recursing (depth 2), or trust the model only near the leaves.
 2. With that, try "never walk a flippable loop".
 3. Fixed squares under the cost gate: a child that completes a second
    square (Pell, nearly free) or flips must be costed as such; the
