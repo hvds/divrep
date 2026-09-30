@@ -855,19 +855,19 @@ void updated_zmax(void) {
     if (highpow) {
         if (rfp)
             need_expanded_diag = 1;
-        for (uint li = final_level + 1; li < level; ++li) {
-            t_level *lp = &levels[li];
-            if (lp->p == 0)
-                continue;
-            uint vi = lp->vi;
-            t_value *v = &value[vi];
-            uint vlevel = lp->vi_depth;
-            t_allocation *ap = &v->alloc[vlevel - 1];
-            if (ispow2(ap->t)) {
-                mpz_add_ui(ap->lim, zmax, TYPE_OFFSET(vi));
-                if (ap->t > 1) {
-                    mpz_fdiv_q(ap->lim, ap->lim, ap->q);
-                    mpz_root(ap->lim, ap->lim, divisors[ap->t].sumpm);
+        /* there are no allocations if cur_vlevel is not initialised */
+        if (cur_vlevel) {
+            for (uint vi = 0; vi < k; ++vi) {
+                t_value *v = &value[vi];
+                for (uint ai = 1; ai < cur_vlevel[vi]; ++ai) {
+                    t_allocation *ap = &v->alloc[ai];
+                    if (!ispow2(ap->t))
+                        continue;
+                    mpz_add_ui(ap->lim, zmax, TYPE_OFFSET(vi));
+                    if (ap->t > 1) {
+                        mpz_fdiv_q(ap->lim, ap->lim, ap->q);
+                        mpz_root(ap->lim, ap->lim, divisors[ap->t].sumpm);
+                    }
                 }
             }
         }
