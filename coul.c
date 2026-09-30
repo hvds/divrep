@@ -208,10 +208,10 @@ uint lastprime;
 
 /* set to utime at start of run, minus last timestamp of recovery file */
 double t0 = 0;
-double g_mock_spent_s = 0;   /* accumulated simulated cost under
-    MOCK_LADDER (coultau.c) - always declared, always 0 unless that
-    build flag is active, so seconds()/elapsed() don't need their own
-    #ifdef */
+/* the cost the mocks have modelled: always declared, and 0 unless
+ * built with MOCK_WALK, so that seconds() needs no #ifdef
+ */
+double g_mock_spent_s = 0;
 struct rusage rusage_buf;
 static inline double utime(void) {
     getrusage(RUSAGE_SELF, &rusage_buf);
@@ -483,12 +483,7 @@ static inline uint test_prime_run(uint first) {
     return remain;
 }
 static inline uint test_multi_run(tau_failure_handler tfh) {
-#ifdef MOCK_LADDER
-    extern uint mock_tau_multi_run(uint count, tau_failure_handler tfh);
-    return mock_tau_multi_run(tm_count, tfh);
-#else
     return tau_multi_run(tm_count, tfh);
-#endif
 }
 
 #if defined(TYPE_o) || defined(TYPE_r)
