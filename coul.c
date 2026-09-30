@@ -3000,7 +3000,6 @@ int inv_comparator(const void *va, const void *vb) {
  *       passes, nprime/tprime cover test_zprimes() only.
  *       Last, for both, the expected number of inverse-filter entries
  *       tested per iteration.
- *   B, BP, BS: batch-level estimator inputs, see gs_batch_record()
  *   F lvl oldp outer ok inner dt
  *       one per run_flip_pqsq() call: the flip point, outer primes tried
  *       and accepted by apply_single(), primes iterated by its
@@ -5140,159 +5139,6 @@ bool apply_batch(
 }
 
 
-#ifdef GATE_STATS
-/* B/BP records: the batch-level inputs of the per-batch cost estimator.
- *   B lvl X pinv zbits cpu k strategy
- *       X = (zmax - zmin) / aq at the batch, pinv the inverse-filter pass
- *       rate a walk at the batch level would see, zbits = log2(zmax),
- *       cpu the process CPU time used before this batch started, k, and
- *       the strategy best_v() will use for this batch (STRATEGY_6X only
- *       if its conditions hold here)
- *   BP vi x t L qbits maxforce
- *       for each position vi and each allocation p^{x-1} it could still
- *       take (x a non-power-of-2 divisor of its remaining t, or with
- *       highpow any divisor x > 1), the batch-
- *       level limit L on p (as prep_midp() computes it), log2(q_vi),
- *       and maxforce[vi] (unforced allocations there use primes above
- *       it); x == 0 marks a position that already needs a prime (t == 2)
- *   BQ vi t qbits maxforce
- *       every position's remaining tau, log2(q_vi) and maxforce[vi]
- *   BM u mintau
- *       mintau(u) at the batch level, for each proper divisor u of n
- *   BR u x mintau
- *       mintau_restricted(u, x) at the batch level, for each restricted x
- *       (as limit_p() uses them) and each proper divisor u of n
- *   BS sqi t g rc root Xsq pinv q
- *       if one value is a fixed power (have_square == 1): its position,
- *       remaining tau and root degree, the number of root residues, the
- *       root limit, Xsq = rc * root / qq (root iterations to walk it at
- *       the batch level), the inverse pass rate over root residues, and
- *       its q
- */
-static void gs_batch_record(t_level *cur_level) {
-    FILE *fp = gs_file();
-    mpz_t *aq = &cur_level->aq, *m = &cur_level->rq;
-    mpz_t qq, o, tmp, mt;
-    mpz_init(qq); mpz_init(o); mpz_init(tmp); mpz_init(mt);
-    ulong mods[256]; ulong res[256][64]; uint nres[256]; uint nm = 0;
-    double zb = log2(mpz_get_d(zmax));
-    for (uint vi = 0; vi < k; ++vi) {
-        t_value *vp = &value[vi];
-        uint vl = cur_vlevel[vi];
-        t_allocation *ap = &vp->alloc[vl - 1];
-        double qb = log2(mpz_get_d(ap->q));
-        mpz_divexact(qq, *aq, ap->q);
-        mpz_add_ui(o, *m, TYPE_OFFSET(vi));
-        mpz_divexact(o, o, ap->q);
-        for (uint ai = 1; ai < vl; ++ai) {
-            t_allocation *a = &vp->alloc[ai];
-            if (a->p == 2)
-                continue;
-            ulong inverse = small_divmod(o, qq, a->p);
-            if (inverse >= a->p)
-                continue;
-            ulong v = inverse ? a->p - inverse : 0;
-            uint mi;
-            for (mi = 0; mi < nm; ++mi)
-                if (mods[mi] == a->p)
-                    break;
-            if (mi == nm) {
-                if (nm == 256)
-                    continue;
-                mods[nm] = a->p;
-                nres[nm++] = 0;
-            }
-            uint ri;
-            for (ri = 0; ri < nres[mi]; ++ri)
-                if (res[mi][ri] == v)
-                    break;
-            if (ri == nres[mi] && nres[mi] < 64)
-                res[mi][nres[mi]++] = v;
-        }
-        uint t = ap->t;
-        fprintf(fp, "BQ %u %u %.2f %u\n", vi, t, qb, maxforce[vi]);
-        if (t == 2) {
-            fprintf(fp, "BP %u 0 2 0 %.2f %u\n", vi, qb, maxforce[vi]);
-            continue;
-        }
-        t_divisors *dp = &divisors[t];
-        for (uint di = 0; di < dp->alldiv; ++di) {
-            uint x = dp->div[di];
-            /* with highpow, powers of 2 are allocated too */
-            if (x == 1 || (!highpow && ispow2(x)))
-                break;
-            mpz_add_ui(tmp, zmax, TYPE_OFFSET(vi));
-            mintau(cur_level, mt, t / x);
-            mpz_fdiv_q(tmp, tmp, mt);
-            mpz_fdiv_q(tmp, tmp, ap->q);
-            mpz_root(tmp, tmp, x - 1);
-            fprintf(fp, "BP %u %u %u %.6g %.2f %u\n", vi, x, t, mpz_get_d(tmp),
-                    qb, maxforce[vi]);
-        }
-    }
-    double pinv = 1.0;
-    for (uint mi = 0; mi < nm; ++mi)
-        pinv *= 1.0 - (double)nres[mi] / mods[mi];
-    if (cur_level->have_square == 1) {
-        /* the root space of the fixed power at sq0: iterations
-         * rc * root / qq, and the inverse pass rate over root residues */
-        t_value *vp = &value[sq0];
-        t_allocation *ap = &vp->alloc[cur_vlevel[sq0] - 1];
-        uint g = divisors[ap->t].gcddm;
-        t_results *xr = res_array(cur_level->level);
-        t_mod im[256 * 64];
-        uint nim = 0;
-        for (uint mi = 0; mi < nm; ++mi)
-            for (uint ri = 0; ri < nres[mi]; ++ri)
-                im[nim++] = (t_mod){ .v = res[mi][ri], .m = mods[mi] };
-        mpz_divexact(qq, *aq, ap->q);
-        mpz_add_ui(o, *m, TYPE_OFFSET(sq0));
-        mpz_divexact(o, o, ap->q);
-        mpz_add_ui(tmp, zmax, TYPE_OFFSET(sq0));
-        mpz_fdiv_q(tmp, tmp, ap->q);
-        mpz_root(tmp, tmp, g);
-        double root = mpz_get_d(tmp);
-        mpz_set_d(mt, 1e300);   /* force the full calculation */
-        double sq_pinv = gs_square_pinv(im, nim, xr, qq, o, g, mt);
-        gmp_fprintf(fp, "BS %u %u %u %u %.6g %.6g %.6g %Zd\n", sq0, ap->t, g,
-                xr->count, root, root * xr->count / mpz_get_d(qq), sq_pinv,
-                ap->q);
-    }
-    t_divisors *nd = &divisors[n];
-    for (uint di = 0; di < nd->alldiv; ++di) {
-        /* only proper divisors are needed (t/x for x > 1); mintau(n)
-         * is not supported */
-        if (nd->div[di] == n)
-            continue;
-        mintau(cur_level, mt, nd->div[di]);
-        fprintf(fp, "BM %u %.6g\n", nd->div[di], mpz_get_d(mt));
-    }
-    /* mintau_restricted(u, x) where limit_p() would use it: x and u
-     * sharing their highest prime */
-    for (uint ri = 0; ri < restricted_count; ++ri) {
-        uint x = restricted[ri];
-        for (uint di = 0; di < nd->alldiv; ++di) {
-            uint u = nd->div[di];
-            if (u == n)
-                continue;
-            mintau_restricted(cur_level, mt, u, x);
-            fprintf(fp, "BR %u %u %.6g\n", u, x, mpz_get_d(mt));
-        }
-    }
-    mpz_sub(tmp, zmax, zmin);
-    mpz_fdiv_q(tmp, tmp, *aq);
-    /* strategy may be a stale STRATEGY_6X from an earlier batch: report
-     * what best_6x() will do, reverting unless its conditions hold here */
-    uint eff_strategy = strategy;
-    if (eff_strategy == STRATEGY_6X
-            && !(cur_level->have_square && sq0 >= 2))
-        eff_strategy = prev_strategy;
-    fprintf(fp, "B %u %.6g %.6g %.3f %.3f %u %u\n", cur_level->level,
-            mpz_get_d(tmp), pinv, zb, utime(), k, eff_strategy);
-    mpz_clear(qq); mpz_clear(o); mpz_clear(tmp); mpz_clear(mt);
-}
-#endif
-
 /* A complete set of forced primes has been allocated. We may process
  * this batch or skip it, according to batch options; we also handle
  * midp ("-W") here, and skip the rest (i.e. allocation of unforced
@@ -5332,9 +5178,6 @@ bool process_batch(t_level *cur_level, bool recover) {
         }
     }
   do_process:
-#ifdef GATE_STATS
-    gs_batch_record(cur_level);
-#endif
     if (need_midp) {
         walk_midp(cur_level, recover);
         if (midp_only)
