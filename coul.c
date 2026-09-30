@@ -375,6 +375,7 @@ t_recover *rstack = NULL;  /* point reached in recovery log file */
 t_recover *istack = NULL;  /* point requested by -I */
 char *pend202 = NULL;   /* recovery candidate under highpow after last 3[01]5 */
 bool have_rwalk = 0;    /* true if recovery is mid-walk */
+bool reinject = 0;      /* true while reapplying a recovered allocation */
 mpz_t rwalk_from;
 mpz_t rwalk_to;
 
@@ -5524,7 +5525,7 @@ e_pux prep_unforced_x(
      */
     if (gr_depth && !prev_level->have_square && ti != 2 * x * x)
         do_walk = gr_walk(prev_level, p, cap, x);
-    if (do_walk) {
+    if (do_walk && !reinject) {
 #ifdef WALK_FROM
         wf_note(1, 1);
         if (!prev_level->is_forced && !prev_level->walk_from
@@ -5747,7 +5748,13 @@ static inline bool insert_float(
     cur_level->ti = ti;
     cur_level->di = di;
 
+    /* the recovery line shows this node recursed: honour that, rather
+     * than asking the gate again, so that -gr1 can be turned on or off
+     * mid-run (with the same options, the gain alone would agree)
+     */
+    reinject = 1;
     e_pux pux = prep_unforced_x(prev_level, cur_level, p, init);
+    reinject = 0;
     switch (pux) {
       case PUX_FLIP_PQSQ:
       case PUX_SKIP_THIS_X:

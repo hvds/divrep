@@ -105,7 +105,10 @@ during the run; recursing costs 0.2us per prime tried plus the
 children's walks, as if every child walks. On every non-square batch
 tried (8 D(96,8), 3 of them at 10x zmax, and 5 D(48,10)) it matched or
 beat the best gain tried within a few %, with no tuning; the user's
--g24 on D(96,8) was 20-35% slower than both.
+-g24 on D(96,8) was 20-35% slower than both. Recovery honours the
+recursion the recovery line shows, without asking the gate again, so
+-gr1 can be turned on or off mid-run; tested by recovering D(12,4) and
+D(24,5) from 100 random log points, and in t/t10init.
 
 ### Instrumentation
 
@@ -128,6 +131,11 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
    the one-level recursion cost over its x values, with cheap bounds
    to discard positions that cannot win. The -j strategies differ by
    up to 40% per batch under -gr1, none winning everywhere.
+   Recovery then needs care: insert_stack() replays the recovered
+   allocations in best_v() order, which a cost-based choice need not
+   reproduce; it could instead take the position holding the last
+   pending allocation as the one chosen (or rely on the expanded 315
+   form, as for -j4).
 2. With that, try "never walk a flippable loop".
 3. Fixed squares under the cost gate: a child that completes a second
    square (Pell, nearly free) or flips must be costed as such; the
