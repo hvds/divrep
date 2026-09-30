@@ -5232,6 +5232,23 @@ double cg_lastW = 0;
 ulong cg_lseq[CG_MAXL];
 /* recursions timed, against their estimates, by the level of the node */
 double cg_rt[2][CG_MAXL], cg_re[2][CG_MAXL], cg_last_R = 0;
+/* CG_TWO: per level, a fit of ln(actual recursion cost) against
+ * ln(estimated walk cost) over the recursions timed, giving a child's
+ * cost as min(walk, recurse) in a two-level estimate
+ */
+double cg_fx[CG_MAXL], cg_fy[CG_MAXL], cg_fxx[CG_MAXL], cg_fxy[CG_MAXL];
+uint cg_fn[CG_MAXL], cg_two = 0;
+static double cg_child(uint L, double W) {
+    if (!cg_two || L >= CG_MAXL || cg_fn[L] < 16)
+        return W;
+    double n = cg_fn[L], d = n * cg_fxx[L] - cg_fx[L] * cg_fx[L];
+    if (d <= 0)
+        return W;
+    double b = (n * cg_fxy[L] - cg_fx[L] * cg_fy[L]) / d;
+    double a = (cg_fy[L] - b * cg_fx[L]) / n;
+    double R = exp(a + b * log(W));
+    return (R < W) ? R : W;
+}
 uint cg_rn[2][CG_MAXL];
 uint cg_n[2][CG_MAXL];
 /* the iterations of a walk at the node lv, as the gate estimates them:
@@ -5339,8 +5356,22 @@ static bool cg_decide(t_level *prev_level, ulong p, ulong cap, uint x,
     double sA = cg_psum(a, mA, s), sB = cg_psum(mB, b, s);
     double R = np * CG_APPLY + nA * CG_SETUP
             + ci1 * za * sA + (CG_SETUP + ci1) * za * sB;
-    /* correct by what recursions from this level have actually cost */
-    if (L < CG_MAXL && cg_rn[sq][L] >= 8 && cg_re[sq][L] > 0)
+    if (cg_two && !sq) {
+        /* each child walks or recurses, whichever is cheaper, summed over
+         * the primes p in [a, b] as the integral of f(e^t) e^t / t dt
+         */
+        double ta = log(a), tb = log(b), h = (tb - ta) / 32, sum = 0;
+        for (uint i = 0; i <= 32; ++i) {
+            double t = ta + i * h, pp = exp(t);
+            double u = za * exp(-s * t);
+            double wc = (u >= 1) ? CG_SETUP + ci1 * u : u * (CG_SETUP + ci1);
+            double c = CG_APPLY + ((u >= 1) ? cg_child(L + 1, wc) : wc);
+            double f = c * pp / t;
+            sum += f * ((i == 0 || i == 32) ? 1 : (i & 1) ? 4 : 2);
+        }
+        R = (tb > ta) ? sum * h / 3 : CG_APPLY;
+    } else if (L < CG_MAXL && cg_rn[sq][L] >= 8 && cg_re[sq][L] > 0)
+        /* correct by what recursions from this level have actually cost */
         R *= cg_rt[sq][L] / cg_re[sq][L];
     cg_last_R = R;
     cg_lastW = W;
@@ -7557,7 +7588,8 @@ e_pux prep_unforced_x(
          */
         bool cg_simple = !((ti / x) & 1) && ti != 2 * x * x;
         cg_last_R = 0;
-        bool use = !prev_level->have_square ? (cg_mode != 1 || cg_simple)
+        bool use = cg_mode == 9 ? 0 /* log only */
+                : !prev_level->have_square ? (cg_mode != 1 || cg_simple)
                 : (prev_level->have_square == 1 && cg_mode >= 2
                     && (cg_simple || cg_mode == 3));
         if (use || (cg_log && prev_level->level <= cg_log
@@ -7627,6 +7659,7 @@ e_pux prep_unforced_x(
     cur_level->cg_t0 = 0;
     if (!forced && cg_last_R > 0 && prev_level->have_square <= 1) {
         cur_level->cg_rest = cg_last_R;
+        cur_level->cg_rW = cg_lastW;
         cur_level->cg_t0 = cg_now();
     }
 #endif
@@ -8268,7 +8301,16 @@ void recurse(e_is jump_continue) {
         if (cur_level->cg_t0 > 0) {
             uint L = prev_level->level, sq = prev_level->have_square;
             if (L < CG_MAXL && sq <= 1) {
-                cg_rt[sq][L] += cg_now() - cur_level->cg_t0;
+                double dt = cg_now() - cur_level->cg_t0;
+                cg_rt[sq][L] += dt;
+                if (!sq && dt > 0 && cur_level->cg_rW > 0) {
+                    double x = log(cur_level->cg_rW), y = log(dt);
+                    cg_fx[L] += x;
+                    cg_fy[L] += y;
+                    cg_fxx[L] += x * x;
+                    cg_fxy[L] += x * y;
+                    ++cg_fn[L];
+                }
                 cg_re[sq][L] += cur_level->cg_rest;
                 ++cg_rn[sq][L];
             }
@@ -8945,6 +8987,8 @@ int main(int argc, char **argv, char **envp) {
         cg_scale = atof(getenv("CG_SCALE"));
     if (getenv("CG_MODE"))
         cg_mode = atoi(getenv("CG_MODE"));
+    if (getenv("CG_TWO"))
+        cg_two = atoi(getenv("CG_TWO"));
     if (getenv("CG_LOG"))
         cg_log = atoi(getenv("CG_LOG"));
 #endif
