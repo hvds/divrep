@@ -3334,7 +3334,9 @@ void walk_1(t_level *cur_level, uint vi) {
     return;
 }
 
-/* test a set of cases where v_i will have all divisors accounted for */
+/* test a set of cases where v_i will have all divisors accounted for:
+ * v_i = q_i . p^{x-1} for primes p with plow < p <= phigh.
+ */
 void walk_1_set(
     t_level *prev_level, t_level *cur_level,
     uint vi, ulong plow, ulong phigh, uint x
@@ -3343,10 +3345,9 @@ void walk_1_set(
     if (!cur_level->have_square)
         return;
 #endif
-    if (!cur_level->have_min)
+    /* p must exceed minp[x - 1] */
+    if (!cur_level->have_min && plow < minp[x - 1])
         plow = minp[x - 1];
-    if (plow < 2)
-        plow = 2;
 
     t_value *vip = &value[vi];
     uint vil = cur_vlevel[vi];
@@ -3358,7 +3359,7 @@ void walk_1_set(
         if (!mpz_fits_ulong_p(Z(temp)))
             return;
         ulong pmin = mpz_get_ui(Z(temp));
-        if (plow < pmin)
+        if (plow < pmin - 1)
             plow = pmin - 1;
     }
 
@@ -3390,13 +3391,30 @@ void walk_1_set(
             need_other[noc++] = vj;
     }
 
-    level_setp(cur_level, plow - 1);    /* next prime should be plow */
+    /* we must skip already allocated primes */
+    ulong maxused = prev_level->maxp;
+    uint maxl = prev_level->level;
+
+    level_setp(cur_level, plow);
     while (1) {
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh)
             break;
+        if (p <= maxused) {
+            bool used = 0;
+            for (uint li = 1; li <= maxl; ++li)
+                if (p == levels[li].p && levels[li].x > 1) {
+                    used = 1;
+                    break;
+                }
+            if (used)
+                continue;
+        }
+        /* Must diag before need_mod checks, which can reject a high
+         * proportion of primes.
+         */
         if (need_work) {
-            /* temporarily make this prime power visible to diag code */
+            /* temporarily make this prime power visible */
             t_allocation *a2ip = &vip->alloc[vil];
             a2ip->p = p;
             a2ip->x = x;
@@ -3404,14 +3422,6 @@ void walk_1_set(
             diag_plain(cur_level);
             --cur_vlevel[vi];
         }
-#if 0
-        /* CHECKME: do we need this check that recurse() has? It seems
-         * unlikely to gain speed, but may be needed for correctness */
-        if (p <= levels[ cur_level->level - 1 ]->maxp)
-            for (uint li = 1; li < level; ++li)
-                if (p == levels[li].p)
-                    goto reject_this_one;
-#endif
         mpz_ui_pow_ui(Z(w1_v), p, x - 1);
         if (need_mod) {
             /* TODO: think about a more efficient approach when the modulus
@@ -4109,7 +4119,7 @@ void prep_midp(t_level *cur_level) {
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
 
-            /* our range of interest is p: midp[e] <= p < maxp[e] */
+            /* our range of interest is p: maxp[e] < p <= midp[e] */
             ulong target_maxp = midp[x - 1];
             ulong target_minp = maxp[x - 1];
             if (mpz_fits_ulong_p(Z(temp))) {
@@ -4941,7 +4951,11 @@ typedef enum {
     PUX_DO_THIS_X
 } e_pux;
 
-/* returns:
+/* Prepare to allocate p^{x-1} at v_i for a range of p. The p value passed
+ * in is 0 for a fresh start, the last prime done when recalculating after
+ * an improved maximum, or the prime that was in progress on recovery.
+ *
+ * Returns:
  *   PUX_NOTHING_TO_DO if nothing more to do at this level for any x;
  *   PUX_SKIP_THIS_X if nothing more to do for this x;
  *   PUX_DO_THIS_X if prepped for this x with work to do.
@@ -4963,6 +4977,7 @@ e_pux prep_unforced_x(
 
     /* pick up any previous unforced x */
     uint nextt = ti / x;
+    bool fresh = (p == 0);
     if (p == 0) {
         uint prevx = (ap->p > maxforce[vi]
 #ifdef TYPE_a
@@ -5036,7 +5051,8 @@ e_pux prep_unforced_x(
      */
     if (nextt == 1) {
         cur_level->have_min = prev_level->have_min;
-        walk_1_set(prev_level, cur_level, vi, p, limp, x);
+        /* a recovered p is the one in progress, so still to try */
+        walk_1_set(prev_level, cur_level, vi, fresh ? p : p - 1, limp, x);
         return PUX_SKIP_THIS_X;
     }
 
@@ -5548,8 +5564,11 @@ void run_flip_pqsq(uint vi) {
             fail("Tried to flip with target > max_ulong^%u", xs - 1);
         ulong phigh = mpz_get_ui(Z(temp));
         next_level->have_min = cur_level->have_min;
-        walk_1_set(cur_level, next_level, vi, recover ? resume_plow : oldp,
-                phigh, xs);
+        /* the flip has taken over oldp's own subtree, so oldp (like a
+         * recovered p) is still to try
+         */
+        walk_1_set(cur_level, next_level, vi,
+                (recover ? resume_plow : oldp) - 1, phigh, xs);
         recover = 0;
         --cur_vlevel[vi];
     }

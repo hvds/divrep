@@ -235,7 +235,7 @@ if (1) {
     # (2z,z) partitions directly (see its own comment for the maths).
     local $type = Type->new('o');
 
-    expect_diag(q{flip is identified and applied, 36 4}, 90,
+    expect_diag(q{flip is identified and applied, 36 4}, 80,
         [qw{ -j2 -x1e6 -b7 36 4 }],
         'b7: 2^2.5^2 . 2.11^5 . F(2,23)',
     );
