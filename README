@@ -106,7 +106,7 @@ RUN
 The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
-      [-g<damp:gain] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
+      [-g<damp:gain>] [-gr1] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
       [-j<strategy>] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
@@ -155,6 +155,14 @@ a lower gain means it spends more time in walk_v().  Also supports
 exponential notation (without decimal), so "-g13e6" is equivalent to
 "-g13000000". Fine-tuning the gain can make a big difference to runtime;
 default gain is 1.
+
+If "-gr1" is specified (experimental), that transition is instead
+decided by estimated cost wherever no square is fixed: walking now is
+weighed against recursing one more level with every resulting case
+walked, using the cost of a walk per iteration learnt during the run.
+The gain then applies only where a square is fixed,
+or where a flip may follow (tau 2q^2 for an odd prime q). The "1" is
+the depth of lookahead; only 1 is supported so far.
 
 If "-p50:100" is specified, it will allocate (see 'HOW IT WORKS' below)
 only powers of primes p < 100, and will allocate at least one power of
