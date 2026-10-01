@@ -150,9 +150,19 @@ ranges: -x3e10 took 87s against 14.5s under -ja1, -x1e11 over 300s
 against 44s; learning, 5.5s and 15s. Elsewhere learning changed
 nothing beyond noise. Costing positions that leave a square helps
 where the strategy is poor: D(60,4) -j2 -x3e14 took 3.6s against 133s
-(-j0 takes 1.6s), but -x1e15 still 196s against 308s, and on the
-other runs tried it changed nothing beyond noise. The square ratios
-learnt are small (1e-5 at level 2, 0.01 at level 4, 0.6 at level 5).
+(-j0 takes 1.6s), and on the other runs tried it changed nothing
+beyond noise. The square ratios learnt are small (1e-5 at level 2,
+0.01 at level 4, 0.6 at level 5).
+
+The -ja1 gate, still deciding walk or recurse for each x of a position
+-ja2 has chosen, applies the same learnt ratios. Without them, it used
+the raw depth-1 estimate, so could walk a node that -ja2 had learnt to
+recurse: choices then depending on timing noise, D(60,4) -j2 -x5e14
+took 4.6s in most runs but 100s in about 1 in 7, from two walks at
+level 3 of 27M and 103M iterations, and -x1e15 196s; D(60,4) -j0
+-x1e15 once took 188s against 2s. With the ratios applied there too,
+16 runs of -x5e14 all took 4.3-4.7s, -x1e15 takes 6.6s (-ja1: over
+300s), and D(60,4) -j0 1.8s; the other runs tried are unchanged.
 
 Recovery: 315 lines mark only levels chosen against the strategy, the
 rest replayed by it.
@@ -175,10 +185,11 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
 ## To do
 
 1. -ja2 (done, experimental; see below): a real model of x leaving a
-   square, rather than the overestimate corrected by learning; find
-   why D(60,4) -j2 -x1e15 still takes 196s (-j0: 2s), when without
-   learning but with the same overestimate it took 7s. Learning starts
-   blind near the root, where single choices are dearest.
+   square, rather than the overestimate corrected by learning; and of
+   recursing near the root, where learning starts blind and single
+   choices are dearest. Measure run-to-run variation as a matter of
+   course, since choices depend on timings: one slow run in several
+   is easily missed.
    Known weakness: when zmax is far above the answer, -ja2 can be slow
    to find the first candidate (D(24,5) -j4 -x1e13: 0.57s to the first
    against 0.00s under -ja1, so 0.75s against 0.16s in all), since it
