@@ -228,6 +228,7 @@ ulong antigain = 0;
 ulong gain2 = 0;    /* as gain/antigain for squares */
 ulong antigain2 = 0;
 uint auto_level = 0;    /* -ja<level>: choices by estimated cost, see README */
+t_cc cc;                /* what the run has done, for costing it */
 /* maxp[e] is the greatest prime we should attempt to allocate as power p^e;
  * minp[e] is the threshold that at least one allocated p^e should exceed
  * (else we can skip the walk); midp[e] is the additional threshold up to
@@ -344,6 +345,7 @@ bool debugW = 0;    /* diag and keep every case seen (including walk) */
 uint debugw_count = 0;  /* debugw/W only for the first n iterations */
 bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
+bool debugT = 0;    /* check the builds that made the cost table */
 bool debugB = 0;    /* show every batch id */
 bool debugf = 0;    /* show prepped sub-batches */
 bool debugt = 0;    /* show target_t() */
@@ -3146,6 +3148,7 @@ static void walk_v(t_level *cur_level, mpz_t start) {
                     break;  /* CHECKME: should this be an error? */
 
                 ++countwi;
+                ++cc.pell_iter;
                 ++pc;
                 if (need_work)
                     diag_walk_pell(cur_level, pc);
@@ -3287,11 +3290,13 @@ static void walk_v(t_level *cur_level, mpz_t start) {
         }
 #endif
 
+        ++cc.sq_walks;
         while (1) {
             mpz_add(Z(wv_r), Z(wv_qqr), xr->r[rindex]);
             if (tester && mpz_cmp(Z(wv_r), Z(wv_endr)) > 0)
                 return;
             ++countwi;
+            ++cc.sq_iter;
             GS_INC(gs_sq_iter);
             mpz_pow_ui(Z(wv_rx), Z(wv_r), xi);
             mpz_sub(Z(wv_ati), Z(wv_rx), *oi);
@@ -3302,16 +3307,22 @@ static void walk_v(t_level *cur_level, mpz_t start) {
                 diag_walk_zv(cur_level, Z(wv_ati), Z(wv_end));
             if (check && !cvec_test_prepped(cx0, ZP(wv_ati)))
                 goto next_sqati;
-            for (uint ii = 0; ii < inv_count; ++ii) {
+            uint ii;
+            for (ii = 0; ii < inv_count; ++ii) {
                 t_mod *ip = &inv[ii];
                 if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
-                    goto next_sqati;
+                    break;
             }
+            cc.sq_inv += ii + (ii < inv_count);
+            if (ii < inv_count)
+                goto next_sqati;
 
             GS_INC(gs_n_inv);
             test_multi_reset();
             /* note: test_multi_append() steals Z(wv_r) */
             if (prime_power) {
+                if (cc.on)
+                    cc.test += cm_price_prime(Z(wv_r));
                 if (!GS_STAGE(gs_t_sq, tau_prime_test(Z(wv_r)))) {
                     TRACK_BAD(0, sqi);
                     goto next_sqati;
@@ -3364,17 +3375,24 @@ static void walk_v(t_level *cur_level, mpz_t start) {
 #endif
     if (check)
         cvec_prep_test(cx0, m, aq);
+    ++cc.lin_walks;
     for (ulong ati = mpz_get_ui(Z(wv_ati)); ati <= end; ++ati) {
         ++countwi;
+        ++cc.lin_iter;
         if (need_work)
             diag_walk_v(cur_level, ati, end);
         if (check && !cvec_test_ui_prepped(cx0, ati))
             goto next_ati;
-        for (uint ii = 0; ii < inv_count; ++ii) {
+        uint ii;
+        for (ii = 0; ii < inv_count; ++ii) {
             t_mod *ip = &inv[ii];
             if (ati % ip->m == ip->v)
-                goto next_ati;
+                break;
         }
+        /* the entries tested, including any that rejected it */
+        cc.lin_inv += ii + (ii < inv_count);
+        if (ii < inv_count)
+            goto next_ati;
 #ifdef VERBOSE
         if (VB(VB_TRACE))
             gmp_printf("prefilter_pass call=%u ati=%lu\n", g_walkv_call, ati);
@@ -3438,15 +3456,42 @@ static inline double gr_now(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-/* The clock for learning costs: thread CPU time, but with the mocks' own
- * time replaced by what they model, and the factoring ladder's time by
- * its expected cost when there is a cost table (see tau_multi_run()),
- * since the actual time of rare expensive factorizations depends on
- * luck.
+/* The cost of what the run has done, counted rather than timed, so that
+ * learning depends neither on the machine's load nor on luck, and two
+ * identical runs make identical choices: walk iterations and inverse
+ * filter entries tested, primes tried by walk_1_set() and the recursion,
+ * each at its cost from the cost table; each test's preparation by where
+ * its trial division stopped, and the factoring ladder at its expected
+ * cost (see cm_prep_price(), cm_pprep_price(), cm_price_prime() and
+ * cm_ladder_cost()).
+ */
+static inline double cc_work(void) {
+    static double c[CM_COUNT];
+    static bool init = 0;
+    if (!init) {
+        for (uint i = 0; i < CM_COUNT; ++i)
+            c[i] = cm_const(i);
+        init = 1;
+    }
+    return cc.lin_walks * c[CM_LINSETUP]
+            + (cc.lin_iter + cc.pell_iter) * c[CM_LOOP0]
+            + cc.lin_inv * c[CM_LOOPTEST]
+            + cc.sq_walks * c[CM_SQSETUP] + cc.sq_iter * c[CM_SQLOOP0]
+            + cc.sq_inv * c[CM_SQTEST]
+            + cc.w1s_prime * c[CM_W1SITER] + cc.w1s_check * c[CM_W1SCHECK]
+            + cc.rec_prime * c[CM_CPRIME]
+            + cc.rec_applied * c[CM_CAPPLY]
+            + cc.test + ct_test_charged + ct_ladder_charged;
+}
+
+/* The clock for learning costs: the counted cost given a cost table,
+ * else thread CPU time, with the mocks' own time replaced by what they
+ * model.
  */
 static inline double gr_clock(void) {
-    return gr_now() - g_mock_overhead_s + g_mock_spent_s
-            - ct_ladder_actual + ct_ladder_charged;
+    if (cc.on)
+        return cc_work();
+    return gr_now() - g_mock_overhead_s + g_mock_spent_s;
 }
 
 /* the iterations of a linear walk at the node lv: the range walked
@@ -3798,6 +3843,7 @@ void walk_1_set(
         ++w1s_tried;
 #endif
         GS_INC(gs_w1s_primes);
+        ++cc.w1s_prime;
         if (p <= maxused) {
             bool used = 0;
             for (uint li = 1; li <= maxl; ++li)
@@ -3827,6 +3873,7 @@ void walk_1_set(
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
         ++countw;
+        ++cc.w1s_check;
         if (check && !cvec_testv(cx0, Z(w1_v)))
             continue;
 
@@ -6591,6 +6638,7 @@ void recurse(e_is jump_continue) {
             /* note: only valid to use from just below here */
           redo_unforced: ;
             ulong p = prime_iterator_next(&cur_level->piter);
+            ++cc.rec_prime;
             if (p > cur_level->limp)
                 goto continue_unforced_x;
 #ifdef MOCK_LEAF
@@ -6623,9 +6671,38 @@ void recurse(e_is jump_continue) {
             }
             if (need_work)
                 diag_plain(cur_level);
+            ++cc.rec_applied;
             ++level;
             continue;   /* deeper */
         }
+    }
+}
+
+/* With -dT, warn of each section of the cost table made by a different
+ * build: those for the factoring tests by a different MPU::GMP, the rest
+ * by a different divrep.
+ */
+void cost_table_check(void) {
+    static const char *mpu[] = { "scan", "prime", "multi", "ladder", "qs" };
+    static const char *coul[] = { "walk", "w1s", "leaf", "tail" };
+    for (uint i = 0; i < 9; ++i) {
+        bool is_mpu = i < 5;
+        const char *sec = is_mpu ? mpu[i] : coul[i - 5];
+        const char *sha = cm_table_sha(sec);
+        const char *want = is_mpu ? MPU_CHANGE : DIVREP_CHANGE;
+        if (!sha) {
+            report("000 cost table: no build recorded for %s\n", sec);
+            continue;
+        }
+        /* "divrep(base)*;mpu(base)": the part for this section */
+        const char *s = sha;
+        if (is_mpu) {
+            s = strchr(sha, ';');
+            s = s ? s + 1 : "";
+        }
+        size_t len = strcspn(s, "(*;");
+        if (len != strlen(want) || strncmp(s, want, len) != 0)
+            report("000 cost table: %s from build %s\n", sec, sha);
     }
 }
 
@@ -6732,6 +6809,9 @@ int main(int argc, char **argv, char **envp) {
               case 'b':
                 debugb = 1;
                 break;
+              case 'T':
+                debugT = 1;
+                break;
               case 'B':
                 debugb = 1;
                 debugB = 1;
@@ -6815,8 +6895,16 @@ int main(int argc, char **argv, char **envp) {
     /* learning charges the factoring ladder its expected cost, given a
      * cost table
      */
-    if (auto_level && getenv("MOCK_WALK_TABLE"))
+#ifndef MOCK_WALK
+    if (auto_level && cm_have_table()) {
         ct_ladder_model = &cm_ladder_cost;
+        ct_prep_price = &cm_prep_price;
+        ct_pprep_price = &cm_pprep_price;
+        cc.on = 1;
+    }
+#endif
+    if (debugT)
+        cost_table_check();
     if (auto_level >= 2 && strategy == STRATEGY_FIXED)
         fail("-ja2 is not supported with -js");
 
@@ -6906,6 +6994,10 @@ int main(int argc, char **argv, char **envp) {
 #else
         report("\n");
 #endif
+        /* how well the counted cost (see cc_work()) matches CPU time */
+        if (cc.on)
+            report("369 cost counted %.2fs, ladder %.3fs against %.3fs\n",
+                    cc_work(), ct_ladder_charged, ct_ladder_actual);
         if (!seen_valid && !seen_best)
             report("406 Error: no valid arrangement of powers\n");
         else if (log_full)

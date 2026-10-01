@@ -61,6 +61,10 @@ extern bool tau_multi_prep(uint i);
 extern uint tau_multi_run(uint i, tau_failure_handler tfh);
 extern double (*ct_ladder_model)(uint count, t_tm *tm);
 extern double ct_ladder_actual, ct_ladder_charged;
+extern double (*ct_prep_price)(uint t, uint e, uint nbits, ulong p,
+        bool full);
+extern double (*ct_pprep_price)(uint nbits, int res);
+extern double ct_test_charged;
 extern bool tau_prime_prep(uint i);
 extern uint tau_prime_run(uint i);
 extern bool tau_prime_test(mpz_t n);

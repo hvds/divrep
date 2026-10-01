@@ -28,6 +28,18 @@ extern int other_comparator(const void *va, const void *vb);
 /* test values in batch: append each (test_*_append() steals the input,
  * and returns FALSE if it is already known to fail), then run the batch
  */
+/* What the run has done, counted for costing it (see cc_work()); tests
+ * outside tau_multi_prep(), tau_prime_prep() and tau_multi_run(), which
+ * price their own, are priced as they are made.
+ */
+typedef struct {
+    bool on;
+    ulong lin_walks, lin_iter, lin_inv, sq_walks, sq_iter, sq_inv,
+            pell_iter, w1s_prime, w1s_check, rec_prime, rec_applied;
+    double test;
+} t_cc;
+extern t_cc cc;
+
 extern uint tm_count;
 static inline void test_multi_reset(void) {
     tm_count = 0;
