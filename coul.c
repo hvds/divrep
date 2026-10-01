@@ -5464,8 +5464,58 @@ e_xr x_range(
  * sets *blind if some x is outside the model (making a square, or where
  * the loop above may flip), when the result is meaningless.
  */
+/* -ja2 learns, per level, the actual cost of the subtrees it chose
+ * against their estimates, in three parts: walking the node, recursing,
+ * and walk_1_set(). The estimates are then corrected by those ratios: the
+ * depth-1 estimate of recursing is far too high near the root (on
+ * D(36,5) -j4, 100x at level 2 and 3x at level 4, about right by level
+ * 5), and the others are off by smaller factors. Each starts from
+ * JA_PRIOR seconds of evidence at ratio 1.
+ */
+#define JA_PRIOR 1e-3
+#define JA_WALK 0
+#define JA_RECURSE 1
+#define JA_W1 2
+static double ja_A[GR_MAXL][3], ja_E[GR_MAXL][3];
+/* the ratios in use, and the raw estimates of the parts of the last cost */
+static double ja_rr = 1, ja_r1 = 1, ja_cost_r, ja_cost_1;
+static inline double ja_ratio(uint L, uint part) {
+    if (L >= GR_MAXL)
+        return 1;
+    return (ja_A[L][part] + JA_PRIOR) / (ja_E[L][part] + JA_PRIOR);
+}
+
+/* the clock for subtree costs (in the mocks, what they model) */
+static inline double ja_now(void) {
+    return gr_now() - g_mock_overhead_s + g_mock_spent_s;
+}
+
+/* the subtree chosen at lp is done: learn from its cost */
+static void ja_learnt(t_level *lp) {
+    uint L = lp->level - 1;
+    double dt = ja_now() - lp->ja_t0;
+    lp->ja_t0 = 0;
+    if (L >= GR_MAXL)
+        return;
+    double e[3];
+    e[JA_WALK] = lp->ja_ew;
+    e[JA_RECURSE] = lp->ja_er;
+    e[JA_W1] = lp->ja_e1;
+    double adj = 0;
+    for (uint i = 0; i < 3; ++i)
+        adj += e[i] * ja_ratio(L, i);
+    if (adj <= 0)
+        return;
+    /* attribute the actual cost in proportion to the adjusted parts */
+    for (uint i = 0; i < 3; ++i) {
+        if (e[i] <= 0)
+            continue;
+        ja_A[L][i] += dt * e[i] * ja_ratio(L, i) / adj;
+        ja_E[L][i] += e[i];
+    }
+}
 #define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
-#define JA_W1T 1e-6         /* walk_1_set(), per prime reaching its tests */
+#define JA_W1T 2e-6         /* walk_1_set(), per prime reaching its tests */
 static double ja_cost(
     t_level *prev_level, t_level *cur_level, uint vi, double bound,
     bool *blind
@@ -5474,6 +5524,7 @@ static double ja_cost(
     uint ti = ap->t;
     t_divisors *dp = &divisors[ti];
     double total = 0;
+    ja_cost_r = ja_cost_1 = 0;
     *blind = 0;
     for (uint di = 0; di < dp->highdiv; ++di) {
         uint x = dp->div[di];
@@ -5492,8 +5543,10 @@ static double ja_cost(
              * to reach the tests
              */
             double m = mpz_get_d(prev_level->aq) / mpz_get_d(ap->q);
-            total += (gr_li(limp) - gr_li(p) + 1)
+            double c1 = (gr_li(limp) - gr_li(p) + 1)
                     * (JA_W1S + JA_W1T / (m < 1 ? 1 : m));
+            ja_cost_1 += c1;
+            total += c1 * ja_r1;
             break;
           }
           case XR_RANGE: {
@@ -5502,8 +5555,11 @@ static double ja_cost(
                 return 0;
             }
             ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
-            if (cap > p)
-                total += gr_recurse(prev_level, p, cap, x);
+            if (cap > p) {
+                double cr = gr_recurse(prev_level, p, cap, x);
+                ja_cost_r += cr;
+                total += cr * ja_rr;
+            }
             break;
           }
         }
@@ -5533,11 +5589,14 @@ static inline bool ja_alike(uint vi, uint vj) {
  */
 uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
     uint L = prev_level->level;
-    double W = GR_SETUP + gr_cit(L) * gr_iters(prev_level);
+    ja_rr = ja_ratio(L, JA_RECURSE);
+    ja_r1 = ja_ratio(L, JA_W1);
+    double W0 = GR_SETUP + gr_cit(L) * gr_iters(prev_level);
+    double W = W0 * ja_ratio(L, JA_WALK);
     bool blind;
     double sT = ja_cost(prev_level, cur_level, sv, HUGE_VAL, &blind);
     uint best = sv, nblind = 0, neval = 1;
-    double bT = sT;
+    double bT = sT, br = ja_cost_r, b1 = ja_cost_1;
     if (blind)
         goto done;
     if (W <= bT) {
@@ -5572,9 +5631,18 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
         if (T < bT || (T == bT && best < BV_SPECIAL && vi < best)) {
             best = vi;
             bT = T;
+            br = ja_cost_r;
+            b1 = ja_cost_1;
         }
     }
   done:
+    /* time the subtree of a choice made by cost */
+    if (auto_level >= 2 && !(blind && best == sv)) {
+        cur_level->ja_ew = (best == BV_WALK) ? W0 : 0;
+        cur_level->ja_er = (best == BV_WALK) ? 0 : br;
+        cur_level->ja_e1 = (best == BV_WALK) ? 0 : b1;
+        cur_level->ja_t0 = ja_now();
+    }
 #ifdef VERBOSE
     if (VB(VB_CHOICE))
         fprintf(gs_file(), "J %u %u %.4g %u %.4g %d %.4g %u %u %u\n",
@@ -6404,6 +6472,8 @@ void recurse(e_is jump_continue) {
         break;
       /* entry point, must set prev_level/cur_level before using */
       derecurse:
+        if (levels[level].ja_t0 > 0)
+            ja_learnt(&levels[level]);
         levels[level + 1].next_best = 0;
         --level;
         if (level <= final_level)

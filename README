@@ -232,9 +232,10 @@ fixed: walking now is weighed against recursing over each eligible
 position, with every resulting case walked. The strategy remains the
 choice where the costs cannot be estimated (when a power allocated
 would leave a square, or a flip may follow); it is not supported with
-"-js". Since the choices then depend on costs learnt during the run,
-progress lines (315) mark each position chosen against the strategy,
-so that recovery can reproduce it.
+"-js". The estimates are corrected as the run proceeds by the costs
+measured for the choices made. Since the choices then depend on costs
+learnt during the run, progress lines (315) mark each position chosen
+against the strategy, so that recovery can reproduce it.
 
 If "-I..." is specified, the argument should be a pattern of the same
 form as that generated for progress lines. All prime powers specified

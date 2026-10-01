@@ -124,8 +124,27 @@ four D(96,8) batches at the usual zmax, -ja2 matched the best of
 -j0..-j2 under -ja1 on each (whichever it falls back on), beat all of
 them on one by 20%, and took 26-45% less time than -j4 -g24. There,
 99% of its choices walk the node, and under 1% choose another
-position. Recovery: 315 lines mark only levels chosen against the
-strategy, the rest replayed by it.
+position. On D(48,10) batches 1-12 at -x22911293821947932 -j2 -f7
+-g30 it took 25-60% less time than -ja1 on every batch that took
+measurable time, and on runs with many squares 45-50% less (D(36,5)
+-j2 -x1e12: 85s against 169s; D(60,4) -j0 -x1e15: 2.2s against 4.2s).
+
+-ja2 learns from its choices: each choice made by cost times the
+subtree chosen (thread CPU time, as for -ja1), and per level the
+actual cost against the estimate, split in proportion between walking,
+recursing and walk_1_set(), gives a ratio by which later estimates of
+each part are corrected (starting from 1ms of evidence at ratio 1). On
+D(36,5) -j4 -x1e10 the ratios found were 0.00-0.01 for recursing at
+level 2, 0.1 at 3, 0.4 at 4 and about 1 at 5 (the depth-1 estimate
+assumes every child walks), about 2 for walk_1_set() (now charged 2us
+per prime reaching its tests, as measured, not 1us), and 1.2-1.5 for
+walking. Without that, -ja2 -j4 on D(36,5) chose vast walk_1_set()
+ranges: -x3e10 took 87s against 14.5s under -ja1, -x1e11 over 300s
+against 44s; learning, 5.5s and 15s. Elsewhere learning changed
+nothing beyond noise.
+
+Recovery: 315 lines mark only levels chosen against the strategy, the
+rest replayed by it.
 
 ### Instrumentation
 
@@ -144,18 +163,20 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
 
 ## To do
 
-1. -ja2 (done, experimental; see below): measure further, on
-   D(48,10) and on batches with squares (blind positions), and extend
-   the model to square-making x so fewer choices stay with the
-   strategy. On D(36,4) -j2 the strategy's choice was blind at 24% of
-   nodes, and -ja2 chose another position at 29%.
-   Known bias: the depth-1 estimate assumes every child walks, so high
-   in the tree it overestimates positions that would recurse, while a
-   walk_1_set() range is costed nearly exactly; -ja2 then prefers the
-   latter. It matters little at a fixed zmax, but badly when zmax falls
-   sharply mid-run (D(24,5) -j4 -x1e13: 0.82s against 0.22s). A fix
-   would cost a recursing position's children by the cheaper of walking
-   and recursing (depth 2), or trust the model only near the leaves.
+1. -ja2 (done, experimental; see below): extend the model to
+   square-making x so fewer choices stay with the strategy. On D(36,4)
+   -j2 the strategy's choice was blind at 24% of nodes, and -ja2 chose
+   another position at 29%; on D(60,4) -j0 at 46%. Costing such a
+   position as if it made no square (an overestimate) was neutral on
+   most runs tried, but on D(60,4) -j2 -x1e15, where the strategy is
+   poor, took 7s against over 300s for both -ja1 and -ja2; with
+   learning, that crude estimate may serve as a start.
+   Known weakness: when zmax is far above the answer, -ja2 can be slow
+   to find the first candidate (D(24,5) -j4 -x1e13: 0.57s to the first
+   against 0.00s under -ja1, so 0.75s against 0.16s in all), since it
+   optimises the cost of the whole search at the current zmax, not how
+   soon zmax falls. At a zmax near the answer the two are within 0.03s
+   there, so this matters little for runs proving a bound minimal.
 2. With that, try "never walk a flippable loop".
 3. Fixed squares under the cost gate: a child that completes a second
    square (Pell, nearly free) or flips must be costed as such; the
