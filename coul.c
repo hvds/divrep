@@ -3556,16 +3556,21 @@ static double gr_recurse(t_level *prev_level, ulong p, ulong cap, uint x) {
 /* -ja1: walk the node at prev_level now, rather than recurse over
  * p^{x-1} for p in [p, cap]?
  */
-static bool gr_walk(t_level *prev_level, ulong p, ulong cap, uint x) {
+/* rw and rr correct the estimates of walking and recursing (as learnt
+ * by -ja2, else 1)
+ */
+static bool gr_walk(
+    t_level *prev_level, ulong p, ulong cap, uint x, double rw, double rr
+) {
     if (cap < p)
         return 0;
     uint L = prev_level->level;
     double za = gr_iters(prev_level);
-    double W = GR_SETUP + gr_cit(L) * za;
+    double W = (GR_SETUP + gr_cit(L) * za) * rw;
     /* quick answer when the walk costs less than trying the primes */
     if (W < (gr_li(cap) - gr_li(p) + 1) * GR_APPLY)
         return 1;
-    return W < gr_recurse(prev_level, p, cap, x);
+    return W < gr_recurse(prev_level, p, cap, x) * rr;
 }
 
 /* test the case where v_i has all divisors accounted for */
@@ -5566,7 +5571,7 @@ static double ja_cost(
              * not, which overestimates them, but learning corrects that
              * by a ratio of its own.
              */
-            bool sq = (nextt & 1) && !(ti & 1);
+            bool sq = ((ti / x) & 1) && !(ti & 1);
             ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
             if (cap > p) {
                 double cr = gr_recurse(prev_level, p, cap, x);
@@ -5811,8 +5816,15 @@ e_pux prep_unforced_x(
     /* -ja1, except at a fixed square, or a loop whose children can flip
      * (t = 2q^2 allocating p^{q-1}), which keep the gain
      */
-    if (auto_level && !prev_level->have_square && ti != 2 * x * x)
-        do_walk = gr_walk(prev_level, p, cap, x);
+    if (auto_level && !prev_level->have_square && ti != 2 * x * x) {
+        /* under -ja2, as corrected by what it has learnt */
+        uint L = prev_level->level;
+        bool sq = ((ti / x) & 1) && !(ti & 1);
+        double rw = (auto_level >= 2) ? ja_ratio(L, JA_WALK) : 1;
+        double rr = (auto_level >= 2)
+                ? ja_ratio(L, sq ? JA_SQUARE : JA_RECURSE) : 1;
+        do_walk = gr_walk(prev_level, p, cap, x, rw, rr);
+    }
     if (do_walk && !reinject) {
 #ifdef WALK_FROM
         wf_note(1, 1);
