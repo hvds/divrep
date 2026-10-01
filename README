@@ -239,6 +239,16 @@ measured for the choices made. Since the choices then depend on costs
 learnt during the run, progress lines (315) mark each position chosen
 against the strategy, so that recovery can reproduce it.
 
+The costs "-ja" learns are counted rather than timed, so that identical
+runs make identical choices, whatever else the machine is doing: walk
+iterations, primes tried and tests made are each charged their cost
+from a cost table (see multibench-table). A default table is built into
+pcoul from the file "cost-table"; set $COST_TABLE to the path of
+another to use that instead. Since only the relative costs matter, a
+table made on one machine should serve on others. With "-dT", pcoul
+notes in the log each section of the table made by a different build
+of divrep or MPU::GMP.
+
 If "-I..." is specified, the argument should be a pattern of the same
 form as that generated for progress lines. All prime powers specified
 are then forced into place.

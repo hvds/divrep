@@ -829,7 +829,42 @@ bool tau_prime_test(mpz_t n) {
     return ct_bpsw(n);
 }
 
+/* If set, the prices of the preparation of a test (see cm_prep_price()
+ * and cm_pprep_price()), so that each is charged by what it did, for the
+ * caller's cost learning: ct_test_charged accumulates them. Trial
+ * division records where it stopped, and whether it ran to its limit.
+ */
+double (*ct_prep_price)(uint t, uint e, uint nbits, ulong p, bool full)
+        = NULL;
+double (*ct_pprep_price)(uint nbits, int res) = NULL;
+double ct_test_charged = 0;
+static ulong ct_stop_p;
+static bool ct_full;
+
+static bool tau_prime_prep_inner(uint i);
 bool tau_prime_prep(uint i) {
+    if (!ct_pprep_price)
+        return tau_prime_prep_inner(i);
+    uint nbits = mpz_sizeinbase(taum[i].n, 2);
+    bool r = tau_prime_prep_inner(i);
+    ct_test_charged += (*ct_pprep_price)(nbits, r ? 1 + taum[i].state : 0);
+    return r;
+}
+
+static bool tau_multi_prep_inner(uint i);
+bool tau_multi_prep(uint i) {
+    if (!ct_prep_price)
+        return tau_multi_prep_inner(i);
+    uint t = taum[i].t, e = taum[i].e;
+    uint nbits = mpz_sizeinbase(taum[i].n, 2);
+    ct_stop_p = 2;
+    ct_full = 0;
+    bool r = tau_multi_prep_inner(i);
+    ct_test_charged += (*ct_prep_price)(t, e, nbits, ct_stop_p, ct_full);
+    return r;
+}
+
+static bool tau_prime_prep_inner(uint i) {
 #ifdef VERBOSE
     if (VB(VB_TRACE))
         gmp_printf("tau_prime_prep vi=%u %Zu\n", taum[i].vi, taum[i].n);
@@ -868,7 +903,7 @@ static inline UV rough_assisted_tlim(UV default_lim, mpz_t n, uint t) {
  * tau(n^e) == t; it currently checks taum[i].state == 0, but better
  * to expose this in the return value.
  */
-bool tau_multi_prep(uint i) {
+static bool tau_multi_prep_inner(uint i) {
     t_tm *tm = &taum[i];
     uint t = tm->t;
     uint e = tm->e;
@@ -933,6 +968,7 @@ bool tau_multi_prep(uint i) {
 #endif
     while (1) {
         p = prime_iterator_next(&iter);
+        ct_stop_p = p;
         if (p * p > lim)
             break;
         while (mpz_divisible_ui_p(tm->n, p)) {
@@ -977,6 +1013,7 @@ bool tau_multi_prep(uint i) {
         }
     }
     prime_iterator_destroy(&iter);
+    ct_full = 1;
 
     if (un < p * p) {
         dz("div: tail is prime");

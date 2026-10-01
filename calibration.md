@@ -87,6 +87,36 @@ Coverage of the ladder: sound to about 191 bits; 207-255 bits from 60
 inputs each; above that (with -f only) the single ECM rung is benched
 from 12-30 inputs and is rough. Rungs after QS count as never reached.
 
+The table is in sections (scan, prime, multi, ladder, qs, walk, w1s,
+leaf, tail), each stamped with the build that made it ("V section
+sha"): `-s<sections>` rebuilds only some, and `-u<table>` takes the
+rest from an existing table, so a new MPUGMP needs only scan, prime,
+ladder and qs (and multi), a change to coul.c only walk, w1s, leaf and
+tail. pcoul builds in a default table from the file cost-table, used
+unless $COST_TABLE names another (or, as before, $MOCK_WALK_TABLE);
+`-dT` notes sections from a different build.
+
+### Counted costs for -ja
+
+-ja1 and -ja2 learn from costs counted from what the run did, not from
+its timings, so that identical runs make identical choices: walk
+setups, iterations and inverse entries tested, fixed-power walks, roots
+and entries, walk_1_set() primes iterated and passing the check, and
+recursion primes tried and applied, each at its table cost; each test's
+preparation by where its trial division stopped (the S rows' cost
+there, plus an R row prime test if it ran to the end); prime tests by
+outcome; and the ladder at its expected cost from the G rows on the
+values pending. A `369` line reports the total, for comparison with
+the run's time.
+
+Against CPU time over 22 runs the counted total ranged 0.56-1.41
+(coefficient of variation 0.25), from table constants alone. The main
+error is test preparation: in situ it costs 0.8-2.6x its price, varying
+by run, presumably from caches and branch prediction in the full
+program, the coarse S sizes, and skip_trial_bands(). With counted costs
+-ja2 matched its timed results within about 8% on the benchmark set,
+except D(64,3) -j4 -x1e15, 7.9s against 29s.
+
 ### calibrate
 
 Lists a range's batches (-a), groups them into strata by log10 of
@@ -226,6 +256,12 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
    failing attempts and hit rates by smallest-factor size measured at
    smaller n; end-to-end validation above 159 bits.
 7. The batch harness.
+8. Counted costs: price test preparation from its own work (trial
+   primes tested, gcd bands skipped, prime tests by size) at per-step
+   costs calibrated in situ from instrumented runs, as the walk loops
+   are; likewise apply_single() and the ladder. Then t rows by class
+   of t rather than per t, so that one table serves every n (the
+   largest n with known values is 8000).
 
 ## Why some of this is hard
 
