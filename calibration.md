@@ -219,7 +219,15 @@ than -ja1; with -j4 it was 3% slower than -ja1 on b50, faster on the
 rest.
 
 Recovery: 315 lines mark only levels chosen against the strategy, the
-rest replayed by it.
+rest replayed by it. A 316 line before each progress line records what
+has been learnt (see ja_save()): the cost counted, the gate's walk
+samples and -ja2's actual and estimated costs by level, so that a
+recovered run carries on from them. Recovering twice from one log gives
+identical runs. Of 9 runs killed partway and recovered, 7 then made
+exactly the tests the uninterrupted run made in all, and 2 differed (by
+0.2% and 2%; without the 316 lines, 8 differed): what was being
+measured as the line was written, a walk and each choice on the path to
+it, is not recorded, so the recovered run learns nothing from those.
 
 ### Instrumentation
 

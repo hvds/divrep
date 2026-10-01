@@ -317,6 +317,10 @@ uint *fixed_v = NULL;   /* values specified for -js */
 #define BV_NEXTX (BV_SPECIAL + 1)
 #define BV_6X (BV_SPECIAL + 2)
 
+/* what -ja has learnt, to and from the log (see ja_save()) */
+void ja_save(FILE *fp);
+void ja_restore(char *s);
+
 typedef uint (*t_strategy)(t_level *cur_level);
 uint best_v0(t_level *cur_level);
 uint best_v1(t_level *cur_level);
@@ -796,6 +800,9 @@ void diag_any(t_level *cur_level, bool need_disp) {
          * clutter on-screen display with that.
          */
         char *code = prep_show_v(cur_level, 1) ? "315" : "305";
+        /* recovery from this line carries on from what -ja has learnt */
+        if (auto_level)
+            ja_save(rfp);
 #ifdef TRACK_STATS
         fprintf(rfp, "%s %s%s (%.2fs) [", code, diag_buf, aux_buf, seconds(t1));
         for (uint i = 0; i < k; ++i) {
@@ -1591,8 +1598,10 @@ void recover(FILE *fp) {
     char *last305 = NULL;   /* 305 or 315 */
     bool expanded = 0;      /* true if it's 315 */
     char *last202 = NULL;
+    char *last316 = NULL;   /* the 316 before last305, if any */
+    char *pend316 = NULL;   /* a 316 not yet followed by a 305 or 315 */
     char *curbuf = NULL;
-    size_t len = 120, len305 = 0, len202 = 0;
+    size_t len = 120, len305 = 0, len202 = 0, len316 = 0;
 
     while (1) {
         ssize_t nread = getline(&curbuf, &len, fp);
@@ -1623,6 +1632,11 @@ void recover(FILE *fp) {
             size_t lt = len305;
             len305 = len;
             len = lt;
+            /* what was learnt goes with the line it precedes */
+            free(last316);
+            last316 = pend316;
+            pend316 = NULL;
+            len316 = 0;
             if (last202) {
                 apply_202(last202);
                 free(last202);
@@ -1639,6 +1653,13 @@ void recover(FILE *fp) {
                 len = lt;
             } else
                 apply_202(curbuf);
+        } else if (strncmp("316 ", curbuf, 4) == 0) {
+            char *t = pend316;
+            pend316 = curbuf;
+            curbuf = t;
+            size_t lt = len316;
+            len316 = len;
+            len = lt;
         } else if (strncmp("001 ", curbuf, 4) == 0) {
             /* TODO: parse and check for consistent options */
             start_seen = 1;
@@ -1651,10 +1672,14 @@ void recover(FILE *fp) {
     }
     if (last305)
         parse_305(last305 + 4, &rstack, expanded);
+    if (last316 && auto_level)
+        ja_restore(last316 + 4);
     if (last202)
         pend202 = last202;
     free(curbuf);
     free(last305);
+    free(last316);
+    free(pend316);
 }
 
 int cmp_high(const void *va, const void *vb) {
@@ -3487,7 +3512,7 @@ static inline double cc_work(void) {
             + cc.w1s_prime * c[CM_W1SITER] + cc.w1s_check * c[CM_W1SCHECK]
             + cc.rec_prime * c[CM_CPRIME]
             + cc.rec_applied * c[CM_CAPPLY]
-            + cc.test + ct_test_charged + ct_ladder_charged;
+            + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
 
 /* The clock for learning costs: the counted cost given a cost table,
@@ -3508,11 +3533,15 @@ static inline double gr_iters(t_level *lv) {
     return (mpz_get_d(zmax) - mpz_get_d(zmin)) / mpz_get_d(lv->aq);
 }
 
+/* The walks seen, for sampling them. A walk resumed on recovery is not
+ * seen again: it was counted when it began, and what is left of it is
+ * not a whole walk to learn from.
+ */
+static uint gr_ctr = 0;
 static void walk_v_gr(t_level *cur_level, mpz_t start) {
-    static uint ctr = 0;
     uint L = cur_level->level;
     if (!auto_level || cur_level->have_square || L >= GR_MAXL
-            || (++ctr % GR_SAMPLE)) {
+            || mpz_sgn(start) != 0 || (++gr_ctr % GR_SAMPLE)) {
         walk_v_inner(cur_level, start);
         return;
     }
@@ -5574,6 +5603,68 @@ static inline void ja_learn(uint L, uint part, double est, double dt) {
         return;
     ja_A[L][part] += dt;
     ja_E[L][part] += est;
+}
+
+/* The 316 log line: what -ja has learnt, written before each 305 or 315
+ * line, so that a run recovered from that line carries on from it
+ * rather than learning afresh:
+ *   316 <counted> <walks> [<level>:<t>,<i>,<n>,<A>,<E>,<A>,<E>, ...] ...
+ * with the cost counted so far (see cc_work()) and the walks seen by
+ * the sampler; then for each level with anything learnt, the cost,
+ * iterations and number of the walks sampled for the gate (gr_t[],
+ * gr_i[], gr_n[]), and for each part in turn the actual and estimated
+ * cost of -ja2's choices (ja_A[], ja_E[]). Costs are in seconds, with
+ * digits enough to restore each exactly.
+ * What was being measured as the line was written is not recorded: the
+ * recovered run learns nothing from the walk it resumes, nor from the
+ * positions already chosen on the path to it.
+ */
+void ja_save(FILE *fp) {
+    fprintf(fp, "316 %.17g %u", cc.on ? cc_work() : 0.0, gr_ctr);
+    for (uint L = 0; L < GR_MAXL; ++L) {
+        bool any = (gr_n[L] != 0);
+        for (uint part = 0; part < JA_PARTS; ++part)
+            if (ja_A[L][part] != 0 || ja_E[L][part] != 0)
+                any = 1;
+        if (!any)
+            continue;
+        fprintf(fp, " %u:%.17g,%.17g,%u", L, gr_t[L], gr_i[L], gr_n[L]);
+        for (uint part = 0; part < JA_PARTS; ++part)
+            fprintf(fp, ",%.17g,%.17g", ja_A[L][part], ja_E[L][part]);
+    }
+    fprintf(fp, "\n");
+}
+
+/* restore what a 316 line records, given what follows its code */
+void ja_restore(char *s) {
+    char *line = s;
+    double counted;
+    int off = 0;
+    if (sscanf(s, "%lf %u%n", &counted, &gr_ctr, &off) != 2 || off == 0)
+        fail("517 could not parse learnt costs: '%s'", line);
+    cc.base = counted;
+    s += off;
+    while (s[0] == ' ') {
+        uint L;
+        off = 0;
+        if (sscanf(s, " %u:%n", &L, &off) != 1 || off == 0 || L >= GR_MAXL)
+            fail("517 could not parse learnt costs: '%s'", line);
+        s += off;
+        off = 0;
+        if (sscanf(s, "%lf,%lf,%u%n", &gr_t[L], &gr_i[L], &gr_n[L], &off)
+                != 3 || off == 0)
+            fail("517 could not parse learnt costs: '%s'", line);
+        s += off;
+        for (uint part = 0; part < JA_PARTS; ++part) {
+            off = 0;
+            if (sscanf(s, ",%lf,%lf%n", &ja_A[L][part], &ja_E[L][part], &off)
+                    != 2 || off == 0)
+                fail("517 could not parse learnt costs: '%s'", line);
+            s += off;
+        }
+    }
+    if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
+        fail("517 could not parse learnt costs: '%s'", line);
 }
 
 /* the walk chosen at lp is done: learn from its cost */

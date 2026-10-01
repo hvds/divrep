@@ -18,6 +18,8 @@ use Type;
 #   make recovery restart that loop;
 # - every expanded (315) line marks some level, since it is written only
 #   when a level on its path needs its mark for recovery.
+# - with -ja, each is preceded by a well-formed 316 line of what has
+#   been learnt, for recovery to carry on from.
 # Progress may still show an allocation that then fails to apply, or
 # fails walk_1_set()'s checks. Recovery retries those, so that's fine.
 
@@ -37,13 +39,24 @@ for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }],
     unlink $path;
     system("$prog -r$path -dL100000000 @$args >/dev/null 2>&1");
     open my $log, '<', $path or die "$path: $!";
-    my($lines, $invalid, $lost, $unmarked) = (0, 0, 0, 0);
-    my(@invalid, @lost, @unmarked);
+    my($lines, $invalid, $lost, $unmarked, $unlearnt) = (0, 0, 0, 0, 0);
+    my(@invalid, @lost, @unmarked, @unlearnt);
     my($last, %shown);
+    my $ja = grep /^-ja/, @$args;
+    my $num = qr{\d+(?:\.\d+)?(?:e[-+]\d+)?};
+    my $learnt = 0;
     while (<$log>) {
         chomp;
+        if (/^316 /) {
+            $learnt = /^316 $num \d+(?: \d+:$num,$num,\d+(?:,$num,$num){4})*$/;
+            next;
+        }
         next unless /^3([01])5 (b\S+: .*?)( \(|: \d+ \/| (?:W|F|6X)\()/;
         my($s, $plain) = ($2, $3 eq ' (');
+        if ($ja && !$learnt) {
+            push @unlearnt, $_ if ++$unlearnt <= 3;
+        }
+        $learnt = 0;
         if ($1 && $s !~ /\(\d+\)/) {
             push @unmarked, $_ if ++$unmarked <= 3;
         }
@@ -71,6 +84,10 @@ for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }],
     }
     if (!is($unmarked, 0, "no expanded lines without a mark for @$args")) {
         diag($_) for @unmarked;
+    }
+    if ($ja && !is($unlearnt, 0,
+            "no progress lines missing a 316 for @$args")) {
+        diag($_) for @unlearnt;
     }
 }
 
