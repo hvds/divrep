@@ -48,10 +48,15 @@ typedef struct s_level {
     bool unsorted;  /* this level is not where best_v() would put it */
     uint choice_strategy;   /* the strategy in force when vi was chosen */
     ulong walk_from;    /* WALK_FROM: children of this loop walk from p */
-    /* -ja2 learning: when the choice here was made, and its estimate in
-     * parts (walking, recursing, walk_1_set())
+    /* -ja2 learning: for a walk chosen by cost, when and its estimate;
+     * for a position, the estimate and part for each x, and when the
+     * current x began
      */
-    double ja_t0, ja_ew, ja_er, ja_e1;
+    double ja_t0, ja_ew;
+    bool ja_on;
+    double ja_xt0;
+    double *ja_ex;
+    unsigned char *ja_xp;
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;
