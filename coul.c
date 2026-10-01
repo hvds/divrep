@@ -5526,7 +5526,15 @@ e_xr x_range(
  * recursing is far too high near the root (on D(36,5) -j4, 100x at level
  * 2 and 3x at level 4, about right by level 5), and the others are off
  * by smaller factors. Each starts from JA_PRIOR seconds of evidence at
- * ratio 1.
+ * a prior ratio: 1, except 1/4 for recursing. The first choices, near
+ * the root, are made with no evidence yet cost the most, and there the
+ * recursion is overestimated most. Recursing where walking was cheaper
+ * costs little, since each child chooses again and may walk, while
+ * walking where recursing was cheaper can cost far more. On D(64,3)
+ * -j4 -x1e15 a prior of 1 walks at level 1 on estimates of 15s against
+ * 21s, and takes 5-30s depending on small differences in the
+ * estimates; with 1/4, 0.1s. Elsewhere on the benchmark set it changes
+ * times by no more than run-to-run variation.
  */
 #define JA_PRIOR 1e-3
 #define JA_WALK 0
@@ -5543,10 +5551,13 @@ static double ja_rr = 1, ja_rs = 1, ja_r1 = 1;
 static uint ja_nd = 0;
 static double *ja_cx, *ja_bx;
 static unsigned char *ja_cp, *ja_bp;
+/* the ratio each part starts from (see above) */
+static const double ja_prior[JA_PARTS] = { 1, 0.25, 1, 0.25 };
 static inline double ja_ratio(uint L, uint part) {
+    double r0 = ja_prior[part];
     if (L >= GR_MAXL)
-        return 1;
-    return (ja_A[L][part] + JA_PRIOR) / (ja_E[L][part] + JA_PRIOR);
+        return r0;
+    return (ja_A[L][part] + JA_PRIOR * r0) / (ja_E[L][part] + JA_PRIOR);
 }
 
 static inline void ja_learn(uint L, uint part, double est, double dt) {

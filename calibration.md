@@ -124,8 +124,9 @@ CPU time on all the counts, but over 30 runs it barely improves on
 that (0.79-1.13) and the constants are poorly determined, so it is
 left as a check. With counted costs D(64,3) -j4 -x1e15 took 7.9s,
 then 29s as the pricing improved, then 5.2s: its choices at the root
-are made before any learning, so they turn on small differences in
-the estimates (see To do).
+are made before any learning, so they turned on small differences in
+the estimates, until the learnt ratio for recursing was given a prior
+of 1/4 (0.1s).
 
 ### calibrate
 
@@ -242,15 +243,18 @@ counts and CPU time (a W record).
 1. -ja2 (done, experimental; see below): a real model of x leaving a
    square, rather than the overestimate corrected by learning; and of
    recursing near the root, where learning starts blind and single
-   choices are dearest. Measure run-to-run variation as a matter of
-   course, since choices depend on timings: one slow run in several
-   is easily missed.
+   choices are dearest (for now the learnt ratio for recursing starts
+   from 1/4 rather than 1, see ja_ratio()). Measure run-to-run
+   variation as a matter of course where choices depend on timings:
+   one slow run in several is easily missed.
    Known weakness: when zmax is far above the answer, -ja2 can be slow
-   to find the first candidate (D(24,5) -j4 -x1e13: 0.57s to the first
-   against 0.00s under -ja1, so 0.75s against 0.16s in all), since it
-   optimises the cost of the whole search at the current zmax, not how
-   soon zmax falls. At a zmax near the answer the two are within 0.03s
-   there, so this matters little for runs proving a bound minimal.
+   to find the first candidate, since it optimises the cost of the
+   whole search at the current zmax, not how soon zmax falls. D(24,5)
+   -j4 -x1e13 took 0.57s to the first against 0.00s under -ja1 (0.75s
+   against 0.16s in all); with the prior of 1/4 it finds the first at
+   once, but takes 0.25s in all. At a zmax near the answer the two are
+   within 0.03s there, so this matters little for runs proving a bound
+   minimal.
 2. Fixed squares under the cost gate: a child that completes a second
    square (Pell, nearly free) or flips must be costed as such; the
    per-iteration cost of square walks varies too much between levels
