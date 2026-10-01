@@ -10,7 +10,7 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   cbf87f5e18 (danaj master 2023-05-15)
 #   a2907ae3b7 (danaj master 2025-07-11)
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
-MPUGMP_VER ?= 2389dcbc44
+MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
     coulvec.h
