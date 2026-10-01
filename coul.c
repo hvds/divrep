@@ -5457,28 +5457,31 @@ e_xr x_range(
     return (nextt == 1) ? XR_WALK1 : XR_RANGE;
 }
 
-/* -ja2: the estimated cost of choosing position vi at the node at
- * prev_level, recursing over every x of t_i with every resulting case
- * walked, as for the -ja1 gate. Returns HUGE_VAL if some x would walk the
- * node (so walking it now is cheaper), or stops early once past bound;
- * sets *blind if some x is outside the model (making a square, or where
- * the loop above may flip), when the result is meaningless.
- */
-/* -ja2 learns, per level, the actual cost of the subtrees it chose
- * against their estimates, in three parts: walking the node, recursing,
- * and walk_1_set(). The estimates are then corrected by those ratios: the
- * depth-1 estimate of recursing is far too high near the root (on
- * D(36,5) -j4, 100x at level 2 and 3x at level 4, about right by level
- * 5), and the others are off by smaller factors. Each starts from
- * JA_PRIOR seconds of evidence at ratio 1.
+/* -ja2 learns, per level, the actual cost of what it chose against the
+ * estimate, in four parts: walking the node, recursing (separately where
+ * a square is left), and walk_1_set(). A walk is timed whole, and a
+ * position chosen one x at a time, each x being of a single part. The
+ * estimates are then corrected by those ratios: the depth-1 estimate of
+ * recursing is far too high near the root (on D(36,5) -j4, 100x at level
+ * 2 and 3x at level 4, about right by level 5), and the others are off
+ * by smaller factors. Each starts from JA_PRIOR seconds of evidence at
+ * ratio 1.
  */
 #define JA_PRIOR 1e-3
 #define JA_WALK 0
 #define JA_RECURSE 1
 #define JA_W1 2
-static double ja_A[GR_MAXL][3], ja_E[GR_MAXL][3];
-/* the ratios in use, and the raw estimates of the parts of the last cost */
-static double ja_rr = 1, ja_r1 = 1, ja_cost_r, ja_cost_1;
+#define JA_SQUARE 3
+#define JA_PARTS 4
+static double ja_A[GR_MAXL][JA_PARTS], ja_E[GR_MAXL][JA_PARTS];
+/* the ratios in use */
+static double ja_rr = 1, ja_rs = 1, ja_r1 = 1;
+/* the raw estimate and part for each x, of the last position costed and
+ * of the best so far
+ */
+static uint ja_nd = 0;
+static double *ja_cx, *ja_bx;
+static unsigned char *ja_cp, *ja_bp;
 static inline double ja_ratio(uint L, uint part) {
     if (L >= GR_MAXL)
         return 1;
@@ -5490,32 +5493,35 @@ static inline double ja_now(void) {
     return gr_now() - g_mock_overhead_s + g_mock_spent_s;
 }
 
-/* the subtree chosen at lp is done: learn from its cost */
+static inline void ja_learn(uint L, uint part, double est, double dt) {
+    if (L >= GR_MAXL || est <= 0)
+        return;
+    ja_A[L][part] += dt;
+    ja_E[L][part] += est;
+}
+
+/* the walk chosen at lp is done: learn from its cost */
 static void ja_learnt(t_level *lp) {
-    uint L = lp->level - 1;
-    double dt = ja_now() - lp->ja_t0;
+    ja_learn(lp->level - 1, JA_WALK, lp->ja_ew, ja_now() - lp->ja_t0);
     lp->ja_t0 = 0;
-    if (L >= GR_MAXL)
-        return;
-    double e[3];
-    e[JA_WALK] = lp->ja_ew;
-    e[JA_RECURSE] = lp->ja_er;
-    e[JA_W1] = lp->ja_e1;
-    double adj = 0;
-    for (uint i = 0; i < 3; ++i)
-        adj += e[i] * ja_ratio(L, i);
-    if (adj <= 0)
-        return;
-    /* attribute the actual cost in proportion to the adjusted parts */
-    for (uint i = 0; i < 3; ++i) {
-        if (e[i] <= 0)
-            continue;
-        ja_A[L][i] += dt * e[i] * ja_ratio(L, i) / adj;
-        ja_E[L][i] += e[i];
-    }
+}
+
+/* the current x of the position chosen at lp is done: learn from it */
+static void ja_learnx(t_level *lp) {
+    uint di = lp->di;
+    if (di < ja_nd)
+        ja_learn(lp->level - 1, lp->ja_xp[di], lp->ja_ex[di],
+                ja_now() - lp->ja_xt0);
 }
 #define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
 #define JA_W1T 2e-6         /* walk_1_set(), per prime reaching its tests */
+/* -ja2: the estimated cost of choosing position vi at the node at
+ * prev_level, recursing over every x of t_i with every resulting case
+ * walked, as for the -ja1 gate, corrected by the ratios learnt. Returns
+ * HUGE_VAL if some x would walk the node (so walking it now is cheaper),
+ * or stops early once past bound; sets *blind if some x is outside the
+ * model (where the loop above may flip), when the result is meaningless.
+ */
 static double ja_cost(
     t_level *prev_level, t_level *cur_level, uint vi, double bound,
     bool *blind
@@ -5524,8 +5530,9 @@ static double ja_cost(
     uint ti = ap->t;
     t_divisors *dp = &divisors[ti];
     double total = 0;
-    ja_cost_r = ja_cost_1 = 0;
     *blind = 0;
+    /* all, since the level's x index can pass the last x of this t */
+    memset(ja_cx, 0, ja_nd * sizeof(double));
     for (uint di = 0; di < dp->highdiv; ++di) {
         uint x = dp->div[di];
         uint nextt = ti / x;
@@ -5545,20 +5552,27 @@ static double ja_cost(
             double m = mpz_get_d(prev_level->aq) / mpz_get_d(ap->q);
             double c1 = (gr_li(limp) - gr_li(p) + 1)
                     * (JA_W1S + JA_W1T / (m < 1 ? 1 : m));
-            ja_cost_1 += c1;
+            ja_cx[di] = c1;
+            ja_cp[di] = JA_W1;
             total += c1 * ja_r1;
             break;
           }
           case XR_RANGE: {
-            if (((nextt & 1) && !(ti & 1)) || ti == 2 * x * x) {
+            if (ti == 2 * x * x) {
                 *blind = 1;
                 return 0;
             }
+            /* Leaving a square, the children are costed as if they did
+             * not, which overestimates them, but learning corrects that
+             * by a ratio of its own.
+             */
+            bool sq = (nextt & 1) && !(ti & 1);
             ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
             if (cap > p) {
                 double cr = gr_recurse(prev_level, p, cap, x);
-                ja_cost_r += cr;
-                total += cr * ja_rr;
+                ja_cx[di] = cr;
+                ja_cp[di] = sq ? JA_SQUARE : JA_RECURSE;
+                total += cr * (sq ? ja_rs : ja_rr);
             }
             break;
           }
@@ -5567,6 +5581,16 @@ static double ja_cost(
             return total;
     }
     return total;
+}
+
+/* keep the estimates by x of the last position costed as the best */
+static inline void ja_swap(void) {
+    double *x = ja_cx;
+    ja_cx = ja_bx;
+    ja_bx = x;
+    unsigned char *p = ja_cp;
+    ja_cp = ja_bp;
+    ja_bp = p;
 }
 
 /* true if positions vi and vj are alike, so cost the same */
@@ -5589,15 +5613,24 @@ static inline bool ja_alike(uint vi, uint vj) {
  */
 uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
     uint L = prev_level->level;
+    if (!ja_nd) {
+        ja_nd = divisors[n].alldiv;
+        ja_cx = malloc(ja_nd * sizeof(double));
+        ja_bx = malloc(ja_nd * sizeof(double));
+        ja_cp = malloc(ja_nd);
+        ja_bp = malloc(ja_nd);
+    }
     ja_rr = ja_ratio(L, JA_RECURSE);
+    ja_rs = ja_ratio(L, JA_SQUARE);
     ja_r1 = ja_ratio(L, JA_W1);
     double W0 = GR_SETUP + gr_cit(L) * gr_iters(prev_level);
     double W = W0 * ja_ratio(L, JA_WALK);
-    bool blind;
-    double sT = ja_cost(prev_level, cur_level, sv, HUGE_VAL, &blind);
+    bool blind, sblind;
+    double sT = ja_cost(prev_level, cur_level, sv, HUGE_VAL, &sblind);
     uint best = sv, nblind = 0, neval = 1;
-    double bT = sT, br = ja_cost_r, b1 = ja_cost_1;
-    if (blind)
+    double bT = sT;
+    ja_swap();
+    if (sblind)
         goto done;
     if (W <= bT) {
         best = BV_WALK;
@@ -5631,22 +5664,29 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
         if (T < bT || (T == bT && best < BV_SPECIAL && vi < best)) {
             best = vi;
             bT = T;
-            br = ja_cost_r;
-            b1 = ja_cost_1;
+            ja_swap();
         }
     }
   done:
-    /* time the subtree of a choice made by cost */
-    if (auto_level >= 2 && !(blind && best == sv)) {
-        cur_level->ja_ew = (best == BV_WALK) ? W0 : 0;
-        cur_level->ja_er = (best == BV_WALK) ? 0 : br;
-        cur_level->ja_e1 = (best == BV_WALK) ? 0 : b1;
-        cur_level->ja_t0 = ja_now();
+    /* time what was chosen by cost: a walk whole, a position by x */
+    if (auto_level >= 2 && !sblind) {
+        if (best == BV_WALK) {
+            cur_level->ja_ew = W0;
+            cur_level->ja_t0 = ja_now();
+        } else {
+            if (!cur_level->ja_ex) {
+                cur_level->ja_ex = malloc(ja_nd * sizeof(double));
+                cur_level->ja_xp = malloc(ja_nd);
+            }
+            memcpy(cur_level->ja_ex, ja_bx, ja_nd * sizeof(double));
+            memcpy(cur_level->ja_xp, ja_bp, ja_nd);
+            cur_level->ja_on = 1;
+        }
     }
 #ifdef VERBOSE
     if (VB(VB_CHOICE))
         fprintf(gs_file(), "J %u %u %.4g %u %.4g %d %.4g %u %u %u\n",
-                L, strategy, W * 1e6, sv, blind && best == sv ? -1.0
+                L, strategy, W * 1e6, sv, sblind ? -1.0
                 : sT * 1e6, best < BV_SPECIAL ? (int)best : -1, bT * 1e6,
                 neval, nblind, auto_level);
 #endif
@@ -6370,6 +6410,7 @@ void recurse(e_is jump_continue) {
 #endif
             if (cur_level->next_best)
                 goto walk_now;
+            cur_level->ja_on = 0;
             uint vi = best_v(cur_level);
             cur_level->choice_strategy = strategy;
             cur_level->unsorted = 0;
@@ -6442,9 +6483,13 @@ void recurse(e_is jump_continue) {
         if (VB(VB_GATE))
             gs_rec_end(level);
 #endif
+        if (cur_level->ja_on)
+            ja_learnx(cur_level);
         ++cur_level->di;
       have_unforced_x:
         {
+            if (cur_level->ja_on)
+                cur_level->ja_xt0 = ja_now();
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
             switch (prep_unforced_x(prev_level, cur_level, 0, 0)) {
@@ -6474,6 +6519,10 @@ void recurse(e_is jump_continue) {
       derecurse:
         if (levels[level].ja_t0 > 0)
             ja_learnt(&levels[level]);
+        if (levels[level].ja_on) {
+            ja_learnx(&levels[level]);
+            levels[level].ja_on = 0;
+        }
         levels[level + 1].next_best = 0;
         --level;
         if (level <= final_level)
