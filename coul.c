@@ -532,9 +532,10 @@ static inline uint shown_top(void) {
 
 /* Show the allocations into diag_buf. If expanded, mark each allocation
  * with its level when not at the position best_v() would have chosen,
- * so recovery can reproduce the order.
+ * so recovery can reproduce the order. Returns TRUE if any is marked.
  */
-void prep_show_v(t_level *cur_level, bool expanded) {
+bool prep_show_v(t_level *cur_level, bool expanded) {
+    bool marked = 0;
     uint offset = 0;
     uint mid_vi;
     if (in_midp)
@@ -560,8 +561,10 @@ void prep_show_v(t_level *cur_level, bool expanded) {
                 if (ap->x > 2)
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
                 if (expanded && ap->level <= shown_top()
-                        && levels[ap->level].unsorted)
+                        && levels[ap->level].unsorted) {
                     offset += sprintf(&diag_buf[offset], "(%u)", ap->level);
+                    marked = 1;
+                }
             }
         }
     }
@@ -576,6 +579,7 @@ void prep_show_v(t_level *cur_level, bool expanded) {
     if (in_flip)
         offset += sprintf(&diag_buf[offset], " F(%u,%lu)", flip_vi, flip_oldp);
     diag_buf[offset] = 0;
+    return marked;
 }
 
 void diag_csv_head(void) {
@@ -786,16 +790,11 @@ void diag_any(t_level *cur_level, bool need_disp) {
     }
 
     if (rfp && (need_log || debugL)) {
-        char *code = "305";
-        /* recovery needs to know the levels not picked by best_v() */
-        uint top = shown_top();
-        for (uint li = 1; li <= top; ++li) {
-            if (levels[li].unsorted) {
-                prep_show_v(cur_level, 1);
-                code = "315";
-                break;
-            }
-        }
+        /* Recovery needs to know of levels not placed by best_v(), if
+         * there are any with active allocations, but we don't want to
+         * clutter on-screen display with that.
+         */
+        char *code = prep_show_v(cur_level, 1) ? "315" : "305";
 #ifdef TRACK_STATS
         fprintf(rfp, "%s %s%s (%.2fs) [", code, diag_buf, aux_buf, seconds(t1));
         for (uint i = 0; i < k; ++i) {
