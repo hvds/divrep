@@ -164,6 +164,19 @@ level 3 of 27M and 103M iterations, and -x1e15 196s; D(60,4) -j0
 16 runs of -x5e14 all took 4.3-4.7s, -x1e15 takes 6.6s (-ja1: over
 300s), and D(60,4) -j0 1.8s; the other runs tried are unchanged.
 
+With all that, 13 runs repeated 5 times each varied by under 10%, and
+the strategy chosen matters much less (D(60,4) -x1e15 at -j0/-j2/-j4:
+1.8/6.2/1.9s against 3.7/295/2.0s under -ja1; D(36,5) -x3e10 4.8-5.6s
+for each, against 9.1-14.1s). Tiny runs lose a little: at a zmax far
+above the answer to the known weakness below, as before learning
+(D(24,5) -j0 -x1e13: 0.19s against 0.15s), and at one just below it
+to the cost of choosing (-x15537947: 0.11s against 0.09s). On
+the D(96,8) batches at -x393643805345636319 -f5 (b5, b50, b5000,
+b350000), -ja2 took 10.3-10.7, 30-31.7, 4.3-4.5 and 12.6-13.5s with
+-j0 or -j2, about 10% less than before learning and up to 25% less
+than -ja1; with -j4 it was 3% slower than -ja1 on b50, faster on the
+rest.
+
 Recovery: 315 lines mark only levels chosen against the strategy, the
 rest replayed by it.
 
@@ -196,24 +209,23 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
    optimises the cost of the whole search at the current zmax, not how
    soon zmax falls. At a zmax near the answer the two are within 0.03s
    there, so this matters little for runs proving a bound minimal.
-2. With that, try "never walk a flippable loop".
-3. Fixed squares under the cost gate: a child that completes a second
+2. Fixed squares under the cost gate: a child that completes a second
    square (Pell, nearly free) or flips must be costed as such; the
    per-iteration cost of square walks varies too much between levels
    to borrow.
-4. Deeper lookahead (a further -ja level), and -W decided per node by cost.
-5. In calibrate: Neyman allocation of samples across strata and a
+3. Deeper lookahead (a further -ja level), and -W decided per node by cost.
+4. In calibrate: Neyman allocation of samples across strata and a
    per-power (-Wx) search; with -ja1 the gain drops out of the search
    for non-square batches.
-6. Mock accuracy: the leaf-stub shape in loops of mostly rejected
+5. Mock accuracy: the leaf-stub shape in loops of mostly rejected
    primes; ctail varies by batch (0.187-0.229us per prime, no predictor
    yet); walks ~6% high on D(48,10); D(90,4) 0.88; fixed-power walks
    lack the inverse filter's exclusions; the loop0/looptest (and
    sqsetup/sqloop0) fits are nearly collinear.
-7. The ladder above 299 bits: price the single ECM rung from timed
+6. The ladder above 299 bits: price the single ECM rung from timed
    failing attempts and hit rates by smallest-factor size measured at
    smaller n; end-to-end validation above 159 bits.
-8. The batch harness.
+7. The batch harness.
 
 ## Why some of this is hard
 
@@ -270,3 +282,6 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
   estimate (no gain over one level).
 - WALK_FROM as a speedup: the gate costs ~1us, so skipping it gains
   nothing measurable.
+- Never walking a loop whose children can flip (t = 2q^2): D(60,3) -j2
+  -x1e13 7x slower under -ja1, D(36,5) -j0 -x3e10 3x slower under
+  either, D(36,4) -j4 1.7-3x; only D(64,3) -j4 gained, by 1.5%.
