@@ -134,8 +134,10 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 
 =cut
 
-my($verbose, $mock, $only, $outfile, $flake)
-        = ('./pcoul', undef, '', undef, 0);
+my($verbose, $mock, $outfile, $flake, $update)
+        = ('./pcoul', undef, undef, 0, undef);
+my @sections = qw{ scan prime multi ladder qs walk w1s leaf tail };
+my %want = map +($_ => 1), @sections;
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
@@ -147,15 +149,46 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     $mock = $1, next if $arg =~ /^-m(.+)$/;
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
     $flake = $1, next if $arg =~ /^-f(\d+)$/;
-    $only = 'other', next if $arg eq '-o';
-    $only = 'multi', next if $arg eq '-M';
     $outfile = $1, next if $arg =~ /^-w(.+)$/;
+    $update = $1, next if $arg =~ /^-u(.+)$/;
+    if ($arg =~ /^-s([\w,]+)$/) {
+        my @s = split /,/, $1;
+        for (@s) {
+            my $s = $_;
+            grep $_ eq $s, @sections or die "Unknown section '$s'";
+        }
+        %want = map +($_ => 1), @s;
+        next;
+    }
+    if ($arg eq '-o') {
+        %want = map +($_ => 1), grep $_ ne 'multi', @sections;
+        next;
+    }
+    if ($arg eq '-M') {
+        %want = (multi => 1);
+        next;
+    }
     die "Unknown option '$arg'";
 }
-@ARGV == 2 && ($mock || $only eq 'multi')
-        or die "500 Usage: $0 [-v<verbose>] -m<mock> [-b<bits,...>]"
-                . " [-f<flake>] [-o | -M] [-w<file>] n k";
+my $need_mock = grep $want{$_}, qw{ leaf tail };
+@ARGV == 2 && ($mock || !$need_mock)
+        or die "500 Usage: $0 [-v<verbose>] [-m<mock>] [-b<bits,...>]"
+                . " [-f<flake>] [-s<sections> | -o | -M] [-u<table>]"
+                . " [-w<file>] n k";
 my($n, $k) = @ARGV;
+
+# with -u, the existing table: its lines by section
+my %old;
+if (defined $update) {
+    open my $fh, '<', $update or die "$update: $!";
+    while (<$fh>) {
+        chomp;
+        my $sec = section_of($_) or next;
+        push @{ $old{$sec} }, $_;
+    }
+    close $fh;
+}
+
 my $out = \*STDOUT;
 if (defined $outfile) {
     open(my $fh, '>', $outfile) or die "$outfile: $!";
@@ -212,10 +245,21 @@ push @ladder_bits, grep $_ > $flake, (277, 299, 400, 511) if $flake;
 # parameters step) from where the ladder first uses it, to 262 bits
 # or the flake size
 my @qs_bits = grep !$flake || $_ <= $flake, map 100 + 3 * $_, 0 .. 54;
-my($done, $total) = (0, scalar @scan_bits);
-$total += @te * @bits unless $only eq 'other';
-$total += @prime_bits + @ladder_bits + @qs_bits + 3 + 18
-        unless $only eq 'multi';
+# the progress total: the pcoul runs to make
+my($done, $total) = (0, 0);
+$total += @scan_bits if $want{scan};
+$total += @te * @bits if $want{multi};
+$total += @prime_bits if $want{prime};
+$total += @ladder_bits if $want{ladder};
+$total += @qs_bits if $want{qs};
+$total += 1 if $want{walk} || $want{w1s};
+$total += 1 if $want{walk};
+$total += 1 if $want{w1s};
+$total += 12 if $want{leaf};
+$total += 6 if $want{tail};
+
+# the lines built, by section
+my %new;
 
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
@@ -226,16 +270,18 @@ my $tscan = (grep $_ > 2 && !($_ & 1), divisors($n))[0] // 2;
 # and an even t whose half is not 2, for the extra cost of a factor that
 # does not end prep
 my $tx = (grep $_ >= 6 && !($_ & 1), divisors($n))[0];
-my @scan = map bench("scan,$_,2000,$tscan" . ($tx ? ",$tx" : '')),
-        @scan_bits;
-my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } @scan;
+$new{scan} = [ map bench("scan,$_,2000,$tscan" . ($tx ? ",$tx" : '')),
+        @scan_bits ] if $want{scan};
+my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } lines_of('scan');
+%L or !grep($want{$_}, qw{ multi prime ladder })
+        or die "need the trial division limits: add -sscan, or -u a table";
 sub trial_limit {
     my($bits) = @_;
     my($near) = sort { abs($a - $bits) <=> abs($b - $bits) } keys %L;
     return $L{$near};
 }
 
-unless ($only eq 'other') {
+if ($want{multi}) {
     for my $te (@te) {
         my($t, $e) = @$te;
         for my $b (@bits) {
@@ -246,47 +292,96 @@ unless ($only eq 'other') {
                 fail\ ([\d.]+)\ decided\ ([\d.]+)\ pending\ ([\d.]+)
                 \ \(pass\ ([\d.]+)\);\ prep\ ([\d.]+)us .* run\ ([\d.]+)us
             }x or die "no result for t=$t bits=$b";
-            print $out join(' ', $t, $e, $b, $F, @v), "\n";
+            push @{ $new{multi} }, join(' ', $t, $e, $b, $F, @v);
         }
     }
 }
+if ($want{prime}) {
+    for my $b (@prime_bits) {
+        push @{ $new{prime} }, grep /^[PR] /,
+                bench("prime,$b,20000," . trial_limit($b));
+    }
+}
+if ($want{ladder}) {
+    for my $b (@ladder_bits) {
+        my $count = ($b <= 64) ? 3000 : ($b <= 99) ? 1500
+                : ($b <= 159) ? 400 : 150;
+        # from 100 bits, inputs built with their smallest factor
+        # oversampled at large sizes, for the rare costly rungs
+        my $alpha = ($b < 100) ? '' : ',0.3';
+        $count = ($b <= 255) ? 60 : ($b <= 299) ? 30 : 12 if $b > 191;
+        push @{ $new{ladder} }, grep /^G /,
+                bench("ladder,$b,$count," . trial_limit($b) . $alpha,
+                        $flake ? "-o$flake" : ());
+    }
+}
+if ($want{qs}) {
+    for my $b (@qs_bits) {
+        my $count = ($b < 200) ? 5 : ($b < 230) ? 2 : 1;
+        push @{ $new{qs} }, grep /^Q /, bench("qs,$b,$count");
+    }
+}
+my @log_sq = ($want{walk} || $want{w1s}) ? gate_log(@cal_sq) : ();
+if ($want{walk}) {
+    my @lin = fit_walks('N', gate_log(@cal_lin));
+    my @sq = fit_walks('S', @log_sq);
+    $new{walk} = [
+        sprintf('C linsetup %.4f', $lin[0]),
+        sprintf('C loop0 %.5f', $lin[1]),
+        sprintf('C looptest %.5f', $lin[2]),
+        sprintf('C sqsetup %.4f', $sq[0]),
+        sprintf('C sqloop0 %.5f', $sq[1]),
+        sprintf('C sqtest %.5f', $sq[2]),
+    ];
+}
+if ($want{w1s}) {
+    my @w1s = fit_w1s(@log_sq, gate_log(@cal_w1s));
+    $new{w1s} = [ sprintf('C w1siter %.5f', $w1s[0]),
+            sprintf('C w1scheck %.5f', $w1s[1]) ];
+}
+$new{leaf} = [ sprintf('C cprime %.4f', cprime('leaf', @cal_leaf)),
+        sprintf('C cprimesq %.4f', cprime('sq', @cal_leafsq)) ]
+        if $want{leaf};
+$new{tail} = [ sprintf('C ctail %.4f', cprime('tail', @cal_tail)) ]
+        if $want{tail};
 
-finish() if $only eq 'multi';
-my @rest;
-for my $b (@prime_bits) {
-    push @rest, grep /^[PR] /, bench("prime,$b,20000," . trial_limit($b));
-}
-for my $b (@ladder_bits) {
-    my $count = ($b <= 64) ? 3000 : ($b <= 99) ? 1500 : ($b <= 159) ? 400
-            : 150;
-    # from 100 bits, inputs built with their smallest factor oversampled
-    # at large sizes, for the rare costly rungs
-    my $alpha = ($b < 100) ? '' : ',0.3';
-    $count = ($b <= 255) ? 60 : ($b <= 299) ? 30 : 12 if $b > 191;
-    push @rest, grep /^G /, bench("ladder,$b,$count," . trial_limit($b)
-            . $alpha, $flake ? "-o$flake" : ());
-}
-for my $b (@qs_bits) {
-    my $count = ($b < 200) ? 5 : ($b < 230) ? 2 : 1;
-    push @rest, grep /^Q /, bench("qs,$b,$count");
-}
-push @rest, @scan;
-my @log_lin = gate_log(@cal_lin);
-my @log_sq = gate_log(@cal_sq);
-my @lin = fit_walks('N', @log_lin);
-push @rest, sprintf('C loop0 %.5f', $lin[0]),
-        sprintf('C looptest %.5f', $lin[1]);
-my @sq = fit_walks('S', @log_sq);
-push @rest, sprintf('C sqsetup %.4f', $sq[0]),
-        sprintf('C sqloop0 %.5f', $sq[1]), sprintf('C sqtest %.5f', $sq[2]);
-my @w1s = fit_w1s(@log_sq, gate_log(@cal_w1s));
-push @rest, sprintf('C w1siter %.5f', $w1s[0]),
-        sprintf('C w1scheck %.5f', $w1s[1]);
-push @rest, sprintf('C cprime %.4f', cprime('leaf', @cal_leaf)),
-        sprintf('C cprimesq %.4f', cprime('sq', @cal_leafsq));
-push @rest, sprintf('C ctail %.4f', cprime('tail', @cal_tail));
-print $out "$_\n" for @rest;
+# each section rebuilt is marked with the build that made it
+my $sha = build_sha();
+my %ver = map { /^V (\w+) / ? ($1 => $_) : () } lines_of('V');
+$ver{$_} = "V $_ $sha" for grep $want{$_}, @sections;
+print $out "$ver{$_}\n" for grep $ver{$_}, @sections;
+print $out "$_\n" for map lines_of($_), @sections;
 finish();
+
+# The lines of a section: as built now, else from the table updated.
+sub lines_of {
+    my($sec) = @_;
+    return @{ $new{$sec} // $old{$sec} // [] };
+}
+
+# the section of a table line, if it has one
+sub section_of {
+    local($_) = @_;
+    return /^V / ? 'V'
+        : /^\d/ ? 'multi'
+        : /^[SL] / ? 'scan'
+        : /^[PR] / ? 'prime'
+        : /^G / ? 'ladder'
+        : /^Q / ? 'qs'
+        : /^C (?:linsetup|loop0|looptest|sqsetup|sqloop0|sqtest) / ? 'walk'
+        : /^C w1s/ ? 'w1s'
+        : /^C cprime/ ? 'leaf'
+        : /^C ctail / ? 'tail'
+        : undef;
+}
+
+# the build of the pcoul running the benches, as its 001 line gives it
+sub build_sha {
+    my $out = `'$verbose' -x1 6 2 2>&1`;
+    my($sha) = $out =~ /^001 .* sha=(\S+)/m
+            or die "no sha in the 001 line from $verbose";
+    return $sha;
+}
 
 sub finish {
     keep_diag() if defined $outfile;
@@ -336,8 +431,8 @@ sub gate_log {
 }
 
 # Fit the walks of the given cause (N linear, S fixed power) from
-# -dv2 records: returns microseconds per walk (S only), per
-# iteration and per inverse entry tested.
+# -dv2 records: returns microseconds per walk, per iteration and per
+# inverse entry tested.
 sub fit_walks {
     my($cause, @recs) = @_;
     my @rows;
@@ -350,7 +445,7 @@ sub fit_walks {
             $rest -= $f[23];
             push @rows, [ 1, $f[21], $f[21] * $f[29], $f[14], $rest ];
         } else {
-            push @rows, [ $f[3], $f[3] * $f[29], $f[14], $rest ];
+            push @rows, [ 1, $f[3], $f[3] * $f[29], $f[14], $rest ];
         }
     }
     @rows > 100 or die "too few $cause walks to fit";
@@ -441,11 +536,12 @@ sub cprime {
     my($var, $other) = ($kind eq 'tail')
             ? ('MOCK_TAIL_OFF', 'MOCK_LEAF_OFF')
             : ('MOCK_LEAF_OFF', 'MOCK_TAIL_OFF');
+    my @table = map lines_of($_), @sections;
     open my $fh, '>', $tmp or die "$tmp: $!";
-    print $fh "$_\n" for @rest, map "C $_ 0",
-            grep !(grep /^C $_ /, @rest), qw{ cprime cprimesq ctail };
+    print $fh "$_\n" for @table, map "C $_ 0",
+            grep !(grep /^C $_ /, @table), qw{ cprime cprimesq ctail };
     close $fh;
-    local $ENV{MOCK_WALK_TABLE} = $tmp;
+    local $ENV{COST_TABLE} = $tmp;
     local $ENV{$other} = 1;
     my(%real, $primes);
     for my $rep (1 .. 3) {
