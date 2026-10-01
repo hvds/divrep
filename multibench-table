@@ -67,6 +67,8 @@ Then the remaining costs:
   C w1scheck us     walk_1_set(), per prime reaching the tests
   C ctail us        recurse loop, per prime in the stubbed end of a
                     loop whose primes are almost all rejected on rq > zmax
+  K name us         the cost of a step of a test's preparation, found
+                    in situ (see below)
   G bits rung reach us hit fbits cprime
                     the factoring ladder of tau_multi_run()
   G bits 0 none     likewise, the fraction for which it found no factor
@@ -84,6 +86,18 @@ primes stubbed. C<ctail> likewise, from a batch of D(162, 3) deep
 enough that almost every prime its recursion tries is rejected on
 rq > zmax, timed with the ends of such loops stubbed and run (and leaf
 loops run for real in both, so that none of those primes is strided).
+
+The K rows (section situ) price each test's preparation by what it
+did, for the costs -ja counts: for tau_multi_prep(), per call
+(prepcall), per trial prime tested by limbs (prepstep1..3, 3 for 3 or
+more), per gcd by trial band (prepgcd0..4), per bit of the values
+tested for primality (preppbit) and per power test (preppower); for
+tau_prime_prep(), per call and per bit by its result (pprep0..2,
+pprep0bit..pprep2bit). They are fitted, by least squares with no
+negative costs, to 1 in 32 of the preparations in calibration runs
+of the C<-v> pcoul at C<-ja1 -dv16>, each timed alone with the gap
+between two clock reads taken off: timed in the full program, they
+see its caches and branch history as the benches cannot.
 
 The G rows come from running the ladder on random composites of the
 given size with no factor up to L, each alone and stopping at the
@@ -136,7 +150,7 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 
 my($verbose, $mock, $outfile, $flake, $update)
         = ('./pcoul', undef, undef, 0, undef);
-my @sections = qw{ scan prime multi ladder qs walk w1s leaf tail };
+my @sections = qw{ scan prime multi ladder qs walk w1s leaf tail situ };
 my %want = map +($_ => 1), @sections;
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
@@ -210,6 +224,11 @@ my @cal_w1s = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b3', 18, 4);
 my @cal_tail = ('-j2', '-f3', '-g60', '-x3068295382408046177023',
         '-I3^2.5^2.7^2.397^2 2^2 .', 162, 3);
 
+# runs whose test preparations price them in situ: small and large
+# values, linear and fixed-power walks
+my @cal_situ = (\@cal_lin, \@cal_sq, [ '-j4', '-x1e10', 36, 5 ],
+        [ '-j2', '-x1e15', 60, 4 ], [ '-j2', '-x1e24', '-b0', 12, 9 ]);
+
 my $tmp = "/tmp/multibench-table.$$";
 $| = 1;
 
@@ -257,6 +276,7 @@ $total += 1 if $want{walk};
 $total += 1 if $want{w1s};
 $total += 12 if $want{leaf};
 $total += 6 if $want{tail};
+$total += @cal_situ if $want{situ};
 
 # the lines built, by section
 my %new;
@@ -344,6 +364,7 @@ $new{leaf} = [ sprintf('C cprime %.4f', cprime('leaf', @cal_leaf)),
         if $want{leaf};
 $new{tail} = [ sprintf('C ctail %.4f', cprime('tail', @cal_tail)) ]
         if $want{tail};
+$new{situ} = [ fit_prep(map prep_log(@$_), @cal_situ) ] if $want{situ};
 
 # each section rebuilt is marked with the build that made it
 my $sha = build_sha();
@@ -372,6 +393,7 @@ sub section_of {
         : /^C w1s/ ? 'w1s'
         : /^C cprime/ ? 'leaf'
         : /^C ctail / ? 'tail'
+        : /^K / ? 'situ'
         : undef;
 }
 
@@ -430,6 +452,57 @@ sub gate_log {
     return @recs;
 }
 
+# Run the VERBOSE pcoul with -ja1, recording 1 in 8 of its test
+# preparations (-dv16), and return the T records.
+sub prep_log {
+    my(@args) = @_;
+    local $ENV{GATE_STATS} = $tmp;
+    unlink $tmp;
+    progress("-ja1 -dv16 @args");
+    my $out = `'$verbose' -X -ja1 -dv16 -Ld60 @{[ map quote($_), @args ]} 2>&1`;
+    open my $fh, '<', $tmp or die "$tmp: $!";
+    # 1 in 4 of them suffices
+    my $i = 0;
+    my @recs = map [ split ], grep /^[TU] / && !($i++ % 4), <$fh>;
+    close $fh;
+    unlink $tmp;
+    (grep $_->[0] eq 'T', @recs) or die "no T records from $verbose @args";
+    return @recs;
+}
+
+# Fit the cost of a test preparation to what it did, from T records:
+# per call, per trial prime tested by limbs (1, 2, 3 or more), per gcd
+# by trial band, per bit tested for primality and per power test; and
+# that of a prime test's preparation from U records, by its result, per
+# call and per bit.
+sub fit_prep {
+    my(@recs) = @_;
+    my(@rows, @urows);
+    for (@recs) {
+        if ($_->[0] eq 'U') {
+            # a prime test's preparation: per result, a cost per call and
+            # per bit
+            my(undef, $nbits, $res, $dt) = @$_;
+            push @urows, [ map(($_ == $res ? (1, $nbits) : (0, 0)), 0 .. 2),
+                    $dt ];
+            next;
+        }
+        my(undef, $nbits, $steps, @g) = @$_;
+        my($npr, $pbits, $npow, $full, $dt) = splice @g, 5;
+        my $limbs = int(($nbits + 63) / 64);
+        $limbs = 3 if $limbs > 3;
+        push @rows, [ 1, map($_ == $limbs ? $steps : 0, 1 .. 3),
+                @g, $pbits, $npow, $dt ];
+    }
+    my @c = lsq_nonneg(\@rows);
+    my @names = qw{ prepcall prepstep1 prepstep2 prepstep3 prepgcd0
+            prepgcd1 prepgcd2 prepgcd3 prepgcd4 preppbit preppower };
+    my @u = @urows ? lsq_nonneg(\@urows) : ();
+    my @unames = qw{ pprep0 pprep0bit pprep1 pprep1bit pprep2 pprep2bit };
+    return (map(sprintf('K %s %.5f', $names[$_], 1e6 * $c[$_]), 0 .. $#names),
+            map(sprintf('K %s %.6f', $unames[$_], 1e6 * $u[$_]), 0 .. $#u));
+}
+
 # Fit the walks of the given cause (N linear, S fixed power) from
 # -dv2 records: returns microseconds per walk, per iteration and per
 # inverse entry tested.
@@ -470,7 +543,11 @@ sub fit_w1s {
 sub lsq_nonneg {
     my($rows) = @_;
     my $m = @{ $rows->[0] } - 1;
-    my @keep = (0 .. $m - 1);
+    # a column that is always zero has nothing to fit: it stays zero
+    my @keep = grep {
+        my $j = $_;
+        grep $_->[$j], @$rows;
+    } 0 .. $m - 1;
     while (1) {
         my @c = lsq([ map [ @$_[@keep, $m] ], @$rows ]);
         my @neg = grep $c[$_] < 0, 0 .. $#c;

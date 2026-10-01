@@ -11,11 +11,19 @@
  *                 walks (two clock reads per candidate tested)
  *   VB_CHOICE  8: with -ja, a J record of each choice of position by
  *                 estimated cost, to the same file (see ja_choose())
+ *   VB_PREP   16: a T record of 1 in 8 of the test preparations
+ *                 (tau_multi_prep()), with what each did and its time,
+ *                 and a U record of 1 in 8 of those for prime tests,
+ *                 to the same file, for pricing them (see trace.c)
+ *   VB_COUNTS 32: a W record at the end of the run, of what it did as
+ *                 counted for costing it and the CPU time it took, to
+ *                 the same file, for pricing what is counted (see
+ *                 gs_count_record())
  * The same build also runs the benches ($MULTIBENCH, see bench.c).
  */
 
 #include <stdio.h>
-#include "coul.h"
+#include "coulint.h"
 #include "rootmod.h"
 
 #ifdef VERBOSE
@@ -24,6 +32,8 @@ extern uint verbose;
 #   define VB_GATE 2
 #   define VB_STAGE 4
 #   define VB_CHOICE 8
+#   define VB_PREP 16
+#   define VB_COUNTS 32
 #   define VB(bits) (verbose & (bits))
 
 #   define GS_MAXLEVEL 256
@@ -46,6 +56,9 @@ extern double gs_tests_pred;
 extern uint gs_rc, gs_xi, gs_pp;
 
 extern FILE *gs_file(void);
+extern void gs_prep_record(uint nbits, const t_ct_work *w, double dt);
+extern void gs_pprep_record(uint nbits, int res, double dt);
+extern void gs_count_record(const t_cc *c, double charged);
 extern double gs_now(void);
 extern double gs_rel(void);
 extern void gs_rec_start(uint lvl, ulong p);
