@@ -18,6 +18,24 @@
 extern double g_mock_spent_s;
 extern double g_mock_overhead_s;
 
+/* the expected cost of tau_multi_run() on these values, or -1 without a
+ * cost table: in every build, for learning costs
+ */
+extern double cm_ladder_cost(uint count, t_tm *tm);
+/* the same table's prices of the tests and its scalar costs, for
+ * counting the cost of what a run does
+ */
+extern bool cm_have_table(void);
+extern const char cm_default_table[];   /* costtab.c, from cost-table */
+extern const char *cm_table_sha(const char *section);
+extern double cm_price_prime(mpz_t n);
+extern double cm_const(uint which);
+extern double cm_prep_price(uint t, uint e, uint nbits, ulong p, bool full);
+extern double cm_pprep_price(uint nbits, int res);
+enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
+        CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
+        CM_LINSETUP, CM_CAPPLY, CM_COUNT };
+
 #ifdef MOCK_WALK
 extern void mock_init(void);
 extern void mock_report(void);

@@ -13,8 +13,11 @@
 #include "coultau.h"
 #include "mock.h"
 
-#ifdef MOCK_WALK
-/* MOCK_WALK: calibration-only stub for walk_v(). Everything up to the
+/* The cost table and the models built on it are compiled into every
+ * build: besides the mocks below, -ja learning charges the factoring
+ * ladder its expected cost from them (cm_ladder_cost()).
+ *
+ * MOCK_WALK: calibration-only stub for walk_v(). Everything up to the
  * iteration loops runs for real; the loops themselves are replaced by
  * their expected cost, added to g_mock_spent_s, so that a run reports
  * real non-walk time plus modelled walk time, deterministically. Never
@@ -115,6 +118,7 @@ typedef struct {
     double v;
     bool seen;
     bool is_time;
+    double dflt;    /* if not 0, the value for a table without it */
 } t_mwc;
 static t_mwc mw_C[] = {
     { "loop0", 0, 0, 1 },       /* linear walk per ati */
@@ -127,15 +131,20 @@ static t_mwc mw_C[] = {
     { "w1siter", 0, 0, 1 },     /* walk_1_set() per prime */
     { "w1scheck", 0, 0, 1 },    /* walk_1_set() per prime passing mod check */
     { "ctail", 0, 0, 1 },       /* rest of a loop of rejects, per prime */
+    /* linear walk per walk (tables before it had none) */
+    { "linsetup", 0, 0, 1, 2e-6 },
+    /* recurse loop per prime applied, beyond cprime (likewise) */
+    { "capply", 0, 0, 1, 0.5e-6 },
 };
+/* in the order of the CM_* constants in mock.h */
 enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
         MWC_CPRIME, MWC_CPRIMESQ, MWC_W1SITER,
-        MWC_W1SCHECK, MWC_CTAIL, MWC_COUNT };
+        MWC_W1SCHECK, MWC_CTAIL, MWC_LINSETUP, MWC_CAPPLY, MWC_COUNT };
 #define MWC(i) (mw_C[i].v)
 
 static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
     if (tp->nb == MW_MAXB)
-        fail("MOCK_WALK: table too large");
+        fail("cost table: table too large");
     tp->bits[tp->nb] = bits;
     tp->v[tp->nb][0] = v0;
     tp->v[tp->nb][1] = v1;
@@ -185,7 +194,7 @@ static t_mwscan *mw_scan_find(double lg, bool create) {
         return bestl;
     if (create && !best) {
         if (mw_nscan == sizeof(mw_scan) / sizeof(mw_scan[0]))
-            fail("MOCK_WALK: too many trial division sizes");
+            fail("cost table: too many trial division sizes");
         best = &mw_scan[mw_nscan++];
         *best = (t_mwscan){ .bits = bits };
     }
@@ -196,17 +205,68 @@ static t_mwscan *mw_scan_find(double lg, bool create) {
  * digit are test_multi() rows "t e bits F rej dec pend pass prep run";
  * others are "C name value", "P bits F pass us", "R bits us us",
  * "S bits p us us" or "L bits p". Times in the file are in microseconds. */
+static void mw_load(void);
+
+/* the build that made each section of the table, from its V lines */
+static struct {
+    char section[16], sha[80];
+} mw_ver[16];
+static uint mw_nver = 0;
+
+/* the build that made a section of the table, or NULL if not known */
+const char *cm_table_sha(const char *section) {
+    if (!mw_loaded)
+        mw_load();
+    for (uint i = 0; i < mw_nver; ++i)
+        if (strcmp(mw_ver[i].section, section) == 0)
+            return mw_ver[i].sha;
+    return NULL;
+}
+
+/* the next line of the table, from the file if any, else from the
+ * built-in default
+ */
+static char *mw_line(char *buf, size_t size, FILE *fp, const char **src) {
+    if (fp)
+        return fgets(buf, size, fp);
+    if (!**src)
+        return NULL;
+    size_t i = 0;
+    while (**src && i + 1 < size) {
+        char c = *(*src)++;
+        buf[i++] = c;
+        if (c == '\n')
+            break;
+    }
+    buf[i] = 0;
+    return buf;
+}
+
 static void mw_load(void) {
     mw_loaded = 1;
     mpz_init(mw_tmp);
-    char *fn = getenv("MOCK_WALK_TABLE");
+    /* $COST_TABLE, or as before $MOCK_WALK_TABLE, else the built-in */
+    char *fn = getenv("COST_TABLE");
     if (!fn)
-        fail("MOCK_WALK: set MOCK_WALK_TABLE to a multibench table");
-    FILE *fp = fopen(fn, "r");
-    if (!fp)
-        fail("MOCK_WALK: %s: %s", fn, strerror(errno));
+        fn = getenv("MOCK_WALK_TABLE");
+    FILE *fp = NULL;
+    const char *src = cm_default_table;
+    if (fn) {
+        fp = fopen(fn, "r");
+        if (!fp)
+            fail("cost table %s: %s", fn, strerror(errno));
+    } else
+        fn = "(built-in)";
     char line[256], name[32];
-    while (fgets(line, sizeof(line), fp)) {
+    while (mw_line(line, sizeof(line), fp, &src)) {
+        char sha[sizeof(mw_ver[0].sha)];
+        if (sscanf(line, "V %15s %79s", name, sha) == 2) {
+            if (mw_nver < sizeof(mw_ver) / sizeof(mw_ver[0])) {
+                strcpy(mw_ver[mw_nver].section, name);
+                strcpy(mw_ver[mw_nver++].sha, sha);
+            }
+            continue;
+        }
         uint t, e, b, F;
         double v[6];
         if (sscanf(line, "C %31s %lf", name, &v[0]) == 2) {
@@ -226,12 +286,12 @@ static void mw_load(void) {
                     break;
             if (i == mw_nlad) {
                 if (mw_nlad == MW_MAXLAD)
-                    fail("MOCK_WALK: too many G sizes");
+                    fail("cost table: too many G sizes");
                 mw_lad[mw_nlad++] = (t_mwlad){ .bits = b, .nr = 0 };
             }
             t_mwlad *lp = &mw_lad[i];
             if (lp->nr == MW_MAXLR)
-                fail("MOCK_WALK: too many G rungs at %u bits", b);
+                fail("cost table: too many G rungs at %u bits", b);
             uint j = lp->nr++;
             lp->rung[j] = r;
             lp->reach[j] = v[0];
@@ -259,7 +319,7 @@ static void mw_load(void) {
         if (nf >= 4) {
             t_mwscan *sp = mw_scan_find(b, 1);
             if (sp->ns == MW_MAXS)
-                fail("MOCK_WALK: too many S rows");
+                fail("cost table: too many S rows");
             sp->p[sp->ns] = p;
             sp->prep[sp->ns] = v[0] * 1e-6;
             sp->extra[sp->ns] = (nf == 5 && v[2] > 0) ? v[2] * 1e-6 : 0;
@@ -279,7 +339,7 @@ static void mw_load(void) {
                 break;
         if (i == mw_count) {
             if (mw_count == MW_MAXT)
-                fail("MOCK_WALK: table too large");
+                fail("cost table: table too large");
             mw_tab[mw_count++] = (t_mw){ .t = t, .e = e, .nb = 0 };
         }
         t_mw *mp = &mw_tab[i];
@@ -290,18 +350,22 @@ static void mw_load(void) {
         v[5] *= 1e-6;
         memcpy(mp->v[mp->nb++], v, sizeof(v));
     }
-    fclose(fp);
+    if (fp)
+        fclose(fp);
     for (uint i = 0; i < MWC_COUNT; ++i)
-        if (!mw_C[i].seen)
-            fail("MOCK_WALK: %s: no value for C %s", fn, mw_C[i].name);
+        if (!mw_C[i].seen) {
+            if (!mw_C[i].dflt)
+                fail("cost table: %s: no value for C %s", fn, mw_C[i].name);
+            mw_C[i].v = mw_C[i].dflt;
+        }
     if (!mw_P.nb || !mw_R.nb)
-        fail("MOCK_WALK: %s: need P and R rows", fn);
+        fail("cost table: %s: need P and R rows", fn);
     if (!mw_nscan)
-        fail("MOCK_WALK: %s: need S and L rows", fn);
+        fail("cost table: %s: need S and L rows", fn);
     uint maxL = 0;
     for (uint i = 0; i < mw_nscan; ++i) {
         if (!mw_scan[i].L || !mw_scan[i].ns)
-            fail("MOCK_WALK: %s: need S and L rows for %u bits", fn,
+            fail("cost table: %s: need S and L rows for %u bits", fn,
                     mw_scan[i].bits);
         if (mw_scan[i].L > maxL)
             maxL = mw_scan[i].L;
@@ -1210,6 +1274,134 @@ static int mw_lad_cmp(const void *va, const void *vb) {
     return (a->lb > b->lb) - (a->lb < b->lb);
 }
 
+/* The expected cost of the trial division a test makes on a value of
+ * log2 lg with no known structure, and the chance that it finds no
+ * factor: which is 0 for test_multi_append(), 1 for test_prime_append().
+ * A value is taken to be divisible by each trial prime p independently
+ * with probability 1/p, and the test to stop at the first, at the cost
+ * the S rows give for stopping there. Cached by size.
+ */
+#define MW_TRMAX 1024
+static double mw_tr_cost[2][MW_TRMAX], mw_tr_surv[2][MW_TRMAX];
+static double mw_trial_random(double lg, uint which, double *surv) {
+    uint nb = mw_nbits(lg);
+    if (nb < MW_TRMAX && mw_tr_cost[which][nb] > 0) {
+        *surv = mw_tr_surv[which][nb];
+        return mw_tr_cost[which][nb];
+    }
+    t_mwscan *sc = mw_scan_find(lg, 0);
+    double reach = 1, cost = 0;
+    for (uint i = 0; i < mw_ntp && mw_tp[i] <= sc->L; ++i) {
+        uint p = mw_tp[i];
+        cost += reach / p * mw_scan_cost(sc, p, which);
+        reach *= 1 - 1.0 / p;
+    }
+    cost += reach * mw_scan_cost(sc, sc->L, which);
+    if (nb < MW_TRMAX) {
+        mw_tr_cost[which][nb] = cost;
+        mw_tr_surv[which][nb] = reach;
+    }
+    *surv = reach;
+    return cost;
+}
+
+static inline double mw_lg(mpz_t n) {
+    long ex;
+    double d = mpz_get_d_2exp(&ex, n);
+    return log2(d) + ex;
+}
+
+/* The expected cost of test_prime_append() and the prime test that
+ * follows if trial division finds no factor, for the value n.
+ */
+double cm_price_prime(mpz_t n) {
+    double lg = mw_lg(n), surv;
+    double c = mw_trial_random(lg, 1, &surv);
+    return c + surv * mw_interp1(&mw_P, lg, 1);
+}
+
+/* The price of tau_multi_prep() for a value of nbits bits tested for
+ * tau(n^e) = t, by what it did: the S rows' cost of trial division
+ * stopping at the prime p (where it found a factor ruling the value
+ * out, or reached its limit or the square root), and if it ran to the
+ * end, the primality test that follows, from the R rows.
+ */
+double cm_prep_price(uint t, uint e, uint nbits, ulong p, bool full) {
+    double lg = nbits - 0.5;
+    t_mwscan *sc = mw_scan_find(lg, 0);
+    double c = mw_scan_cost(sc, p, 0);
+    if (full)
+        c += mw_interp1(&mw_R, lg, 1);
+    return c;
+}
+
+/* The price of tau_prime_prep() for a value of nbits bits, by its
+ * result res: 0 if trial division found a factor (the mean cost of
+ * stopping at a trial prime, for a value without special structure), 1
+ * if it found the value prime, 2 if a prime test must follow (whose cost
+ * the P rows give with that of the trial division).
+ */
+double cm_pprep_price(uint nbits, int res) {
+    double lg = nbits - 0.5, surv;
+    if (res == 2)
+        return mw_interp1(&mw_P, lg, 1);
+    t_mwscan *sc = mw_scan_find(lg, 0);
+    if (res == 1)
+        return mw_scan_cost(sc, sc->L, 1);
+    double c = mw_trial_random(lg, 1, &surv);
+    double full = surv * mw_scan_cost(sc, sc->L, 1);
+    return (surv < 1) ? (c - full) / (1 - surv) : c;
+}
+
+/* the table's scalar costs (see mw_C[]), in seconds */
+double cm_const(uint which) {
+    if (!mw_loaded)
+        mw_load();
+    return mw_C[which].v;
+}
+
+/* whether a cost table is available: always, since there is a built-in
+ * default, unless that is empty and none is named
+ */
+bool cm_have_table(void) {
+    static int have = -1;
+    if (have < 0) {
+        have = (getenv("COST_TABLE") || getenv("MOCK_WALK_TABLE")
+                || cm_default_table[0]) ? 1 : 0;
+        if (have && !mw_loaded)
+            mw_load();
+    }
+    return have;
+}
+
+/* The expected cost of tau_multi_run() on the values pending in tm[0]
+ * .. tm[count - 1] (those with state 0 are already done): what -ja
+ * learning charges in place of the time it actually takes, which is
+ * heavy-tailed. Returns -1 without a cost table ($MOCK_WALK_TABLE).
+ */
+double cm_ladder_cost(uint count, t_tm *tm) {
+    if (!cm_have_table() || !mw_nlad)
+        return -1;
+    t_mwtest test[count], *m[count];
+    uint n = 0;
+    for (uint j = 0; j < count; ++j) {
+        if (tm[j].state == 0)
+            continue;
+        t_mwtest *tp = &test[n];
+        memset(tp, 0, sizeof(*tp));
+        long ex;
+        double d = mpz_get_d_2exp(&ex, tm[j].n);
+        tp->lb = log2(d) + ex;
+        tp->lt = tm[j].t;
+        mw_lad_slots(tm[j].t, tm[j].e, tp->lb, tp->lc, tp->la, 1);
+        m[n++] = tp;
+    }
+    if (n == 0)
+        return 0;
+    qsort(m, n, sizeof(t_mwtest *), &mw_lad_cmp);
+    return mw_lad_interleave(n, m);
+}
+
 /* the test of position vj's value, of tau t with exponent multiplier e
  * and about 'bits' bits: trial division as above, then the table for
  * each tau still to find */
@@ -1673,5 +1865,4 @@ e_mock_loop mock_loop_prime(
     }
     return MOCK_LOOP_GO;
 }
-#endif
 #endif

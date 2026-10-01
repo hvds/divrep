@@ -3444,6 +3444,17 @@ static inline double gr_now(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
+/* The clock for learning costs: thread CPU time, but with the mocks' own
+ * time replaced by what they model, and the factoring ladder's time by
+ * its expected cost when there is a cost table (see tau_multi_run()),
+ * since the actual time of rare expensive factorizations depends on
+ * luck.
+ */
+static inline double gr_clock(void) {
+    return gr_now() - g_mock_overhead_s + g_mock_spent_s
+            - ct_ladder_actual + ct_ladder_charged;
+}
+
 /* the iterations of a linear walk at the node lv: the range walked
  * over its modulus (the gain gate's r_walk has zmax alone without
  * LARGE_MIN, but the walk covers zmin..zmax either way)
@@ -3461,11 +3472,9 @@ static void walk_v_gr(t_level *cur_level, mpz_t start) {
         return;
     }
     double za = gr_iters(cur_level);
-    double m0 = g_mock_spent_s, o0 = g_mock_overhead_s;
-    double t0 = gr_now();
+    double t0 = gr_clock();
     walk_v_inner(cur_level, start);
-    double dt = gr_now() - t0 - (g_mock_overhead_s - o0)
-            + (g_mock_spent_s - m0) - GR_SETUP;
+    double dt = gr_clock() - t0 - GR_SETUP;
     gr_t[L] += dt;
     gr_i[L] += za;
     ++gr_n[L];
@@ -5502,11 +5511,6 @@ static inline double ja_ratio(uint L, uint part) {
     return (ja_A[L][part] + JA_PRIOR) / (ja_E[L][part] + JA_PRIOR);
 }
 
-/* the clock for subtree costs (in the mocks, what they model) */
-static inline double ja_now(void) {
-    return gr_now() - g_mock_overhead_s + g_mock_spent_s;
-}
-
 static inline void ja_learn(uint L, uint part, double est, double dt) {
     if (L >= GR_MAXL || est <= 0)
         return;
@@ -5516,7 +5520,7 @@ static inline void ja_learn(uint L, uint part, double est, double dt) {
 
 /* the walk chosen at lp is done: learn from its cost */
 static void ja_learnt(t_level *lp) {
-    ja_learn(lp->level - 1, JA_WALK, lp->ja_ew, ja_now() - lp->ja_t0);
+    ja_learn(lp->level - 1, JA_WALK, lp->ja_ew, gr_clock() - lp->ja_t0);
     lp->ja_t0 = 0;
 }
 
@@ -5525,7 +5529,7 @@ static void ja_learnx(t_level *lp) {
     uint di = lp->di;
     if (di < ja_nd)
         ja_learn(lp->level - 1, lp->ja_xp[di], lp->ja_ex[di],
-                ja_now() - lp->ja_xt0);
+                gr_clock() - lp->ja_xt0);
 }
 #define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
 #define JA_W1T 2e-6         /* walk_1_set(), per prime reaching its tests */
@@ -5686,7 +5690,7 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
     if (auto_level >= 2 && !sblind) {
         if (best == BV_WALK) {
             cur_level->ja_ew = W0;
-            cur_level->ja_t0 = ja_now();
+            cur_level->ja_t0 = gr_clock();
         } else {
             if (!cur_level->ja_ex) {
                 cur_level->ja_ex = malloc(ja_nd * sizeof(double));
@@ -6510,7 +6514,7 @@ void recurse(e_is jump_continue) {
       have_unforced_x:
         {
             if (cur_level->ja_on)
-                cur_level->ja_xt0 = ja_now();
+                cur_level->ja_xt0 = gr_clock();
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
             switch (prep_unforced_x(prev_level, cur_level, 0, 0)) {
@@ -6817,6 +6821,11 @@ int main(int argc, char **argv, char **envp) {
     if (force_all > k)
         fail("require force_all <= k");
     /* -ja2 chooses positions, as -js does */
+    /* learning charges the factoring ladder its expected cost, given a
+     * cost table
+     */
+    if (auto_level && getenv("MOCK_WALK_TABLE"))
+        ct_ladder_model = &cm_ladder_cost;
     if (auto_level >= 2 && strategy == STRATEGY_FIXED)
         fail("-ja2 is not supported with -js");
 
