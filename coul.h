@@ -45,6 +45,8 @@ typedef struct s_level {
                     /* this is a dummy entry for initial squares if 2 */
     bool have_min;  /* we have passed any minp requirement */
     bool next_best; /* vi is known stable result of best_v() */
+    bool unsorted;  /* this level is not where best_v() would put it */
+    uint choice_strategy;   /* the strategy in force when vi was chosen */
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;
@@ -76,6 +78,7 @@ typedef struct s_allocation {
     ulong p;
     uint x;
     uint t;
+    uint level;     /* the level that made this allocation */
     mpz_t q;
     mpz_t lim;
 } t_allocation;

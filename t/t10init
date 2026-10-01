@@ -302,6 +302,24 @@ if (1) {
         'b1: 2^2 3^2 2.11^2 5^2: 3 / 45912',
     );
 
+    # With n = 64 every tau is a power of 2, so all of best_v4()'s choices
+    # depend on zmax. Here the candidates found since the choice of v_1 at
+    # level 5 would make best_v() choose differently on recovery, so the
+    # 315 line marks that level alone.
+    expect_recover(q{recover -j4 from a level marked after candidates},
+        [qw{ -j4 -x1e15 64 3 }],
+        ['202 Candidate 2260515199304 (0.00s)',
+         '202 Candidate 409736749784 (0.00s)',
+         '202 Candidate 157156822184 (0.00s)',
+         '202 Candidate 41769309944 (0.00s)',
+         '202 Candidate 3824122664 (0.00s)',
+         '202 Candidate 2931871304 (0.01s)',
+         '202 Candidate 220522664 (0.01s)',
+         '202 Candidate 167663144 (0.01s)',
+         '315 b0: 2^3 3.5.29(5).47.71.79 2.7 (0.02s) [1394 458 49]'],
+        'b0: 2^3 3.5.29.47.71.79 2.7',
+    );
+
     # -js (a fixed, user-specified allocation order) can also produce
     # "315" lines, but its own choices don't depend on the search bound
     # the way -j4's do, so a plain "305" line is enough to confirm its

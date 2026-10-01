@@ -389,7 +389,6 @@ ulong countr, countw, countwi;
 #define MAX_EXPANDED 5
 #define DIAG_BUFSIZE (6 + MAX_DEC_ULONG + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1 + MAX_EXPANDED) + 1)
 char *diag_buf = NULL;
-bool need_expanded_diag = 0;
 uint aux_buf_size = 0;
 char *aux_buf = NULL;
 
@@ -523,6 +522,18 @@ void update_window(t_level *cur_level) {
     fflush(stdout);
 }
 
+/* The highest level whose position is shown in progress lines as its
+ * own: the levels of a flip, walk_midp() or walk_6x() are shown instead
+ * by their suffix (F, W or 6X), and recovered from that.
+ */
+static inline uint shown_top(void) {
+    return in_flip ? level - 2 : (in_midp || in_b6x) ? level - 1 : level;
+}
+
+/* Show the allocations into diag_buf. If expanded, mark each allocation
+ * with its level when not at the position best_v() would have chosen,
+ * so recovery can reproduce the order.
+ */
 void prep_show_v(t_level *cur_level, bool expanded) {
     uint offset = 0;
     uint mid_vi;
@@ -548,15 +559,9 @@ void prep_show_v(t_level *cur_level, bool expanded) {
                 offset += sprintf(&diag_buf[offset], "%lu", ap->p);
                 if (ap->x > 2)
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
-                if (expanded) {
-                    for (uint li = 0; li < level; ++li) {
-                        t_level *lpi = &levels[li];
-                        if (lpi->vi != vi || lpi->p != ap->p)
-                            continue;
-                        offset += sprintf(&diag_buf[offset], "(%u)", li);
-                        break;
-                    }
-                }
+                if (expanded && ap->level <= shown_top()
+                        && levels[ap->level].unsorted)
+                    offset += sprintf(&diag_buf[offset], "(%u)", ap->level);
             }
         }
     }
@@ -782,9 +787,14 @@ void diag_any(t_level *cur_level, bool need_disp) {
 
     if (rfp && (need_log || debugL)) {
         char *code = "305";
-        if (need_expanded_diag) {
-            prep_show_v(cur_level, 1);
-            code = "315";
+        /* recovery needs to know the levels not picked by best_v() */
+        uint top = shown_top();
+        for (uint li = 1; li <= top; ++li) {
+            if (levels[li].unsorted) {
+                prep_show_v(cur_level, 1);
+                code = "315";
+                break;
+            }
         }
 #ifdef TRACK_STATS
         fprintf(rfp, "%s %s%s (%.2fs) [", code, diag_buf, aux_buf, seconds(t1));
@@ -799,7 +809,6 @@ void diag_any(t_level *cur_level, bool need_disp) {
 #endif
         logt = t1 + log_delay;
         need_log = 0;
-        need_expanded_diag = 0;
         if (debugL && debugL_count) {
             --debugL_count;
             if (debugL_count == 0) {
@@ -826,6 +835,7 @@ void diag_attempt(t_level *cur_level, uint vi, ulong p, uint x) {
     t_allocation *ap = &value[vi].alloc[vil];
     ap->p = p;
     ap->x = x;
+    ap->level = cur_level->level;   /* for expanded diagnostics */
     ++cur_vlevel[vi];
     diag_plain(cur_level);
     --cur_vlevel[vi];
@@ -846,15 +856,58 @@ void diag_walk_pell(t_level *cur_level, uint pc) {
     diag_any(cur_level, !(debugw && !debugW && pc));
 }
 
+/* Mark each unforced level on the current path at which best_v() would
+ * no longer choose the position chosen there, so that progress lines
+ * show it for recovery. best_v() is asked again as it would be on
+ * recovery, given the depths of the positions and the strategy in force
+ * when the choice was made. The depth of each position then
+ * was 1 more than the number of its allocations made at earlier levels.
+ */
+uint best_v(t_level *cur_level);
+void mark_unsorted(void) {
+    /* nothing to do while reading a recovery log, before any levels */
+    if (level <= final_level + 1)
+        return;
+    uint top = shown_top();
+    uint save[k];
+    memcpy(save, cur_vlevel, k * sizeof(uint));
+    uint save_strategy = strategy;
+    /* the current level too, if its position has been chosen */
+    for (uint li = final_level + 1; li <= level; ++li) {
+        t_level *lp = &levels[li];
+        if (lp->is_forced || lp->p == 0 || li > top) {
+            lp->unsorted = 0;
+            continue;
+        }
+        /* set cur_vlevel[] as it would have been at this level */
+        for (uint vj = 0; vj < k; ++vj) {
+            t_allocation *alloc = value[vj].alloc;
+            uint d = 1;
+            while (d < save[vj] && alloc[d].level < li)
+                ++d;
+            cur_vlevel[vj] = d;
+        }
+        strategy = lp->choice_strategy;
+        /* best_6x() sets the level's vi (so we must preserve it),
+         * and we don't need it's unsorted flag (so can set to 0).
+         * CHECKME: can we avoid the need for best_6x() to set lp->vi?
+         */
+        uint vi = lp->vi;
+        uint bvi = best_v(lp);
+        lp->unsorted = (bvi == BV_6X) ? 0 : (bvi == vi);
+        lp->vi = vi;
+    }
+    strategy = save_strategy;
+    memcpy(cur_vlevel, save, k * sizeof(uint));
+}
+
 void updated_zmax(void) {
-    /* if we are allocating p^{2^m-1}, changing zmax affects calculation
-     * of best_v(). Next progress diag needs to be in expanded form so
-     * that recovery can sync correctly, and existing cached limits must
-     * be recalculated.
+    /* If we are allocating p^{2^m-1}, changing zmax affects calculation
+     * of best_v(). Existing cached limits must be recalculated, and the
+     * positions best_v() would no longer choose must be marked in
+     * progress lines so that recovery can sync correctly.
      */
     if (highpow) {
-        if (rfp)
-            need_expanded_diag = 1;
         /* there are no allocations if cur_vlevel is not initialised */
         if (cur_vlevel) {
             for (uint vi = 0; vi < k; ++vi) {
@@ -870,6 +923,7 @@ void updated_zmax(void) {
                     }
                 }
             }
+            mark_unsorted();
         }
     }
 }
@@ -970,6 +1024,7 @@ void init_value(void) {
         ap->p = 0;
         ap->x = 0;
         ap->t = target_t(i);
+        ap->level = 0;
         mpz_set_ui(ap->q, 1);
     }
 }
@@ -1321,39 +1376,6 @@ void init_pre(void) {
     flip_recover.valid = 0;
 }
 
-/* Given a forced recovery stack parsed from a 315 and a standard one parsed
- * from a 305, apply necessary force to the standard one.
- * Forced is passed in, standard is in rstack[].
- */
-void resolve_expanded(t_recover *fp) {
-    t_recover *sp = rstack;
-    uint fprev = 0;
-    uint flast[k], slast[k];
-    for (uint vi = 0; vi < k; ++vi) {
-        flast[vi] = fp->f[vi].count;
-        slast[vi] = sp->f[vi].count;
-    }
-    for (uint fi = 0; fi < fp->force; ++fi) {
-        uint vi = fp->forced[fi];
-        sp->forced[fi] = vi;
-        sp->force = fi + 1;
-        if (vi == 0)
-            continue;   /* no allocation shown at this level */
-        --vi;
-        uint fj = flast[vi]--;
-        uint sj = slast[vi]--;
-        if (fj == 0 || sj == 0)
-            break;
-        --fj;
-        --sj;
-        if (fp->f[vi].ppow[fj].p != sp->f[vi].ppow[sj].p)
-            break;
-        if (fp->f[vi].ppow[fj].e != sp->f[vi].ppow[sj].e)
-            break;
-        /* p^e matches in forced and standard, so continue forcing */
-    }
-}
-
 /* Parse a "305" log line for initialization.
  * Input string should point after the initial "305 ".
  * If 'expanded' is true, expects a "315" expanded line instead.
@@ -1558,11 +1580,11 @@ void apply_202(char *s) {
 }
 
 void recover(FILE *fp) {
-    char *last305 = NULL;
-    char *last315 = NULL;
+    char *last305 = NULL;   /* 305 or 315 */
+    bool expanded = 0;      /* true if it's 315 */
     char *last202 = NULL;
     char *curbuf = NULL;
-    size_t len = 120, len305 = 0, len315 = 0, len202 = 0;
+    size_t len = 120, len305 = 0, len202 = 0;
 
     while (1) {
         ssize_t nread = getline(&curbuf, &len, fp);
@@ -1583,34 +1605,16 @@ void recover(FILE *fp) {
                         strerror(errno));
             break;
         }
-        if (strncmp("305 ", curbuf, 4) == 0) {
+        if (strncmp("305 ", curbuf, 4) == 0
+            || strncmp("315 ", curbuf, 4) == 0
+        ) {
+            expanded = (curbuf[1] == '1');
             char *t = last305;
             last305 = curbuf;
             curbuf = t;
             size_t lt = len305;
             len305 = len;
             len = lt;
-            if (last202) {
-                apply_202(last202);
-                free(last202);
-                last202 = NULL;
-                len202 = 0;
-            }
-        } else if (strncmp("315 ", curbuf, 4) == 0) {
-            char *t = last315;
-            last315 = curbuf;
-            curbuf = t;
-            size_t lt = len315;
-            len315 = len;
-            len = lt;
-            /* We want to keep only the last 305 diag that appears _after_
-             * the last 315 expanded diag.
-             */
-            if (last305) {
-                free(last305);
-                last305 = NULL;
-                len305 = 0;
-            }
             if (last202) {
                 apply_202(last202);
                 free(last202);
@@ -1637,24 +1641,12 @@ void recover(FILE *fp) {
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
-    if (last305 || last315) {
-        if (!last315)
-            parse_305(last305 + 4, &rstack, 0);
-        else if (!last305)
-            parse_305(last315 + 4, &rstack, 1);
-        else {
-            t_recover *expanded;
-            parse_305(last315 + 4, &expanded, 1);
-            parse_305(last305 + 4, &rstack, 0);
-            resolve_expanded(expanded);
-            free_stack(expanded);
-        }
-    }
+    if (last305)
+        parse_305(last305 + 4, &rstack, expanded);
     if (last202)
         pend202 = last202;
     free(curbuf);
     free(last305);
-    free(last315);
 }
 
 int cmp_high(const void *va, const void *vb) {
@@ -3687,6 +3679,7 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
     cur->p = p;
     cur->x = x;
     cur->t = prev->t / x;
+    cur->level = cur_level->level;
     mpz_mul(cur->q, prev->q, px);
 
     if (highpow && ispow2(cur->t)) {
@@ -4716,6 +4709,7 @@ void walk_6x(uint vi) {
     ap_next->t = 1;
     ap_next->p = 0; /* the real value may well not fit */
     ap_next->x = 2;
+    ap_next->level = level;
     cur_vlevel[vi] = vlevel + 1;
     cur_level->have_min = 1;
     /* We will fully fix v_i, so we don't need to roll the prime we
@@ -5430,27 +5424,26 @@ e_is insert_stack(void) {
                 goto insert_check;
         }
 
-        /* insert any additional forced-order allocations, from the level
-         * the forced primes have reached (levels with none shown, such
-         * as a forced prime's p^0 tail, are gaps in the list)
+        /* Insert the rest in strategy-allocated order except as
+         * overridden by explicit levels marked in a 315 recovery line.
          */
-        for (uint vf = level; vf < rstack->force; ++vf) {
-            uint vi = rstack->forced[vf];
-            if (vi-- == 0)
-                continue;
-            if (!insert_float(rstack->f, NULL, vi, &jump, 0))
-                break;
-        }
-
-        /* insert the rest, in strategy-allocated order */
         while (1) {
-            uint vi = best_v(&levels[level]);
-            if (vi >= BV_SPECIAL) {
-                if (vi == BV_6X)
-                    jump = IS_6X;
-                /* CHECKME: should we be handling the other cases here?
-                 * BV_WALK -> IS_RWALK, BV_NEXTX -> IS_NEXTX */
-                break;
+            uint vi;
+            if (level < rstack->force && rstack->forced[level]) {
+                vi = rstack->forced[level] - 1;
+                levels[level].choice_strategy = strategy;
+                levels[level].unsorted = 1;
+            } else {
+                vi = best_v(&levels[level]);
+                levels[level].choice_strategy = strategy;
+                levels[level].unsorted = 0;
+                if (vi >= BV_SPECIAL) {
+                    if (vi == BV_6X)
+                        jump = IS_6X;
+                    /* CHECKME: should we be handling the other cases here?
+                     * BV_WALK -> IS_RWALK, BV_NEXTX -> IS_NEXTX */
+                    break;
+                }
             }
             if (flip_recover.valid && absorb_flip(vi, &rstack->f[vi])) {
                 /* absorb_flip has handled all remaining allocations */
@@ -5642,6 +5635,8 @@ void recurse(e_is jump_continue) {
             if (cur_level->next_best)
                 goto walk_now;
             uint vi = best_v(cur_level);
+            cur_level->choice_strategy = strategy;
+            cur_level->unsorted = 0;
             if (vi >= BV_SPECIAL) {
                 switch (vi - BV_SPECIAL) {
                   default:

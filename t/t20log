@@ -15,7 +15,9 @@ use Type;
 #   p must divide the distance between them), nor twice at one position;
 # - no line loses its loop position - once a node's loop has shown a
 #   child allocation, a plain line showing the bare node again would
-#   make recovery restart that loop.
+#   make recovery restart that loop;
+# - every expanded (315) line marks some level, since it is written only
+#   when a level on its path needs its mark for recovery.
 # Progress may still show an allocation that then fails to apply, or
 # fails walk_1_set()'s checks. Recovery retries those, so that's fine.
 
@@ -33,13 +35,17 @@ for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }]) {
     unlink $path;
     system("$prog -r$path -dL100000000 @$args >/dev/null 2>&1");
     open my $log, '<', $path or die "$path: $!";
-    my($lines, $invalid, $lost) = (0, 0, 0);
-    my(@invalid, @lost);
+    my($lines, $invalid, $lost, $unmarked) = (0, 0, 0, 0);
+    my(@invalid, @lost, @unmarked);
     my($last, %shown);
     while (<$log>) {
         chomp;
-        next unless /^3[01]5 (b\S+: .*?)( \(|: \d+ \/| [WF6]\S*\()/;
-        my($s, $plain) = ($1, $2 eq ' (');
+        next unless /^3([01])5 (b\S+: .*?)( \(|: \d+ \/| (?:W|F|6X)\()/;
+        my($s, $plain) = ($2, $3 eq ' (');
+        if ($1 && $s !~ /\(\d+\)/) {
+            push @unmarked, $_ if ++$unmarked <= 3;
+        }
+        $s =~ s/\(\d+\)//g;  # level marks of an expanded line
         ++$lines;
         my @pos = split / /, $s;
         my $bid = shift @pos;
@@ -60,6 +66,9 @@ for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }]) {
     if (!is($lost, 0,
             "no progress lines losing their loop position for @$args")) {
         diag($_) for @lost;
+    }
+    if (!is($unmarked, 0, "no expanded lines without a mark for @$args")) {
+        diag($_) for @unmarked;
     }
 }
 
