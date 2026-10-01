@@ -88,11 +88,11 @@ inputs each; above that (with -f only) the single ECM rung is benched
 from 12-30 inputs and is rough. Rungs after QS count as never reached.
 
 The table is in sections (scan, prime, multi, ladder, qs, walk, w1s,
-leaf, tail), each stamped with the build that made it ("V section
+leaf, tail, situ), each stamped with the build that made it ("V section
 sha"): `-s<sections>` rebuilds only some, and `-u<table>` takes the
 rest from an existing table, so a new MPUGMP needs only scan, prime,
-ladder and qs (and multi), a change to coul.c only walk, w1s, leaf and
-tail. pcoul builds in a default table from the file cost-table, used
+ladder and qs (and multi), a change to coul.c only walk, w1s, leaf,
+tail and situ. pcoul builds in a default table from the file cost-table, used
 unless $COST_TABLE names another (or, as before, $MOCK_WALK_TABLE);
 `-dT` notes sections from a different build.
 
@@ -103,19 +103,29 @@ its timings, so that identical runs make identical choices: walk
 setups, iterations and inverse entries tested, fixed-power walks, roots
 and entries, walk_1_set() primes iterated and passing the check, and
 recursion primes tried and applied, each at its table cost; each test's
-preparation by where its trial division stopped (the S rows' cost
-there, plus an R row prime test if it ran to the end); prime tests by
-outcome; and the ladder at its expected cost from the G rows on the
-values pending. A `369` line reports the total, for comparison with
-the run's time.
+preparation by the steps it took (trial primes by limbs, gcds by band,
+bits tested for primality, power tests), at the K rows' costs fitted in
+situ; prime tests' preparations by outcome and size, likewise; and the
+ladder at its expected cost from the G rows on the values pending. A
+`369` line reports the total, for comparison with the run's time.
 
-Against CPU time over 22 runs the counted total ranged 0.56-1.41
-(coefficient of variation 0.25), from table constants alone. The main
-error is test preparation: in situ it costs 0.8-2.6x its price, varying
-by run, presumably from caches and branch prediction in the full
-program, the coarse S sizes, and skip_trial_bands(). With counted costs
--ja2 matched its timed results within about 8% on the benchmark set,
-except D(64,3) -j4 -x1e15, 7.9s against 29s.
+Against CPU time over 22 runs the counted total first ranged 0.56-1.41
+(coefficient of variation 0.25), pricing each preparation from the
+bench rows by where it stopped: in situ preparation cost 0.8-2.6x that
+price, varying by run, from caches and branch prediction in the full
+program, the coarse S sizes, and skip_trial_bands(). Priced by its
+steps from the K rows, each run's preparations come within 0.94-1.07
+of their time (D(64,3) -j4 -x1e15, whose time is almost all
+preparation, among them), and the whole run's counted total within
+0.82-1.28 over 30 runs (mostly 0.95-1.13). What remains is in the walk
+and recursion constants, fitted outside the full program or not at all
+(capply); a -dv32 W record per run allows a regression of the run's
+CPU time on all the counts, but over 30 runs it barely improves on
+that (0.79-1.13) and the constants are poorly determined, so it is
+left as a check. With counted costs D(64,3) -j4 -x1e15 took 7.9s,
+then 29s as the pricing improved, then 5.2s: its choices at the root
+are made before any learning, so they turn on small differences in
+the estimates (see To do).
 
 ### calibrate
 
@@ -213,7 +223,9 @@ rest replayed by it.
 ### Instrumentation
 
 A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
-(trace.h): 1 the trace, 2 the records, 4 stage timing.
+(trace.h): 1 the trace, 2 the records, 4 stage timing, 8 the -ja2
+choices, 16 the test preparations (T and U records), 32 the run's
+counts and CPU time (a W record).
 
 - -dv2: one record per gate decision, recursion subtree, walk,
   walk_1_set(), flip and midp phase (trace.c). With -dv6 its clock

@@ -215,6 +215,18 @@ static inline bool ct_trial(factor_state *fs) {
 #   define ct_bpsw(n) _GMP_BPSW(n)
 #endif
 
+/* what the current tau_multi_prep() has done, for pricing it */
+t_ct_work ct_w;
+static inline bool ct_prime_w(mpz_t n) {
+    ++ct_w.nprime;
+    ct_w.pbits += mpz_sizeinbase(n, 2);
+    return ct_prime(n);
+}
+static inline ulong ct_power_w(mpz_t n) {
+    ++ct_w.npower;
+    return ct_power(n);
+}
+
 #define NPRIMES_SMALL 6500
 /* MPUG declares this static, so we must copy it */
 static unsigned short primes_small[NPRIMES_SMALL];
@@ -256,6 +268,13 @@ static inline bool next_trial_band(UV sp, UV *band_end, mpz_t **gcdp) {
     return 1;
 }
 
+static inline uint band_index(UV band_end) {
+    return (band_end == TRIAL_BAND_A_END) ? 0
+            : (band_end == TRIAL_BAND_B_END) ? 1
+            : (band_end == TRIAL_BAND_C_END) ? 2
+            : (band_end == TRIAL_BAND_D_END) ? 3 : 4;
+}
+
 /* Skip as many whole bands as possible from sp, returning the new sp.
  * A band is skipped when its GCD with n is 1, which is tested whenever
  * at least TRIAL_BAND_FEW of its primes are within sqrt(lim), even if
@@ -277,6 +296,7 @@ static inline UV skip_trial_bands(
         UV few = sp + TRIAL_BAND_FEW;
         if (few < band_end && (UV)primes_small[few] * primes_small[few] > lim)
             break;
+        ++ct_w.gcd[band_index(band_end)];
         mpz_gcd(gcd_scratch, n, *gcdp);
         if (mpz_cmp_ui(gcd_scratch, 1) != 0)
             break;
@@ -830,21 +850,34 @@ bool tau_prime_test(mpz_t n) {
 
 /* If set, the prices of the preparation of a test (see cm_prep_price()
  * and cm_pprep_price()), so that each is charged by what it did, for the
- * caller's cost learning: ct_test_charged accumulates them. Trial
- * division records where it stopped, and whether it ran to its limit.
+ * caller's cost learning: ct_test_charged accumulates them, from what
+ * tau_multi_prep() records in ct_w. If set, the record hooks are given
+ * each preparation's time too (see gs_prep_record()).
  */
-double (*ct_prep_price)(uint t, uint e, uint nbits, ulong p, bool full)
-        = NULL;
+double (*ct_prep_price)(uint nbits, const t_ct_work *w) = NULL;
 double (*ct_pprep_price)(uint nbits, int res) = NULL;
+void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt) = NULL;
+void (*ct_pprep_record)(uint nbits, int res, double dt) = NULL;
 double ct_test_charged = 0;
-static ulong ct_stop_p;
-static bool ct_full;
+ulong ct_preps = 0, ct_ppreps = 0;  /* the calls of each that are priced */
 
 static bool tau_prime_prep_inner(uint i);
 bool tau_prime_prep(uint i) {
     if (!ct_pprep_price)
         return tau_prime_prep_inner(i);
+    ++ct_ppreps;
     uint nbits = mpz_sizeinbase(taum[i].n, 2);
+    if (ct_pprep_record) {
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
+        bool r = tau_prime_prep_inner(i);
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t1);
+        int res = r ? 1 + taum[i].state : 0;
+        (*ct_pprep_record)(nbits, res, (t1.tv_sec - t0.tv_sec)
+                + (t1.tv_nsec - t0.tv_nsec) * 1e-9);
+        ct_test_charged += (*ct_pprep_price)(nbits, res);
+        return r;
+    }
     bool r = tau_prime_prep_inner(i);
     ct_test_charged += (*ct_pprep_price)(nbits, r ? 1 + taum[i].state : 0);
     return r;
@@ -854,12 +887,22 @@ static bool tau_multi_prep_inner(uint i);
 bool tau_multi_prep(uint i) {
     if (!ct_prep_price)
         return tau_multi_prep_inner(i);
-    uint t = taum[i].t, e = taum[i].e;
+    ++ct_preps;
     uint nbits = mpz_sizeinbase(taum[i].n, 2);
-    ct_stop_p = 2;
-    ct_full = 0;
+    memset(&ct_w, 0, sizeof(ct_w));
+    ct_w.stop_p = 2;
+    if (ct_prep_record) {
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
+        bool r = tau_multi_prep_inner(i);
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t1);
+        (*ct_prep_record)(nbits, &ct_w, (t1.tv_sec - t0.tv_sec)
+                + (t1.tv_nsec - t0.tv_nsec) * 1e-9);
+        ct_test_charged += (*ct_prep_price)(nbits, &ct_w);
+        return r;
+    }
     bool r = tau_multi_prep_inner(i);
-    ct_test_charged += (*ct_prep_price)(t, e, nbits, ct_stop_p, ct_full);
+    ct_test_charged += (*ct_prep_price)(nbits, &ct_w);
     return r;
 }
 
@@ -966,7 +1009,8 @@ static bool tau_multi_prep_inner(uint i) {
 #endif
     while (1) {
         p = prime_iterator_next(&iter);
-        ct_stop_p = p;
+        ct_w.stop_p = p;
+        ++ct_w.steps;
         if (p * p > lim)
             break;
         while (mpz_divisible_ui_p(tm->n, p)) {
@@ -992,7 +1036,7 @@ static bool tau_multi_prep_inner(uint i) {
             } else if (t == e + 1) {
                 dz("div: t=%u", e + 1);
                 prime_iterator_destroy(&iter);
-                return prep_abort(tm, ct_prime(tm->n));
+                return prep_abort(tm, ct_prime_w(tm->n));
             } else if (mpz_cmp_ui(tm->n, 1) == 0) {
                 dz("div: n=1");
                 prime_iterator_destroy(&iter);
@@ -1011,7 +1055,7 @@ static bool tau_multi_prep_inner(uint i) {
         }
     }
     prime_iterator_destroy(&iter);
-    ct_full = 1;
+    ct_w.full = 1;
 
     if (un < p * p) {
         dz("div: tail is prime");
@@ -1024,7 +1068,7 @@ static bool tau_multi_prep_inner(uint i) {
         return 0;
     } else if (t == e + 1) {
         dz("div: t == %u", e + 1);
-        return prep_abort(tm, ct_prime(tm->n));
+        return prep_abort(tm, ct_prime_w(tm->n));
     }
     if (test_rough && t >= test_rough) {
         mpz_ui_pow_ui(tmp_lim, p, divisors[t].sumpm);
@@ -1034,13 +1078,13 @@ static bool tau_multi_prep_inner(uint i) {
         }
     }
     dz("div: done, t=%u, e=%u", t, e);
-    if (ct_prime(tm->n))
+    if (ct_prime_w(tm->n))
         return prep_abort(tm, t == 2);
-    e = ct_power(tm->n);
+    e = ct_power_w(tm->n);
     if (e) {
         /* we found a power, did it leave a prime? */
         tm->e *= e;
-        if (ct_prime(tm->n))
+        if (ct_prime_w(tm->n))
             return prep_abort(tm, t == tm->e + 1);
     }
     if ((t & 1) && (tm->e & 1))

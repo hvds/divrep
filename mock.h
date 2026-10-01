@@ -30,7 +30,7 @@ extern const char cm_default_table[];   /* costtab.c, from cost-table */
 extern const char *cm_table_sha(const char *section);
 extern double cm_price_prime(mpz_t n);
 extern double cm_const(uint which);
-extern double cm_prep_price(uint t, uint e, uint nbits, ulong p, bool full);
+extern double cm_prep_price(uint nbits, const t_ct_work *w);
 extern double cm_pprep_price(uint nbits, int res);
 enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
         CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,

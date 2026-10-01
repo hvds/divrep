@@ -6905,6 +6905,12 @@ int main(int argc, char **argv, char **envp) {
 #endif
     if (debugT)
         cost_table_check();
+#ifdef VERBOSE
+    if (VB(VB_PREP) && cc.on) {
+        ct_prep_record = &gs_prep_record;
+        ct_pprep_record = &gs_pprep_record;
+    }
+#endif
     if (auto_level >= 2 && strategy == STRATEGY_FIXED)
         fail("-ja2 is not supported with -js");
 
@@ -6998,6 +7004,11 @@ int main(int argc, char **argv, char **envp) {
         if (cc.on)
             report("369 cost counted %.2fs, ladder %.3fs against %.3fs\n",
                     cc_work(), ct_ladder_charged, ct_ladder_actual);
+#ifdef VERBOSE
+        if (VB(VB_COUNTS) && cc.on)
+            gs_count_record(&cc,
+                    cc.test + ct_test_charged + ct_ladder_charged);
+#endif
         if (!seen_valid && !seen_best)
             report("406 Error: no valid arrangement of powers\n");
         else if (log_full)

@@ -128,6 +128,72 @@ static void gs_close(void) {
         fclose(gs_fp);
     gs_fp = NULL;
 }
+
+/* What timing each test preparation recorded adds to its time, to take
+ * from it: the mean time between two thread clock reads with nothing
+ * between them. It is a system call, so comparable with the cheapest
+ * preparations; measured once.
+ */
+static double gs_clock_gap(void) {
+    static double cost = -1;
+    if (cost < 0) {
+        struct timespec a, b;
+        double sum = 0;
+        for (uint i = 0; i < 10000; ++i) {
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &a);
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &b);
+            sum += (b.tv_sec - a.tv_sec) + (b.tv_nsec - a.tv_nsec) * 1e-9;
+        }
+        cost = sum / 10000;
+    }
+    return cost;
+}
+
+/* a test preparation (VB_PREP): 1 in 8 recorded, as T records:
+ *   T nbits steps gcd0 .. gcd4 nprime pbits npower full dt
+ * where dt excludes what the clock reads timing it add (see
+ * gs_clock_gap())
+ */
+void gs_prep_record(uint nbits, const t_ct_work *w, double dt) {
+    static uint ctr = 0;
+    if (++ctr % 8)
+        return;
+    dt -= gs_clock_gap();
+    fprintf(gs_file(), "T %u %u %u %u %u %u %u %u %.0f %u %u %.9f\n",
+            nbits, w->steps, w->gcd[0], w->gcd[1], w->gcd[2], w->gcd[3],
+            w->gcd[4], w->nprime, w->pbits, w->npower, w->full ? 1 : 0, dt);
+}
+
+/* a prime test's preparation (VB_PREP), with its result res (see
+ * cm_pprep_price()): 1 in 8 recorded, as U records:
+ *   U nbits res dt
+ */
+void gs_pprep_record(uint nbits, int res, double dt) {
+    static uint ctr = 0;
+    if (++ctr % 8)
+        return;
+    dt -= gs_clock_gap();
+    fprintf(gs_file(), "U %u %d %.9f\n", nbits, res, dt);
+}
+
+/* the whole run (VB_COUNTS), as a W record:
+ *   W lin_walks lin_iter lin_inv sq_walks sq_iter sq_inv w1s_prime
+ *       w1s_check rec_prime rec_applied preps ppreps charged cpu
+ * where lin_iter includes pell_iter (see cc_work()), preps and ppreps
+ * are the calls of tau_multi_prep() and tau_prime_prep(), charged is
+ * what the tests were priced at and cpu the process CPU time
+ */
+void gs_count_record(const t_cc *c, double charged) {
+    struct timespec t;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t);
+    fprintf(gs_file(),
+            "W %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %.6f %.6f\n",
+            c->lin_walks, c->lin_iter + c->pell_iter, c->lin_inv,
+            c->sq_walks, c->sq_iter, c->sq_inv, c->w1s_prime, c->w1s_check,
+            c->rec_prime, c->rec_applied, ct_preps, ct_ppreps, charged,
+            t.tv_sec + t.tv_nsec * 1e-9);
+}
+
 FILE *gs_file(void) {
     if (!gs_fp) {
         const char *fn = getenv("GATE_STATS");

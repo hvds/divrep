@@ -267,8 +267,9 @@ In a build with VERBOSE=1, "-dv<bits>" selects instrumentation, as the
 sum of: 1 for a trace of the recursion, walks and factoring tests to
 stdout; 2 for records of each gate decision, recursion loop and walk
 (and more) to the file named by $GATE_STATS (default gate_stats.log);
-4 to add, with 2, the time spent in each stage of a walk's tests. See
-trace.h and trace.c. The default is none, and the build is then only a
+4 to add, with 2, the time spent in each stage of a walk's tests; 8,
+16 and 32 for records of -ja2's choices, of test preparations and of
+the run's counted costs, to the same file. See trace.h and trace.c. The default is none, and the build is then only a
 few percent slower than a normal one. The same build runs the
 benchmarks behind the cost tables of multibench-table (see bench.c).
 

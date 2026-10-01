@@ -142,6 +142,25 @@ enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
         MWC_W1SCHECK, MWC_CTAIL, MWC_LINSETUP, MWC_CAPPLY, MWC_COUNT };
 #define MWC(i) (mw_C[i].v)
 
+/* The "K" rows: costs per step of the test preparation, fitted in situ
+ * to T records, and of a prime test's preparation by its result, to U
+ * records (see multibench-table, section situ). Without them, each is
+ * priced from the S, R and P rows.
+ */
+enum { MWK_CALL, MWK_STEP1, MWK_STEP2, MWK_STEP3, MWK_GCD0, MWK_GCD1,
+        MWK_GCD2, MWK_GCD3, MWK_GCD4, MWK_PBIT, MWK_POWER, MWK_PP0,
+        MWK_PP0BIT, MWK_PP1, MWK_PP1BIT, MWK_PP2, MWK_PP2BIT, MWK_COUNT };
+static const char *mw_kname[MWK_COUNT] = {
+    "prepcall", "prepstep1", "prepstep2", "prepstep3", "prepgcd0",
+    "prepgcd1", "prepgcd2", "prepgcd3", "prepgcd4", "preppbit",
+    "preppower", "pprep0", "pprep0bit", "pprep1", "pprep1bit", "pprep2",
+    "pprep2bit"
+};
+static struct {
+    bool seen, pseen;   /* the rows for test_multi(), and prime tests */
+    double v[MWK_COUNT];
+} mw_K;
+
 static void mw_add1(t_mw1 *tp, double bits, double v0, double v1) {
     if (tp->nb == MW_MAXB)
         fail("cost table: table too large");
@@ -269,6 +288,17 @@ static void mw_load(void) {
         }
         uint t, e, b, F;
         double v[6];
+        if (sscanf(line, "K %31s %lf", name, &v[0]) == 2) {
+            for (uint i = 0; i < MWK_COUNT; ++i)
+                if (strcmp(name, mw_kname[i]) == 0) {
+                    mw_K.v[i] = v[0] * 1e-6;
+                    if (i >= MWK_PP0)
+                        mw_K.pseen = 1;
+                    else
+                        mw_K.seen = 1;
+                }
+            continue;
+        }
         if (sscanf(line, "C %31s %lf", name, &v[0]) == 2) {
             for (uint i = 0; i < MWC_COUNT; ++i)
                 if (strcmp(name, mw_C[i].name) == 0) {
@@ -1320,28 +1350,45 @@ double cm_price_prime(mpz_t n) {
     return c + surv * mw_interp1(&mw_P, lg, 1);
 }
 
-/* The price of tau_multi_prep() for a value of nbits bits tested for
- * tau(n^e) = t, by what it did: the S rows' cost of trial division
- * stopping at the prime p (where it found a factor ruling the value
- * out, or reached its limit or the square root), and if it ran to the
- * end, the primality test that follows, from the R rows.
+/* The price of tau_multi_prep() for a value of nbits bits, by what it
+ * did (*w): with K rows, its steps at their costs found in situ; else
+ * the S rows' cost of trial division stopping at the prime w->stop_p
+ * (where it found a factor ruling the value out, or reached its limit
+ * or the square root), and if it ran to the end, the primality test
+ * that follows, from the R rows.
  */
-double cm_prep_price(uint t, uint e, uint nbits, ulong p, bool full) {
+double cm_prep_price(uint nbits, const t_ct_work *w) {
+    if (mw_K.seen) {
+        /* by the work it did, at the costs found in situ */
+        uint limbs = (nbits + 63) / 64;
+        if (limbs > 3)
+            limbs = 3;
+        double c = mw_K.v[MWK_CALL] + w->steps * mw_K.v[MWK_STEP1 + limbs - 1]
+                + w->pbits * mw_K.v[MWK_PBIT]
+                + w->npower * mw_K.v[MWK_POWER];
+        for (uint b = 0; b < 5; ++b)
+            c += w->gcd[b] * mw_K.v[MWK_GCD0 + b];
+        return c;
+    }
     double lg = nbits - 0.5;
     t_mwscan *sc = mw_scan_find(lg, 0);
-    double c = mw_scan_cost(sc, p, 0);
-    if (full)
+    double c = mw_scan_cost(sc, w->stop_p, 0);
+    if (w->full)
         c += mw_interp1(&mw_R, lg, 1);
     return c;
 }
 
 /* The price of tau_prime_prep() for a value of nbits bits, by its
- * result res: 0 if trial division found a factor (the mean cost of
- * stopping at a trial prime, for a value without special structure), 1
- * if it found the value prime, 2 if a prime test must follow (whose cost
- * the P rows give with that of the trial division).
+ * result res: 0 if trial division found a factor, 1 if it found the
+ * value prime, 2 if a prime test must follow. With K rows, a cost per
+ * call and per bit for each; else for 0 the mean cost of stopping at a
+ * trial prime, for a value without special structure, and for 2 the
+ * cost the P rows give with that of the trial division.
  */
 double cm_pprep_price(uint nbits, int res) {
+    if (mw_K.pseen)
+        return mw_K.v[MWK_PP0 + 2 * res]
+                + nbits * mw_K.v[MWK_PP0BIT + 2 * res];
     double lg = nbits - 0.5, surv;
     if (res == 2)
         return mw_interp1(&mw_P, lg, 1);
