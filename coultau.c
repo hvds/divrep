@@ -1211,7 +1211,7 @@ mpz_t *tm_factor(t_tm *tm) {
 /* Returns the number of values still being tested at the point a failure
  * was seen; return value of zero implies success.
  */
-uint tau_multi_run(uint count, tau_failure_handler tfh) {
+static uint tau_multi_run_inner(uint count, tau_failure_handler tfh) {
     uint i = 0;
     /* Shuffle the entries that did not complete by trial division to
      * the front. Find size and thus the associated tmfb entry for each. */
@@ -1318,6 +1318,30 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
     fail("no factors found for %u non-primes starting %Zd (%u)\n",
         count, taum[0].n, taum[0].t
     );
+}
+
+/* If set, the model of the expected cost of a call (see cm_ladder_cost()),
+ * so that each call is charged that instead of the time it takes, for the
+ * caller's cost learning: ct_ladder_actual and ct_ladder_charged
+ * accumulate the actual thread CPU time and the expected cost of the
+ * calls.
+ */
+double (*ct_ladder_model)(uint count, t_tm *tm) = NULL;
+double ct_ladder_actual = 0, ct_ladder_charged = 0;
+uint tau_multi_run(uint count, tau_failure_handler tfh) {
+    if (!ct_ladder_model)
+        return tau_multi_run_inner(count, tfh);
+    double E = (*ct_ladder_model)(count, taum);
+    if (E < 0)
+        return tau_multi_run_inner(count, tfh);
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
+    uint r = tau_multi_run_inner(count, tfh);
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t1);
+    ct_ladder_actual += (t1.tv_sec - t0.tv_sec)
+            + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
+    ct_ladder_charged += E;
+    return r;
 }
 
 /* Same as tau_multi_run() except that all values are required to be prime.
