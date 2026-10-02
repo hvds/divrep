@@ -57,6 +57,12 @@ typedef struct s_level {
     double ja_xt0, ja_w;
     double *ja_ex;
     unsigned char *ja_xp;
+    /* loop of allocations at this level: whether, and above which
+     * multiple of aq, an allocation can be rejected early (see
+     * reject_single()), and whether aq is a single limb
+     */
+    bool rj_ok, rj_limb;
+    ulong rj_k;
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;

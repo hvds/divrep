@@ -3471,7 +3471,7 @@ static void walk_v(t_level *cur_level, mpz_t start) {
 #define GR_MAXL 64
 #define GR_SAMPLE 8
 #define GR_SETUP 2e-6
-#define GR_APPLY 0.2e-6
+#define GR_APPLY 0.12e-6
 #define GR_RSCALE 0.25
 #define GR_DEFIT 400e-9     /* per iteration, until a level has samples */
 double gr_t[GR_MAXL], gr_i[GR_MAXL];
@@ -5940,6 +5940,117 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
     return (auto_level >= 2) ? best : sv;
 }
 
+/* Most primes tried by a loop of allocations are rejected for giving a
+ * least v_0 = rq + t.aq > zmax, with t the multiple the CRT finds: that
+ * is, for t > (zmax - rq) / aq, which is the same for every prime of
+ * the loop. So where that bound fits in a limb, a prime can be rejected
+ * on t alone, calculated in single limbs, without the cost of
+ * apply_single(): 100ns against 240ns for each, where they were half
+ * the time of a run. As zmax can only fall, the bound found when the
+ * loop is prepared stays valid, if no longer the least.
+ */
+static inline void reject_prep(t_level *prev, t_level *cur) {
+    cur->rj_ok = 0;
+#ifdef CHECK_OVERFLOW
+    if (mpz_cmp(prev->rq, zmax) > 0)
+        return;
+    mpz_sub(Z(temp), zmax, prev->rq);
+    mpz_fdiv_q(Z(temp), Z(temp), prev->aq);
+    if (!mpz_fits_ulong_p(Z(temp)))
+        return;
+    cur->rj_k = mpz_get_ui(Z(temp));
+    cur->rj_limb = (mpz_size(prev->aq) == 1 && mpz_size(prev->rq) <= 1);
+    cur->rj_ok = 1;
+#endif
+}
+
+/* the inverse of d mod prime p, for 0 < d < p < 2^32 */
+static inline ulong invert_u32(uint d, uint p) {
+    long t = 0, newt = 1;
+    uint r = p, newr = d;
+    while (newr) {
+        uint q = r / newr, tr = r - q * newr;
+        long tt = t - (long)q * newt;
+        r = newr;
+        newr = tr;
+        t = newt;
+        newt = tt;
+    }
+    return (t < 0) ? t + p : t;
+}
+
+/* aq and rq below prev, mod m */
+static inline void reject_mod(
+    t_level *prev, bool limb, ulong m, ulong *am, ulong *rm
+) {
+    if (limb) {
+        *am = mpz_getlimbn(prev->aq, 0) % m;
+        *rm = mpz_get_ui(prev->rq) % m;
+    } else {
+        *am = mpz_fdiv_ui(prev->aq, m);
+        *rm = mpz_fdiv_ui(prev->rq, m);
+    }
+}
+
+/* True if allocating p^{x-1} at v_i below prev is sure to be rejected
+ * for v_0 > zmax, given reject_prep(); if false, it may still be.
+ * The multiple t solves aq.t == -i - rq (mod p^{x-1}). Mod p alone that
+ * gives its last digit base p, k0 <= t, which rejects most; and for
+ * p^2 the next digit follows from the same inverse mod p.
+ */
+static inline bool reject_single(
+    t_level *prev, t_level *cur, uint vi, ulong p, uint x
+) {
+    if (!cur->rj_ok || !(p & 1) || x < 2)
+        return 0;
+    ulong off = TYPE_OFFSET(vi), k = cur->rj_k, am, rm;
+    if (p < (1UL << 31)) {
+        reject_mod(prev, cur->rj_limb, p, &am, &rm);
+        if (am == 0)
+            return 0;
+        ulong inv = invert_u32(am, p);
+        /* -(i + rq) mod p */
+        ulong c = ((off < p ? off : off % p) + rm) % p;
+        if (c)
+            c = p - c;
+        ulong k0 = c * inv % p;
+        if (k0 > k)
+            return 1;
+        if (x == 2)
+            return 0;
+        if (x == 3) {
+            /* aq.(k0 + p.k1) == c (mod p^2), so
+             * k1 == ((c - aq.k0) / p) / aq (mod p)
+             */
+            ulong m = p * p;
+            reject_mod(prev, cur->rj_limb, m, &am, &rm);
+            c = (off % m + rm) % m;
+            if (c)
+                c = m - c;
+            ulong d = c + m - mulmod_u64(am, k0, m);
+            if (d >= m)
+                d -= m;
+            return k0 + p * (d / p * inv % p) > k;
+        }
+    }
+    /* as update_chinese(): m = p^{x-1} < 2^61, not dividing aq */
+    ulong m = p;
+    for (uint e = 2; e < x; ++e) {
+        if (m >= (1UL << 61) / p)
+            return 0;
+        m *= p;
+    }
+    if (m >= (1UL << 61))
+        return 0;
+    reject_mod(prev, cur->rj_limb, m, &am, &rm);
+    if (am % p == 0)
+        return 0;
+    ulong c = (off % m + rm) % m;
+    if (c)
+        c = m - c;
+    return mulmod_u64(c, ppow_invert(am, p, m), m) > k;
+}
+
 /* Prepare to allocate p^{x-1} at v_i for a range of p. p is 0 for a
  * fresh start (we choose the cursor), the cursor (the last p done) when
  * recalculating after an improved maximum, or a recovered p, the one in
@@ -6104,6 +6215,7 @@ e_pux prep_unforced_x(
     cur_level->x = x;
     cur_level->limp = limp;
     cur_level->max_at = seen_best;
+    reject_prep(prev_level, cur_level);
     /* TODO: do some constant alloc stuff in advance */
     return PUX_DO_THIS_X;
 }
@@ -6852,6 +6964,15 @@ void recurse(e_is jump_continue) {
                 for (uint li = 1; li < level; ++li)
                     if (p == levels[li].p && levels[li].x > 1)
                         goto redo_unforced;
+            /* p stays the cursor, as when apply_single() fails */
+            if (reject_single(
+                prev_level, cur_level, cur_level->vi, p, cur_level->x
+            )) {
+                cur_level->p = p;
+                if (need_work)
+                    diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
+                goto continue_unforced;
+            }
             /* note: this returns 0 if t=1 */
             if (!apply_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x

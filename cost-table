@@ -5,8 +5,8 @@ V ladder 755663e(64415bc);f94aeff
 V qs 755663e(64415bc);f94aeff
 V walk 755663e(64415bc)*;f94aeff
 V w1s 755663e(64415bc)*;f94aeff
-V leaf 755663e(64415bc)*;f94aeff
-V tail 755663e(64415bc)*;f94aeff
+V leaf 134f11e(64415bc)*;f94aeff
+V tail 134f11e(64415bc)*;f94aeff
 V situ 27ecd47(64415bc)*;f94aeff
 S 24 3 0.2719 0.1501 0.0000
 S 24 5 0.2786 0.1438 -0.0381
@@ -757,9 +757,9 @@ C sqloop0 0.09027
 C sqtest 0.02719
 C w1siter 0.11690
 C w1scheck 0.33034
-C cprime 0.2216
-C cprimesq 2.4511
-C ctail 0.2333
+C cprime 0.1373
+C cprimesq 2.3532
+C ctail 0.1249
 K prepcall 0.00000
 K prepstep1 0.00881
 K prepstep2 0.02566
