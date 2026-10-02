@@ -151,6 +151,23 @@ recursion the recovery line shows, without asking the gate again, so
 -ja1 can be turned on or off mid-run; tested by recovering D(12,4) and
 D(24,5) from 100 random log points, and in t/t10init.
 
+The estimate of recursing is too high near the root, where a wrong
+choice to walk costs most: D(64,3) -j4 -x1e15 took 29s under -ja1,
+walking at level 1, against 0.04s with no -ja. So the gate scales that
+estimate by 1/4, as -ja2 does before it has learnt better: 0.05s there,
+D(60,3) -j2 -x1e13 1.02s to 0.59s, D(48,4) -j2 -x1e12 0.68s to 0.28s,
+and the other 26 runs of the benchmark set within 3% either way.
+For n = 2^x.3 it is what lets -j4 pay as x grows (-ja1, seconds without
+and with the factor, 90s allowed):
+
+| run | -j0 | -j2 | -j4 |
+|---|---|---|---|
+| D(24,6) -x1e13 | 4.00, 4.08 | 3.47, 3.48 | 3.84, 3.80 |
+| D(48,4) -x1e15 | 0.33, 0.31 | 0.67, 0.28 | 0.33, 0.34 |
+| D(96,3) -x1e15 | 5.88, 5.97 | 13.44, 13.27 | 5.85, 0.73 |
+| D(96,4) -x1e16 | 42.43, 40.30 | 45.09, 35.79 | 37.60, 12.48 |
+| D(192,3) -x1e16 | >90, >90 | >90, >90 | >90, 27.66 |
+
 ### -ja2 (choosing positions by cost)
 
 At a node with no fixed square, walking it costs W whichever position
