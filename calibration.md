@@ -154,7 +154,7 @@ D(24,5) from 100 random log points, and in t/t10init.
 The estimate of recursing is too high near the root, where a wrong
 choice to walk costs most: D(64,3) -j4 -x1e15 took 29s under -ja1,
 walking at level 1, against 0.04s with no -ja. So the gate scales that
-estimate by 1/4, as -ja2 does before it has learnt better: 0.05s there,
+estimate by 1/4 (GR_RSCALE; -ja2 learns the scale instead): 0.05s there,
 D(60,3) -j2 -x1e13 1.02s to 0.59s, D(48,4) -j2 -x1e12 0.68s to 0.28s,
 and the other 26 runs of the benchmark set within 3% either way.
 For n = 2^x.3 it is what lets -j4 pay as x grows (-ja1, seconds without
@@ -250,11 +250,99 @@ was never slower beyond noise (1.02x at worst), up to 2x faster
 threshold of 10us did much the same; 1ms lost up to 60% on D(36,5) and
 D(36,6) at -j2, where the choices matter.
 
+The ratio for recursing was at first learnt per level, like the rest,
+but nodes of one level differ far more than nodes of one size. From
+175k records of estimate against actual cost on D(96,4) -j4 -x1e16,
+actual/estimated falls smoothly with the size of the node: 0.6 for
+nodes that would cost 0.1-1ms to walk, 0.06 at 0.1-1s, 0.004 at 1000s.
+The ratios per level, each dominated by the largest nodes of its level,
+were 0.000 at levels 2-4, 0.57 at level 5 and 0.016 at level 6, so
+that at level 5 it walked what -ja1 recursed (20.7M walk iterations
+against 8.7M, 17.6s against 12.5s). Correcting each record by its
+level's ratio left a cost-weighted error of 3.1 decades there and
+0.15-2.3 on eight other runs; by decade of size 0.33, and 2-8x less
+than by level on every one. So the two recursing parts are now learnt
+in bands of the node's estimated cost to walk, a factor of 8 each
+(ja_rsize()), a band with no evidence starting from 0.4 of the ratio
+in use for the band below (0.25 and 0.6 do the same within 3%). Over
+the same 42 runs that was never slower beyond noise and 4% less time
+in all: D(96,4) -j4 -x1e16 17.6s to 11.9s, D(48,4) -j4 -x1e15 0.38s to
+0.28s, D(96,3) -j4 -x1e15 0.77s to 0.64s, D(60,4) -j0 -x1e15 2.04s to
+1.77s, D(96,8) b50 -j4 36.0s to 33.4s.
+Keying by the position's own estimate instead fits the records as
+well, but chooses worse (D(60,4) -j0 -x1e15: 9.5s): it shrinks large
+estimates more than small ones, so distorts the comparison between
+positions at a node, where a ratio shared by the node cancels.
+
+#### Where -ja2 pays
+
+Each run under -ja1 and -ja2 at four strategies (seconds, 120s
+allowed; the D(48,10) batches at -x22911293821947932 -f7 -g30, the
+D(96,8) batches at -x393643805345636319 -f5):
+
+| run | -ja1: -j0 | -j1 | -j2 | -j4 | -ja2: -j0 | -j1 | -j2 | -j4 |
+|---|---|---|---|---|---|---|---|---|
+| D(24,6) -x1e13 | 3.86 | 3.84 | 3.47 | 3.80 | 3.24 | 3.21 | 3.18 | 3.26 |
+| D(48,4) -x1e15 | 0.31 | 0.31 | 0.28 | 0.31 | 0.29 | 0.29 | 0.31 | 0.31 |
+| D(96,3) -x1e15 | 5.93 | 5.97 | 13.41 | 0.77 | 5.98 | 5.91 | 5.85 | 0.63 |
+| D(96,4) -x1e16 | 40.73 | 40.66 | 35.65 | 12.44 | 38.26 | 37.79 | 38.29 | 12.17 |
+| D(192,3) -x1e16 | >120 | >120 | >120 | 28.07 | >120 | >120 | >120 | 32.30 |
+| D(40,5) -x1e17 | 1.15 | 1.16 | 0.90 | 1.17 | 1.03 | 1.04 | 1.06 | 1.06 |
+| D(80,5) -x1e16 | 3.49 | 3.49 | 2.97 | 3.56 | 3.24 | 3.17 | 3.32 | 3.27 |
+| D(20,6) -x1e18 | 2.06 | 2.06 | 1.48 | 2.06 | 1.49 | 1.50 | 1.52 | 1.52 |
+| D(64,3) -x1e15 | 28.84 | 28.90 | 28.78 | 0.06 | 28.68 | 28.60 | 28.41 | 0.06 |
+| D(32,5) -x1e14 | 46.15 | 45.32 | 44.85 | 1.12 | 44.85 | 44.60 | 44.87 | 1.10 |
+| D(36,5) -x1e10 | 5.27 | 5.32 | 3.82 | 5.15 | 1.99 | 1.98 | 1.97 | 2.01 |
+| D(36,6) -x1e11 | 15.89 | 16.48 | 11.76 | 16.22 | 5.30 | 5.28 | 5.32 | 5.42 |
+| D(18,4) -x1e16 | 4.43 | 4.36 | 36.61 | 4.45 | 4.89 | 4.42 | 36.56 | 4.39 |
+| D(100,3) -x1e18 | 2.37 | 2.38 | 2.73 | 2.35 | 1.74 | 1.77 | 2.77 | 1.74 |
+| D(100,4) -x1e18 | 9.54 | 9.60 | 4.29 | 9.53 | 2.63 | 2.66 | 2.30 | 2.71 |
+| D(90,3) -x1e15 | 5.93 | 4.57 | 111.29 | 4.58 | 4.63 | 4.53 | 37.78 | 4.58 |
+| D(144,3) -x1e15 | 3.79 | 3.82 | 3.33 | 3.84 | 2.47 | 2.47 | 3.44 | 2.45 |
+| D(60,4) -x1e15 | 3.70 | 2.04 | >120 | 2.06 | 1.83 | 1.78 | 6.69 | 1.82 |
+| D(60,4) -x1e16 | 21.06 | 9.79 | >120 | 9.64 | 7.81 | 7.74 | 22.20 | 7.74 |
+| D(120,4) -x1e16 | 19.97 | 10.36 | >120 | 10.52 | 8.87 | 8.89 | 19.67 | 9.10 |
+| D(12,8) -x1e12 | 23.15 | 23.25 | 20.48 | 24.12 | 16.49 | 16.54 | 16.52 | 16.64 |
+| D(12,7) -x1e9 | 0.31 | 0.31 | 0.22 | 0.28 | 0.21 | 0.20 | 0.20 | 0.20 |
+| D(24,5) -x1e12 | 0.18 | 0.18 | 0.18 | 0.16 | 0.15 | 0.15 | 0.15 | 0.15 |
+| D(48,10) b1 | 2.38 | 2.26 | 3.85 | 2.15 | 1.48 | 1.48 | 1.48 | 1.48 |
+| D(48,10) b7 | 2.11 | 2.13 | 4.41 | 2.15 | 2.04 | 2.05 | 2.04 | 2.04 |
+| D(96,8) b5 | 15.72 | 16.44 | 11.42 | 15.76 | 11.48 | 11.24 | 11.25 | 11.33 |
+| D(96,8) b50 | 39.66 | 39.44 | 33.28 | 39.53 | 33.16 | 33.22 | 33.37 | 33.68 |
+| D(96,8) b5000 | 5.27 | 5.27 | 6.27 | 5.26 | 4.93 | 5.01 | 4.93 | 4.94 |
+| D(96,8) b350000 | 18.34 | 18.26 | 22.24 | 18.35 | 14.00 | 14.01 | 14.03 | 14.26 |
+
+Taking the best strategy for each:
+
+- -ja2 is 1.8-2.2x faster than -ja1 on D(36,5), D(36,6) and D(100,4);
+  1.2-1.45x on D(100,3), D(144,3), D(96,3), D(12,8), D(60,4) -x1e16,
+  D(48,10) b1 and D(96,8) b350000; and 1.15x on D(60,4) -x1e15 and
+  D(120,4). Those are mostly n with an odd square, or two odd primes,
+  or small n with large k.
+- They are level (within 10%) on the other D(96,8) and D(48,10)
+  batches, n = 24 and 48, the powers of 2, D(96,4), D(18,4), D(90,3),
+  D(20,6) and D(80,5).
+- -ja1 is ahead by 15% on D(192,3) (at -j4) and D(40,5) (at -j2).
+
+But the best strategy is not known beforehand, and -ja1 depends on it
+far more: its worst strategy takes over 10x its best on 7 of the 29
+runs, and over 120s on 4 of them; -ja2's only on the powers of 2, which
+need -j4 under either. -ja2 at -j4 is never more than 18% behind the
+best of -ja1's four, nor behind -ja2's own best.
+
+Two things still tie -ja2 to the strategy. Only -j4 lets it allocate
+p^{2^x-1}, without which D(96,k), D(192,3) and the powers of 2 take
+3-500x longer whatever chooses the positions. And at nodes with a
+square already fixed the strategy still chooses: that is why -j2 costs
+it 2-8x on D(18,4), D(90,3), D(60,4) and D(120,4) (on D(60,4) -x1e15,
+strategy 2 takes the position with tau 3 left, for walk_1_set() over
+600k primes at a time).
+
 Recovery: 315 lines mark only levels chosen against the strategy, the
 rest replayed by it. A 316 line before each progress line records what
 has been learnt (see ja_save()): the cost counted, the gate's walk
-samples and -ja2's actual and estimated costs by level, so that a
-recovered run carries on from them. Recovering twice from one log gives
+samples and -ja2's actual and estimated costs by level and by size of
+node, so that a recovered run carries on from them. Recovering twice from one log gives
 identical runs. Of 9 runs killed partway and recovered, 7 then made
 exactly the tests the uninterrupted run made in all, and 2 differed (by
 0.2% and 2%; without the 316 lines, 8 differed): what was being
@@ -283,8 +371,8 @@ counts and CPU time (a W record).
 1. -ja2 (done, experimental; see below): a real model of x leaving a
    square, rather than the overestimate corrected by learning; and of
    recursing near the root, where learning starts blind and single
-   choices are dearest (for now the learnt ratio for recursing starts
-   from 1/4 rather than 1, see ja_ratio()). Measure run-to-run
+   choices are dearest (for now the ratio for recursing is learnt by
+   the size of the node, see ja_rsize()). Measure run-to-run
    variation as a matter of course where choices depend on timings:
    one slow run in several is easily missed.
    Known weakness: when zmax is far above the answer, -ja2 can be slow

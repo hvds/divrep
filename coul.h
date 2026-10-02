@@ -49,12 +49,12 @@ typedef struct s_level {
     uint choice_strategy;   /* the strategy in force when vi was chosen */
     ulong walk_from;    /* WALK_FROM: children of this loop walk from p */
     /* -ja2 learning: for a walk chosen by cost, when and its estimate;
-     * for a position, the estimate and part for each x, and when the
-     * current x began
+     * for a position, the estimate and part for each x, when the
+     * current x began, and the estimated cost of walking the node
      */
     double ja_t0, ja_ew;
     bool ja_on;
-    double ja_xt0;
+    double ja_xt0, ja_w;
     double *ja_ex;
     unsigned char *ja_xp;
     uint vi;        /* allocation of p^x into v_i */

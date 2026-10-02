@@ -44,11 +44,13 @@ for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }],
     my($last, %shown);
     my $ja = grep /^-ja/, @$args;
     my $num = qr{\d+(?:\.\d+)?(?:e[-+]\d+)?};
+    my $by_level = qr{ \d+:$num,$num,\d+(?:,$num,$num){2}};
+    my $by_size = qr{ [rs]-?\d+:$num,$num};
     my $learnt = 0;
     while (<$log>) {
         chomp;
         if (/^316 /) {
-            $learnt = /^316 $num \d+(?: \d+:$num,$num,\d+(?:,$num,$num){4})*$/;
+            $learnt = /^316 $num \d+$by_level*$by_size*$/;
             next;
         }
         next unless /^3([01])5 (b\S+: .*?)( \(|: \d+ \/| (?:W|F|6X)\()/;
