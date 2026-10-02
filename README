@@ -228,8 +228,9 @@ square is fixed, or where a flip may follow (tau 2q^2 for an odd prime
 q).
 "-ja2" also chooses the next position to which to allocate by
 estimated cost, instead of by the strategy, wherever no square is
-fixed: walking now is weighed against recursing over each eligible
-position, with every resulting case walked. The strategy remains the
+fixed and the node is not too cheap for the choice to pay: walking now
+is weighed against recursing over each eligible position, with every
+resulting case walked. The strategy remains the
 choice where the costs cannot be estimated (when a flip may follow);
 it is not supported with "-js". The estimates are corrected as the run proceeds by the costs
 measured for the choices made. Since the choices then depend on costs
