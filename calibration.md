@@ -136,6 +136,39 @@ are made before any learning, so they turned on small differences in
 the estimates, until the learnt ratio for recursing was given a prior
 of 1/4 (0.1s).
 
+### Rejecting primes early
+
+Broken into components, the counted cost of -ja2 -j4 runs was about
+half in the recursion loops' primes on the production-like batches
+(D(96,8) b5, b50, b350000 and D(48,10) b7: 46-50%, with 43-51% in
+tests and 2-7% in walk loops), where 200-360 primes are tried for each
+one that applies; D(60,4) -x1e16 58%, D(12,8) 42%, D(96,4) 26%. The
+choice to recurse is right there (walking those nodes would cost
+seconds); what dominates is the cost of rejecting a prime, 240ns: the
+level set up, p^{x-1} and the CRT in mpz_t, then rq > zmax.
+
+Almost all are rejected for that last reason, which is t > (zmax - rq)
+/ aq for the multiple t of aq the CRT finds, a bound shared by the
+whole loop. Of 24M rejections on D(96,8) b5, nearly all were of p^2
+with p of 16-24 bits. So the loop now finds t itself in single limbs
+first (reject_single()): its last digit base p, which is no more than
+t and rejects most, needs only a 32-bit inverse mod p; for p^2 the
+next digit comes from the same inverse; other powers take the inverse
+mod p^{x-1}. That is about 100ns a prime, 80ns of it the inverse. The
+search is unchanged: of 82 runs compared with it on and off (-ja1,
+-ja2 and plain -g, with -W, and at 2 limbs), all that finished made
+the same recursions, walks and tests.
+
+With cprime and ctail measured again (0.22us to 0.14us, 0.23us to
+0.12us), and the gate's cost per prime lowered to match (GR_APPLY,
+0.2us to 0.12us), the 42 runs took 12% less time in all under -ja2,
+and the production-like ones 21-25% less: D(96,8) b5 11.3s to 8.8s, b50
+33.7s to 26.5s, b350000 14.2s to 10.8s; D(48,10) b7 2.02s to 1.63s;
+D(60,4) -x1e16 7.8s to 5.9s; and the D(162,3) batch used to calibrate
+ctail (-x3.07e21, aq of 2 limbs) 32.4s to 22.5s. Under -ja1 the 29 runs
+of the benchmark set took 24% less in all. A table made before this
+has cprime and ctail too high: rebuild its leaf and tail sections.
+
 ### calibrate
 
 Lists a range's batches (-a), groups them into strata by log10 of
