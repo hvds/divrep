@@ -83,6 +83,14 @@ the smallest factor oversampled and weighted back (Buchstab). Without
 -f, G rows reach 255 bits, and the rows above 230 bits take over an
 hour to generate.
 
+The benches' inputs are the same from run to run (each bench seeds a
+GMP generator of its own from a constant and the size, and each size is
+a fresh process, so MPU::GMP's ISAAC starts from seed 1 too), but need
+not be between versions of GMP, whose default generator may differ.
+Only the inputs depend on it: the search draws on ISAAC alone. Five
+runs of the 112-bit ladder bench agreed in every column but the times,
+of which four agreed within 5% and one was 15-60% slower throughout.
+
 Coverage of the ladder: sound to about 191 bits; 207-255 bits from 60
 inputs each; above that (with -f only) the single ECM rung is benched
 from 12-30 inputs and is rough. Rungs after QS count as never reached.
