@@ -114,9 +114,10 @@ all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
 pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
-# the built-in cost table (see mock.c), from the file cost-table
+# the built-in cost table (see mock.c), from the file cost-table, which
+# may have been checked out with CRLF line endings
 costtab.c: cost-table
-	perl -ne 'BEGIN { print "/* generated from cost-table: do not edit */\nconst char cm_default_table[] =\n" } chomp; s/(["\\\\])/\\$$1/g; print qq{    "$$_\\n"\n}; END { print "    \"\";\n" }' cost-table > $@
+	perl -ne 'BEGIN { print "/* generated from cost-table: do not edit */\nconst char cm_default_table[] =\n" } s/\r?\n\z//; s/(["\\\\])/\\$$1/g; print qq{    "$$_\\n"\n}; END { print "    \"\";\n" }' cost-table > $@
 
 test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR} t/t05pell
 	gcc -o test_pell -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
