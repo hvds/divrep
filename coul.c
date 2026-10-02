@@ -4604,6 +4604,15 @@ static inline bool kern_batch(void) {
     return kern_b && levels[cur_batch_level].have_square == 1;
 }
 
+/* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
+ * applies to: walk_midp() has tried each prime up to kern_b as the odd
+ * power, x_range() refuses the rest, and with the squares left to the
+ * walk a strategy would otherwise loop over p^1 wherever else it could.
+ */
+static inline bool kern_highpow(void) {
+    return highpow && !kern_batch();
+}
+
 /* True if v_i is a position that -k applies to in this batch: one that
  * needed a prime to an odd power and something more besides once the
  * batch was complete, in a batch that fixes exactly one square.
@@ -5066,7 +5075,7 @@ uint best_v0(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
@@ -5104,7 +5113,7 @@ uint best_v1(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
@@ -5144,7 +5153,7 @@ uint best_v2(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
@@ -5180,7 +5189,7 @@ uint best_v3(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
@@ -5238,7 +5247,7 @@ uint best_v4(t_level *cur_level) {
         ulong minj;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
@@ -5471,6 +5480,9 @@ uint best_fixed(t_level *cur_level) {
     /* skip prime powers when capped, and any square under -k (invariant) */
     if ((t & 1) && (kern_batch()
             || (need_maxp && divisors[t].alldiv == 2)))
+        return BV_WALK;
+    /* nor a -k position with only its odd power to come */
+    if (t == 2 && kern_at(vi))
         return BV_WALK;
     return vi;
 }
@@ -5998,9 +6010,10 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
         t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
         uint ti = ap->t;
         /* eligible as for the strategies */
-        if (divisors[ti].high <= (highpow ? 1 : 2))
+        if (divisors[ti].high <= (kern_highpow() ? 1 : 2))
             continue;
-        if (need_maxp && (ti & 1) && divisors[ti].alldiv == 2)
+        if ((ti & 1) && (kern_batch()
+                || (need_maxp && divisors[ti].alldiv == 2)))
             continue;
         /* a position alike to one before it (or to the strategy's
          * choice) cannot improve on it
