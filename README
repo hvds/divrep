@@ -182,7 +182,8 @@ every p^1 with p <= 1e6 that way, and every higher odd power of any p.
 The normal recursion then continues knowing that prime exceeds 1e6,
 lowering the limit on every other prime allocated at the same position;
 and it leaves the position needing the square to the walk rather than
-allocating there. Default is not to do this.
+allocating there. In such a batch "-j4" and "-js" allocate no p^{2^z-1}.
+Default is not to do this.
 
 "-p" and "-W" may also be specified in the form "100^2" rather than
 as a simple integer, in which case it expresses a limit on the

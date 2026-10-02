@@ -74,7 +74,9 @@ if (1) {
             $result65, '', [qw{ -k1000 -x1e20 6 5 }]);
     expect_result(q{-k -W find f(6,5)},
             $result65, '', [qw{ -k1e5 -W100 -x1e17 6 5 }]);
-    for my $opts ([], [qw{ -k30 }], [qw{ -k1e4 }], [qw{ -k1e4 -W100 }]) {
+    for my $opts (
+        [], [qw{ -k30 }], [qw{ -k1e4 }], [qw{ -k1e4 -W100 }], [qw{ -k1e4 -j4 }],
+    ) {
         my $lines = run_test($type, [ @$opts, qw{ -X -x1e13 6 4 } ], 0);
         is(0 + @{ $lines->{202} // [] }, 21,
                 "all f(6,4) candidates to 1e13 found with '@$opts'");
