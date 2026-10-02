@@ -106,10 +106,14 @@ speed: Makefile speed.c prime_iterator.c ${HFACTOR} ${MPUGMP}/gmp_main.c
 sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h prime_iterator.h ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
-test: pcoul pcaul pcrul
+# coul.h may need a type
+test_pell: DEFINES += -DTYPE_o
+test: pcoul pcaul pcrul test_pell
+	t/t05pell
 	t/t10init
 	t/t20log
 
-dtest: dpcoul dpcaul dpcrul
+dtest: dpcoul dpcaul dpcrul test_pell
+	t/t05pell
 	DEBUG=1 t/t10init
 	DEBUG=1 t/t20log

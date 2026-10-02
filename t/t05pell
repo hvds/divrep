@@ -1,0 +1,63 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+
+use Test::More;
+
+# Check the solutions test_pell finds for Ax^2 - Dy^2 = N with x up to a
+# limit against those found by trying every x. A and D are of the shapes
+# coul.c makes them: a small factor times at most one larger prime.
+my $limit = 3000;
+my @coeff = (1, 2, 3, 5, 6, 7, 8, 9, 10, 18, 25, 50,
+        13, 26, 117, 101, 202, 909, 997);
+
+for my $N (-4 .. -1, 1 .. 4) {
+    my($count, @bad) = (0);
+    for my $A (@coeff) {
+        for my $D (@coeff) {
+            my %want;
+            for my $x (1 .. $limit) {
+                my $y2 = $A * $x * $x - $N;
+                next if $y2 <= 0 || $y2 % $D;
+                $y2 /= $D;
+                my $y = int(sqrt($y2) + 0.5);
+                $want{"$x, $y"} = 1 if $y * $y == $y2;
+            }
+            my %got = map +($_ => 1),
+                    `./test_pell $A $D $N $limit` =~ /^solution \((.*)\)$/mg;
+            $count += keys %want;
+            my $lost = grep !$got{$_}, keys %want;
+            my $extra = grep !$want{$_}, keys %got;
+            push @bad, "${A}x^2 - ${D}y^2 = $N: missed $lost, wrong $extra"
+                    if $lost || $extra;
+        }
+    }
+    ok(!@bad, "all $count solutions found for N = $N");
+    diag($_) for @bad;
+}
+
+# Beyond what trying every x can reach: v+1 = 2x^2, v+4 = 5y^2. With
+# X = 2x, X^2 - 10y^2 = -6 has two classes of solutions, each stepped
+# by the unit 19 + 6 sqrt(10).
+{
+    use Math::BigInt;
+    my $max = Math::BigInt->new(10) ** 30;
+    my @want;
+    for my $start ([1, 1], [11, 7]) {
+        my($x, $y) = map Math::BigInt->new($_), @$start;
+        while ($x <= $max) {
+            push @want, "$x, $y";
+            ($x, $y) = (19 * $x + 30 * $y, 12 * $x + 19 * $y);
+        }
+    }
+    @want = map $_->[1], sort { $a->[0] <=> $b->[0] }
+            map [ Math::BigInt->new(/^(\d+)/), $_ ], @want;
+    is_deeply(
+        [ `./test_pell 2 5 -3 1e30` =~ /^solution \((.*)\)$/mg ],
+        \@want,
+        'solutions in order, well past the first period',
+    );
+}
+
+done_testing();
