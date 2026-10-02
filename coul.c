@@ -3463,7 +3463,8 @@ static void walk_v(t_level *cur_level, mpz_t start) {
  * iterations, or if that is below 1, one iteration with that chance, the
  * sums over primes in closed form. At the leaf recursion that estimate
  * is right (actual/estimated 0.84-1.07 on D(96,8), D(48,10)); higher up
- * it overestimates recursion, but walking is dearer still there.
+ * it overestimates recursion, so the estimate is scaled down (see
+ * ja_prior[]).
  * The cost per iteration is learnt per level from 1 in GR_SAMPLE of the
  * walks made, by thread CPU time (and in the mocks, what they model).
  */
@@ -5564,6 +5565,9 @@ e_xr x_range(
  * 21s, and takes 5-30s depending on small differences in the
  * estimates; with 1/4, 0.1s. Elsewhere on the benchmark set it changes
  * times by no more than run-to-run variation.
+ * The -ja1 gate, which learns no ratios, uses the priors as they are:
+ * with 1 for recursing it walks that case at the root and takes 29s,
+ * against 0.04s with no -ja at all.
  */
 #define JA_PRIOR 1e-3
 #define JA_WALK 0
@@ -5970,12 +5974,14 @@ e_pux prep_unforced_x(
      * (t = 2q^2 allocating p^{q-1}), which keep the gain
      */
     if (auto_level && !prev_level->have_square && ti != 2 * x * x) {
-        /* under -ja2, as corrected by what it has learnt */
         uint L = prev_level->level;
         bool sq = ((ti / x) & 1) && !(ti & 1);
+        /* under -ja2, as corrected by what it has learnt; else by where
+         * that learning starts
+         */
+        uint part = sq ? JA_SQUARE : JA_RECURSE;
         double rw = (auto_level >= 2) ? ja_ratio(L, JA_WALK) : 1;
-        double rr = (auto_level >= 2)
-                ? ja_ratio(L, sq ? JA_SQUARE : JA_RECURSE) : 1;
+        double rr = (auto_level >= 2) ? ja_ratio(L, part) : ja_prior[part];
         do_walk = gr_walk(prev_level, p, cap, x, rw, rr);
     }
     if (do_walk && !reinject) {
