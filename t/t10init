@@ -69,6 +69,16 @@ if (1) {
     # -ja1 below an -I pattern
     expect_result(q{-ja1 below a constraint for f(24,5)},
             '266624899224', '2^3.3 . 2 3^2 2^2', [qw{ -ja1 -x1e12 24 5 }]);
+    # -k tries primes to an odd power first, where that leaves a Pell equation
+    expect_result(q{-k find f(6,5)},
+            $result65, '', [qw{ -k1000 -x1e20 6 5 }]);
+    expect_result(q{-k -W find f(6,5)},
+            $result65, '', [qw{ -k1e5 -W100 -x1e20 6 5 }]);
+    for my $opts ([], [qw{ -k30 }], [qw{ -k1e4 }], [qw{ -k1e4 -W100 }]) {
+        my $lines = run_test($type, [ @$opts, qw{ -X -x1e13 6 4 } ], 0);
+        is(0 + @{ $lines->{202} // [] }, 21,
+                "all f(6,4) candidates to 1e13 found with '@$opts'");
+    }
     # v + 1 = 64013.100003^2: with nothing for trial division to find,
     # the ladder finds 64013 and is left with the square of a prime
     {
@@ -195,6 +205,10 @@ if (1) {
     expect_recover(q{recover midp walk}, $args65W,
         ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263'],
         'b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263',
+    );
+    expect_recover(q{recover -k pass}, [qw{ -x1e20 -f3 -k1000 6 5 }],
+        ['305 b0: . 2 3^2 2^2 5^2 W(769,2,0)'],
+        'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
     );
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
