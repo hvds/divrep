@@ -64,24 +64,26 @@ extern double ct_ladder_actual, ct_ladder_charged;
 /* what a tau_multi_prep() did: trial primes tested, where it stopped
  * and whether it ran to its limit, gcds by trial band, and primality
  * and power tests (with the total bits of the values tested for
- * primality)
+ * primality, those of a single limb apart from the rest)
  */
 typedef struct {
     uint steps, gcd[5], nprime, npower;
     ulong stop_p;
     bool full;
-    double pbits;
+    double pbits, zbits;
 } t_ct_work;
 extern t_ct_work ct_w;
 extern double (*ct_prep_price)(uint nbits, const t_ct_work *w);
 extern void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt);
 extern void (*ct_pprep_record)(uint nbits, int res, double dt);
 extern double (*ct_pprep_price)(uint nbits, int res);
+extern double (*ct_ptest_price)(uint nbits);
 extern double ct_test_charged;
 extern ulong ct_preps, ct_ppreps;
 extern bool tau_prime_prep(uint i);
 extern uint tau_prime_run(uint i);
 extern bool tau_prime_test(mpz_t n);
+extern bool tau_isprime(mpz_t n);
 /* the ladder of factoring methods tau_multi_run() climbs: rungs
  * TM_INIT..tm_rungs()-1, the mask of rungs tried at a size, running
  * rung i on tm, and the factor a successful rung found

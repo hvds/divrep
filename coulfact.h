@@ -42,6 +42,7 @@ extern ulong simple_gcd(ulong a, ulong b);
 extern ulong small_divmod(mpz_t za, mpz_t zb, ulong p);
 extern ulong simple_invert(ulong d, ulong m);
 extern ulong ppow_invert(ulong d, ulong p, ulong m);
+extern bool u64_bpsw(ulong n);
 extern bool chinese_ppow_shared(mpz_t rp, mpz_t ap, mpz_t r, mpz_t a,
         ulong p, ulong m, ulong s, ulong am);
 extern void chinese_ppow_zai(mpz_t rp, mpz_t r, mpz_t a, mpz_t m, mpz_t s,

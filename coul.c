@@ -7213,6 +7213,7 @@ int main(int argc, char **argv, char **envp) {
         ct_ladder_model = &cm_ladder_cost;
         ct_prep_price = &cm_prep_price;
         ct_pprep_price = &cm_pprep_price;
+        ct_ptest_price = &cm_ptest_price;
         cc.on = 1;
     }
 #endif

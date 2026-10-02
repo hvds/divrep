@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <math.h>
 #include "coulfact.h"
 #include "gmp_main.h"   /* prime_count */
 
@@ -188,6 +189,149 @@ ulong ppow_invert(ulong d, ulong p, ulong m) {
         i = mulmod_u64(i, 2 + m - di, m);
     }
     return i;
+}
+
+/* Primality of n < 2^64 in single limbs, by the BPSW test just as
+ * _GMP_BPSW() makes it: a strong probable prime test to base 2, then
+ * the "almost extra strong" Lucas test with Baillie's parameters
+ * (_GMP_is_almost_extra_strong_lucas_pseudoprime(n, 1)). Together they
+ * are exact below 2^64.
+ */
+
+/* a.b/2^64 mod n, for odd n with ni = 1/n mod 2^64, and a, b < n */
+static inline ulong mont_mul(ulong a, ulong b, ulong n, ulong ni) {
+    __uint128_t t = (__uint128_t)a * b;
+    ulong h = (ulong)(t >> 64);
+    ulong mh = (ulong)(((__uint128_t)((ulong)t * ni) * n) >> 64);
+    return (h >= mh) ? h - mh : h - mh + n;
+}
+
+/* 1/n mod 2^64 for odd n, by Newton's iteration */
+static inline ulong mont_inv(ulong n) {
+    ulong ni = n;
+    for (uint i = 0; i < 5; ++i)
+        ni *= 2 - n * ni;
+    return ni;
+}
+
+static inline ulong mont_sub(ulong a, ulong b, ulong n) {
+    return (a >= b) ? a - b : a - b + n;
+}
+
+/* strong probable prime to base 2, for odd n > 2: one is 2^64 mod n */
+static inline bool u64_sprp2(ulong n, ulong ni, ulong one) {
+    ulong mone = n - one, d = n - 1;
+    uint s = __builtin_ctzl(d);
+    d >>= s;
+    /* 2^d, left to right, doubling for each bit set */
+    ulong x = one;
+    for (int b = 63 - __builtin_clzl(d); b >= 0; --b) {
+        x = mont_mul(x, x, n, ni);
+        if ((d >> b) & 1)
+            x = (x >= n - x) ? x - (n - x) : x + x;
+    }
+    if (x == one || x == mone)
+        return 1;
+    while (--s) {
+        x = mont_mul(x, x, n, ni);
+        if (x == mone)
+            return 1;
+        if (x == one)
+            return 0;
+    }
+    return 0;
+}
+
+/* the Jacobi symbol (a / n) for odd n */
+static inline int u64_jacobi(ulong a, ulong n) {
+    int t = 1;
+    a %= n;
+    while (a) {
+        uint z = __builtin_ctzl(a);
+        a >>= z;
+        if ((z & 1) && ((n & 7) == 3 || (n & 7) == 5))
+            t = -t;
+        if ((a & 3) == 3 && (n & 3) == 3)
+            t = -t;
+        ulong r = n % a;
+        n = a;
+        a = r;
+    }
+    return (n == 1) ? t : 0;
+}
+
+static inline ulong u64_gcd(ulong a, ulong b) {
+    while (b) {
+        ulong r = a % b;
+        a = b;
+        b = r;
+    }
+    return a;
+}
+
+static inline bool u64_is_square(ulong n) {
+    ulong r = (ulong)sqrtl((long double)n);
+    while (r * r > n)
+        --r;
+    while ((r + 1) * (r + 1) <= n && r + 1 < (1UL << 32))
+        ++r;
+    return r * r == n;
+}
+
+/* the almost extra strong Lucas test, for odd n >= 13 */
+static inline bool u64_aeslucas(ulong n, ulong ni, ulong one) {
+    ulong P = 3;
+    while (1) {
+        ulong D = P * P - 4;
+        ulong g = u64_gcd(n, D);
+        if (g > 1 && g != n)
+            return 0;
+        if (u64_jacobi(D, n) == -1)
+            break;
+        if (P == 23 && u64_is_square(n))
+            return 0;
+        if (++P > 65535)
+            return 0;   /* not reached: n is no square */
+    }
+    ulong d = n + 1;
+    if (d == 0)
+        return 0;       /* 2^64 - 1 = 3.5.17.257.641.65537.6700417 */
+    uint s = __builtin_ctzl(d);
+    d >>= s;
+    /* in Montgomery form: 2, P, and V = V_k, W = V_{k+1} from k = 1 */
+    ulong two = (one >= n - one) ? one - (n - one) : one + one;
+    ulong Pm = (ulong)(((__uint128_t)one * P) % n);
+    ulong V = Pm, W = mont_sub(mont_mul(Pm, Pm, n, ni), two, n);
+    for (int b = 62 - __builtin_clzl(d); b >= 0; --b) {
+        ulong T = mont_sub(mont_mul(V, W, n, ni), Pm, n);
+        if ((d >> b) & 1) {
+            V = T;
+            W = mont_sub(mont_mul(W, W, n, ni), two, n);
+        } else {
+            W = T;
+            V = mont_sub(mont_mul(V, V, n, ni), two, n);
+        }
+    }
+    if (V == two || V == n - two)
+        return 1;
+    /* the extra strong test takes r < s - 1 */
+    --s;
+    while (s--) {
+        if (V == 0)
+            return 1;
+        if (s)
+            V = mont_sub(mont_mul(V, V, n, ni), two, n);
+    }
+    return 0;
+}
+
+bool u64_bpsw(ulong n) {
+    if (n < 13)
+        return n == 2 || n == 3 || n == 5 || n == 7 || n == 11;
+    if (!(n & 1))
+        return 0;
+    ulong ni = mont_inv(n), one = -n % n;
+    return u64_sprp2(n, ni, one) && u64_aeslucas(n, ni, one);
 }
 
 /* CRT for a prime power: chinese_ppow() where it is known p | a.
