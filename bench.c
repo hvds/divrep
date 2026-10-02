@@ -1,6 +1,12 @@
 /* The benches behind the cost table (see multibench-table): with
  * MULTIBENCH set in the environment, a VERBOSE build of pcoul runs the
  * bench it names instead of the search.
+ * Each bench makes its inputs with a GMP generator of its own, seeded
+ * by a constant and the size, so that every run tests the same inputs.
+ * That holds for one version of GMP: gmp_randinit_default() need not
+ * give the same stream in another. Nothing else here or in the search
+ * draws from GMP's generator: the factoring and primality code takes
+ * its randomness from MPU::GMP's ISAAC, seeded by init_randstate().
  */
 
 #include <stdlib.h>
