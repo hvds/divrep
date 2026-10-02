@@ -235,6 +235,21 @@ b350000), -ja2 took 10.3-10.7, 30-31.7, 4.3-4.5 and 12.6-13.5s with
 than -ja1; with -j4 it was 3% slower than -ja1 on b50, faster on the
 rest.
 
+Choosing has a cost of its own, about 1us for each position weighed
+(x_range()'s integer root and the sum over primes, for each x), which
+is as much as a whole node where nodes are cheap: D(96,3) -j4 -x1e15
+made much the same search as under -ja1 (415k recursions against 399k,
+the same tests) in 1.10s against 0.74s. By the -dv8 records, at nodes
+that would cost under 10us to walk (60-90% of them) the choice is
+estimated to save 0.03-0.9us a node, and from 100us tens of us or
+more. So where walking would cost under 100us (JA_MIN_WALK) the
+strategy's choice stands and the gate decides, as under -ja1. Over 42
+runs (the benchmark set, and n = 24, 48, 96, 192 at -j0, -j2, -j4) that
+was never slower beyond noise (1.02x at worst), up to 2x faster
+(D(48,4) -j4 -x1e15: 0.76s to 0.38s) and 9% less time in all. A
+threshold of 10us did much the same; 1ms lost up to 60% on D(36,5) and
+D(36,6) at -j2, where the choices matter.
+
 Recovery: 315 lines mark only levels chosen against the strategy, the
 rest replayed by it. A 316 line before each progress line records what
 has been learnt (see ja_save()): the cost counted, the gate's walk

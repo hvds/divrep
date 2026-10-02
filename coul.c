@@ -5684,6 +5684,7 @@ static void ja_learnx(t_level *lp) {
         ja_learn(lp->level - 1, lp->ja_xp[di], lp->ja_ex[di],
                 gr_clock() - lp->ja_xt0);
 }
+#define JA_MIN_WALK 100e-6  /* least cost of walking, to choose by cost */
 #define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
 #define JA_W1T 2e-6         /* walk_1_set(), per prime reaching its tests */
 /* -ja2: the estimated cost of choosing position vi at the node at
@@ -5780,6 +5781,10 @@ static inline bool ja_alike(uint vi, uint vj) {
  * position: W is a bound any position must beat. On equal cost, the
  * least position is chosen. Positions the model cannot cost stay
  * unchosen, unless the strategy chose one, when its choice stands.
+ * Where walking would cost less than JA_MIN_WALK the strategy's choice
+ * stands too, and nothing is learnt: weighing a position costs about
+ * 1us (an integer root and a sum over primes for each x), and below
+ * there the choice saves less than that.
  * With just -dv8 (and -ja1), it reports the choice without making it.
  */
 uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
@@ -5791,11 +5796,14 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
         ja_cp = malloc(ja_nd);
         ja_bp = malloc(ja_nd);
     }
+    double W0 = GR_SETUP + gr_cit(L) * gr_iters(prev_level);
+    double W = W0 * ja_ratio(L, JA_WALK);
+    /* not worth choosing: leave it to the strategy and the gate */
+    if (W < JA_MIN_WALK && auto_level >= 2)
+        return sv;
     ja_rr = ja_ratio(L, JA_RECURSE);
     ja_rs = ja_ratio(L, JA_SQUARE);
     ja_r1 = ja_ratio(L, JA_W1);
-    double W0 = GR_SETUP + gr_cit(L) * gr_iters(prev_level);
-    double W = W0 * ja_ratio(L, JA_WALK);
     bool blind, sblind;
     double sT = ja_cost(prev_level, cur_level, sv, HUGE_VAL, &sblind);
     uint best = sv, nblind = 0, neval = 1;
