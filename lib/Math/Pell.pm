@@ -90,8 +90,11 @@ sub full {
             return gen_pell(-$c, -$f) if $a == 1;
             my($mul) = _sqfree($a);
             my $root = ($a * $mul)->bsqrt;
-            return _linear_filter(gen_pell(-$c * $mul, -$f * $mul),
-                    $root, $zero, $zone, $zero);
+            # we solve for X = root . x, so that is what the limit is on
+            my $limit = $want_limit;
+            my $r = with_limit(sub { gen_pell(-$c * $mul, -$f * $mul) },
+                    defined($limit) ? $limit * $root : undef);
+            return _linear_filter($r, $root, $zero, $zone, $zero);
         },
         undef,  # ade
         sub { die "Not two variable" },                         # ad
@@ -129,7 +132,7 @@ sub full {
     my $N = $E * $E - $D * ($d * $d - 4 * $a * $f);
     # so X^2 - DY^2 = N with X = Dy + E, Y = 2ax + by + d
     my $limit = $want_limit;
-    my $iter = want_limit(sub { gen_pell($D, $N) }, undef);
+    my $iter = without_limit(sub { gen_pell($D, $N) });
     return sub {
         while (1) {
             my($X, $Y) = $iter->() // return +(undef, undef);
@@ -177,6 +180,21 @@ sub _mul_filter {
         return +(undef, undef) unless defined $x;
         return +(undef, undef) if defined($limit) && abs($x * $f) > $limit;
         return +($x * $f, $y * $f);
+    };
+}
+
+sub _uniq_filter {
+    # drop repeats from an ordered iterator
+    my($r) = @_;
+    my($lx, $ly);
+    return sub {
+        while (1) {
+            my($x, $y) = $r->();
+            return +(undef, undef) unless defined $x;
+            next if defined($lx) && $x == $lx && $y == $ly;
+            ($lx, $ly) = ($x, $y);
+            return +($x, $y);
+        }
     };
 }
 
@@ -554,60 +572,92 @@ sub gen_pell {
     } divisors($Nsq));
 }
 
+=head2 gen_pell_coprime ( $D, $N )
+
+Given positive non-square C<D> and non-zero C<N>, returns an iterator
+over the pairs C< (x, y) > with C<< x >= 0, y > 0 >>, C<x> and C<y>
+coprime, satisfying C< x^2 - Dy^2 = N >, in increasing order.
+
+This is the method of Lagrange, Matthews and Mollin. For each C<z> with
+C<< z^2 == D (mod |N|) >>, every solution with C<< x == -zy (mod |N|) >>
+is C<< (|N|A - zB, B) >> for some convergent C<A/B> of
+C<< (z + sqrt(D)) / |N| >>, namely C<< A_{i-1}/B_{i-1} >> where the
+complete quotient C<< (P_i + sqrt(D)) / Q_i >> has
+C<< Q_i = (-1)^i sign(N) >>.
+
+=cut
+
 sub gen_pell_coprime {
     my($D, $N) = @_;
-    my $neg = ($N < 0) ? 1 : 0;
     my $aN = abs($N);
+    my @root = ($aN == 1) ? ($zero) : _z(allsqrtmod($D, $aN));
+    return _fail() unless @root;
+    # a solution with |N|A < zB also appears, with x of the other sign,
+    # for the root -z
+    return _uniq_filter(_interleave(
+        map _pell_class($D, $N, $_), @root
+    ));
+}
 
-    # If D is not a quadratic residue (mod |N|), there can be no solution.
-    my $q = sqrtmod($D, $aN) // return _fail();
-    my $q2 = $aN - $q;
-    $q2 = undef if $q == 0 || $q == $q2;
-    my @match;
-    for my $P_0 ($q, grep defined, $q2) {
-        my @best;
-        my($cf, $cfr) = cf($D, $P_0, $zone, $aN);
-        my $conv = convergents($cf, $cfr);
-        my($P_i, $Q_i, $A_i, $B_i) = ($P_0, $aN, $conv->());
-        for my $cfi (@$cf, @$cfr) {
-            # calculate 1 / ((P + sqrt(D)) / Q - x)
-            #         = (Qx - P + sqrt(D)) / ((D - (P + Qx)^2 / Q)
-            my $disc = $P_i * $P_i - $D;
-            die "logic error: expect $P_i^2 == $D (mod $Q_i)"
-                    if $disc % $Q_i;
-            my($P_n, $Q_n) = (
-                $Q_i * $cfi - $P_i,
-                $cfi * ( 2 * $P_i - $Q_i * $cfi) - $disc / $Q_i,
-            );
-            my($A_n, $B_n) = $conv->();
-            if ($Q_n == 1) {
-                my $G_i = abs($aN * $A_i - $P_0 * $B_i);
-                if ($G_i * $G_i - $D * $B_i * $B_i == $N) {
-                    @best = ($G_i, $B_i) if !@best || $G_i < $best[0];
-                }
-            }
-            ($P_i, $Q_i, $A_i, $B_i) = ($P_n, $Q_n, $A_n, $B_n);
-        }
-        # It isn't entirely clear from the paper, but I _think_ we get
-        # exactly 0 or 1 fundamental solutions per $P_0.
-        push @match, [ @best ] if @best;
-    }
-    return _fail() unless @match;
-    @match = sort { $a->[0] <=> $b->[0] } @match;
-    my($e, $f) = _pell_fund_sol($D);
+sub _pell_class {
+    my($D, $N, $z) = @_;
+    my $aN = abs($N);
+    my $sign = ($N < 0) ? -1 : 1;
+    my $rD = $D->bsqrt;
+    my($P, $Q) = ($z, $aN);
+    # (A1, B1) is convergent i - 1, (A0, B0) the one before it
+    my($A0, $A1, $B0, $B1) = ($zero, $zone, $zone, $zero);
     my $i = 0;
     my $limit = $want_limit;
+    my $limit2 = defined($limit) ? $limit * $limit : undef;
+    # We note each (P_i, Q_i, parity of i) until one repeats. The solutions
+    # since its first appearance, with signed x, then give all the rest in
+    # turn on multiplying by the least unit e + f sqrt(D) of norm 1.
+    my(%seen, @found, @cycle, $ci, $e, $f, $done);
     return sub {
-        my $which = $match[$i];
-        $i = ($i + 1) % @match;
-        my($x, $y) = @$which;
-        return +(undef, undef) if defined($limit) && abs($x) > $limit;
-        # next x' + y' sqrt(D) = (x + y sqrt(D))(e + f sqrt(D))
-        @$which = (
-            $x * $e + $y * $f * $D,
-            $x * $f + $y * $e,
-        );
-        return +($x, $y);
+        return +(undef, undef) if $done;
+        while (!@cycle) {
+            last if defined($limit2) && $D * $B1 * $B1 + $N > $limit2;
+            my $key = "$P:$Q:" . ($i & 1);
+            if (defined(my $first = $seen{$key})) {
+                @cycle = map [ @$_[1, 2] ], grep $_->[0] >= $first, @found;
+                last unless @cycle;
+                ($e, $f) = _pell_fund_sol($D);
+                $ci = 0;
+                %seen = ();
+                @found = ();
+                last;
+            }
+            $seen{$key} = $i;
+            my @sol;
+            if ($i > 0 && abs($Q) == 1
+                && ($Q < 0 ? -1 : 1) == (($i & 1) ? -$sign : $sign)
+            ) {
+                @sol = ($aN * $A1 - $z * $B1, $B1);
+                push @found, [ $i, @sol ];
+            }
+            # a_i = floor((P_i + sqrt(D)) / Q_i), where sqrt(D) is irrational
+            my $ai = ($Q > 0)
+                ? ($P + $rD) / $Q
+                : -(($P + $rD) / -$Q + 1);
+            ($A0, $A1) = ($A1, $ai * $A1 + $A0);
+            ($B0, $B1) = ($B1, $ai * $B1 + $B0);
+            $P = $ai * $Q - $P;
+            $Q = ($D - $P * $P) / $Q;
+            ++$i;
+            return +(abs($sol[0]), $sol[1]) if @sol;
+        }
+        if (@cycle) {
+            my($x, $y) = @{ $cycle[$ci] };
+            ($x, $y) = ($x * $e + $y * $f * $D, $x * $f + $y * $e);
+            if (!defined($limit) || abs($x) <= $limit) {
+                $cycle[$ci] = [ $x, $y ];
+                $ci = ($ci + 1) % @cycle;
+                return +(abs($x), $y);
+            }
+        }
+        $done = 1;
+        return +(undef, undef);
     };
 }
 
