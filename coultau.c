@@ -2,6 +2,7 @@
 
 #include "coul.h"
 #include "coultau.h"
+#include "coulfact.h"
 #include "trace.h"
 #include "factor.h"
 #include "gmp_main.h"
@@ -52,12 +53,23 @@ static inline ulong cgdiff(struct timespec *t0) {
 #define dz(...) 1
 #endif
 
+/* Primality: a value of a single limb is tested in single limbs, with
+ * the same result (see u64_bpsw()), 4-5 times as fast.
+ */
+static inline bool ct_isprime(mpz_t n) {
+    return (mpz_size(n) <= 1) ? u64_bpsw(mpz_get_ui(n))
+            : _GMP_is_prob_prime(n) != 0;
+}
+static inline bool ct_isbpsw(mpz_t n) {
+    return (mpz_size(n) <= 1) ? u64_bpsw(mpz_get_ui(n)) : _GMP_BPSW(n) != 0;
+}
+
 #ifdef VERBOSE
 static inline bool ct_prime(mpz_t n) {
     if (!VB(VB_TRACE))
-        return _GMP_is_prob_prime(n);
+        return ct_isprime(n);
     clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_is_prob_prime(n);
+    bool r = ct_isprime(n);
     gmp_printf("(%ld) p: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
 }
@@ -180,9 +192,9 @@ static inline int ct_pretest(mpz_t n) {
 }
 static inline bool ct_bpsw(mpz_t n) {
     if (!VB(VB_TRACE))
-        return _GMP_BPSW(n);
+        return ct_isbpsw(n);
     clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_BPSW(n);
+    bool r = ct_isbpsw(n);
     gmp_printf("(%ld) bpsw: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
 }
@@ -199,7 +211,7 @@ static inline bool ct_trial(factor_state *fs) {
     return r;
 }
 #else
-#   define ct_prime(n) _GMP_is_prob_prime(n)
+#   define ct_prime(n) ct_isprime(n)
 #   define ct_power(n) power_factor(n, n)
 #   define ct_ecm(n, f, b1, curves) _GMP_ECM_FACTOR(n, f, b1, curves)
 #   define ct_pminus1(n, f, b1, b2) _GMP_pminus1_factor(n, f, b1, b2)
@@ -212,14 +224,17 @@ static inline bool ct_trial(factor_state *fs) {
 #   define ct_trial(fs) fs_trial(fs)
 #   define ct_cheb(n, f, B) _GMP_cheb_factor(n, f, B, 0)
 #   define ct_pretest(n) primality_pretest(n)
-#   define ct_bpsw(n) _GMP_BPSW(n)
+#   define ct_bpsw(n) ct_isbpsw(n)
 #endif
 
 /* what the current tau_multi_prep() has done, for pricing it */
 t_ct_work ct_w;
 static inline bool ct_prime_w(mpz_t n) {
     ++ct_w.nprime;
-    ct_w.pbits += mpz_sizeinbase(n, 2);
+    if (mpz_size(n) <= 1)
+        ct_w.pbits += mpz_sizeinbase(n, 2);
+    else
+        ct_w.zbits += mpz_sizeinbase(n, 2);
     return ct_prime(n);
 }
 static inline ulong ct_power_w(mpz_t n) {
@@ -833,6 +848,11 @@ static inline bool prep_abort(t_tm *tm, bool result) {
     return result;
 }
 
+/* primality as tau_multi_prep() tests it, for the benches */
+bool tau_isprime(mpz_t n) {
+    return ct_prime(n);
+}
+
 /* Effectively identical to _GMP_is_prob_prime(), but with VERBOSE
  * diagnostics for debugging/calibration.
  */
@@ -857,6 +877,8 @@ bool tau_prime_test(mpz_t n) {
  */
 double (*ct_prep_price)(uint nbits, const t_ct_work *w) = NULL;
 double (*ct_pprep_price)(uint nbits, int res) = NULL;
+/* likewise, the price of each prime test tau_prime_run() makes */
+double (*ct_ptest_price)(uint nbits) = NULL;
 void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt) = NULL;
 void (*ct_pprep_record)(uint nbits, int res, double dt) = NULL;
 double ct_test_charged = 0;
@@ -1455,6 +1477,9 @@ uint tau_prime_run(uint first, uint count) {
     count = i;
     qsort(&taum[first], count - first, sizeof(t_tm), &taum_comparator);
     for (i = first; i < count; ++i) {
+        if (ct_ptest_price)
+            ct_test_charged += (*ct_ptest_price)(
+                    mpz_sizeinbase(taum[i].n, 2));
         if (!ct_bpsw(taum[i].n)) {
             taum[first].vi = taum[i].vi;
             return count - i;

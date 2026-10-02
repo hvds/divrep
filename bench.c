@@ -84,7 +84,7 @@ static void mb_prime(char *spec) {
     for (uint i = 0; i < count; ++i) {
         mb_random(m, rs, bits, F);
         double t0 = mb_now();
-        mb_sink ^= _GMP_is_prob_prime(m);
+        mb_sink ^= tau_isprime(m);
         tr += mb_now() - t0;
         test_multi_reset();
         t0 = mb_now();
@@ -103,7 +103,7 @@ static void mb_prime(char *spec) {
         if (mpz_probab_prime_p(m, 1))
             continue;
         double t0 = mb_now();
-        mb_sink ^= _GMP_is_prob_prime(m);
+        mb_sink ^= tau_isprime(m);
         tc += mb_now() - t0;
         ++nc;
     }

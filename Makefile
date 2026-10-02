@@ -125,6 +125,9 @@ test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iter
 test_tau: Makefile test_tau.c coultau.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o test_tau -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_tau.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
+test_prime: Makefile test_prime.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
+	gcc -o test_prime -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_prime.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+
 rungbench: Makefile rungbench.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o rungbench -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} rungbench.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 

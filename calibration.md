@@ -169,6 +169,38 @@ ctail (-x3.07e21, aq of 2 limbs) 32.4s to 22.5s. Under -ja1 the 29 runs
 of the benchmark set took 24% less in all. A table made before this
 has cprime and ctail too high: rebuild its leaf and tail sections.
 
+### Primality in single limbs
+
+With primes rejected early, the next cost was the primality test of
+what trial division leaves: about 60 bits on the D(96,8) and D(48,10)
+batches, half of them prime. _GMP_is_prob_prime() takes 3.2-3.4us for
+those, nearly all of it the Lucas test in mpz_t arithmetic (its
+strong test to base 2 is 0.5us). u64_bpsw() makes the same BPSW test
+for a value of a single limb in Montgomery arithmetic: the same strong
+test to base 2, then the same "almost extra strong" Lucas test with the
+same parameters, so the same answer, in 0.6-0.9us. test_prime checks
+it against _GMP_BPSW() on 9.7M values (every n below 2^22, squares,
+cubes, semiprimes, random values of every size to 64 bits, the ends of
+the range and known pseudoprimes); 42 runs made the same search with
+it as without.
+
+Values of more than a limb still go to MPU::GMP, and there the cost of
+a preparation steps up sharply (about 20us for a 65-70 bit value that
+reaches the primality test), so the K rows price the bits tested apart
+(preppbit for a single limb, prepzbit beyond). The calibration run
+that was to supply such values gave only 19 records in its minute, so
+the situ section now takes them from the D(162,3) batch and from
+D(36,5) -x1e22. And tau_prime_run()'s own tests, which the K rows had
+left uncharged, are now charged as tau_multi_prep()'s are.
+
+With the table fitted again, against the state before primes were
+rejected early: D(96,8) b5 11.3s to 6.5s, b50 33.7s to 19.3s, b350000
+14.2s to 8.0s, b5000 4.9s to 2.7s; D(48,10) b1, b7, b12 1.5-2.0s to
+0.9-1.2s; D(60,4) -x1e16 7.8s to 5.1s; D(18,4) -x1e16 4.3s to 3.3s;
+the 42 runs 19% less time in all under -ja2, and the benchmark set 35%
+less under -ja1. Runs whose values are small or whose time is in walk
+loops gain little (D(96,4), D(192,3), D(48,4): within 5% either way).
+
 ### calibrate
 
 Lists a range's batches (-a), groups them into strata by log10 of

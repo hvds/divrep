@@ -150,7 +150,7 @@ static double gs_clock_gap(void) {
 }
 
 /* a test preparation (VB_PREP): 1 in 8 recorded, as T records:
- *   T nbits steps gcd0 .. gcd4 nprime pbits npower full dt
+ *   T nbits steps gcd0 .. gcd4 nprime pbits npower full zbits dt
  * where dt excludes what the clock reads timing it add (see
  * gs_clock_gap())
  */
@@ -159,9 +159,10 @@ void gs_prep_record(uint nbits, const t_ct_work *w, double dt) {
     if (++ctr % 8)
         return;
     dt -= gs_clock_gap();
-    fprintf(gs_file(), "T %u %u %u %u %u %u %u %u %.0f %u %u %.9f\n",
+    fprintf(gs_file(), "T %u %u %u %u %u %u %u %u %.0f %u %u %.0f %.9f\n",
             nbits, w->steps, w->gcd[0], w->gcd[1], w->gcd[2], w->gcd[3],
-            w->gcd[4], w->nprime, w->pbits, w->npower, w->full ? 1 : 0, dt);
+            w->gcd[4], w->nprime, w->pbits, w->npower, w->full ? 1 : 0,
+            w->zbits, dt);
 }
 
 /* a prime test's preparation (VB_PREP), with its result res (see

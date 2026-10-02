@@ -149,12 +149,13 @@ enum { MWC_LOOP0, MWC_LOOPTEST, MWC_SQSETUP, MWC_SQLOOP0, MWC_SQTEST,
  */
 enum { MWK_CALL, MWK_STEP1, MWK_STEP2, MWK_STEP3, MWK_GCD0, MWK_GCD1,
         MWK_GCD2, MWK_GCD3, MWK_GCD4, MWK_PBIT, MWK_POWER, MWK_PP0,
-        MWK_PP0BIT, MWK_PP1, MWK_PP1BIT, MWK_PP2, MWK_PP2BIT, MWK_COUNT };
+        MWK_PP0BIT, MWK_PP1, MWK_PP1BIT, MWK_PP2, MWK_PP2BIT, MWK_ZBIT,
+        MWK_COUNT };
 static const char *mw_kname[MWK_COUNT] = {
     "prepcall", "prepstep1", "prepstep2", "prepstep3", "prepgcd0",
     "prepgcd1", "prepgcd2", "prepgcd3", "prepgcd4", "preppbit",
     "preppower", "pprep0", "pprep0bit", "pprep1", "pprep1bit", "pprep2",
-    "pprep2bit"
+    "pprep2bit", "prepzbit"
 };
 static struct {
     bool seen, pseen;   /* the rows for test_multi(), and prime tests */
@@ -292,7 +293,7 @@ static void mw_load(void) {
             for (uint i = 0; i < MWK_COUNT; ++i)
                 if (strcmp(name, mw_kname[i]) == 0) {
                     mw_K.v[i] = v[0] * 1e-6;
-                    if (i >= MWK_PP0)
+                    if (i >= MWK_PP0 && i <= MWK_PP2BIT)
                         mw_K.pseen = 1;
                     else
                         mw_K.seen = 1;
@@ -1364,7 +1365,7 @@ double cm_prep_price(uint nbits, const t_ct_work *w) {
         if (limbs > 3)
             limbs = 3;
         double c = mw_K.v[MWK_CALL] + w->steps * mw_K.v[MWK_STEP1 + limbs - 1]
-                + w->pbits * mw_K.v[MWK_PBIT]
+                + w->pbits * mw_K.v[MWK_PBIT] + w->zbits * mw_K.v[MWK_ZBIT]
                 + w->npower * mw_K.v[MWK_POWER];
         for (uint b = 0; b < 5; ++b)
             c += w->gcd[b] * mw_K.v[MWK_GCD0 + b];
@@ -1398,6 +1399,16 @@ double cm_pprep_price(uint nbits, int res) {
     double c = mw_trial_random(lg, 1, &surv);
     double full = surv * mw_scan_cost(sc, sc->L, 1);
     return (surv < 1) ? (c - full) / (1 - surv) : c;
+}
+
+/* The price of a prime test made by tau_prime_run() on a value of nbits
+ * bits: with K rows, as for those tau_multi_prep() makes; else nothing,
+ * cm_pprep_price() having charged it.
+ */
+double cm_ptest_price(uint nbits) {
+    if (!mw_K.seen || !mw_K.pseen)
+        return 0;
+    return nbits * mw_K.v[(nbits <= 64) ? MWK_PBIT : MWK_ZBIT];
 }
 
 /* the table's scalar costs (see mw_C[]), in seconds */

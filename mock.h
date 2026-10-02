@@ -32,6 +32,7 @@ extern double cm_price_prime(mpz_t n);
 extern double cm_const(uint which);
 extern double cm_prep_price(uint nbits, const t_ct_work *w);
 extern double cm_pprep_price(uint nbits, int res);
+extern double cm_ptest_price(uint nbits);
 enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
         CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
         CM_LINSETUP, CM_CAPPLY, CM_COUNT };
