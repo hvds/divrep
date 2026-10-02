@@ -351,65 +351,71 @@ positions at a node, where a ratio shared by the node cancels.
 
 Each run under -ja1 and -ja2 at four strategies (seconds, 120s
 allowed; the D(48,10) batches at -x22911293821947932 -f7 -g30, the
-D(96,8) batches at -x393643805345636319 -f5):
+D(96,8) batches at -x393643805345636319 -f5), with primes rejected
+early and primality tested in single limbs (see above):
 
 | run | -ja1: -j0 | -j1 | -j2 | -j4 | -ja2: -j0 | -j1 | -j2 | -j4 |
 |---|---|---|---|---|---|---|---|---|
-| D(24,6) -x1e13 | 3.86 | 3.84 | 3.47 | 3.80 | 3.24 | 3.21 | 3.18 | 3.26 |
-| D(48,4) -x1e15 | 0.31 | 0.31 | 0.28 | 0.31 | 0.29 | 0.29 | 0.31 | 0.31 |
-| D(96,3) -x1e15 | 5.93 | 5.97 | 13.41 | 0.77 | 5.98 | 5.91 | 5.85 | 0.63 |
-| D(96,4) -x1e16 | 40.73 | 40.66 | 35.65 | 12.44 | 38.26 | 37.79 | 38.29 | 12.17 |
-| D(192,3) -x1e16 | >120 | >120 | >120 | 28.07 | >120 | >120 | >120 | 32.30 |
-| D(40,5) -x1e17 | 1.15 | 1.16 | 0.90 | 1.17 | 1.03 | 1.04 | 1.06 | 1.06 |
-| D(80,5) -x1e16 | 3.49 | 3.49 | 2.97 | 3.56 | 3.24 | 3.17 | 3.32 | 3.27 |
-| D(20,6) -x1e18 | 2.06 | 2.06 | 1.48 | 2.06 | 1.49 | 1.50 | 1.52 | 1.52 |
-| D(64,3) -x1e15 | 28.84 | 28.90 | 28.78 | 0.06 | 28.68 | 28.60 | 28.41 | 0.06 |
-| D(32,5) -x1e14 | 46.15 | 45.32 | 44.85 | 1.12 | 44.85 | 44.60 | 44.87 | 1.10 |
-| D(36,5) -x1e10 | 5.27 | 5.32 | 3.82 | 5.15 | 1.99 | 1.98 | 1.97 | 2.01 |
-| D(36,6) -x1e11 | 15.89 | 16.48 | 11.76 | 16.22 | 5.30 | 5.28 | 5.32 | 5.42 |
-| D(18,4) -x1e16 | 4.43 | 4.36 | 36.61 | 4.45 | 4.89 | 4.42 | 36.56 | 4.39 |
-| D(100,3) -x1e18 | 2.37 | 2.38 | 2.73 | 2.35 | 1.74 | 1.77 | 2.77 | 1.74 |
-| D(100,4) -x1e18 | 9.54 | 9.60 | 4.29 | 9.53 | 2.63 | 2.66 | 2.30 | 2.71 |
-| D(90,3) -x1e15 | 5.93 | 4.57 | 111.29 | 4.58 | 4.63 | 4.53 | 37.78 | 4.58 |
-| D(144,3) -x1e15 | 3.79 | 3.82 | 3.33 | 3.84 | 2.47 | 2.47 | 3.44 | 2.45 |
-| D(60,4) -x1e15 | 3.70 | 2.04 | >120 | 2.06 | 1.83 | 1.78 | 6.69 | 1.82 |
-| D(60,4) -x1e16 | 21.06 | 9.79 | >120 | 9.64 | 7.81 | 7.74 | 22.20 | 7.74 |
-| D(120,4) -x1e16 | 19.97 | 10.36 | >120 | 10.52 | 8.87 | 8.89 | 19.67 | 9.10 |
-| D(12,8) -x1e12 | 23.15 | 23.25 | 20.48 | 24.12 | 16.49 | 16.54 | 16.52 | 16.64 |
-| D(12,7) -x1e9 | 0.31 | 0.31 | 0.22 | 0.28 | 0.21 | 0.20 | 0.20 | 0.20 |
-| D(24,5) -x1e12 | 0.18 | 0.18 | 0.18 | 0.16 | 0.15 | 0.15 | 0.15 | 0.15 |
-| D(48,10) b1 | 2.38 | 2.26 | 3.85 | 2.15 | 1.48 | 1.48 | 1.48 | 1.48 |
-| D(48,10) b7 | 2.11 | 2.13 | 4.41 | 2.15 | 2.04 | 2.05 | 2.04 | 2.04 |
-| D(96,8) b5 | 15.72 | 16.44 | 11.42 | 15.76 | 11.48 | 11.24 | 11.25 | 11.33 |
-| D(96,8) b50 | 39.66 | 39.44 | 33.28 | 39.53 | 33.16 | 33.22 | 33.37 | 33.68 |
-| D(96,8) b5000 | 5.27 | 5.27 | 6.27 | 5.26 | 4.93 | 5.01 | 4.93 | 4.94 |
-| D(96,8) b350000 | 18.34 | 18.26 | 22.24 | 18.35 | 14.00 | 14.01 | 14.03 | 14.26 |
+| D(24,6) -x1e13 | 2.92 | 2.94 | 2.65 | 3.09 | 2.46 | 2.46 | 2.56 | 2.56 |
+| D(48,4) -x1e15 | 0.31 | 0.30 | 0.32 | 0.30 | 0.31 | 0.31 | 0.31 | 0.29 |
+| D(96,3) -x1e15 | 6.36 | 6.37 | 14.05 | 0.72 | 6.31 | 6.36 | 6.38 | 0.61 |
+| D(96,4) -x1e16 | 40.70 | 39.93 | 36.23 | 11.17 | 38.34 | 38.30 | 38.07 | 11.13 |
+| D(192,3) -x1e16 | >120 | >120 | >120 | 28.54 | >120 | >120 | >120 | 31.03 |
+| D(40,5) -x1e17 | 0.80 | 0.80 | 0.66 | 0.84 | 0.74 | 0.75 | 0.78 | 0.76 |
+| D(80,5) -x1e16 | 2.41 | 2.39 | 2.08 | 2.39 | 2.26 | 2.24 | 2.42 | 2.33 |
+| D(20,6) -x1e18 | 1.60 | 1.60 | 1.33 | 1.59 | 1.22 | 1.22 | 1.22 | 1.22 |
+| D(64,3) -x1e15 | 30.35 | 30.39 | 30.66 | 0.05 | 30.87 | 31.17 | 31.06 | 0.07 |
+| D(32,5) -x1e14 | 51.99 | 48.53 | 49.06 | 1.15 | 48.85 | 49.07 | 48.78 | 1.09 |
+| D(36,5) -x1e10 | 4.90 | 4.81 | 3.41 | 4.90 | 1.73 | 1.72 | 1.86 | 1.78 |
+| D(36,6) -x1e11 | 14.07 | 14.00 | 8.66 | 13.69 | 4.25 | 4.27 | 4.72 | 4.22 |
+| D(18,4) -x1e16 | 3.44 | 3.60 | 26.70 | 3.42 | 3.46 | 3.45 | 26.43 | 3.43 |
+| D(100,3) -x1e18 | 1.75 | 1.77 | 1.97 | 1.74 | 1.29 | 1.27 | 1.97 | 1.26 |
+| D(100,4) -x1e18 | 6.95 | 6.99 | 3.09 | 6.91 | 1.91 | 1.90 | 1.81 | 1.92 |
+| D(90,3) -x1e15 | 5.65 | 4.30 | 76.00 | 4.33 | 4.47 | 4.44 | 27.21 | 4.40 |
+| D(144,3) -x1e15 | 3.09 | 3.15 | 3.02 | 3.23 | 2.11 | 2.16 | 2.75 | 2.14 |
+| D(60,4) -x1e15 | 2.64 | 1.48 | >120 | 1.46 | 1.25 | 1.25 | 5.16 | 1.28 |
+| D(60,4) -x1e16 | 14.06 | 6.53 | >120 | 6.55 | 5.28 | 5.21 | 17.13 | 5.16 |
+| D(120,4) -x1e16 | 13.36 | 7.12 | >120 | 7.12 | 6.33 | 6.33 | 14.46 | 6.20 |
+| D(12,8) -x1e12 | 16.62 | 16.65 | 16.56 | 16.80 | 12.99 | 12.71 | 12.71 | 12.82 |
+| D(12,7) -x1e9 | 0.17 | 0.17 | 0.15 | 0.17 | 0.14 | 0.14 | 0.14 | 0.14 |
+| D(24,5) -x1e12 | 0.16 | 0.13 | 0.13 | 0.14 | 0.14 | 0.14 | 0.14 | 0.15 |
+| D(48,10) b1 | 1.25 | 1.25 | 2.56 | 1.30 | 0.92 | 0.91 | 0.91 | 0.92 |
+| D(48,10) b7 | 1.25 | 1.23 | 2.58 | 1.24 | 1.15 | 1.16 | 1.16 | 1.18 |
+| D(96,8) b5 | 9.19 | 9.23 | 6.35 | 9.31 | 6.73 | 6.71 | 6.65 | 6.65 |
+| D(96,8) b50 | 23.32 | 23.21 | 19.29 | 23.23 | 19.38 | 19.54 | 19.54 | 19.60 |
+| D(96,8) b5000 | 2.85 | 2.86 | 3.45 | 2.91 | 2.80 | 2.80 | 2.83 | 2.80 |
+| D(96,8) b350000 | 10.28 | 10.26 | 12.60 | 10.53 | 8.18 | 8.10 | 8.11 | 8.20 |
 
 Taking the best strategy for each:
 
-- -ja2 is 1.8-2.2x faster than -ja1 on D(36,5), D(36,6) and D(100,4);
-  1.2-1.45x on D(100,3), D(144,3), D(96,3), D(12,8), D(60,4) -x1e16,
-  D(48,10) b1 and D(96,8) b350000; and 1.15x on D(60,4) -x1e15 and
-  D(120,4). Those are mostly n with an odd square, or two odd primes,
-  or small n with large k.
+- -ja2 is 1.7-2.0x faster than -ja1 on D(36,5), D(36,6) and D(100,4);
+  1.15-1.45x on D(144,3), D(100,3), D(48,10) b1, D(12,8), D(60,4),
+  D(96,8) b350000, D(96,3) and D(120,4). Those are mostly n with an odd
+  square, or two odd primes, or small n with large k.
 - They are level (within 10%) on the other D(96,8) and D(48,10)
-  batches, n = 24 and 48, the powers of 2, D(96,4), D(18,4), D(90,3),
-  D(20,6) and D(80,5).
-- -ja1 is ahead by 15% on D(192,3) (at -j4) and D(40,5) (at -j2).
+  batches, n = 20, 24 and 48, D(32,5), D(96,4), D(18,4), D(90,3),
+  D(80,5) and D(192,3).
+- -ja1 is ahead by 12% on D(40,5) (at -j2), and by 0.02s on D(64,3).
 
 But the best strategy is not known beforehand, and -ja1 depends on it
 far more: its worst strategy takes over 10x its best on 7 of the 29
-runs, and over 120s on 4 of them; -ja2's only on the powers of 2, which
-need -j4 under either. -ja2 at -j4 is never more than 18% behind the
-best of -ja1's four, nor behind -ja2's own best.
+runs, and over 120s on 4 of them; -ja2's only where -j4 is needed
+under either (D(96,3) and the powers of 2). -ja2 at -j4 is never more
+than 15% behind the best of -ja1's four (D(64,3) apart, 0.07s against
+0.05s), nor more than 7% behind -ja2's own best.
 
 Two things still tie -ja2 to the strategy. Only -j4 lets it allocate
 p^{2^x-1}, without which D(96,k), D(192,3) and the powers of 2 take
-3-500x longer whatever chooses the positions. And at nodes with a
+3-600x longer whatever chooses the positions. And at nodes with a
 square already fixed the strategy still chooses: that is why -j2 costs
 it 2-8x on D(18,4), D(90,3), D(60,4) and D(120,4) (on D(60,4) -x1e15,
 strategy 2 takes the position with tau 3 left, for walk_1_set() over
-600k primes at a time).
+600k primes at a time). With another strategy little time goes there
+(square walks and walk_1_set() under 1.5% of 13 runs of 14, D(18,4)
+apart), so a cost model for those nodes has little to gain beyond
+avoiding that; and overriding strategy 2 at them still leaves D(90,3),
+D(100,3) and D(144,3) slower at -j2, where it also chooses the nodes
+that a flip may follow.
 
 Recovery: 315 lines mark only levels chosen against the strategy, the
 rest replayed by it. A 316 line before each progress line records what
