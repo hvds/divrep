@@ -8,7 +8,7 @@ use Math::Prime::Util::GMP qw{ trial_factor is_prime is_power divisors gcd };
 use List::Util qw{ first };
 use lib 'lib';
 use Type;
-use Seq::Db;
+# use Seq::Db;  # loaded conditionally if not $dryrun
 
 sub MBI { return Math::GMP->new(@_) }
 my $zero = MBI(0);
@@ -40,7 +40,10 @@ die "Type '$typename' not yet supported" unless $supported{$typename};
 my $type = Type->new($typename);
 $type->bind_owner('upperlim');
 $type->bind($n);
-my $db = $dryrun ? undef : Seq::Db->new($type, 0);
+my $db = $dryrun ? undef : do {
+    require Seq::Db;
+    Seq::Db->new($type, 0);
+};
 my $r = $dryrun ? undef : do {
     Seq::TauG->genTo($db, $n);
     my $g = $db->resultset('TauG')->find({ n => $n })
