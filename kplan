@@ -17,7 +17,8 @@ C<-k> applies to (one that fixes exactly one square, other than those
 STRATEGY_6X takes) estimates its cost in seconds under C<-ja1> for a
 range of C<-k> and C<-W> bounds, with each number of the positions C<-k>
 would pass over kept by C<-K>; it shows the cheapest found, as the
-options to run that batch with. Any of C<-k>, C<-W> and C<-K> given here
+options to run that batch with. For a batch STRATEGY_6X can take it
+shows those only if cheaper than that, as pcoul will choose. Any of C<-k>, C<-W> and C<-K> given here
 is fixed at that value instead (C<-W0> for no sweep).
 
 The estimate follows the search in the abstract. At each node the next
@@ -57,8 +58,8 @@ my $z = 0 + $o{x};
 # costs in seconds: per prime tried, per root taken by reject_square(),
 # per prime whose roots are extended, per child applied, per walk, per
 # root walked (set for each batch), per prime of a sweep where
-# reject_square() does not apply, of a STRATEGY_6X loop, and of the pass
-# at one position
+# reject_square() does not apply, per prime applied by a STRATEGY_6X
+# loop, and per prime of the pass at one position
 my $C_TRY = 0.12e-6;
 my $C_FAST = 0.6e-6;
 my $C_APP = 2.2e-6;
@@ -66,7 +67,7 @@ my $C_CHILD = 0.5e-6;
 my $C_SETUP = 1.7e-6;
 my $C_ROOT;
 my $C_SWEEP = 2.1e-6 * (log($z) / log(1e22)) ** 1.4;
-my $C_6X = 4.8e-6;
+my $C_6X = 10.7e-6;
 my $C_PELL = 3.0e-6;
 my @small = @{ primes(3, 400) };
 # the default strategy looks at the highest prime of tau first if n has
@@ -320,17 +321,22 @@ while (<$ph>) {
                 : 'no square'), "\n";
         next;
     }
-    if ($bt->{six}) {
-        my $t = $C_6X * pc(($z / 8) ** 0.25);
-        printf "%s\n    STRATEGY_6X: %.0fs\n", $what, $t;
-        $sum += $t;
-        next;
-    }
     $C_ROOT = $o{c} * 1e-6 * (($bt->{v}[ $bt->{sq0} ][1] == 3) ? 0.7 : 1.5);
     my @K = defined($o{K}) ? (min($o{K}, 0 + @{ $bt->{passed} }))
             : (0 .. @{ $bt->{passed} });
     my $best;
     $budget = 9**9**9;
+    if ($bt->{six}) {
+        # STRATEGY_6X takes it unless the search under -k is estimated to
+        # cost less, as ke_6x() in coul.c: a loop of p^2 two places before
+        # the square, given tau 6 there
+        my $six = ($bt->{v}[ $bt->{sq0} - 2 ][1] == 6 && $bt->{endr})
+            ? pc(($z / 8) ** 0.25) * ($C_TRY + $C_FAST / 2)
+                + pc(min(($z / 8) ** 0.25, sqrt($bt->{endr}))) * $C_6X
+            : 0;
+        $budget = $six;
+        $bt->{six_cost} = $six;
+    }
     for my $m (@K) {
         my %keep = map +($_ => 1), @{ $bt->{passed} }[0 .. $m - 1];
         for my $W (@W) {
@@ -343,6 +349,12 @@ while (<$ph>) {
                 $budget = $e->{total};
             }
         }
+    }
+    if (!$best) {
+        printf "%s\n    STRATEGY_6X%s\n", $what, $bt->{six_cost}
+                ? sprintf(': %.0fs', $bt->{six_cost}) : ' (not estimated)';
+        $sum += $bt->{six_cost};
+        next;
     }
     printf "%s\n    -k%s%s%s: %.0fs = pass %.0f + sweep %.0f + rest %.0f"
             . " (%.2g nodes, %.2g roots)\n",
