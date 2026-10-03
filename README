@@ -190,9 +190,10 @@ another has a larger multiple of 6 left: its one prime squared has too
 high a limit to be allocated before the other position's last, so
 nothing is allocated there at all (nor by "-W"), and the walks cover it.
 With "-K2", the two such positions with most allocated are not passed
-over, which can pay with "-W" where few positions are left. It does not
-apply to a batch that the special strategy for "2z^2" two places after a
-power of 2 takes. In such a batch "-j4" and "-js" allocate no p^{2^z-1}.
+over, which can pay with "-W" where few positions are left. A batch that
+the special strategy for "2z^2" two places after a power of 2 can take
+is left to it, unless the search under "-k" is estimated to cost less.
+In a batch "-k" applies to, "-j4" and "-js" allocate no p^{2^z-1}.
 The script "kplan" estimates the cost of each batch for a range of "-k",
 "-W" and "-K", and shows the cheapest.
 Default is not to do this.

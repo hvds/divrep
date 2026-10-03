@@ -220,6 +220,7 @@ volatile bool need_work, need_diag, need_log;
 bool clock_is_realtime = 0;
 
 mpz_t zmin, zmax;   /* limits to check for v_0 */
+double zmax_given = 0;  /* zmax as given: it may since have improved */
 mpz_t best;         /* best solution seen */
 bool improve_max = 1;   /* reduce zmax when solution found */
 uint seen_best = 0; /* number of times we've improved zmax */
@@ -2607,6 +2608,7 @@ void set_minmax(char *s) {
         mpz_set_ui(zmin, 0);
         ston(zmax, s);
     }
+    zmax_given = mpz_get_d(zmax);
 }
 
 void set_gain(char *s) {
@@ -4729,9 +4731,14 @@ void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
 /* What -k does in the current batch, worked out once the batch is
  * complete: whether it applies at all, and as bit vectors the positions
  * it applies to and those passed over.
- * It applies to a batch that fixes exactly one square, unless that is
- * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
- * at v_{i-2} and gains nothing from the pass.
+ * It applies to a batch that fixes exactly one square. One that
+ * STRATEGY_6X can take (2.z^2 at v_i, i >= 2) has its own loop at
+ * v_{i-2}, and gains nothing from the pass: it is left to that, unless
+ * the search under -k is estimated to cost less (see ke_batch()), when
+ * best_6x() stands aside. That loop runs to the 4th root of zmax
+ * whatever n is, while under -k the limits fall as the powers of n
+ * rise, so for n = 6p the batch with 2^{p-1} at v_{i-2} goes to -k from
+ * about p = 5.
  */
 typedef struct {
     int id;
@@ -4786,6 +4793,288 @@ static bool kern_6x(void) {
     return 0;
 }
 
+
+/* The estimated cost of the whole search of a batch that -k applies to,
+ * for choices that must be made before it starts (see kern_state()). It
+ * follows the search in the abstract, as the script kplan does: at each
+ * node the position the default strategy would take; walk or recurse as
+ * the -ja1 gate would, by the loop with every child walking; and the
+ * primes of each loop summed, those below KE_SMALL one by one, each
+ * dividing or not, the rest in bins. Costs are as for gq_recurse(), with
+ * a fixed cost per root, and all is taken from zmax as given, so that a
+ * recovered run chooses the same.
+ */
+#define KE_MAXPOS 8
+#define KE_MAXSLOT 8
+#define KE_SMALL 400
+#define KE_BIN 1.5
+#define KE_PELL 3e-6        /* the pass, per prime at each position */
+#define KE_SWEEP 3e-6       /* a sweep without reject_square(), likewise */
+#define KE_6X 10.7e-6       /* a STRATEGY_6X loop, per prime applied */
+typedef struct {
+    double Z;       /* zmax over what is allocated, and the bound of -k */
+    long d;         /* offset of the square less that of this position */
+    uint ns;        /* powers still to allocate, as exponents in order */
+    unsigned char e[KE_MAXSLOT];
+    uint laste;     /* the last allocated, 0 if none */
+    double lastp;
+} t_kepos;
+typedef struct {
+    double roots, zl;
+    uint np;
+    t_kepos pos[KE_MAXPOS];
+    uint nused;
+    uint used[KE_MAXPOS * KE_MAXSLOT];
+} t_kenode;
+static double ke_root, ke_endr, ke_pmin;
+static bool ke_high;
+static inline int jacobi_u64(ulong a, ulong n);
+
+/* true if n is prime, for n < GR_PIMAX */
+static inline bool gr_isprime(ulong n) {
+    gr_li(3);
+    return n >= 2 && n < GR_PIMAX && gr_pi[n] != gr_pi[n - 1];
+}
+
+/* the range (lo, hi] and exponent of the next allocation at a position */
+static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
+    uint e = kp->e[0], same = 1;
+    double other = 1;
+    for (uint i = 1; i < kp->ns; ++i)
+        if (kp->e[i] == e)
+            ++same;
+        else
+            other *= pow(ke_pmin, kp->e[i]);
+    double L = pow(kp->Z / other, 1.0 / (e * same));
+    if (need_maxp && maxp[e] && L > maxp[e])
+        L = maxp[e];
+    *hi = L;
+    *lo = (kp->laste == e) ? kp->lastp : ke_pmin - 1;
+    return e;
+}
+
+/* tau left at a position, and its highest prime */
+static inline uint ke_tau(t_kepos *kp) {
+    uint t = 2;
+    for (uint i = 0; i < kp->ns; ++i)
+        t *= kp->e[i] + 1;
+    return t;
+}
+
+static double ke_cost(t_kenode *node, double budget);
+
+/* the cost of walking a node */
+static inline double ke_walk(t_kenode *node) {
+    return GQ_SETUP + ke_root * node->roots;
+}
+
+/* The cost of the loop over the next allocation at position j, each child
+ * walked, or with deep set costed in full; HUGE_VAL once past budget.
+ */
+static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
+    t_kepos *kp = &node->pos[j];
+    double lo, hi, cost = 0;
+    uint e = ke_limit(kp, &lo, &hi);
+    if (hi <= lo)
+        return 0;
+    ulong qm = 0;
+    mpz_t *q = kern_q(sq0);
+    bool sq = (e == 2 && ke_endr > 0);
+    double a = lo;
+    while (a < hi) {
+        double p, c, f, b;
+        if (a < KE_SMALL) {
+            /* the next prime above a, on its own */
+            ulong pi = (ulong)a + 1;
+            while (!gr_isprime(pi))
+                ++pi;
+            b = pi;
+            a = b;
+            if (b > hi)
+                break;
+            bool skip = 0;
+            for (uint i = 0; i < node->nused; ++i)
+                if (node->used[i] == pi)
+                    skip = 1;
+            if (skip || mpz_fdiv_ui(levels[cur_batch_level].aq, pi) == 0)
+                continue;
+            qm = mpz_fdiv_ui(*q, pi);
+            ulong dm = (kp->d < 0) ? pi - (ulong)(-kp->d) % pi
+                    : (ulong)kp->d % pi;
+            p = pi;
+            c = 1;
+            f = (jacobi_u64(mulmod_u64(dm, qm, pi), pi) == 1) ? 1 : 0;
+        } else {
+            b = a * KE_BIN;
+            if (b > hi)
+                b = hi;
+            c = gr_li(b) - gr_li(a);
+            p = sqrt(a * b);
+            f = 0.5;
+            a = b;
+            if (c <= 0)
+                continue;
+        }
+        double pe = pow(p, e);
+        /* those giving a least v_0 within the bound, see reject_single() */
+        double s = (node->zl < pe) ? node->zl / pe : 1;
+        /* those that divide with a root in range, see reject_square() */
+        double r = 1;
+        if (sq) {
+            cost += c * GR_APPLY;
+            if (f == 0)
+                continue;
+            if (pe > ke_endr) {
+                cost += c * s * f * GQ_ROOT;
+                if (2 * ke_endr < pe)
+                    r = 2 * ke_endr / pe;
+            }
+            cost += c * s * f * r * GQ_PRIME;
+        } else {
+            cost += c * (GR_APPLY + s * GQ_PRIME);
+            if (f == 0)
+                continue;
+        }
+        t_kenode ch = *node;
+        ch.roots = node->roots * 2 / pe / r;
+        ch.zl = node->zl / pe;
+        t_kepos *cp = &ch.pos[j];
+        cp->Z /= pe;
+        --cp->ns;
+        memmove(cp->e, cp->e + 1, cp->ns);
+        cp->laste = e;
+        cp->lastp = p;
+        if (c == 1 && p < KE_SMALL)
+            ch.used[ch.nused++] = (uint)p;
+        double cc = deep ? ke_cost(&ch, (budget - cost) / (c * s * f * r))
+                : ke_walk(&ch);
+        cost += c * s * f * r * (GQ_APPLY + cc);
+        if (cost > budget)
+            return HUGE_VAL;
+    }
+    return cost;
+}
+
+/* the cost of the subtree at a node; HUGE_VAL once past budget */
+static double ke_cost(t_kenode *node, double budget) {
+    double w = ke_walk(node);
+    uint best = KE_MAXPOS;
+    for (uint j = 0; j < node->np; ++j) {
+        t_kepos *kp = &node->pos[j];
+        if (!kp->ns)
+            continue;
+        if (best == KE_MAXPOS) {
+            best = j;
+            continue;
+        }
+        t_kepos *bp = &node->pos[best];
+        /* as the default strategy: by the highest prime of tau if so,
+         * then the highest tau, then the most allocated
+         */
+        if (ke_high && kp->e[0] != bp->e[0]) {
+            if (kp->e[0] > bp->e[0])
+                best = j;
+            continue;
+        }
+        uint tj = ke_tau(kp), tb = ke_tau(bp);
+        if (tj > tb || (tj == tb && kp->Z < bp->Z))
+            best = j;
+    }
+    if (best == KE_MAXPOS)
+        return w;
+    double lo, hi;
+    ke_limit(&node->pos[best], &lo, &hi);
+    if (hi <= lo || w < (gr_li(hi) - gr_li(lo)) * GR_APPLY)
+        return w;
+    if (w < ke_loop(node, best, 0, HUGE_VAL))
+        return w;
+    return ke_loop(node, best, 1, budget);
+}
+
+/* The estimated cost of the current batch under -k with the positions of
+ * at, including its pass and any sweep; HUGE_VAL once past budget.
+ */
+static double ke_batch(ulong at, double budget) {
+    t_kenode root;
+    t_level *lv = &levels[cur_batch_level];
+    double z = zmax_given;
+    uint ts = kern_tau(sq0);
+    ke_endr = (divisors[ts].gcddm == 2) ? sqrt(z / mpz_get_d(*kern_q(sq0)))
+            : 0;
+    ke_root = (divisors[ts].alldiv == 2) ? 0.7e-6 : 1.5e-6;
+    for (ke_pmin = 3; mpz_fdiv_ui(lv->aq, (ulong)ke_pmin) == 0
+            || !gr_isprime((ulong)ke_pmin); ++ke_pmin)
+        ;
+    ke_high = (nf.count > 2);
+    root.roots = pow(z / mpz_get_d(*kern_q(sq0)), 1.0 / divisors[ts].gcddm)
+            * mpz_get_d(*kern_q(sq0)) * res_array(lv->level)->count
+            / mpz_get_d(lv->aq);
+    root.zl = z / mpz_get_d(lv->aq);
+    root.np = 0;
+    root.nused = 0;
+    double cost = 0;
+    for (uint vi = 0; vi < k && root.np < KE_MAXPOS; ++vi) {
+        if (!((at >> vi) & 1))
+            continue;
+        t_kepos *kp = &root.pos[root.np++];
+        kp->Z = z / mpz_get_d(*kern_q(vi)) / kern_b;
+        kp->d = (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi);
+        kp->laste = 0;
+        kp->lastp = 0;
+        kp->ns = 0;
+        /* the powers of the highest prime of tau come first */
+        uint u = kern_tau(vi) / 2;
+        while (u > 1 && kp->ns < KE_MAXSLOT) {
+            uint h = divisors[u].high;
+            kp->e[kp->ns++] = h - 1;
+            u /= h;
+        }
+        /* the pass, and the sweep of each power in turn */
+        cost += KE_PELL * gr_li(kern_b);
+        for (uint i = 0; need_midp && i < kp->ns; ++i) {
+            uint e = kp->e[i];
+            if ((i && kp->e[i - 1] == e) || !maxp[e])
+                continue;
+            double other = 1;
+            for (uint l = 0; l < kp->ns; ++l)
+                if (l != i)
+                    other *= pow(ke_pmin, kp->e[l]);
+            double L = pow(kp->Z / other, 1.0 / e), W = maxp[e];
+            if (L <= W)
+                continue;
+            double np = gr_li(L) - gr_li(W);
+            cost += ke_root * root.roots * pow(W, 1.0 - e) / (e - 1) / log(W);
+            if (e == 2 && ke_endr > 0) {
+                double re = sqrt(2 * ke_endr);
+                if (re < W)
+                    re = W;
+                cost += np * (GR_APPLY + GQ_ROOT / 2)
+                        + (GQ_PRIME + GQ_SETUP) * ((gr_li(re) - gr_li(W)) / 2
+                            + ke_endr / re / log(re));
+            } else
+                cost += np * KE_SWEEP;
+        }
+    }
+    if (cost > budget)
+        return HUGE_VAL;
+    return cost + ke_cost(&root, budget - cost);
+}
+
+/* The estimated cost of the current batch under STRATEGY_6X, given tau 6
+ * left two places before the square: its loop of p^2 there, of which
+ * reject_square() lets through half up to the root of the greatest
+ * root; else 0.
+ */
+static double ke_6x(void) {
+    if (kern_tau(sq0 - 2) != 6 || divisors[kern_tau(sq0)].gcddm != 2)
+        return 0;
+    double L = pow(zmax_given / 8, 0.25);
+    double se = pow(zmax_given / mpz_get_d(*kern_q(sq0)), 0.25);
+    if (se > L)
+        se = L;
+    return gr_li(L) * (GR_APPLY + GQ_ROOT / 2) + gr_li(se) * KE_6X;
+}
+
 /* See t_kern. The positions -k applies to are those that needed a prime
  * to an odd power and something more besides once the batch was
  * complete.
@@ -4807,7 +5096,7 @@ static t_kern *kern_state(void) {
         ks.level = cur_batch_level;
         ks.at = 0;
         ks.passed = 0;
-        ks.on = (levels[cur_batch_level].have_square == 1 && !kern_6x());
+        ks.on = (levels[cur_batch_level].have_square == 1);
         if (!ks.on)
             return &ks;
         for (uint vi = 0; vi < k; ++vi) {
@@ -4833,6 +5122,18 @@ static t_kern *kern_state(void) {
                     best = vi;
             ks.passed &= ~(1UL << best);
             ks.at |= 1UL << best;
+        }
+        /* a batch that STRATEGY_6X can take is left to it unless that is
+         * estimated to cost more
+         */
+        if (kern_6x()) {
+            double c6 = (zmax_given > 0) ? ke_6x() : 0;
+            double ck = (c6 > 0) ? ke_batch(ks.at, c6) : HUGE_VAL;
+            if (!(ck < c6)) {
+                ks.on = 0;
+                ks.at = 0;
+                ks.passed = 0;
+            }
         }
     }
     return &ks;
@@ -5548,9 +5849,11 @@ void diag_6x(t_level *cur_level, uint vi, uint a) {
  * BV_6X to invoke the fast walk_6x().
  */
 uint best_6x(t_level *cur_level) {
-    /* check if conditions for STRATEGY_6X still hold */
+    /* check if conditions for STRATEGY_6X still hold, and that the batch
+     * is not one that -k takes instead (see kern_state())
+     */
     t_level *prev_level = &levels[ cur_level->level - 1 ];
-    if (!prev_level->have_square || sq0 < 2) {
+    if (!prev_level->have_square || sq0 < 2 || kern_batch()) {
         strategy = prev_strategy;
         return best_v(cur_level);
     }
