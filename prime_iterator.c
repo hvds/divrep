@@ -411,7 +411,7 @@ void prime_iterator_setprime(prime_iterator *iter, UV n) {
     } else {
         /* Sieve this range */
         UV lod = n / 30;
-        UV hid = lod + SEGMENT_SIZE;
+        UV hid = lod + SEGMENT_SIZE - 1;
         iter->segment_mem = malloc(SEGMENT_SIZE * sizeof(unsigned char));
         iter->segment_start = lod * 30;
         iter->segment_bytes = SEGMENT_SIZE;
