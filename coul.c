@@ -3500,8 +3500,9 @@ static inline double gr_now(void) {
 /* The cost of what the run has done, counted rather than timed, so that
  * learning depends neither on the machine's load nor on luck, and two
  * identical runs make identical choices: walk iterations and inverse
- * filter entries tested, primes tried by walk_1_set() and the recursion,
- * each at its cost from the cost table; each test's preparation by where
+ * filter entries tested, primes tried by walk_1_set() and the recursion
+ * (those reaching apply_single() below a fixed square at cprimesq), each
+ * at its cost from the cost table; each test's preparation by where
  * its trial division stopped, and the factoring ladder at its expected
  * cost (see cm_prep_price(), cm_pprep_price(), cm_price_prime() and
  * cm_ladder_cost()).
@@ -3521,6 +3522,7 @@ static inline double cc_work(void) {
             + cc.sq_inv * c[CM_SQTEST]
             + cc.w1s_prime * c[CM_W1SITER] + cc.w1s_check * c[CM_W1SCHECK]
             + cc.rec_prime * c[CM_CPRIME]
+            + cc.rec_sq * (c[CM_CPRIMESQ] - c[CM_CPRIME])
             + cc.rec_applied * c[CM_CAPPLY]
             + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
@@ -7135,6 +7137,9 @@ void recurse(e_is jump_continue) {
                     diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
                 goto continue_unforced;
             }
+            /* below a fixed square, the roots are extended to each prime */
+            if (prev_level->have_square)
+                ++cc.rec_sq;
             /* note: this returns 0 if t=1 */
             if (!apply_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x
