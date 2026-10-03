@@ -90,6 +90,28 @@ if (1) {
         } [], [qw{ -k1e4 }];
         is($walks[1], $walks[0], '-k makes no pass in a STRATEGY_6X batch');
     }
+    # the sweep starts from the highest limit, here of p^2, though that
+    # of the pass is more than 2^31 below it
+    expect_diag(q{-W sweeps from the highest limit}, 8,
+        [qw{ -k5e8 -W3e4 -b2 -x1713329413278777621219490657300 18 5 }],
+        'b2: . 2 3^2 2^2.5^2 . W(8360972897,3,0)',
+    );
+    # but -k takes such a batch where that is estimated to cost less
+    {
+        my @count = map {
+            my $lines = run_test($type, [ @$_, qw{ -b0 -x1e26 66 4 } ], 0);
+            ($lines->{367}[0] // '') =~ /recurse (\d+)/ ? $1 : -1;
+        } [], [qw{ -k100 }];
+        ok($count[1] >= 0 && $count[1] * 10 < $count[0],
+                '-k takes a batch from STRATEGY_6X where it is cheaper')
+            or diag("recursions @count");
+    }
+    {
+        my $lines = run_test($type, [qw{ -k30 -X -x1e13 30 3 }], 0);
+        my %seen;
+        ++$seen{$_} for map /^202 Candidate (\d+)/, @{ $lines->{202} // [] };
+        is(0 + keys %seen, 13, 'all f(30,3) candidates to 1e13 found so');
+    }
     # a position with tau 6 left is passed over where another has 18
     # and nothing is allocated there, so that -W need not sweep it; -K
     # keeps some of them
