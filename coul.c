@@ -96,7 +96,7 @@ mpz_t *wv_o, *wv_qq;        /* size [k] */
 mpz_t *mint_best, *mint_px; /* size [sumpm(n / high(n))] */
 /* for failure diagnostics */
 mpz_t *g_q0;
-uint g_ati;
+ulong g_ati;
 
 /* used to store disallowed inverses in walk_v() */
 typedef struct s_mod {
@@ -992,7 +992,7 @@ void init_levels(void) {
     levels[0].vi_depth = 1;
     if (forcedp + 1 > 8 * sizeof(levels[0].fp_need))
         fail("FIXME: too many forced primes");
-    levels[0].fp_need = (1 << forcedp) - 1;
+    levels[0].fp_need = (1U << forcedp) - 1;
     memset(levels[0].pfreev, 0xff, pfree_vecsize * sizeof(uint));
     for (uint j = 0; j < k; ++j)
         cur_vlevel[j] = 1;
@@ -1376,6 +1376,11 @@ void init_pre(void) {
     flip_recover.valid = 0;
 }
 
+static inline bool is_prime_ul(ulong p) {
+    mpz_set_ui(Z(temp), p);
+    return _GMP_is_prob_prime(Z(temp)) ? 1 : 0;
+}
+
 /* Parse a "305" log line for initialization.
  * Input string should point after the initial "305 ".
  * If 'expanded' is true, expects a "315" expanded line instead.
@@ -1419,9 +1424,12 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
             if (pp.p == 1 || pp.e == 0)
                 ;
-            else if (pp.e == 1)
-                simple_fact(pp.p, &stack->f[i]);
-            else
+            else if (pp.e == 1 && !is_prime_ul(pp.p)) {
+                /* -I allows unfactored entries, but only small ones */
+                if (pp.p > UINT_MAX)
+                    fail("517 unfactored entry %lu is too large", pp.p);
+                simple_fact((uint)pp.p, &stack->f[i]);
+            } else
                 add_fact(&stack->f[i], pp);
             if (expanded && s[0] == '(') {
                 uint off = strtoul(&s[1], &s, 10);
@@ -2641,7 +2649,7 @@ uint find_nextpi(t_level *cur, uint pi) {
     uint off = pi >> 5;
     uint bit = pi & 0x1f;
     while (off < pfree_vecsize) {
-        uint v = pv[off] & ~((1 << bit) - 1);
+        uint v = pv[off] & ~((1U << bit) - 1);
         int ffs = __builtin_ffs((int)v);
         if (ffs)
             return (off << 5) + ffs - 1;
@@ -2899,7 +2907,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         return;
 #endif
     if (!cur_level->have_min) {
-        uint min = minp[cur_level->x - 1];
+        ulong min = minp[cur_level->x - 1];
         if (min)
             level_setp(cur_level, min);
         return;
@@ -3270,7 +3278,7 @@ void walk_1(t_level *cur_level, uint vi) {
         return;
 #endif
     if (!cur_level->have_min) {
-        uint min = minp[cur_level->x - 1];
+        ulong min = minp[cur_level->x - 1];
         if (min)
             level_setp(cur_level, min);
         return;
@@ -3707,7 +3715,7 @@ void apply_pfreev(t_level *prev_level, t_level *cur_level, ulong p) {
     if (p == 0 || p > lastprime)
         return;
     uint pi = ptoi[p];
-    pfreev[pi >> 5] &= ~(1 << (pi & 0x1f));
+    pfreev[pi >> 5] &= ~(1U << (pi & 0x1f));
 }
 
 /* Update level structure for the allocation of p^{x-1} to v_{vi}.
@@ -3846,8 +3854,8 @@ static inline void state_extend(signed short i) {
     uint nextbit = next & 0x1f;
     uint depth = s->pfreedepth;
     while (depth <= i) {
-        assert(nextoff < pfree_vecsize);
-        uint v = pv[nextoff] & ~((1 << nextbit) - 1);
+        assert(nextoff < pfree_vecsize && nextbit < 8 * sizeof(uint));
+        uint v = pv[nextoff] & ~((1U << nextbit) - 1);
         nextbit = __builtin_ffs((int)v);
         if (nextbit) {
             s->pfreei[depth] = (nextoff << 5) + (nextbit - 1);
@@ -4276,7 +4284,7 @@ bool apply_batch(
 
     if (bp->x[vi] == 0) {
         apply_null(prev_level, cur_level, fp->p);
-        cur_level->fp_need &= ~(1 << fpi);
+        cur_level->fp_need &= ~(1U << fpi);
         return 1;
     }
     cur_level->have_min = prev_level->have_min;
@@ -4301,7 +4309,7 @@ bool apply_batch(
         if (vp->alloc[ cur_vlevel[vj] - 1 ].t == 1)
             terminal = vj;
     }
-    cur_level->fp_need &= ~(1 << fpi);
+    cur_level->fp_need &= ~(1U << fpi);
 
     if (terminal < k) {
         /* we have a value fully allocated, so test it unless we are
@@ -4750,7 +4758,7 @@ void walk_6x(uint vi) {
      */
     if (vlevel > sizeof(uint) * 8 - 1)
         fail("FIXME: too many factors for STRATEGY_6X");
-    uint a_start = (1 << vlevel) - 2;
+    uint a_start = (1U << vlevel) - 2;
     if (b6x_recover.valid) {
         /* on recover, skip to the bit-vector value that was in progress */
         if (b6x_recover.vi != vi)
@@ -4765,7 +4773,7 @@ void walk_6x(uint vi) {
     for (uint a = a_start; a; a -= 2) {
         mpz_set_ui(Z(j4a), 1);
         for (uint i = 1; i < vlevel; ++i) {
-            if ((a & (1 << i)) == 0)
+            if ((a & (1U << i)) == 0)
                 continue;
             ap = &vp->alloc[i];
             if (ap->p == 2)
@@ -5419,7 +5427,7 @@ e_is insert_stack(void) {
         /* insert recovery forced primes */
         for (uint fpi = 0; fpi < forcedp; ++fpi) {
             /* skip if already inserted via init pattern */
-            if ((levels[level - 1].fp_need & (1 << fpi)) == 0)
+            if ((levels[level - 1].fp_need & (1U << fpi)) == 0)
                 continue;
             if (!insert_forced(rstack->f, NULL, fpi, &jump, 0))
                 goto insert_check;
