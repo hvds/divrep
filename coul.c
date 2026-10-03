@@ -248,6 +248,7 @@ bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
  */
 ulong kern_b = 0;
 static inline bool kern_batch(void);    /* below, with the rest of -k */
+bool kern_passed(uint vi);
 bool in_b6x = 0;        /* true while a STRATEGY_6X candidate is on trial */
 uint b6x_vi;            /* the v_i it is on trial for */
 bool in_flip = 0;       /* true while run_flip_pqsq() is proceeding */
@@ -4695,9 +4696,24 @@ void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
     mintau_restricted_r(0, mint, t, r, ri);
 }
 
-/* true if -k applies to this batch: one that fixes exactly one square */
+/* What -k does in the current batch, worked out once the batch is
+ * complete: whether it applies at all, and as bit vectors the positions
+ * it applies to and those passed over.
+ * It applies to a batch that fixes exactly one square, unless that is
+ * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
+ * at v_{i-2} and gains nothing from the pass.
+ */
+typedef struct {
+    int id;
+    uint level;
+    bool on;
+    ulong at, passed;
+} t_kern;
+static t_kern *kern_state(void);
+
+/* true if -k applies to this batch */
 static inline bool kern_batch(void) {
-    return kern_b && levels[cur_batch_level].have_square == 1;
+    return kern_b && kern_state()->on;
 }
 
 /* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
@@ -4718,49 +4734,69 @@ static inline uint kern_tau(uint vi) {
     return vp->alloc[vil - 1].t;
 }
 
-/* The positions that -k applies to in this batch, as a bit vector: those
- * that needed a prime to an odd power and something more besides once
- * the batch was complete.
+/* true if the current batch is one STRATEGY_6X takes, see apply_secondary() */
+static bool kern_6x(void) {
+#if defined(TYPE_o)
+    if ((n & 3) == 2 && sq0 >= 2) {
+        t_value *vp = &value[sq0];
+        for (uint i = 1; i < cur_vlevel[sq0]; ++i)
+            if (vp->alloc[i].p == 2)
+                return vp->alloc[i].x == 2;
+    }
+#endif
+    return 0;
+}
+
+/* See t_kern. The positions -k applies to are those that needed a prime
+ * to an odd power and something more besides once the batch was
+ * complete.
  * A position with tau 6 left takes a single p^2 besides, with p up to
  * the square root of what is left, far too many to loop over until
  * little else remains. Where another position will take a square as its
  * last allocation after others, that square has a lower limit and
  * leaves a smaller walk, so it is always preferred, and by then the
- * walk is too small for more: so the first is then left out, and
- * walk_midp() spared its primes. (Recursion counts were unchanged by
- * this for D(n,4), D(n,5), n in 18, 30, 54, 90, 126.)
+ * walk is too small for more. So the first is then passed over: nothing
+ * is allocated there at all, by walk_midp() or by any strategy, and the
+ * walks cover it. (Recursion counts were unchanged by this for D(n,4),
+ * D(n,5), n in 18, 30, 54, 90, 126.)
  */
-static ulong kern_mask(void) {
-    static ulong mask = 0;
-    static int id = -1;
-    static uint lev = ~0U;
-    if (id != batch_alloc || lev != cur_batch_level) {
+static t_kern *kern_state(void) {
+    static t_kern ks = { -1, ~0U, 0, 0, 0 };
+    if (ks.id != batch_alloc || ks.level != cur_batch_level) {
         bool later = 0;
-        id = batch_alloc;
-        lev = cur_batch_level;
-        mask = 0;
+        ks.id = batch_alloc;
+        ks.level = cur_batch_level;
+        ks.at = 0;
+        ks.passed = 0;
+        ks.on = (levels[cur_batch_level].have_square == 1 && !kern_6x());
+        if (!ks.on)
+            return &ks;
         for (uint vi = 0; vi < k; ++vi) {
             uint t = kern_tau(vi);
             if (t > 2 && (t & 3) == 2) {
-                mask |= 1UL << vi;
+                ks.at |= 1UL << vi;
                 if (t > 6 && t % 6 == 0)
                     later = 1;
             }
         }
-        /* not under -W, whose sweep needs the lower limit there */
-        if (later && !need_midp)
+        if (later)
             for (uint vi = 0; vi < k; ++vi)
-                if (kern_tau(vi) == 6)
-                    mask &= ~(1UL << vi);
+                if (kern_tau(vi) == 6) {
+                    ks.at &= ~(1UL << vi);
+                    ks.passed |= 1UL << vi;
+                }
     }
-    return mask;
+    return &ks;
 }
 
-/* true if v_i is a position that -k applies to in this batch, one that
- * fixes exactly one square
- */
+/* true if v_i is a position that -k applies to in this batch */
 bool kern_at(uint vi) {
-    return kern_batch() && ((kern_mask() >> vi) & 1);
+    return kern_batch() && ((kern_state()->at >> vi) & 1);
+}
+
+/* true if v_i is passed over in this batch */
+bool kern_passed(uint vi) {
+    return kern_batch() && ((kern_state()->passed >> vi) & 1);
 }
 
 /* As mintau() for the tau t left at v_i, but under -k the prime taking
@@ -4839,8 +4875,10 @@ void prep_midp(t_level *cur_level) {
             continue;
         if (highpow ? t == 1 : ispow2(t))
             continue;
-        /* under -k no strategy allocates at any square, see below */
-        if ((t & 1) && kern_batch())
+        /* under -k no strategy allocates at any square, see below, nor
+         * at a position passed over
+         */
+        if (((t & 1) && kern_batch()) || kern_passed(vi))
             continue;
         /* Under need_maxp no strategy allocates at a position whose
          * remaining tau is an odd prime: best_v0() .. best_v4() skip it
@@ -5216,6 +5254,8 @@ uint best_v0(t_level *cur_level) {
         if ((tj & 1) && (kern_batch()
                 || (need_maxp && divisors[tj].alldiv == 2)))
             continue;
+        if (kern_passed(vj))
+            continue;
         if (ti) {
             /* skip if not higher tau, or same tau with higher q */
             if (tj < ti)
@@ -5253,6 +5293,8 @@ uint best_v1(t_level *cur_level) {
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
                 || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         if (ti) {
             uint hi = divisors[ti].high;
@@ -5294,6 +5336,8 @@ uint best_v2(t_level *cur_level) {
         if ((tj & 1) && (kern_batch()
                 || (need_maxp && divisors[tj].alldiv == 2)))
             continue;
+        if (kern_passed(vj))
+            continue;
         if (ti) {
             /* skip if not lower tau, or same tau with higher q */
             if (tj > ti)
@@ -5329,6 +5373,8 @@ uint best_v3(t_level *cur_level) {
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
                 || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         /* shortcircuit if single allocation of (even) sqrt(n) */
         if ((tj & 1) == 0 && apj->x == apj->t) {
@@ -5387,6 +5433,8 @@ uint best_v4(t_level *cur_level) {
         /* skip prime powers when capped, and any square under -k */
         if ((tj & 1) && (kern_batch()
                 || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         uint hj = divisors[tj].high;
         if (ti) {
@@ -5616,8 +5664,8 @@ uint best_fixed(t_level *cur_level) {
     if ((t & 1) && (kern_batch()
             || (need_maxp && divisors[t].alldiv == 2)))
         return BV_WALK;
-    /* nor a -k position with only its odd power to come */
-    if (t == 2 && kern_at(vi))
+    /* nor a -k position with only its odd power to come, or passed over */
+    if ((t == 2 && kern_at(vi)) || kern_passed(vi))
         return BV_WALK;
     return vi;
 }
@@ -6212,6 +6260,8 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
             continue;
         if ((ti & 1) && (kern_batch()
                 || (need_maxp && divisors[ti].alldiv == 2)))
+            continue;
+        if (kern_passed(vi))
             continue;
         /* a position alike to one before it (or to the strategy's
          * choice) cannot improve on it
