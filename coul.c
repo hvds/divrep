@@ -172,9 +172,10 @@ static inline void level_setp(t_level *lp, ulong p) {
 
 /* list of some small primes, at least enough for one per allocation,
  * and a reverse lookup */
+#define MAX_NSPRIMES 32767      /* indexed and counted by short */
+uint nsprimes;
 uint *sprimes = NULL;
 uint *ptoi = NULL;
-uint nsprimes;
 uint lastprime;
 
 /* set to utime at start of run, minus last timestamp of recovery file */
@@ -370,6 +371,7 @@ typedef struct s_mint {
 } t_mint;
 typedef struct s_mint_state {
     uint *pfreev;       /* bit vector of available primes */
+    /* the rest need MAX_NSPRIMES < 32768 */
     ushort *pfreei;     /* list of free prime indices */
     ushort pfreenext;   /* where to start looking for next free prime */
     ushort pfreedepth;  /* number of free primes found */
@@ -1112,7 +1114,7 @@ void prep_mintau(void) {
 
     uint maxtau = target_lcm / divisors[target_lcm].high;
     dp = &divisors[maxtau];
-    ushort maxdepth = dp->sumpm;
+    uint maxdepth = dp->sumpm;
     pfree_vecsize = (nsprimes + 31) >> 5;
     t_mint_state *s = &mint_state;
     s->pfreei = calloc(maxdepth, sizeof(ushort));
@@ -1169,7 +1171,7 @@ void done_mintau(void) {
 
     uint maxtau = target_lcm / divisors[target_lcm].high;
     t_divisors *dp = &divisors[maxtau];
-    ushort maxdepth = dp->sumpm;
+    uint maxdepth = dp->sumpm;
     for (uint i = 0; i < maxdepth; ++i) {
         mpz_clear(mint_best[i]);
         mpz_clear(mint_px[i]);
@@ -1782,6 +1784,9 @@ void prep_primes(void) {
      * In mintau() we may need maxfact primes beyond what may have been
      * allocated in k-1 places. */
     nsprimes = (highpow ? maxfact : maxodd) * k + forcedp + (maxfact - maxodd);
+    if (nsprimes > MAX_NSPRIMES)
+        fail("require at most %u small primes, not %u",
+                MAX_NSPRIMES, nsprimes);
     sprimes = malloc(nsprimes * sizeof(uint));
     if (debugm)
         fprintf(stderr, "nsprimes %u\n", nsprimes);
@@ -3846,6 +3851,7 @@ static inline void mint_init_state(t_level *cur_level) {
     s->pfreedepth = 0;
 }
 
+/* needs MAX_NSPRIMES < 32768 */
 static inline void state_extend(signed short i) {
     t_mint_state *s = &mint_state;
     uint *pv = s->pfreev;
@@ -3868,6 +3874,7 @@ static inline void state_extend(signed short i) {
     s->pfreenext = (nextoff << 5) + nextbit;
     s->pfreedepth = depth;
 }
+/* needs MAX_NSPRIMES < 32768 */
 static inline signed short state_pfi(signed short i) {
     t_mint_state *s = &mint_state;
     assert(i >= 0);
@@ -3881,6 +3888,7 @@ static inline bool mintau_check_known(
 ) {
     t_mint_state *s = &mint_state;
     for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
+        /* needs MAX_NSPRIMES < 32768 */
         ushort off = state_pfi(depth)
                 - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
         t_mint_capped *capped = mint_capped(mtp, off, 0);
@@ -3900,6 +3908,7 @@ static inline void mintau_cache_result(
 ) {
     t_mint_state *s = &mint_state;
     for (uint depth = depth0; mtp && depth <= maxdepth; ++depth) {
+        /* needs MAX_NSPRIMES < 32768 */
         ushort off = state_pfi(depth)
                 - ((depth == depth0) ? 0 : s->pfreei[depth - 1]);
         signed short next = (depth < maxdepth) ? state_pfi(depth + 1) : -1;
@@ -3934,7 +3943,7 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
 
     t_divisors *dp = &divisors[t];
     t_mint_state *s = &mint_state;
-    ushort maxdepth = depth0 - 1 + dp->sumpm;
+    uint maxdepth = depth0 - 1 + dp->sumpm;
 
     /* check if we already know this mintau */
     if (mintau_check_known(mint_base[t], mint, depth0, maxdepth))
@@ -4011,7 +4020,7 @@ void mintau_restricted_r(ushort depth0, mpz_t mint, uint t, uint r, uint ri) {
 
     t_divisors *dp = &divisors[t];
     t_mint_state *s = &mint_state;
-    ushort maxdepth = depth0 - 1 + dp->sumpm;
+    uint maxdepth = depth0 - 1 + dp->sumpm;
 
     /* check if we already know this mintau */
     if (mintau_check_known(mint_base_restricted[ri][t], mint, depth0, maxdepth))
