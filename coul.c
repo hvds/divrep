@@ -1992,7 +1992,12 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
 void prep_forcep(void) {
     mpz_t pz;
     uint p;
+#if defined(TYPE_o) || defined(TYPE_r)
     uint pi[k];
+#elif defined(TYPE_a)
+    /* we also force each p | n */
+    uint pi[k + nf.count];
+#endif
 
     forcedp = 0;
     mpz_init_set_ui(pz, 1);
