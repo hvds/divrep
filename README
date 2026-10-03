@@ -107,7 +107,7 @@ The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
       [-g<damp:gain>] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
-      [-j<strategy>] [-ja<level>] [-k<bound>] [-K<count>] <n> <k>
+      [-j<strategy>] [-ja<level>] [-k<bound>|-ka] [-K<count>] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
 you will usually invoke it as "pcoul" or as "pcoul.exe".
@@ -194,9 +194,22 @@ over, which can pay with "-W" where few positions are left. A batch that
 the special strategy for "2z^2" two places after a power of 2 can take
 is left to it, unless the search under "-k" is estimated to cost less.
 In a batch "-k" applies to, "-j4" and "-js" allocate no p^{2^z-1}.
-The script "kplan" estimates the cost of each batch for a range of "-k",
-"-W" and "-K", and shows the cheapest.
 Default is not to do this.
+
+If "-ka" is specified, the bound of "-k" is chosen for each batch it
+applies to by estimated cost, along with the bound of "-W" and the count
+of "-K" unless those are given. Each choice is estimated by following the
+search of the batch in the abstract under "-ja1", which "-ka" implies. A
+batch is left without "-k" if it would take under 10ms to walk whole, or
+if no choice is estimated to cost less than that walk.
+The choice is shown on a line for the batch (203), as "[k=<bound>]"
+("[k=0]" if "-k" is not to apply), "[W=<bound>]" if a sweep was chosen,
+"[K=<count>]", and "[est=<seconds>]". It is also logged with each
+progress line (in 316), and a recovered run continues the batch with what
+was logged rather than choosing again. With "-a" the choices are listed
+without running anything. The script "kplan" makes the same estimates
+outside pcoul, for given "-k", "-W" and "-K" as well, and shows what
+each is made up of.
 
 "-p" and "-W" may also be specified in the form "100^2" rather than
 as a simple integer, in which case it expresses a limit on the

@@ -259,7 +259,7 @@ sub estimate {
 # parse a batch from a 203 line of pcoul -a
 sub batch {
     my($line) = @_;
-    $line =~ /^203 b(\d+): (.*?)((?: \[\w+=\d+\])*) \(/ or return undef;
+    $line =~ /^203 b(\d+): (.*?)((?: \[\w+=[\d.]+\])*) \(/ or return undef;
     my($id, $alloc, $tags) = ($1, $2, $3);
     my %tag = $tags =~ /\[(\w+)=(\d+)\]/g;
     my @v;

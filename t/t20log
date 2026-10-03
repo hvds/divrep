@@ -19,7 +19,8 @@ use Type;
 # - every expanded (315) line marks some level, since it is written only
 #   when a level on its path needs its mark for recovery.
 # - with -ja, each is preceded by a well-formed 316 line of what has
-#   been learnt, for recovery to carry on from.
+#   been learnt, for recovery to carry on from; and with -ka that has
+#   what was chosen for the batch.
 # Progress may still show an allocation that then fails to apply, or
 # fails walk_1_set()'s checks. Recovery retries those, so that's fine.
 
@@ -36,7 +37,8 @@ if ($ENV{DEBUG}) {
 my $cap = 100000;
 for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }],
         [qw{ -ja2 -x1e14 12 4 }], [qw{ -ja2 -j2 -x1e7 36 4 }],
-        [qw{ -ja2 -j4 -x1e7 12 4 }], [qw{ -ja2 -k30 -x1e14 54 4 }]) {
+        [qw{ -ja2 -j4 -x1e7 12 4 }], [qw{ -ja2 -k30 -x1e14 54 4 }],
+        [qw{ -ka -x1e16 6 4 }]) {
     my $fh = File::Temp->new;
     my $path = $fh->filename;
     $fh->close;
@@ -46,21 +48,25 @@ for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }],
     my($lines, $invalid, $lost, $unmarked, $unlearnt) = (0, 0, 0, 0, 0);
     my(@invalid, @lost, @unmarked, @unlearnt);
     my($last, %shown);
-    my $ja = grep /^-ja/, @$args;
+    my $ja = grep /^-(?:ja|ka)/, @$args;
+    my $ka = grep $_ eq '-ka', @$args;
     my $num = qr{\d+(?:\.\d+)?(?:e[-+]\d+)?};
     my $by_level = qr{ \d+:$num,$num,\d+(?:,$num,$num){3}};
     my $by_qlevel = qr{ q\d+:$num,$num,\d+};
     my $by_size = qr{ [rsf]-?\d+:$num,$num};
-    my $learnt = 0;
+    my $by_plan = qr{ k\d+:\d+,\d+,\d+};
+    my($learnt, $planned) = (0, 0);
     while (<$log>) {
         chomp;
         if (/^316 /) {
-            $learnt = /^316 $num \d+$by_level*$by_qlevel*$by_size*$/;
+            $learnt = /^316 $num \d+$by_level*$by_qlevel*$by_size*$by_plan?$/;
+            $planned = /$by_plan$/;
             next;
         }
         next unless /^3([01])5 (b\S+: .*?)( \(|: \d+ \/| (?:W|F|6X)\()/;
         my($s, $plain) = ($2, $3 eq ' (');
-        if ($ja && !$learnt) {
+        # every batch of the -ka case is one it chooses for
+        if ($ja && !($learnt && ($planned || !$ka || $s =~ /^b\*/))) {
             push @unlearnt, $_ if ++$unlearnt <= 3;
         }
         $learnt = 0;

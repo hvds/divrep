@@ -158,6 +158,31 @@ if (1) {
         is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
                 $expect, $legend);
     }
+    # few of those are in a batch -k applies to; in these two all are,
+    # the first with a position passed over, and -ka chooses the bounds
+    for my $case ([ 4, '1e14', 6 ], [ 19, '1e13', 9 ]) {
+        my($batch, $max, $count) = @$case;
+        for my $opts (
+            [], [qw{ -k1e3 }], [qw{ -k1e5 -ja1 }], [qw{ -k1e4 -W1e3 -K1 }],
+            [qw{ -ka }], [qw{ -ka -ja2 }], [qw{ -ka -W300 }],
+        ) {
+            my $lines = run_test($type,
+                    [ @$opts, "-b$batch", '-X', "-x$max", 18, 3 ], 0);
+            my %seen;
+            ++$seen{$_} for map /^202 Candidate (\d+)/,
+                    @{ $lines->{202} // [] };
+            is(0 + keys %seen, $count, "all f(18,3) candidates of b$batch"
+                    . " to $max found with '@$opts'");
+        }
+    }
+    # -ka shows what it chose for a batch, here a sweep as well
+    {
+        my $lines = run_test($type, [qw{ -a -ka -x1e20 -f3 6 5 }], 0);
+        my $tags = join ' ', map "\\[$_\\]",
+                qw{ sq=1 rc=8 k=\d+ W=\d+ est=[\d.]+ aq=1800 };
+        like($lines->{203}[0] // '', qr{^203 b0: \. 2 3\^2 2\^2 5\^2 $tags },
+                '-ka shows the bounds chosen for a batch');
+    }
 
     count_batch(q{batches without constraint},
             56, '', $args124);
@@ -257,6 +282,19 @@ if (1) {
         ['305 b0: . 2 3^2 2^2 5^2 W(769,2,0)'],
         'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
     );
+    # under -ka a recovered batch goes on with the bounds logged for it
+    {
+        my $fh = temp_log([
+            '316 0 0 k1:1000,0,0', '305 b0: . 2 3^2 2^2 5^2 W(769,2,0)',
+        ]);
+        my $lines = run_test($type, [
+            '-dW1', '-r' . $fh->filename, qw{ -x1e20 -f3 -ka 6 5 },
+        ], 1);
+        like($lines->{203}[0] // '', qr{^203 b0: .* \[k=1000\] \(},
+                'recover -ka: bounds as logged');
+        is($lines->{''}[-1] // '', 'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
+                'recover -ka pass');
+    }
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
         $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],
