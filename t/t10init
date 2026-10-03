@@ -249,7 +249,9 @@ if (1) {
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }],
         'b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)',
     );
-    expect_recurse_count(q{6x search is exhaustively correct, 90 4}, 59,
+    # (one fewer than is applied: 59^2 after 5^2 has roots 1547 and 1934
+    # mod 59^2, both past the greatest root 939, see reject_square())
+    expect_recurse_count(q{6x search is exhaustively correct, 90 4}, 58,
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 
@@ -272,7 +274,7 @@ if (1) {
         [qw{ -g1000 -x20000 -jp -b2 30 4 }]);
 
     expect_recover_recurse_count(q{recover 6x from its own diag point, 90 4},
-        55, ['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)'],
+        54, ['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)'],
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 

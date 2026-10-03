@@ -37,7 +37,7 @@ typedef struct {
     bool on;
     ulong lin_walks, lin_iter, lin_inv, sq_walks, sq_iter, sq_inv,
             pell_iter, w1s_prime, w1s_check, rec_prime, rec_applied,
-            rec_sq;
+            rec_sq, rec_root;
     double test, base;
 } t_cc;
 extern t_cc cc;

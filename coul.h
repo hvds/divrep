@@ -64,6 +64,13 @@ typedef struct s_level {
      */
     bool rj_ok, rj_limb;
     ulong rj_k;
+    /* likewise whether, for which difference of offsets and above which
+     * root, one can be rejected for the fixed square (see
+     * reject_square())
+     */
+    bool rs_ok;
+    long rs_d;
+    ulong rs_endr;
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;
