@@ -33,8 +33,7 @@ position's limit).
 
 The costs per prime, child and root are those of pcoul's cost model (see
 gq_recurse() in coul.c), with a cost per prime for the pass and for the
-sweep fitted to D(18,5) (3us, and 2.1us at 1e22 rising to 3.3us at
-1.7e30); C<-c> scales the cost per root, which depends on the tests a
+sweep fitted to D(18,5); C<-c> scales the cost per root, which depends on the tests a
 candidate goes on to. Estimates were within 30% of runs of D(18,5) at
 1e22 and 1e24 for each batch, and agreed on the number of nodes and of
 roots to a few percent; the times are for the machine the cost table
@@ -55,10 +54,13 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
 defined($k) && defined($o{x}) or die "Usage: $0 [options] -x<max> n k\n";
 my $z = 0 + $o{x};
 
-# costs in seconds: per prime tried, per prime whose roots are extended,
-# per child applied, per walk, per root (set for each batch), per prime
-# of a sweep, of a STRATEGY_6X loop, and of the pass at one position
+# costs in seconds: per prime tried, per root taken by reject_square(),
+# per prime whose roots are extended, per child applied, per walk, per
+# root walked (set for each batch), per prime of a sweep where
+# reject_square() does not apply, of a STRATEGY_6X loop, and of the pass
+# at one position
 my $C_TRY = 0.12e-6;
+my $C_FAST = 0.6e-6;
 my $C_APP = 2.2e-6;
 my $C_CHILD = 0.5e-6;
 my $C_SETUP = 1.7e-6;
@@ -141,20 +143,33 @@ sub loop_cost {
         my $pe = $p ** $e;
         # only those giving a least v_0 within the bound are applied
         my $s = min(1, $node->{zl} / $pe);
-        $cost += $c * ($C_TRY + $s * $C_APP);
-        next unless $f;
+        # and for p^2 against a square, only those that divide, with a
+        # root in range (see reject_square() in coul.c)
+        my $r = 1;
+        if ($e == 2 && $node->{endr}) {
+            $cost += $c * $C_TRY;
+            next unless $f;
+            if ($pe > $node->{endr}) {
+                $cost += $c * $s * $f * $C_FAST;
+                $r = min(1, 2 * $node->{endr} / $pe);
+            }
+            $cost += $c * $s * $f * $r * $C_APP;
+        } else {
+            $cost += $c * ($C_TRY + $s * $C_APP);
+            next unless $f;
+        }
         my @sl = @{ $pos->{slots} };
         shift @sl;
         my @cp = @{ $node->{pos} };
         $cp[$j] = { %$pos, Z => $pos->{Z} / $pe, slots => \@sl,
                 lastp => $p, laste => $e };
         my $cc = $child->({
-            roots => $node->{roots} * 2 / $pe, zl => $node->{zl} / $pe,
-            pos => \@cp,
+            roots => $node->{roots} * 2 / $pe / $r, zl => $node->{zl} / $pe,
+            pos => \@cp, endr => $node->{endr},
             used => ($c == 1) ? { %{ $node->{used} }, $p => 1 }
                     : $node->{used},
         });
-        my $w = $c * $s * $f;
+        my $w = $c * $s * $f * $r;
         $cost += $w * ($C_CHILD + $cc->[0]);
         $app += $w * (1 + $cc->[1]);
         $roots += $w * $cc->[2];
@@ -197,6 +212,7 @@ sub estimate {
         };
     }
     my $root = { roots => $bt->{roots}, zl => $z / $bt->{aq}, pos => \@pos,
+            endr => $bt->{endr},
             used => { map +($_ => 1), grep $bt->{aq} % $_ == 0, @small } };
     my $pass = $C_PELL * @pos * pc($B);
     my $sweep = 0;
@@ -213,8 +229,19 @@ sub estimate {
                 my $L = ($p->{Z} / $other) ** (1 / $e);
                 next if $L <= $W;
                 # each prime tried, and the roots of the half that divide
-                $sweep += $C_SWEEP * (pc($L) - pc($W)) + $C_ROOT
+                my $np = pc($L) - pc($W);
+                $sweep += $C_ROOT
                         * $bt->{roots} * $W ** (1 - $e) / ($e - 1) / log($W);
+                if ($e == 2 && $bt->{endr}) {
+                    # a root for that half, and the residues extended for
+                    # those with one in range
+                    my $re = max($W, sqrt(2 * $bt->{endr}));
+                    $sweep += $np * ($C_TRY + $C_FAST / 2)
+                            + ($C_APP + $C_SETUP) * ((pc($re) - pc($W)) / 2
+                                + $bt->{endr} / $re / log($re));
+                } else {
+                    $sweep += $C_SWEEP * $np;
+                }
             }
         }
     }
@@ -253,6 +280,7 @@ sub batch {
     my $g = gcd(map $_ - 1, grep $_ > 1, divisors($v[$bt->{sq0}][1]));
     $bt->{roots} = ($z / $bt->{qs}) ** (1 / $g) * $bt->{qs} * $tag{rc}
             / $bt->{aq};
+    $bt->{endr} = ($g == 2) ? sqrt($z / $bt->{qs}) : 0;
     $bt->{six} = ($n % 4 == 2 && $bt->{sq0} >= 2
             && ($v[$bt->{sq0}][3]{2} // 0) == 1);
     # the least prime free to allocate
