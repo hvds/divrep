@@ -41,6 +41,7 @@
  *   (if compiled with TYPE_t): tau(n + di) = tau(n)
  * (TYPE_t not yet supported.)
  */
+#define MAXK 66     /* nextprime(8 * sizeof(ulong)) - 1 */
 uint n, k;
 
 /* mpz_t passed as function parameter decays to pointer in a way that
@@ -1934,10 +1935,11 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
         /* Earlier element cannot have same or higher power of p */
         return TFP_BAD;
     }
+    /* can fail for pcaul when p | n */
     if (p > 8 * sizeof(ulong))
         fail("TODO: cope with p > %u", 8 * sizeof(ulong));
     /* set bits for moduli 1 .. p - 1 */
-    ulong seen_same = (1 << p) - 2;
+    ulong seen_same = (1UL << p) - 2;   /* needs MAXK < 67 */
     for (uint j = 1; j + vi < k; ++j) {
         uint vj = vi + j;
         uint off = TYPE_OFFSET(j);
@@ -1961,7 +1963,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
          * exceed the (p-1) possible values mod p */
         for (uint i = 0; i < ei; ++i)
             off /= p;
-        seen_same &= ~(1 << (off % p));
+        seen_same &= ~(1UL << (off % p));   /* needs MAXK < 67 */
     }
     if (seen_same == 0)
         /* all moduli seen, so one must have a higher power of p */
@@ -5931,6 +5933,8 @@ int main(int argc, char **argv, char **envp) {
         k = strtoul(argv[i++], NULL, 10);
         if (k < 1)
             fail("require k >= 1, not %lu", k);
+        if (k > MAXK)
+            fail("require k <= %u, not %u", MAXK, k);
     } else
         fail("wrong number of arguments");
     if (force_all > k)
