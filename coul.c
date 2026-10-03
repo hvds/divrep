@@ -4075,7 +4075,7 @@ void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
 int midpp_comparator(const void *va, const void *vb) {
     t_midpp *ma = (t_midpp *)va;
     t_midpp *mb = (t_midpp *)vb;
-    return mb->maxp - ma->maxp;
+    return (mb->maxp > ma->maxp) - (mb->maxp < ma->maxp);
 }
 
 /* Populate midpp[] with the capped min and max p for each possible
