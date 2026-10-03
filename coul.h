@@ -53,6 +53,7 @@ typedef struct s_level {
      * current x began, and the estimated cost of walking the node
      */
     double ja_t0, ja_ew;
+    unsigned char ja_wp;
     bool ja_on;
     double ja_xt0, ja_w;
     double *ja_ex;
