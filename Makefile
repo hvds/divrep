@@ -94,8 +94,9 @@ all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
 pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
-test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
+test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR} t/t05pell
 	gcc -o test_pell -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+	t/t05pell
 
 ftest: Makefile ftest.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o ftest -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ftest.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
@@ -108,12 +109,10 @@ sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h p
 
 # coul.h may need a type
 test_pell: DEFINES += -DTYPE_o
-test: pcoul pcaul pcrul test_pell
-	t/t05pell
+test: pcoul pcaul pcrul
 	t/t10init
 	t/t20log
 
-dtest: dpcoul dpcaul dpcrul test_pell
-	t/t05pell
+dtest: dpcoul dpcaul dpcrul
 	DEBUG=1 t/t10init
 	DEBUG=1 t/t20log

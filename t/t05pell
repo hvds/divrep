@@ -2,8 +2,9 @@
 BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
 use strict;
 use warnings;
-
 use Test::More;
+
+my $prog = './test_pell';
 
 # Check the solutions test_pell finds for Ax^2 - Dy^2 = N with x up to a
 # limit against those found by trying every x. A and D are of the shapes
@@ -25,7 +26,7 @@ for my $N (-4 .. -1, 1 .. 4) {
                 $want{"$x, $y"} = 1 if $y * $y == $y2;
             }
             my %got = map +($_ => 1),
-                    `./test_pell $A $D $N $limit` =~ /^solution \((.*)\)$/mg;
+                    `$prog $A $D $N $limit` =~ /^solution \((.*)\)$/mg;
             $count += keys %want;
             my $lost = grep !$got{$_}, keys %want;
             my $extra = grep !$want{$_}, keys %got;
@@ -54,7 +55,7 @@ for my $N (-4 .. -1, 1 .. 4) {
     @want = map $_->[1], sort { $a->[0] <=> $b->[0] }
             map [ Math::BigInt->new(/^(\d+)/), $_ ], @want;
     is_deeply(
-        [ `./test_pell 2 5 -3 1e30` =~ /^solution \((.*)\)$/mg ],
+        [ `$prog 2 5 -3 1e30` =~ /^solution \((.*)\)$/mg ],
         \@want,
         'solutions in order, well past the first period',
     );
