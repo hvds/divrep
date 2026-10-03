@@ -5088,7 +5088,7 @@ e_pux prep_unforced_x(
         if (antigain > 1)
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
     }
-    uint cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+    ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
     if (mpz_fits_ulong_p(Z(r_walk))
         && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p)
     ) {
