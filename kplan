@@ -1,0 +1,328 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+use Math::Prime::Util qw{
+    primes prime_count prime_count_approx kronecker factor_exp gcd divisors
+};
+use List::Util qw{ min max };
+
+=head1 kplan: choose -k, -W and -K for each batch of a pcoul run
+
+  kplan [-p<prog>] [-k<bound>] [-W<bound>] [-K<count>] [-c<factor>]
+          -x<max> n k
+
+Lists the batches of C<pcoul -a -x<max> n k>, and for each batch that
+C<-k> applies to (one that fixes exactly one square, other than those
+STRATEGY_6X takes) estimates its cost in seconds under C<-ja1> for a
+range of C<-k> and C<-W> bounds, with each number of the positions C<-k>
+would pass over kept by C<-K>; it shows the cheapest found, as the
+options to run that batch with. Any of C<-k>, C<-W> and C<-K> given here
+is fixed at that value instead (C<-W0> for no sweep).
+
+The estimate follows the search in the abstract. At each node the next
+position is the one pcoul's default strategy would choose; the gate
+walks the node or recurses over that position's next allocation by
+comparing the walk with the loop, every child walking, as C<-ja1> does;
+and the primes tried, children applied and roots walked are summed over
+the tree, the primes below 400 one by one, each with its own chance of
+dividing, the rest in bins. To that it adds the pass of C<-k> (a Pell
+equation for each prime up to the bound at each position) and the sweep
+of C<-W> (each prime above its bound at each position, as far as that
+position's limit).
+
+The costs per prime, child and root are those of pcoul's cost model (see
+gq_recurse() in coul.c), with a cost per prime for the pass and for the
+sweep fitted to D(18,5) (3us, and 2.1us at 1e22 rising to 3.3us at
+1.7e30); C<-c> scales the cost per root, which depends on the tests a
+candidate goes on to. Estimates were within 30% of runs of D(18,5) at
+1e22 and 1e24 for each batch, and agreed on the number of nodes and of
+roots to a few percent; the times are for the machine the cost table
+was made on.
+
+=cut
+
+$| = 1;
+my %o = (p => "./pcoul", c => 1);
+my($n, $k);
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    $arg =~ /^-([pkWKcx])(.*)$/ or die "Unknown option '$arg'\n";
+    $o{$1} = $2;
+}
+($n, $k) = @ARGV;
+defined($k) && defined($o{x}) or die "Usage: $0 [options] -x<max> n k\n";
+my $z = 0 + $o{x};
+
+# costs in seconds: per prime tried, per prime whose roots are extended,
+# per child applied, per walk, per root (set for each batch), per prime
+# of a sweep, of a STRATEGY_6X loop, and of the pass at one position
+my $C_TRY = 0.12e-6;
+my $C_APP = 2.2e-6;
+my $C_CHILD = 0.5e-6;
+my $C_SETUP = 1.7e-6;
+my $C_ROOT;
+my $C_SWEEP = 2.1e-6 * (log($z) / log(1e22)) ** 1.4;
+my $C_6X = 4.8e-6;
+my $C_PELL = 3.0e-6;
+my @small = @{ primes(3, 400) };
+# the default strategy looks at the highest prime of tau first if n has
+# at least two distinct odd primes
+my $by_high = (grep($_->[0] > 2, factor_exp($n)) >= 2);
+# an estimate is abandoned once it passes this
+my $budget;
+
+sub pc {
+    my($x) = @_;
+    return 0 if $x < 2;
+    return ($x < 1e11) ? prime_count(int($x)) : prime_count_approx(int($x));
+}
+
+# the powers still to allocate at a position that -k applies to with
+# tau t left, as exponents in the order pcoul takes them: those of the
+# highest prime of tau first
+sub slots {
+    my($t) = @_;
+    return [ map { ($_->[0] - 1) x $_->[1] }
+            sort { $b->[0] <=> $a->[0] } factor_exp($t / 2) ];
+}
+
+# tau left at a position from its slots, and its highest prime
+sub slot_tau { my $t = 2; $t *= $_ + 1 for @{ $_[0] }; $t }
+sub slot_high { @{ $_[0] } ? $_[0][0] + 1 : 2 }
+
+# the range (lo, L] and exponent of the next allocation at a position
+sub limit {
+    my($pos, $cap) = @_;
+    my($e, @rest) = @{ $pos->{slots} };
+    my $same = 1 + grep $_ == $e, @rest;
+    my $other = 1;
+    $other *= $pos->{pmin} ** $_ for grep $_ != $e, @rest;
+    my $L = ($pos->{Z} / $other) ** (1 / ($e * $same));
+    $L = $cap if $cap && $L > $cap;
+    my $lo = ($pos->{laste} && $pos->{laste} == $e)
+            ? $pos->{lastp} : $pos->{pmin} - 1;
+    return ($lo, $L, $e);
+}
+
+# the primes of a loop as [ p, count, chance of dividing ]
+sub bins {
+    my($pos, $lo, $L, $used) = @_;
+    my @b;
+    for my $p (@small) {
+        next if $p <= $lo || $used->{$p};
+        last if $p > $L;
+        push @b, [ $p, 1, (kronecker($pos->{res}, $p) == 1) ? 1 : 0 ];
+    }
+    my $a = max($lo, $small[-1]);
+    while ($a < $L) {
+        my $b = min($L, $a * 1.5);
+        my $c = pc($b) - pc($a);
+        push @b, [ sqrt($a * $b), $c, 0.5 ] if $c > 0;
+        $a = $b;
+    }
+    return \@b;
+}
+
+# [ cost, children applied, roots walked ] of walking a node
+sub walk_cost { [ $C_SETUP + $C_ROOT * $_[0]{roots}, 0, $_[0]{roots} ] }
+
+# the same of the loop over the next allocation at position $j, each
+# child costed by $child; if $real it is abandoned once past the budget
+sub loop_cost {
+    my($node, $j, $cap, $child, $real) = @_;
+    my $pos = $node->{pos}[$j];
+    my($lo, $L, $e) = limit($pos, $cap);
+    my($cost, $app, $roots) = (0, 0, 0);
+    return [ 0, 0, 0 ] if $L <= $lo;
+    for my $b (@{ bins($pos, $lo, $L, $node->{used}) }) {
+        my($p, $c, $f) = @$b;
+        my $pe = $p ** $e;
+        # only those giving a least v_0 within the bound are applied
+        my $s = min(1, $node->{zl} / $pe);
+        $cost += $c * ($C_TRY + $s * $C_APP);
+        next unless $f;
+        my @sl = @{ $pos->{slots} };
+        shift @sl;
+        my @cp = @{ $node->{pos} };
+        $cp[$j] = { %$pos, Z => $pos->{Z} / $pe, slots => \@sl,
+                lastp => $p, laste => $e };
+        my $cc = $child->({
+            roots => $node->{roots} * 2 / $pe, zl => $node->{zl} / $pe,
+            pos => \@cp,
+            used => ($c == 1) ? { %{ $node->{used} }, $p => 1 }
+                    : $node->{used},
+        });
+        my $w = $c * $s * $f;
+        $cost += $w * ($C_CHILD + $cc->[0]);
+        $app += $w * (1 + $cc->[1]);
+        $roots += $w * $cc->[2];
+        die "over\n" if $real && $cost > $budget;
+    }
+    return [ $cost, $app, $roots ];
+}
+
+# the same of the whole subtree at a node
+sub cost {
+    my($node, $cap) = @_;
+    my $w = walk_cost($node);
+    my @open = grep @{ $node->{pos}[$_]{slots} }, 0 .. $#{ $node->{pos} };
+    return $w unless @open;
+    # the strategy's choice: by the highest prime of tau if so, then the
+    # highest tau, then the most allocated
+    my($j) = sort {
+        my($pa, $pb) = @{ $node->{pos} }[$a, $b];
+        ($by_high && slot_high($pb->{slots}) <=> slot_high($pa->{slots}))
+            || slot_tau($pb->{slots}) <=> slot_tau($pa->{slots})
+            || $pa->{Z} <=> $pb->{Z}
+    } @open;
+    my($lo, $L) = limit($node->{pos}[$j], $cap);
+    return $w if $L <= $lo || $w->[0] < (pc($L) - pc($lo)) * $C_TRY;
+    return $w if $w->[0] < loop_cost($node, $j, $cap, \&walk_cost)->[0];
+    return loop_cost($node, $j, $cap, sub { cost($_[0], $cap) }, 1);
+}
+
+# estimate a batch under -k B and -W W (0 for none), with the positions
+# of %$keep not passed over
+sub estimate {
+    my($bt, $B, $W, $keep) = @_;
+    my @pos;
+    for my $j (0 .. $#{ $bt->{v} }) {
+        my($q, $t, $state) = @{ $bt->{v}[$j] };
+        next unless $state eq 'k' || $keep->{$j};
+        push @pos, {
+            j => $j, Z => $z / $q / $B, slots => slots($t), t => $t,
+            res => ($bt->{sq0} - $j) * $bt->{qs}, pmin => $bt->{pmin},
+        };
+    }
+    my $root = { roots => $bt->{roots}, zl => $z / $bt->{aq}, pos => \@pos,
+            used => { map +($_ => 1), grep $bt->{aq} % $_ == 0, @small } };
+    my $pass = $C_PELL * @pos * pc($B);
+    my $sweep = 0;
+    if ($W) {
+        for my $p (@pos) {
+            my @sl = @{ $p->{slots} };
+            for my $i (0 .. $#sl) {
+                next if $i && $sl[$i] == $sl[$i - 1];
+                my $e = $sl[$i];
+                my @rest = @sl;
+                splice @rest, $i, 1;
+                my $other = 1;
+                $other *= $p->{pmin} ** $_ for @rest;
+                my $L = ($p->{Z} / $other) ** (1 / $e);
+                next if $L <= $W;
+                # each prime tried, and the roots of the half that divide
+                $sweep += $C_SWEEP * (pc($L) - pc($W)) + $C_ROOT
+                        * $bt->{roots} * $W ** (1 - $e) / ($e - 1) / log($W);
+            }
+        }
+    }
+    return undef if $pass + $sweep > $budget;
+    my $rec = eval { cost($root, $W) } // return undef;
+    return {
+        B => $B, W => $W, keep => 0 + keys %$keep,
+        pass => $pass, sweep => $sweep, rec => $rec->[0],
+        nodes => $rec->[1], roots => $rec->[2],
+        total => $pass + $sweep + $rec->[0],
+    };
+}
+
+# parse a batch from a 203 line of pcoul -a
+sub batch {
+    my($line) = @_;
+    $line =~ /^203 b(\d+): (.*?)((?: \[\w+=\d+\])*) \(/ or return undef;
+    my($id, $alloc, $tags) = ($1, $2, $3);
+    my %tag = $tags =~ /\[(\w+)=(\d+)\]/g;
+    my @v;
+    for my $s (split ' ', $alloc) {
+        my($q, $t) = (1, $n);
+        my %pp = map { /^(\d+)(?:\^(\d+))?$/ ? ($1 => $2 // 1) : () }
+                grep $_ ne '', split /\./, $s;
+        for my $p (keys %pp) {
+            $q *= $p ** $pp{$p};
+            $t /= $pp{$p} + 1;
+        }
+        push @v, [ $q, $t, '', \%pp ];
+    }
+    my $bt = { id => $id, v => \@v, sq => $tag{sq} // 0, aq => $tag{aq},
+            alloc => $alloc };
+    return $bt unless $bt->{sq} == 1;
+    ($bt->{sq0}) = grep $v[$_][1] & 1, 0 .. $#v;
+    $bt->{qs} = $v[$bt->{sq0}][0];
+    my $g = gcd(map $_ - 1, grep $_ > 1, divisors($v[$bt->{sq0}][1]));
+    $bt->{roots} = ($z / $bt->{qs}) ** (1 / $g) * $bt->{qs} * $tag{rc}
+            / $bt->{aq};
+    $bt->{six} = ($n % 4 == 2 && $bt->{sq0} >= 2
+            && ($v[$bt->{sq0}][3]{2} // 0) == 1);
+    # the least prime free to allocate
+    ($bt->{pmin}) = grep $bt->{aq} % $_, @small;
+    # the positions -k applies to, and those it passes over
+    my @at = grep { $_->[1] > 2 && $_->[1] % 4 == 2 } @v;
+    $_->[2] = 'k' for @at;
+    if (grep $_->[1] > 6 && $_->[1] % 6 == 0, @at) {
+        $_->[2] = 'p' for grep $_->[1] == 6, @at;
+    }
+    # passed over, most allocated first
+    $bt->{passed} = [ sort { $v[$b][0] <=> $v[$a][0] }
+            grep $v[$_][2] eq 'p', 0 .. $#v ];
+    return $bt;
+}
+
+sub sci {
+    my($x) = @_;
+    my $s = sprintf '%.0e', $x;
+    $s =~ s/e\+?0*/e/;
+    return $s;
+}
+
+my @B = defined($o{k}) ? (0 + $o{k})
+        : map { my $d = $_; map $_ * 10 ** $d, 1, 2, 5 } 5 .. 10;
+# no sweep last: where it is not the cheapest it is the slowest to
+# estimate, and the budget from the others cuts it short
+my @W = defined($o{W}) ? (0 + $o{W}) : (1e5, 3e4, 1e4, 3e5, 1e6, 0);
+my $sum = 0;
+open my $ph, '-|', $o{p}, '-a', "-x$o{x}", $n, $k
+        or die "Could not run $o{p}: $!\n";
+while (<$ph>) {
+    my $bt = batch($_) // next;
+    my $what = "b$bt->{id}: $bt->{alloc}";
+    if ($bt->{sq} != 1) {
+        print "$what\n    not estimated: ", ($bt->{sq} ? 'two squares'
+                : 'no square'), "\n";
+        next;
+    }
+    if ($bt->{six}) {
+        my $t = $C_6X * pc(($z / 8) ** 0.25);
+        printf "%s\n    STRATEGY_6X: %.0fs\n", $what, $t;
+        $sum += $t;
+        next;
+    }
+    $C_ROOT = $o{c} * 1e-6 * (($bt->{v}[ $bt->{sq0} ][1] == 3) ? 0.7 : 1.5);
+    my @K = defined($o{K}) ? (min($o{K}, 0 + @{ $bt->{passed} }))
+            : (0 .. @{ $bt->{passed} });
+    my $best;
+    $budget = 9**9**9;
+    for my $m (@K) {
+        my %keep = map +($_ => 1), @{ $bt->{passed} }[0 .. $m - 1];
+        for my $W (@W) {
+            for my $B (@B) {
+                # more primes in the pass than the best costs in all
+                last if $C_PELL * pc($B) > $budget;
+                my $e = estimate($bt, $B, $W, \%keep) // next;
+                next if $best && $e->{total} >= $best->{total};
+                $best = $e;
+                $budget = $e->{total};
+            }
+        }
+    }
+    printf "%s\n    -k%s%s%s: %.0fs = pass %.0f + sweep %.0f + rest %.0f"
+            . " (%.2g nodes, %.2g roots)\n",
+            $what, sci($best->{B}),
+            ($best->{W} ? ' -W' . sci($best->{W}) : ''),
+            ($best->{keep} ? " -K$best->{keep}" : ''),
+            @$best{qw{ total pass sweep rec nodes roots }};
+    $sum += $best->{total};
+}
+close $ph;
+printf "total %.0fs\n", $sum;
