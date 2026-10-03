@@ -91,11 +91,12 @@ if (1) {
         is($walks[1], $walks[0], '-k makes no pass in a STRATEGY_6X batch');
     }
     # a position with tau 6 left is passed over where another has 18
-    # and nothing is allocated there, so that -W need not sweep it
+    # and nothing is allocated there, so that -W need not sweep it; -K
+    # keeps some of them
     for my $opts (
         [], [qw{ -k30 }], [qw{ -k1e4 }],
         [qw{ -k1e4 -ja1 }], [qw{ -k1e4 -ja2 }],
-        [qw{ -k30 -W100 }],
+        [qw{ -k30 -W100 }], [qw{ -k30 -K1 }], [qw{ -k1e4 -K2 -W1000 }],
     ) {
         my $lines = run_test($type, [ @$opts, qw{ -X -x1e10 18 3 } ], 0);
         my %seen;
