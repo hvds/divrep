@@ -4810,7 +4810,7 @@ typedef struct {
     double Z;       /* zmax over what is allocated, and the bound of -k */
     long d;         /* offset of the square less that of this position */
     uint ns;        /* powers still to allocate, as exponents in order */
-    unsigned char e[KE_MAXSLOT];
+    uint e[KE_MAXSLOT];
     uint laste;     /* the last allocated, 0 if none */
     double lastp;
 } t_kepos;
@@ -4936,7 +4936,7 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
         t_kepos *cp = &ch.pos[j];
         cp->Z /= pe;
         --cp->ns;
-        memmove(cp->e, cp->e + 1, cp->ns);
+        memmove(cp->e, cp->e + 1, cp->ns * sizeof(cp->e[0]));
         cp->laste = e;
         cp->lastp = p;
         if (c == 1 && p < KE_SMALL)
