@@ -45,6 +45,7 @@
  * (TYPE_t not yet supported.)
  */
 #define MAXK 66     /* nextprime(8 * sizeof(ulong)) - 1 */
+#define MAXK_KERN 64    /* under -k: positions are bits of a ulong */
 uint n, k;
 
 /* mpz_t passed as function parameter decays to pointer in a way that
@@ -4738,7 +4739,7 @@ typedef struct {
     int id;
     uint level;
     bool on;
-    ulong at, passed;
+    ulong at, passed;   /* needs MAXK_KERN <= 64 */
 } t_kern;
 static t_kern *kern_state(void);
 
@@ -5008,6 +5009,7 @@ static double ke_batch(ulong at, double budget) {
     root.nused = 0;
     double cost = 0;
     for (uint vi = 0; vi < k && root.np < KE_MAXPOS; ++vi) {
+        /* needs MAXK_KERN <= 64 */
         if (!((at >> vi) & 1))
             continue;
         t_kepos *kp = &root.pos[root.np++];
@@ -5093,6 +5095,7 @@ static t_kern *kern_state(void) {
         ks.on = (levels[cur_batch_level].have_square == 1);
         if (!ks.on)
             return &ks;
+        /* the rest need MAXK_KERN <= 64 */
         for (uint vi = 0; vi < k; ++vi) {
             uint t = kern_tau(vi);
             if (t > 2 && (t & 3) == 2) {
@@ -5133,7 +5136,9 @@ static t_kern *kern_state(void) {
     return &ks;
 }
 
-/* true if v_i is a position that -k applies to in this batch */
+/* true if v_i is a position that -k applies to in this batch; needs
+ * MAXK_KERN <= 64, as does kern_passed()
+ */
 bool kern_at(uint vi) {
     return kern_batch() && ((kern_state()->at >> vi) & 1);
 }
@@ -8071,6 +8076,8 @@ int main(int argc, char **argv, char **envp) {
             fail("require k >= 1, not %lu", k);
         if (k > MAXK)
             fail("require k <= %u, not %u", MAXK, k);
+        if (kern_b && k > MAXK_KERN)
+            fail("-k requires k <= %u, not %u", MAXK_KERN, k);
     } else
         fail("wrong number of arguments");
     if (force_all > k)
