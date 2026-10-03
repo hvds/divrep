@@ -107,7 +107,7 @@ The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
       [-g<damp:gain>] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
-      [-j<strategy>] [-ja<level>] [-k<bound>] <n> <k>
+      [-j<strategy>] [-ja<level>] [-k<bound>] [-K<count>] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
 you will usually invoke it as "pcoul" or as "pcoul.exe".
@@ -189,9 +189,12 @@ allocating there. A position with tau 6 left is passed over where
 another has a larger multiple of 6 left: its one prime squared has too
 high a limit to be allocated before the other position's last, so
 nothing is allocated there at all (nor by "-W"), and the walks cover it.
-It does not apply to a batch that the special strategy for "2z^2" two
-places after a power of 2 takes. In such a batch "-j4" and "-js" allocate
-no p^{2^z-1}.
+With "-K2", the two such positions with most allocated are not passed
+over, which can pay with "-W" where few positions are left. It does not
+apply to a batch that the special strategy for "2z^2" two places after a
+power of 2 takes. In such a batch "-j4" and "-js" allocate no p^{2^z-1}.
+The script "kplan" estimates the cost of each batch for a range of "-k",
+"-W" and "-K", and shows the cheapest.
 Default is not to do this.
 
 "-p" and "-W" may also be specified in the form "100^2" rather than
@@ -216,7 +219,8 @@ and execution continues. The default is to stop execution at this point.
 If "-a" is specified, it will establish only each valid set of batch
 allocations of forced primes, and output those sets assigning an index
 to each one (for use by '-b' below), along with its modulus aq used as
-a guide to its cost.
+a guide to its cost; and where it fixes one square, the number rc of
+residues mod aq of that square's root.
 
 If "-b100" is specified, it will find the set of batch allocations of
 forced primes with index 100, and run the normal calculations only
