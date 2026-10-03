@@ -81,6 +81,14 @@ if (1) {
         is(0 + @{ $lines->{202} // [] }, 21,
                 "all f(6,4) candidates to 1e13 found with '@$opts'");
     }
+    # a position with tau 6 left is passed over where another has 18
+    for my $opts ([], [qw{ -k30 }], [qw{ -k1e4 }]) {
+        my $lines = run_test($type, [ @$opts, qw{ -X -x1e10 18 3 } ], 0);
+        my %seen;
+        ++$seen{$_} for map /^202 Candidate (\d+)/, @{ $lines->{202} // [] };
+        is(0 + keys %seen, 56,
+                "all f(18,3) candidates to 1e10 found with '@$opts'");
+    }
     # v + 1 = 64013.100003^2: with nothing for trial division to find,
     # the ladder finds 64013 and is left with the square of a prime
     {

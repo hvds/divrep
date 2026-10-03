@@ -4613,19 +4613,58 @@ static inline bool kern_highpow(void) {
     return highpow && !kern_batch();
 }
 
-/* True if v_i is a position that -k applies to in this batch: one that
- * needed a prime to an odd power and something more besides once the
- * batch was complete, in a batch that fixes exactly one square.
- */
-bool kern_at(uint vi) {
-    if (!kern_batch())
-        return 0;
+/* the tau left at v_i once the current batch was complete */
+static inline uint kern_tau(uint vi) {
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
     while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
         --vil;
-    uint t = vp->alloc[vil - 1].t;
-    return t > 2 && (t & 3) == 2;
+    return vp->alloc[vil - 1].t;
+}
+
+/* The positions that -k applies to in this batch, as a bit vector: those
+ * that needed a prime to an odd power and something more besides once
+ * the batch was complete.
+ * A position with tau 6 left takes a single p^2 besides, with p up to
+ * the square root of what is left, far too many to loop over until
+ * little else remains. Where another position will take a square as its
+ * last allocation after others, that square has a lower limit and
+ * leaves a smaller walk, so it is always preferred, and by then the
+ * walk is too small for more: so the first is then left out, and
+ * walk_midp() spared its primes. (Recursion counts were unchanged by
+ * this for D(n,4), D(n,5), n in 18, 30, 54, 90, 126.)
+ */
+static ulong kern_mask(void) {
+    static ulong mask = 0;
+    static int id = -1;
+    static uint lev = ~0U;
+    if (id != batch_alloc || lev != cur_batch_level) {
+        bool later = 0;
+        id = batch_alloc;
+        lev = cur_batch_level;
+        mask = 0;
+        for (uint vi = 0; vi < k; ++vi) {
+            uint t = kern_tau(vi);
+            if (t > 2 && (t & 3) == 2) {
+                mask |= 1UL << vi;
+                if (t > 6 && t % 6 == 0)
+                    later = 1;
+            }
+        }
+        /* not under -W, whose sweep needs the lower limit there */
+        if (later && !need_midp)
+            for (uint vi = 0; vi < k; ++vi)
+                if (kern_tau(vi) == 6)
+                    mask &= ~(1UL << vi);
+    }
+    return mask;
+}
+
+/* true if v_i is a position that -k applies to in this batch, one that
+ * fixes exactly one square
+ */
+bool kern_at(uint vi) {
+    return kern_batch() && ((kern_mask() >> vi) & 1);
 }
 
 /* As mintau() for the tau t left at v_i, but under -k the prime taking
