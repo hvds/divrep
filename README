@@ -183,9 +183,12 @@ The normal recursion then continues knowing that prime exceeds 1e6,
 lowering the limit on every other prime allocated at the same position;
 and it leaves the position needing the square to the walk rather than
 allocating there. A position with tau 6 left is passed over where
-another has a larger multiple of 6 left, unless "-W" is in use: its one
-prime squared has too high a limit to be allocated before the other
-position's last. In such a batch "-j4" and "-js" allocate no p^{2^z-1}.
+another has a larger multiple of 6 left: its one prime squared has too
+high a limit to be allocated before the other position's last, so
+nothing is allocated there at all (nor by "-W"), and the walks cover it.
+It does not apply to a batch that the special strategy for "2z^2" two
+places after a power of 2 takes. In such a batch "-j4" and "-js" allocate
+no p^{2^z-1}.
 Default is not to do this.
 
 "-p" and "-W" may also be specified in the form "100^2" rather than

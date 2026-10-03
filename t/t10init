@@ -82,10 +82,20 @@ if (1) {
         is(0 + @{ $lines->{202} // [] }, 21,
                 "all f(6,4) candidates to 1e13 found with '@$opts'");
     }
+    # not in a batch STRATEGY_6X takes, where the pass would be wasted
+    {
+        my @walks = map {
+            my $lines = run_test($type, [ @$_, qw{ -b0 -x1e18 18 5 } ], 0);
+            ($lines->{367}[0] // '') =~ /walk (\d+)/ ? $1 : -1;
+        } [], [qw{ -k1e4 }];
+        is($walks[1], $walks[0], '-k makes no pass in a STRATEGY_6X batch');
+    }
     # a position with tau 6 left is passed over where another has 18
+    # and nothing is allocated there, so that -W need not sweep it
     for my $opts (
         [], [qw{ -k30 }], [qw{ -k1e4 }],
         [qw{ -k1e4 -ja1 }], [qw{ -k1e4 -ja2 }],
+        [qw{ -k30 -W100 }],
     ) {
         my $lines = run_test($type, [ @$opts, qw{ -X -x1e10 18 3 } ], 0);
         my %seen;
