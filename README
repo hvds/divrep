@@ -237,15 +237,16 @@ primes; "-j0" is the default in all other cases.
 
 If "-ja1" is specified (experimental), choices are automated by
 estimated cost, to the level given; level 1 automates only the
-transition from recursion to walking (see "-g" above) wherever no
-square is fixed: walking now is weighed against recursing one more
-level with every resulting case walked, using the cost of a walk per
-iteration learnt during the run. The gain then applies only where a
-square is fixed, or where a flip may follow (tau 2q^2 for an odd prime
-q).
+transition from recursion to walking (see "-g" above): walking now is
+weighed against recursing one more level with every resulting case
+walked, using the cost of a walk per iteration learnt during the run.
+That covers every loop where no square is fixed, unless a flip may
+follow (tau 2q^2 for an odd prime q); and with one square fixed, every
+loop in a batch that "-k" applies to. The gain then applies only to
+what is left.
 "-ja2" also chooses the next position to which to allocate by
-estimated cost, instead of by the strategy, wherever no square is
-fixed and the node is not too cheap for the choice to pay: walking now
+estimated cost, instead of by the strategy, in the same places,
+wherever the node is not too cheap for the choice to pay: walking now
 is weighed against recursing over each eligible position, with every
 resulting case walked. The strategy remains the
 choice where the costs cannot be estimated (when a flip may follow);
