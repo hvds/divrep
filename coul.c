@@ -425,6 +425,7 @@ typedef struct s_mint_state {
     ushort pfreedepth;  /* number of free primes found */
 } t_mint_state;
 size_t pfree_vecsize;
+uint mint_maxdepth;     /* size of pfreei[], mint_best[] and mint_px[] */
 t_mint **mint_base;
 uint *restricted;
 uint restricted_count;
@@ -1134,10 +1135,17 @@ void prep_mintau(void) {
             mint_init_base(&mint_base_restricted[i]);
     }
 
+    /* mintau() is asked for t dividing n/h(n); or under -k for t dividing
+     * n/2, since that fixes the prime to an odd power before any other
+     * (see mintau_at()).
+     */
     uint maxtau = target_lcm / divisors[target_lcm].high;
+    if (kern_b && !(target_lcm & 1))
+        maxtau = target_lcm / 2;
     dp = &divisors[maxtau];
     uint maxdepth = dp->sumpm;
     pfree_vecsize = (nsprimes + 31) >> 5;
+    mint_maxdepth = maxdepth;
     t_mint_state *s = &mint_state;
     s->pfreei = calloc(maxdepth, sizeof(ushort));
 
@@ -4503,6 +4511,7 @@ static inline void state_extend(signed short i) {
         uint v = pv[nextoff] & ~((1U << nextbit) - 1);
         nextbit = __builtin_ffs((int)v);
         if (nextbit) {
+            assert(depth < mint_maxdepth);
             s->pfreei[depth] = (nextoff << 5) + (nextbit - 1);
             ++depth;
         } else {
@@ -5157,6 +5166,7 @@ bool kern_passed(uint vi) {
 /* As mintau() for the tau t left at v_i, but under -k the prime taking
  * the odd power exceeds kern_b: the powers that could be less were all
  * tried by walk_midp().
+ * Here t / 2 need not divide n/h(n): prep_mintau() allows for that.
  */
 void mintau_at(t_level *cur_level, mpz_t mint, uint t, uint vi) {
     if ((t & 3) == 2 && kern_at(vi)) {
