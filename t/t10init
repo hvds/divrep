@@ -161,6 +161,15 @@ if (1) {
         $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],
         'b1: 2^2 3^2 2 .',
     );
+    # the candidate has 127^2 at v_2, the entry after the one recovered
+    {
+        my $fh = temp_log(['305 b1: 3^2 2^2 . W(127,3,1): 5623 / 8610']);
+        my $lines = run_test($type, [
+            '-r' . $fh->filename, qw{ -b1 -W100 -X -x1e10 18 3 },
+        ], 1);
+        ok(scalar(grep /^202 Candidate 1477626075 /, @{ $lines->{202} // [] }),
+                q{-W: recovery mid-sweep tries the same p at later positions});
+    }
 }
 
 if (1) {

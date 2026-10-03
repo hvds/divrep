@@ -4174,6 +4174,7 @@ void walk_midp(t_level *prev_level, bool recover) {
     uint vi, x, mi;
     ulong p;
     t_midpp *mp;
+    bool used;
 
     in_midp = 1;
     cur_level->is_forced = 0;
@@ -4210,6 +4211,8 @@ void walk_midp(t_level *prev_level, bool recover) {
                 diag_plain(cur_level);
             walk_v(cur_level, have_rwalk ? rwalk_from : Z(zero));
             --cur_vlevel[vi];   /* unallocate */
+            /* we were working on p, so it is not already allocated */
+            used = 0;
             goto next_mi;
         }
         fail("midp recovery x=%u vi=%u invalid", x, vi);
@@ -4221,7 +4224,7 @@ void walk_midp(t_level *prev_level, bool recover) {
         /* If p is already allocated must still prune any completed powers,
          * skipping only the apply.
          */
-        bool used = 0;
+        used = 0;
         if (p <= prev_level->maxp)
             for (uint li = 1; li <= prev_level->level; ++li)
                 if (p == levels[li].p && levels[li].x > 1) {
