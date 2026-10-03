@@ -1440,6 +1440,9 @@ bool cm_have_table(void) {
 double cm_ladder_cost(uint count, t_tm *tm) {
     if (!cm_have_table() || !mw_nlad)
         return -1;
+    /* nor may the arrays be empty */
+    if (count == 0)
+        return 0;
     t_mwtest test[count], *m[count];
     uint n = 0;
     for (uint j = 0; j < count; ++j) {
