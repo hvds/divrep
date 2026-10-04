@@ -677,36 +677,27 @@ int is_taux(mpz_t n, uint32_t k, uint32_t x) {
     fs_init(&fs);
     mpz_set(fs.n, n);
     while (1) {
-        if ((k & 1) && (x & 1)) {
+        /* we may have extra factors in the stack at any point now. */
+        uint xe = x * fs.ef;
+        if (k == xe + 1) {
+            result = _scanp(&fs);
+            break;
+        }
+        /* MPUG-0.54 has a bug in power_factor when small primes are present,
+         * so wait until we've completed trial division before testing.
+         */
+        if ((k & 1) && (xe & 1) && fs.state == FS_LARGE) {
+            for (int i = 0; i < fs.ntofac; ++i) {
+                mpz_mul(fs.n, fs.n, fs.tofac_stack[i]);
+                mpz_clear(fs.tofac_stack[i]);
+            }
+            fs.ntofac = 0;
             int e = ct_power(fs.n);
             if (e == 0 || e & 1 || e > k)
                 break;
             /* we actually need e divisible by gcd(map $_ - 1, divisors(k)) */
             x *= e;
-        }
-        if (k & 1) {
-            while (1) {
-                if (k == x + 1) {
-                    result = _scanp(&fs);
-                    break;
-                }
-                if (!factor_one(&fs))
-                    break;
-                if (k % (fs.e * x + 1))
-                    break;
-                k /= fs.e * x + 1;
-                if (k == 1) {
-                    result = (mpz_cmp_ui(fs.n, 1) == 0);
-                    for (int i = 0; i < fs.ntofac; ++i)
-                        result &= (mpz_cmp_ui(fs.tofac_stack[i], 1) == 0);
-                    break;
-                }
-            }
-            break;
-        }
-        if (k == x + 1) {
-            result = _scanp(&fs);
-            break;
+            continue;
         }
         if (!factor_one(&fs))
             break;
