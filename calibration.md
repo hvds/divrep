@@ -41,8 +41,10 @@ modelled part alone, with what was stubbed.
   modelled valuations of each position's value (honouring the inverse
   filter's exclusions), primality tests stage by stage as
   test_primes() runs them, and the factoring ladder rung by rung as
-  tau_multi_run() interleaves its pending values. Pell walks (nqc >= 2)
-  run for real.
+  tau_multi_run() interleaves its pending values. The root of a fixed
+  power is costed as the walk tests it: trial division at once, and if
+  that does not settle it, the ladder with the other values once the
+  primes have passed. Pell walks (nqc >= 2) run for real.
 - walk_1_set(): the first 10000 primes run for real with modelled
   tests (every 8th exactly), the rest charged at their rates.
 - MOCK_LEAF: an innermost loop whose first child walks is charged in

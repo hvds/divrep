@@ -1525,10 +1525,14 @@ static void mw_other(
  * divisible again by a prime allocated there), and those that make a
  * position that must be prime divisible by a small prime, are excluded
  * from the values reaching the later tests.
+ * If root is given, it is the test of a fixed power's root that is left
+ * pending: it stays queued through the prime tests, and runs in the ladder
+ * with the need_other positions.
  */
 static double mw_tail(
     double zb, mpz_t **q, uint *t, uint *need_prime, uint npc,
-    uint *need_other, uint noc, t_mwwalk *wk, t_mod *inv, uint inv_count
+    uint *need_other, uint noc, t_mwwalk *wk, t_mod *inv, uint inv_count,
+    t_mwtest *root
 ) {
     if (!mw_loaded)
         mw_load();
@@ -1600,7 +1604,8 @@ static double mw_tail(
      * (mw_lad_interleave()), else as the sum of their ladder costs alone
      */
     double cm = 0, survive = 1, ladder = 0;
-    t_mwtest mo[noc], *mp[noc];
+    t_mwtest mo[noc + 1], *mp[noc + 1];
+    uint nlad = noc;
     for (uint i = 0; i < noc; ++i) {
         uint vi = need_other[i];
         t_mwtest *m = &mo[i];
@@ -1619,9 +1624,21 @@ static double mw_tail(
             }
         }
     }
-    if (mw_nlad && noc) {
-        qsort(mp, noc, sizeof(mp[0]), &mw_lad_cmp);
-        ladder = mw_lad_interleave(noc, mp);
+    if (root && mw_nlad) {
+        /* given that it is pending */
+        t_mwtest *m = &mo[noc];
+        double sc = root->pend > 0 ? 1 / root->pend : 0;
+        *m = *root;
+        for (uint r = 0; r < MW_NSLOT; ++r) {
+            m->lc[r] *= sc;
+            m->la[r] *= sc;
+        }
+        mp[nlad++] = m;
+    } else if (root)
+        ladder = root->run + root->pass * ladder;
+    if (mw_nlad && nlad) {
+        qsort(mp, nlad, sizeof(mp[0]), &mw_lad_cmp);
+        ladder = mw_lad_interleave(nlad, mp);
     }
     cm += survive * ladder;
     return cp + pprime * cm;
@@ -1704,7 +1721,7 @@ bool mock_walk_v(
     else
         mw_walk_init(&wk, MWK_LINEAR, mw_alloc, k, 0, 0);
     double tail = mw_tail(log2(mpz_get_d(zmax)), q, t, need_prime, npc,
-            need_other, noc, &wk, inv, inv_count);
+            need_other, noc, &wk, inv, inv_count, NULL);
     double tests;
     double pinv = mw_pinv(inv, inv_count, &tests);
     double cost;
@@ -1744,7 +1761,7 @@ bool mock_walk_v(
                 ? pow((mpz_get_d(zmin) + TYPE_OFFSET(sqi)) / qd, 1.0 / xi) : 0;
         double iters = xr->count * (hi - lo) / qqd;
         double rbits = log2(hi > 2 ? hi : 2);
-        double csq, psq;
+        double after;
         t_mwwalk rk = { .kind = MWK_ROOT, .alloc = wk.alloc,
                 .nalloc = wk.nalloc };
         if (divisors[ti].alldiv == 2) {
@@ -1756,20 +1773,24 @@ bool mock_walk_v(
             double r = tr->Kend / (b * M_LN2);
             if (r > 1)
                 r = 1;
-            csq = tr->rejcost + tr->passcost + tr->w[2] * mw_ptest(b, r);
-            psq = tr->pass + tr->w[2] * r;
+            after = tr->rejcost + tr->passcost + tr->w[2] * mw_ptest(b, r)
+                    + (tr->pass + tr->w[2] * r) * tail;
         } else {
-            /* the root's own test, with no information on its
-             * divisibility
+            /* The root's own test, with no information on its
+             * divisibility. If trial division does not settle it, the
+             * rest is left for the ladder, once the primes have passed.
              */
             t_mwtest m;
             mw_other(&m, &rk, sqi, ti, xi, rbits, NULL, NULL);
-            csq = m.prep + m.pend * m.run;
-            psq = m.dec + m.pend * m.pass;
+            after = m.prep + m.dec * tail;
+            if (m.pend > 0)
+                after += m.pend * mw_tail(log2(mpz_get_d(zmax)), q, t,
+                        need_prime, npc, need_other, noc, &wk, inv,
+                        inv_count, &m);
         }
         double setup = MWC(MWC_SQSETUP) * (iters < 1 ? iters : 1);
         double loop = MWC(MWC_SQLOOP0) + tests * MWC(MWC_SQTEST);
-        cost = setup + iters * (loop + pinv * (csq + psq * tail));
+        cost = setup + iters * (loop + pinv * after);
 #ifdef MOCK_LEAF
         if (L < ML_MAX && ml_state[L] == ML_SQ)
             ml_walk[L] += cost;
@@ -1830,7 +1851,7 @@ void mock_w1s_pass(
     if ((mw1.pass - 1) % MW_W1S_SAMPLE == 0) {
         double mo0 = mw_clock();
         mw1.tailsum += mw_tail(log2(mpz_get_d(v)), mw1.q, t, need_prime,
-                npc, need_other, noc, &mw1.wk, NULL, 0);
+                npc, need_other, noc, &mw1.wk, NULL, 0, NULL);
         ++mw1.nsample;
         g_mock_overhead_s += mw_clock() - mo0 + g_mw_read;
     }
