@@ -61,6 +61,16 @@ if (1) {
             $result124b, '1 2 1 332', $args124);
     expect_result(q{constraint on 3 + sub-high for f(12,4)},
             $result124b, '. . 3 83', $args124);
+    # v + 1 = 64013.100003^2: with nothing for trial division to find,
+    # the ladder finds 64013 and is left with the square of a prime
+    {
+        my $v = '640168408376116';
+        my $lines = run_test($type, [
+            '-X', '-x' . ($v - 1) . ":$v", 6, 2,
+        ], 0);
+        is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
+                $v, 'the ladder accepts a prime squared as what is left');
+    }
 
     count_batch(q{batches without constraint},
             56, '', $args124);

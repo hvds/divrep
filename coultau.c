@@ -1182,7 +1182,7 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
                 return count;
             else if (tm->t & 1) {
                 /* odd tau should be easy, do immediate full check */
-                if (!is_taux(tm->n, 1, tm->t))
+                if (!is_taux(tm->n, tm->t, tm->e))
                     return count;
                 goto tmr_splice;
             } else if (ct_prime(tm->n))
