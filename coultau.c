@@ -397,6 +397,7 @@ static int _fs_remove(factor_state* fs) {
 int factor_one(factor_state* fs) {
     UV nbits = mpz_sizeinbase(fs->n, 2);
     UV B1;
+    int cmp;
 
 fs_retry:
     if (mpz_cmp_ui(fs->n, 1) == 0) {
@@ -424,6 +425,7 @@ fs_retry:
             return 1;
         }
         fs->sp = 0;
+        /* ref TLIM_IS_SQUARE */
 #ifdef MPUG_054
         /* new limits justified by gcd-banding support */
         fs->tlim = 64007UL * 64007UL;
@@ -436,9 +438,6 @@ fs_retry:
             return 1;
         fs->state = FS_POWER;
     case FS_POWER:
-        /* note that we currently rely on this to catch the factorization
-         * of tlim itself - the check at the start of FS_LARGE would
-         * assume 64007^2 is prime without it. */
         fs->ef = ct_power(fs->n);
         if (!fs->ef)
             fs->ef = 1;
@@ -459,7 +458,18 @@ fs_retry:
  * and tofac_stack must be checked (see label fs_retry above).
  */
     case FS_LARGE:
-        if (mpz_cmp_ui(fs->n, fs->tlim) <= 0 || ct_prime(fs->n)) {
+        /* Trial division stops short of the root of tlim, so tlim itself
+         * may be left: if so, that root is a prime, squared. Anything less
+         * is a prime. Any path responsible for setting tlim (marked by
+         * TLIM_IS_SQUARE) must ensure that it is a square.
+         */
+        cmp = mpz_cmp_ui(fs->n, fs->tlim);
+        if (cmp == 0) {
+            mpz_sqrt(fs->f, fs->n);
+            fs->e = fs->ef * _fs_remove(fs);
+            return 1;
+        }
+        if (cmp < 0 || ct_prime(fs->n)) {
             mpz_set(fs->f, fs->n);
             fs->e = fs->ef * _fs_remove(fs);
             return 1;
@@ -778,7 +788,7 @@ static inline UV rough_assisted_tlim(UV default_lim, mpz_t n, uint t) {
     if (mpz_sizeinbase(tmp_lim, 2) >= 8 * sizeof(UV) / 2)
         return default_lim;
     UV lim = mpz_get_ui(tmp_lim);
-    lim = lim * lim;
+    lim = lim * lim;        /* ref TLIM_IS_SQUARE */
     /* need room to double it */
     return (lim > (UV_MAX >> 1)) ? default_lim : lim;
 }
@@ -831,6 +841,7 @@ bool tau_multi_prep(uint i) {
 
     UV p;
     UV sp = 2;
+    /* ref TLIM_IS_SQUARE */
 #ifdef MPUG_054
     /* new limits justified by gcd-banding support */
     UV tlim = 64007UL * 64007UL;
@@ -1091,7 +1102,7 @@ mpz_t *tm_factor(t_tm *tm) {
     /* .. leaving a composite residue */
     factor_state fs;
     fs_init(&fs);
-    fs.tlim = tm->tlim;
+    fs.tlim = tm->tlim;     /* ref TLIM_IS_SQUARE */
     if (mpz_cmp(tmf, tmf2) < 0)
         mpz_set(fs.n, tmf);
     else
