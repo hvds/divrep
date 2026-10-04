@@ -71,6 +71,28 @@ if (1) {
         is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
                 $v, 'the ladder accepts a prime squared as what is left');
     }
+    # A walk over squares queues each root, to be tested with the rest.
+    # In each of these v = 2r^2 with v + 1 good, where r is a product
+    # of primes that trial division will not find: too many of them in
+    # the first two.
+    for (
+        [ 'square walk rejects a root that is pqr', 18, '2 3^2.19^2',
+                '1713329412856343796186167534161:1713329412856343796186167534163',
+                '' ],
+        [ 'Pell walk rejects a root that is pq', 30, '2 3^4.51899',
+                '20602546734719875598683297:20602546734719875598683299',
+                '' ],
+        [ 'square walk accepts a root that is pq', 18, '2 3^2.11^2',
+                '34862081214054703057:34862081214054703059',
+                '34862081214054703058' ],
+    ) {
+        my($legend, $n, $init, $range, $expect) = @$_;
+        my $lines = run_test($type, [
+            '-X', qq{-I"$init"}, "-x$range", $n, 2,
+        ], 0);
+        is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
+                $expect, $legend);
+    }
 
     count_batch(q{batches without constraint},
             56, '', $args124);

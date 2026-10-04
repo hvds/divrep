@@ -443,8 +443,11 @@ static inline bool test_prime_append(mpz_t n, uint vi) {
     tm->e = 1;
     return tau_prime_prep(i);
 }
-static inline uint test_prime_run(void) {
-    return tau_prime_run(tm_count);
+/* tests the primes queued from 'first' on, taking them off the queue */
+static inline uint test_prime_run(uint first) {
+    uint remain = tau_prime_run(first, tm_count);
+    tm_count = first;
+    return remain;
 }
 static inline uint test_multi_run(tau_failure_handler tfh) {
     return tau_multi_run(tm_count, tfh);
@@ -2742,7 +2745,7 @@ bool test_1primes(uint *need, uint nc) {
             ++good;
 #endif
     }
-    uint remain = test_prime_run();
+    uint remain = test_prime_run(0);
     if (remain) {
         TRACK_BAD(nc - remain, taum[0].vi);
         return 0;
@@ -2786,7 +2789,7 @@ bool test_primes(uint *need, uint nc, ulong ati) {
             ++good;
 #endif
     }
-    uint remain = test_prime_run();
+    uint remain = test_prime_run(0);
     if (remain) {
         TRACK_BAD(nc - remain, taum[0].vi);
         return 0;
@@ -2794,9 +2797,12 @@ bool test_primes(uint *need, uint nc, ulong ati) {
     return 1;
 }
 
+/* The caller may have queued the roots of the squares it is walking:
+ * we leave those on the queue for test_zmulti().
+ */
 bool test_zprimes(uint *need, uint nc, mpz_t ati) {
     uint good = 0;
-    test_multi_reset();
+    uint first = tm_count;
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
         mpz_mul(Z(temp), wv_qq[vi], ati);
@@ -2810,9 +2816,9 @@ bool test_zprimes(uint *need, uint nc, mpz_t ati) {
             ++good;
 #endif
     }
-    uint remain = test_prime_run();
+    uint remain = test_prime_run(first);
     if (remain) {
-        TRACK_BAD(nc - remain, taum[0].vi);
+        TRACK_BAD(nc - remain, taum[first].vi);
         return 0;
     }
     return 1;
@@ -2841,11 +2847,14 @@ bool test_multi(
     return remain ? 0 : 1;
 }
 
+/* The caller may have queued the roots of the squares it is walking:
+ * we test those along with the rest. Having odd tau, they sort to the
+ * front of the queue.
+ */
 bool test_zmulti(
     uint *need, uint nc, mpz_t ati, uint *t, tau_failure_handler tfh
 ) {
     uint good = 0;
-    test_multi_reset();
     for (uint i = 0; i < nc; ++i) {
         uint vi = need[i];
         mpz_mul(Z(temp), wv_qq[vi], ati);

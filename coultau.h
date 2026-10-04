@@ -60,6 +60,6 @@ extern void alloc_taum(uint size);
 extern bool tau_multi_prep(uint i);
 extern uint tau_multi_run(uint i, tau_failure_handler tfh);
 extern bool tau_prime_prep(uint i);
-extern uint tau_prime_run(uint i);
+extern uint tau_prime_run(uint first, uint count);
 
 #endif

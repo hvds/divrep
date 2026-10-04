@@ -1233,12 +1233,15 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
 
 /* Same as tau_multi_run() except that all values are required to be prime.
  * It is the caller's responsibility to ensure the precondition is met.
+ * We test only the values from 'first' on, leaving any before that as
+ * they are; on failure, taum[first].vi is the value that failed.
  */
-uint tau_prime_run(uint count) {
-    uint i = 0;
+uint tau_prime_run(uint first, uint count) {
+    uint i = first;
     /* Shuffle the entries that did not complete by trial division to
-     * and order by size */
-    for (uint j = 0; j < count; ++j) {
+     * the front, and order by size.
+     */
+    for (uint j = first; j < count; ++j) {
         if (taum[j].state == 0)
             continue;
         if (i < j) {
@@ -1247,13 +1250,13 @@ uint tau_prime_run(uint count) {
         }
         ++i;
     }
-    if (i == 0)
+    if (i == first)
         return 0;
     count = i;
-    qsort(taum, count, sizeof(t_tm), &taum_comparator);
-    for (i = 0; i < count; ++i) {
+    qsort(&taum[first], count - first, sizeof(t_tm), &taum_comparator);
+    for (i = first; i < count; ++i) {
         if (!_GMP_BPSW(taum[i].n)) {
-            taum[0].vi = taum[i].vi;
+            taum[first].vi = taum[i].vi;
             return count - i;
         }
     }
