@@ -94,9 +94,8 @@ all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
 pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
-test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR} t/t05pell
+test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o test_pell -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
-	t/t05pell
 
 ftest: Makefile ftest.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o ftest -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ftest.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
@@ -109,10 +108,21 @@ sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h p
 
 # coul.h may need a type
 test_pell: DEFINES += -DTYPE_o
-test: pcoul pcaul pcrul
+
+# The tests from t/t50 on are soak tests, each of a program of its own:
+# they take longer, and are for when we have changed what they test. Each
+# skips itself, and its program is not built, unless its variable is set
+# in the environment, eg "TEST_PELL=1 make test".
+ifdef TEST_PELL
+    SOAK += test_pell
+endif
+
+test: pcoul pcaul pcrul ${SOAK}
 	t/t10init
 	t/t20log
+	t/t50pell
 
-dtest: dpcoul dpcaul dpcrul
+dtest: dpcoul dpcaul dpcrul ${SOAK}
 	DEBUG=1 t/t10init
 	DEBUG=1 t/t20log
+	DEBUG=1 t/t50pell
