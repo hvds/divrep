@@ -67,6 +67,18 @@ Validation, mock/real (367 totals, tables of 2026-09-29):
 | D(18,4) -x1e18 | 0.97 |
 | D(90,4) -x1e24 / -x1e22 | 0.88 / 0.94 |
 
+Walks of one fixed power alone, model/real per root over 1e6 to 2e6
+roots (2026-10-04, a table with rows for n=18): the eight such batches
+of D(18,5) at its bound 0.88-1.03; four batches each of D(18,5) at 1e27,
+D(18,4) at 1e24 and D(18,3) at 1e20, 0.84-1.13; four of D(18,2) at 1e22,
+1.12-1.18 and one at 1.61, where the cost is nearly all in the ladder
+for the other value. -ka takes its cost per root from this model (see
+mock_root_price()), where the table has the rows for it: for each walk
+it estimates, with the tau left at each position by then. Priced as the
+batch stands throughout, D(18,5) b3 (three positions with tau 6 left,
+at 2.9us a root against 1.3-1.5us with two) was given a plan that took
+1517s against 1120s.
+
 With leaf loops real (MOCK_LEAF_OFF) the 397^2 subtree is 1.00-1.02:
 the walk, test and ladder models are right there, and the rest is in
 the leaf stubs (~5%) and striding (~3%). Mock runs vary ~4% run to run

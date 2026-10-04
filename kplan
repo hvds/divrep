@@ -12,7 +12,7 @@ use List::Util qw{ min max };
   kplan [-p<prog>] [-k<bound>] [-W<bound>] [-K<count>] [-c<factor>]
           -x<max> n k
 
-Lists the batches of C<pcoul -a -x<max> n k>, and for each batch that
+Lists the batches of C<pcoul -ka -a -x<max> n k>, and for each batch that
 C<-k> applies to (one that fixes exactly one square, other than those
 STRATEGY_6X takes) estimates its cost in seconds under C<-ja1> for a
 range of C<-k> and C<-W> bounds, with each number of the positions C<-k>
@@ -34,8 +34,13 @@ position's limit).
 
 The costs per prime, child and root are those of pcoul's cost model (see
 gq_recurse() in coul.c), with a cost per prime for the pass and for the
-sweep fitted to D(18,5); C<-c> scales the cost per root, which depends on the tests a
-candidate goes on to. Estimates were within 30% of runs of D(18,5) at
+sweep fitted to D(18,5). The cost per root depends on the tests a
+candidate goes on to: it is what C<pcoul -ka> shows for the batch, from
+its cost table, or a fixed guess if it shows none; C<-c> scales it.
+pcoul itself goes further, and prices the roots of each walk by the tau
+left at each position by then, so its estimates differ from these where
+that changes the cost much.
+Estimates were within 30% of runs of D(18,5) at
 1e22 and 1e24 for each batch, and agreed on the number of nodes and of
 roots to a few percent; the times are for the machine the cost table
 was made on.
@@ -261,7 +266,7 @@ sub batch {
     my($line) = @_;
     $line =~ /^203 b(\d+): (.*?)((?: \[\w+=[\d.]+\])*) \(/ or return undef;
     my($id, $alloc, $tags) = ($1, $2, $3);
-    my %tag = $tags =~ /\[(\w+)=(\d+)\]/g;
+    my %tag = $tags =~ /\[(\w+)=([\d.]+)\]/g;
     my @v;
     for my $s (split ' ', $alloc) {
         my($q, $t) = (1, $n);
@@ -274,7 +279,7 @@ sub batch {
         push @v, [ $q, $t, '', \%pp ];
     }
     my $bt = { id => $id, v => \@v, sq => $tag{sq} // 0, aq => $tag{aq},
-            alloc => $alloc };
+            alloc => $alloc, rootus => $tag{rootus} };
     return $bt unless $bt->{sq} == 1;
     ($bt->{sq0}) = grep $v[$_][1] & 1, 0 .. $#v;
     $bt->{qs} = $v[$bt->{sq0}][0];
@@ -311,7 +316,7 @@ my @B = defined($o{k}) ? (0 + $o{k})
 # estimate, and the budget from the others cuts it short
 my @W = defined($o{W}) ? (0 + $o{W}) : (1e5, 3e4, 1e4, 3e5, 1e6, 0);
 my $sum = 0;
-open my $ph, '-|', $o{p}, '-a', "-x$o{x}", $n, $k
+open my $ph, '-|', $o{p}, '-ka', '-a', "-x$o{x}", $n, $k
         or die "Could not run $o{p}: $!\n";
 while (<$ph>) {
     my $bt = batch($_) // next;
@@ -321,7 +326,9 @@ while (<$ph>) {
                 : 'no square'), "\n";
         next;
     }
-    $C_ROOT = $o{c} * 1e-6 * (($bt->{v}[ $bt->{sq0} ][1] == 3) ? 0.7 : 1.5);
+    # as pcoul has it from the cost table, else a guess
+    $C_ROOT = $o{c} * 1e-6 * ($bt->{rootus}
+            // (($bt->{v}[ $bt->{sq0} ][1] == 3) ? 0.7 : 1.5));
     my @K = defined($o{K}) ? (min($o{K}, 0 + @{ $bt->{passed} }))
             : (0 .. @{ $bt->{passed} });
     my $best;

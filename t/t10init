@@ -175,12 +175,14 @@ if (1) {
                     . " to $max found with '@$opts'");
         }
     }
-    # -ka shows what it chose for a batch, here a sweep as well
+    # -ka shows what it chose for a batch, here a sweep as well; and the
+    # cost per root it estimated with, if that came from the cost table
     {
         my $lines = run_test($type, [qw{ -a -ka -x1e20 -f3 6 5 }], 0);
         my $tags = join ' ', map "\\[$_\\]",
-                qw{ sq=1 rc=8 k=\d+ W=\d+ est=[\d.]+ aq=1800 };
-        like($lines->{203}[0] // '', qr{^203 b0: \. 2 3\^2 2\^2 5\^2 $tags },
+                qw{ sq=1 rc=8 k=\d+ W=\d+ est=[\d.]+ };
+        like($lines->{203}[0] // '',
+                qr{^203 b0: \. 2 3\^2 2\^2 5\^2 $tags (?:\[rootus=[\d.]+\] )?\[aq=1800\] },
                 '-ka shows the bounds chosen for a batch');
     }
 

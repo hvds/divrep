@@ -202,9 +202,15 @@ of "-K" unless those are given. Each choice is estimated by following the
 search of the batch in the abstract under "-ja1", which "-ka" implies. A
 batch is left without "-k" if it would take under 10ms to walk whole, or
 if no choice is estimated to cost less than that walk.
+The cost of walking a root is taken from the cost table, for a walk of
+the batch with the tau that would then be left at each position, if the
+table has rows for each tau to be tested (see multibench-table); else it
+is a fixed guess.
 The choice is shown on a line for the batch (203), as "[k=<bound>]"
 ("[k=0]" if "-k" is not to apply), "[W=<bound>]" if a sweep was chosen,
-"[K=<count>]", and "[est=<seconds>]". It is also logged with each
+"[K=<count>]", "[est=<seconds>]", and "[rootus=<microseconds>]" for the
+cost per root of walking the batch whole, if that came from the cost
+table. It is also logged with each
 progress line (in 316), and a recovered run continues the batch with what
 was logged rather than choosing again. With "-a" the choices are listed
 without running anything. The script "kplan" makes the same estimates

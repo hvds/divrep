@@ -37,6 +37,9 @@ enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
         CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
         CM_LINSETUP, CM_CAPPLY, CM_COUNT };
 
+extern double mock_root_price(double z, mpz_t **q, uint *t, uint sqi,
+        uint *need_prime, uint npc, uint *need_other, uint noc, t_mod *inv,
+        uint inv_count);
 #ifdef MOCK_WALK
 extern void mock_init(void);
 extern void mock_report(void);

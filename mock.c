@@ -1463,6 +1463,9 @@ double cm_ladder_cost(uint count, t_tm *tm) {
     return mw_lad_interleave(n, m);
 }
 
+/* count of the times mw_other() has found no row in the table for a test */
+static ulong mw_missing = 0;
+
 /* the test of position vj's value, of tau t with exponent multiplier e
  * and about 'bits' bits: trial division as above, then the table for
  * each tau still to find */
@@ -1497,6 +1500,7 @@ static void mw_other(
         double m[6];
         if (!mw_lookup(s, e, b, m)) {
             out->prep += w * 15e-6;     /* no table row: rough fallback */
+            ++mw_missing;
             continue;
         }
         out->prep += w * m[4];
@@ -1698,6 +1702,72 @@ void mock_init(void) {
 #endif
 }
 
+/* The modelled cost per root of a walk of a single fixed power at
+ * position sqi, with candidates of zb bits and roots of rbits: the loop,
+ * and for the roots that pass the inverse filter, the root's own test
+ * and what follows it. The other arguments are as walk_v() prepares them.
+ */
+static double mw_root_cost(
+    double zb, double rbits, mpz_t **q, uint *t, uint sqi, uint *need_prime,
+    uint npc, uint *need_other, uint noc, t_mod *inv, uint inv_count
+) {
+    uint ti = t[sqi];
+    uint xi = divisors[ti].gcddm;
+    ulong mw_alloc[k * maxfact];
+    t_mwwalk wk;
+    mw_walk_init(&wk, MWK_FIXED, mw_alloc, sqi, xi, divisors[ti].alldiv == 2);
+    double tail = mw_tail(zb, q, t, need_prime, npc, need_other, noc, &wk,
+            inv, inv_count, NULL);
+    double tests;
+    double pinv = mw_pinv(inv, inv_count, &tests);
+    double after;
+    t_mwwalk rk = { .kind = MWK_ROOT, .alloc = wk.alloc,
+            .nalloc = wk.nalloc };
+    if (divisors[ti].alldiv == 2) {
+        /* a prime test of the root, coprime to the allocated primes */
+        t_mwtrial *tr = mw_trial(&rk, sqi, 2, 1, rbits, 1, NULL, NULL);
+        double b = rbits - tr->rb[2];
+        if (b < 1)
+            b = 1;
+        double r = tr->Kend / (b * M_LN2);
+        if (r > 1)
+            r = 1;
+        after = tr->rejcost + tr->passcost + tr->w[2] * mw_ptest(b, r)
+                + (tr->pass + tr->w[2] * r) * tail;
+    } else {
+        /* The root's own test, with no information on its divisibility.
+         * If trial division does not settle it, the rest is left for
+         * the ladder, once the primes have passed.
+         */
+        t_mwtest m;
+        mw_other(&m, &rk, sqi, ti, xi, rbits, NULL, NULL);
+        after = m.prep + m.dec * tail;
+        if (m.pend > 0)
+            after += m.pend * mw_tail(zb, q, t, need_prime, npc, need_other,
+                    noc, &wk, inv, inv_count, &m);
+    }
+    return MWC(MWC_SQLOOP0) + tests * MWC(MWC_SQTEST) + pinv * after;
+}
+
+/* The modelled cost per root of walking a single fixed power at position
+ * sqi, for a search to z: as mw_root_cost(), for the caller to estimate
+ * with. Returns a negative value if there is no cost table, or it lacks
+ * a row for one of the tests.
+ */
+double mock_root_price(
+    double z, mpz_t **q, uint *t, uint sqi, uint *need_prime, uint npc,
+    uint *need_other, uint noc, t_mod *inv, uint inv_count
+) {
+    if (!cm_have_table())
+        return -1;
+    ulong missing = mw_missing;
+    double hi = pow((z + TYPE_OFFSET(sqi)) / mpz_get_d(*q[sqi]),
+            1.0 / divisors[t[sqi]].gcddm);
+    double cost = mw_root_cost(log2(z), log2(hi > 2 ? hi : 2), q, t, sqi,
+            need_prime, npc, need_other, noc, inv, inv_count);
+    return (mw_missing == missing) ? cost : -1;
+}
+
 /* walk_v(): for a linear walk or one of a single fixed power (nqc < 2),
  * charge its modelled cost instead of walking, and return TRUE. The
  * arguments are those walk_v() has prepared: the positions' q, target
@@ -1712,23 +1782,18 @@ bool mock_walk_v(
     if (nqc >= 2)
         return 0;
     double mo0 = mw_clock();
-    ulong mw_alloc[k * maxfact];
-    t_mwwalk wk;
-    if (nqc)
-        mw_walk_init(&wk, MWK_FIXED, mw_alloc, need_square[0],
-                divisors[t[need_square[0]]].gcddm,
-                divisors[t[need_square[0]]].alldiv == 2);
-    else
-        mw_walk_init(&wk, MWK_LINEAR, mw_alloc, k, 0, 0);
-    double tail = mw_tail(log2(mpz_get_d(zmax)), q, t, need_prime, npc,
-            need_other, noc, &wk, inv, inv_count, NULL);
-    double tests;
-    double pinv = mw_pinv(inv, inv_count, &tests);
     double cost;
 #ifdef MOCK_LEAF
     uint L = cur_level->level;
 #endif
     if (nqc == 0) {
+        ulong mw_alloc[k * maxfact];
+        t_mwwalk wk;
+        mw_walk_init(&wk, MWK_LINEAR, mw_alloc, k, 0, 0);
+        double tail = mw_tail(log2(mpz_get_d(zmax)), q, t, need_prime, npc,
+                need_other, noc, &wk, inv, inv_count, NULL);
+        double tests;
+        double pinv = mw_pinv(inv, inv_count, &tests);
         double iters = mpz_get_d(end) - mpz_get_d(ati) + 1;
         if (iters < 0)
             iters = 0;
@@ -1752,8 +1817,7 @@ bool mock_walk_v(
         }
 #endif
         uint sqi = need_square[0];
-        uint ti = t[sqi];
-        uint xi = divisors[ti].gcddm;
+        uint xi = divisors[t[sqi]].gcddm;
         t_results *xr = res_array(cur_level->level);
         double qd = mpz_get_d(*q[sqi]), qqd = mpz_get_d(wv_qq[sqi]);
         double hi = pow((mpz_get_d(zmax) + TYPE_OFFSET(sqi)) / qd, 1.0 / xi);
@@ -1761,36 +1825,9 @@ bool mock_walk_v(
                 ? pow((mpz_get_d(zmin) + TYPE_OFFSET(sqi)) / qd, 1.0 / xi) : 0;
         double iters = xr->count * (hi - lo) / qqd;
         double rbits = log2(hi > 2 ? hi : 2);
-        double after;
-        t_mwwalk rk = { .kind = MWK_ROOT, .alloc = wk.alloc,
-                .nalloc = wk.nalloc };
-        if (divisors[ti].alldiv == 2) {
-            /* a prime test of the root, coprime to the allocated primes */
-            t_mwtrial *tr = mw_trial(&rk, sqi, 2, 1, rbits, 1, NULL, NULL);
-            double b = rbits - tr->rb[2];
-            if (b < 1)
-                b = 1;
-            double r = tr->Kend / (b * M_LN2);
-            if (r > 1)
-                r = 1;
-            after = tr->rejcost + tr->passcost + tr->w[2] * mw_ptest(b, r)
-                    + (tr->pass + tr->w[2] * r) * tail;
-        } else {
-            /* The root's own test, with no information on its
-             * divisibility. If trial division does not settle it, the
-             * rest is left for the ladder, once the primes have passed.
-             */
-            t_mwtest m;
-            mw_other(&m, &rk, sqi, ti, xi, rbits, NULL, NULL);
-            after = m.prep + m.dec * tail;
-            if (m.pend > 0)
-                after += m.pend * mw_tail(log2(mpz_get_d(zmax)), q, t,
-                        need_prime, npc, need_other, noc, &wk, inv,
-                        inv_count, &m);
-        }
         double setup = MWC(MWC_SQSETUP) * (iters < 1 ? iters : 1);
-        double loop = MWC(MWC_SQLOOP0) + tests * MWC(MWC_SQTEST);
-        cost = setup + iters * (loop + pinv * after);
+        cost = setup + iters * mw_root_cost(log2(mpz_get_d(zmax)), rbits, q,
+                t, sqi, need_prime, npc, need_other, noc, inv, inv_count);
 #ifdef MOCK_LEAF
         if (L < ML_MAX && ml_state[L] == ML_SQ)
             ml_walk[L] += cost;
