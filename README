@@ -39,6 +39,7 @@ dpcoul: debugging parallel search
 pcaul/dpcaul: equivalent to pcoul for A165498/A165499
 pcrul/dpcrul: equivalent to pcoul for A309981
 test_pell: a tool to solve Pell equations
+test_tau: a tool to test whether tau(n^e) = t, two ways
 ftest: test a specific factorization
 test/dtest: run the tests in t/ on the optimized/debugging programs;
   the soak tests among them run only if asked for, see the Makefile

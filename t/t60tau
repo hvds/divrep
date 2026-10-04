@@ -1,0 +1,99 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+use Test::More;
+use Math::BigInt;
+use File::Temp ();
+
+# a soak test, see the Makefile
+plan skip_all => 'set TEST_TAU to run this' unless $ENV{TEST_TAU};
+
+my $prog = './test_tau';
+
+# Check whether tau(n^e) == t, as answered both by is_taux() and by the
+# queue of tau_multi_prep() and tau_multi_run(), against what we know
+# from having built n. Trial division stops short of 64007, and the
+# hard part is all in what that leaves: so we take most of our primes
+# from there on up, and give them every pattern of small exponents.
+my @small = (3, 1103);
+my @large = (64007, 64013, 64019, 100003, 378067243);
+my @power = (1 .. 4);
+
+# each case is [ [ prime, exponent ], ... ]
+my @case = map {
+    my $p = $_;
+    map [[ $p, $_ ]], @power, 6
+} @small, @large;
+for my $i (0 .. $#large) {
+    for my $j ($i + 1 .. $#large) {
+        for my $ei (@power) {
+            push @case, map [ [ $large[$i], $ei ], [ $large[$j], $_ ] ], @power;
+        }
+        for my $s (@small) {
+            for my $es (2, 4) {
+                push @case, map [
+                    [ $s, $es ], [ $large[$i], $_->[0] ], [ $large[$j], $_->[1] ],
+                ], [1, 1], [1, 2], [2, 1], [2, 2], [3, 3], [2, 4], [4, 2];
+            }
+        }
+        for my $k ($j + 1 .. $#large) {
+            push @case, map [
+                [ $large[$i], $_->[0] ], [ $large[$j], $_->[1] ],
+                [ $large[$k], $_->[2] ],
+            ], [1, 1, 1], [2, 2, 2], [1, 1, 2], [1, 2, 1], [2, 1, 1],
+                    [1, 2, 2], [2, 1, 2], [2, 2, 1], [3, 3, 3];
+        }
+    }
+}
+
+# For each case and each e we ask for the true tau, and for the tau we
+# would get by going wrong over a single prime.
+my(%want, @in);
+for my $c (@case) {
+    my $n = Math::BigInt->new(1);
+    $n *= Math::BigInt->new($_->[0]) ** $_->[1] for @$c;
+    for my $e (1 .. 4) {
+        my $tau = 1;
+        $tau *= $_->[1] * $e + 1 for @$c;
+        my %t = ($tau => 1);
+        for (@$c) {
+            my $f = $_->[1] * $e + 1;
+            my $rest = $tau / $f;
+            $t{$rest * $_} = 1 for 1, 2, $_->[1] + 1, $e + 1, $f - 1, $f + 1;
+        }
+        delete $t{1};
+        for my $t (keys %t) {
+            next if $t > 100_000;
+            my $in = "$n $t $e";
+            $want{$in} = ($t == $tau) ? 1 : 0;
+            push @in, $in;
+        }
+    }
+}
+
+my $fh = File::Temp->new;
+print $fh "$_\n" for @in;
+$fh->close or die "$fh: $!";
+my @out = `$prog < $fh`;
+is($?, 0, 'test_tau ran to completion');
+is(0 + @out, 0 + @in, 'one answer for each question');
+
+my %bad = (direct => [], queue => []);
+my %count = (0 => 0, 1 => 0);
+for (@out) {
+    my($n, $t, $e, $direct, $queue) = split ' ';
+    my $want = $want{"$n $t $e"} // next;
+    ++$count{$want};
+    push @{ $bad{direct} }, "tau($n^$e) == $t: want $want, got $direct"
+            if $direct != $want;
+    push @{ $bad{queue} }, "tau($n^$e) == $t: want $want, got $queue"
+            if $queue != $want;
+}
+for my $which (qw{ direct queue }) {
+    my $bad = $bad{$which};
+    ok(!@$bad, "$which test right for $count{1} true and $count{0} false");
+    diag($_) for (@$bad > 20) ? (@$bad[0 .. 19], '...') : @$bad;
+}
+
+done_testing();
