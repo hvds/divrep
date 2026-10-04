@@ -72,4 +72,10 @@ int main(int argc, char **argv) {
     done_pell();
     done_zrootmod();
     done_tau();
+    _GMP_destroy();
+    mpz_clear(zA);
+    mpz_clear(zD);
+    mpz_clear(zlimit);
+    mpz_clear(zx);
+    mpz_clear(zy);
 }
