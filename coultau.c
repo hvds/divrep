@@ -1166,23 +1166,27 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
                     return count;
                 goto tmr_splice;
             } else if (tm->t == 2) {
-                if (!ct_prime(tm->n))
+                if (tm->e != 1 || !ct_prime(tm->n))
                     return count;
                 goto tmr_splice;
             } else if (mpz_cmp_ui(tm->n, 1) == 0)
                 return count;
             else if (tm->t & 1) {
+                if (tm->e & 1) {
+                    /* we need n^e square, so must have n square */
+                    e = ct_power(tm->n);
+                    if (e == 0 || e & 1 || tm->e * e >= tm->t)
+                        return count;
+                    tm->e *= e;
+                }
                 /* odd tau should be easy, do immediate full check */
                 if (!is_taux(tm->n, tm->t, tm->e))
                     return count;
                 goto tmr_splice;
-            } else if (ct_prime(tm->n))
-                return count;
-            else if ((tm->t & 1) && (tm->e & 1)) {
-                e = ct_power(tm->n);
-                if (e == 0 || e & 1 || e > tm->t)
+            } else if (ct_prime(tm->n)) {
+                if (tm->t != tm->e + 1)
                     return count;
-                tm->e *= e;
+                goto tmr_splice;
             }
             tm->state = TM_INIT;
             next_i = TM_INIT;
