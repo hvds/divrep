@@ -12,7 +12,7 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
-    coulvec.c mock.c trace.c bench.c costtab.c
+    coulvec.c mock.c trace.c bench.c timings.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
     coulvec.h mock.h trace.h bench.h coulint.h
 
@@ -114,10 +114,13 @@ all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
 pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
-# the built-in cost table (see mock.c), from the file cost-table, which
-# may have been checked out with CRLF line endings
-costtab.c: cost-table
-	perl -ne 'BEGIN { print "/* generated from cost-table: do not edit */\nconst char cm_default_table[] =\n" } s/\r?\n\z//; s/(["\\\\])/\\$$1/g; print qq{    "$$_\\n"\n}; END { print "    \"\";\n" }' cost-table > $@
+# The built-in cost table (see mock.c), from the file timings, which
+# may have been checked out with CRLF line endings. The rule for timings
+# keeps make from its built-in rule, which would compile timings.c to
+# make it.
+timings: ;
+timings.c: timings
+	perl -ne 'BEGIN { print "/* generated from timings: do not edit */\nconst char cm_default_table[] =\n" } s/\r?\n\z//; s/(["\\\\])/\\$$1/g; print qq{    "$$_\\n"\n}; END { print "    \"\";\n" }' timings > $@
 
 test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o test_pell -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm

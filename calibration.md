@@ -114,7 +114,7 @@ leaf, tail, situ), each stamped with the build that made it ("V section
 sha"): `-s<sections>` rebuilds only some, and `-u<table>` takes the
 rest from an existing table, so a new MPUGMP needs only scan, prime,
 ladder and qs (and multi), a change to coul.c only walk, w1s, leaf,
-tail and situ. pcoul builds in a default table from the file cost-table, used
+tail and situ. pcoul builds in a default table from the file timings, used
 unless $COST_TABLE names another (or, as before, $MOCK_WALK_TABLE);
 `-dT` notes sections from a different build.
 
