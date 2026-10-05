@@ -5089,6 +5089,104 @@ typedef enum {
     PUX_DO_THIS_X
 } e_pux;
 
+/* Most primes tried by a loop of allocations are rejected for giving a
+ * least v_0 = rq + mult.aq > zmax, with mult the multiple the CRT finds:
+ * that is, for mult > floor((zmax - rq) / aq), which is the same for
+ * every prime of the loop. So where that bound (rj_mult) fits in a limb,
+ * a prime can be rejected on mult alone, calculated in single limbs,
+ * without the cost of apply_single(). As zmax can only fall, the bound
+ * found when the loop is prepared stays valid, if no longer the least.
+ */
+static inline void reject_prep(t_level *prev, t_level *cur) {
+    cur->rj_ok = 0;
+#ifdef CHECK_OVERFLOW
+    if (mpz_cmp(prev->rq, zmax) > 0)
+        return;
+    mpz_sub(Z(temp), zmax, prev->rq);
+    mpz_fdiv_q(Z(temp), Z(temp), prev->aq);
+    if (!mpz_fits_ulong_p(Z(temp)))
+        return;
+    cur->rj_mult = mpz_get_ui(Z(temp));
+    /* rq < aq, so rq fits in a limb if aq does */
+    cur->rj_limb = (mpz_size(prev->aq) == 1);
+    cur->rj_ok = 1;
+#endif
+}
+
+/* aq and rq of prev, mod m */
+static inline void reject_mod(
+    t_level *prev, bool limb, ulong m, ulong *am, ulong *rm
+) {
+    if (limb) {
+        *am = mpz_getlimbn(prev->aq, 0) % m;
+        *rm = mpz_get_ui(prev->rq) % m;
+    } else {
+        *am = mpz_fdiv_ui(prev->aq, m);
+        *rm = mpz_fdiv_ui(prev->rq, m);
+    }
+}
+
+/* Returns true if allocating p^{x-1} at v_i over prev is sure to be
+ * rejected for v_0 > zmax, or false if uncertain. The caller checks
+ * that p is odd, and that reject_prep() set cur->rj_ok.
+ * The CRT gives v_0 = rq + mult.aq, where 0 <= mult < p^{x-1} and
+ *   mult == -(rq + i) / aq (mod p^{x-1}).
+ * Taken mod p, that gives mult0 = mult % p from an inverse mod p alone;
+ * mult >= mult0, so mult0 > rj_mult is enough to reject. Otherwise
+ * we need all of mult: for p^2 its other digit base p comes from the
+ * same inverse, and for higher powers we invert mod p^{x-1}.
+ */
+static inline bool reject_single(
+    t_level *prev, t_level *cur, uint vi, ulong p, uint x
+) {
+    ulong off = TYPE_OFFSET(vi), am, rm;
+    if (p < (1UL << 31)) {
+        reject_mod(prev, cur->rj_limb, p, &am, &rm);
+        if (am == 0)
+            return 0;
+        ulong inv = simple_invert(am, p);
+        /* -(i + rq) mod p */
+        ulong c = ((off < p ? off : off % p) + rm) % p;
+        if (c)
+            c = p - c;
+        ulong mult0 = c * inv % p;
+        if (mult0 > cur->rj_mult)
+            return 1;
+        if (x == 2)
+            return 0;
+        if (x == 3) {
+            /* aq.(mult0 + p.mult1) == c (mod p^2), so
+             * mult1 == ((c - aq.mult0) / p) / aq (mod p).
+             */
+            ulong m = p * p;
+            reject_mod(prev, cur->rj_limb, m, &am, &rm);
+            c = (off % m + rm) % m;
+            if (c)
+                c = m - c;
+            ulong d = c + m - mulmod_u64(am, mult0, m);
+            if (d >= m)
+                d -= m;
+            return mult0 + p * (d / p * inv % p) > cur->rj_mult;
+        }
+    }
+    /* as update_chinese(): m = p^{x-1} < 2^61, not dividing aq */
+    ulong m = p;
+    for (uint e = 2; e < x; ++e) {
+        if (m >= (1UL << 61) / p)
+            return 0;
+        m *= p;
+    }
+    if (m >= (1UL << 61))
+        return 0;
+    reject_mod(prev, cur->rj_limb, m, &am, &rm);
+    if (am % p == 0)
+        return 0;
+    ulong c = (off % m + rm) % m;
+    if (c)
+        c = m - c;
+    return mulmod_u64(c, ppow_invert(am, p, m), m) > cur->rj_mult;
+}
+
 /* Act on the limit limp for p^{x-1} at cur_level, given the last prime
  * done p (the prime before the first to try, if fresh).
  *
@@ -5203,11 +5301,14 @@ bool gate_walk(t_level *prev_level, uint vi, ulong p, ulong limp) {
 /* Set cur_level to allocate its current x for the primes after p up to
  * limp.
  */
-static inline void set_unforced_x(t_level *cur_level, ulong p, ulong limp) {
+static inline void set_unforced_x(
+    t_level *prev_level, t_level *cur_level, ulong p, ulong limp
+) {
     level_setp(cur_level, p);
     cur_level->x = divisors[cur_level->ti].div[cur_level->di];
     cur_level->limp = limp;
     cur_level->max_at = seen_best;
+    reject_prep(prev_level, cur_level);
     /* TODO: do some constant alloc stuff in advance */
 }
 
@@ -5248,7 +5349,7 @@ e_pux prep_unforced_x(t_level *prev_level, t_level *cur_level) {
 #endif
         return PUX_NOTHING_TO_DO;
     }
-    set_unforced_x(cur_level, p, limp);
+    set_unforced_x(prev_level, cur_level, p, limp);
     return PUX_DO_THIS_X;
 }
 
@@ -5491,14 +5592,14 @@ static inline bool insert_float(
     e_pux pux;
     if (init) {
         /* we never continue from an init pattern, so need no checks */
-        set_unforced_x(cur_level, p, 0);
+        set_unforced_x(prev_level, cur_level, p, 0);
         pux = PUX_DO_THIS_X;
     } else {
         /* the log shows that we recursed here, so the gate is not asked */
         ulong limp = limit_p(cur_level, vi, x, ti / x);
         pux = limit_unforced_x(prev_level, cur_level, p, limp, 0);
         if (pux == PUX_DO_THIS_X)
-            set_unforced_x(cur_level, p, limp);
+            set_unforced_x(prev_level, cur_level, p, limp);
     }
     switch (pux) {
       case PUX_FLIP_PQSQ:
@@ -5973,6 +6074,7 @@ void recurse(e_is jump_continue) {
                             limp);
                 cur_level->limp = limp;
                 cur_level->max_at = seen_best;
+                reject_prep(prev_level, cur_level);
             }
             /* note: only valid to use from just below here */
           redo_unforced: ;
@@ -5981,6 +6083,15 @@ void recurse(e_is jump_continue) {
                 goto continue_unforced_x;
             if (known_prime(prev_level, p))
                 goto redo_unforced;
+            /* p stays the cursor, as when apply_single() fails */
+            if (cur_level->rj_ok && (p & 1) && reject_single(
+                prev_level, cur_level, cur_level->vi, p, cur_level->x
+            )) {
+                cur_level->p = p;
+                if (need_work)
+                    diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
+                goto redo_unforced;
+            }
 
             /* note: this returns 0 if t=1 */
             if (!apply_single(
