@@ -1381,11 +1381,6 @@ void init_pre(void) {
     flip_recover.valid = 0;
 }
 
-static inline bool is_prime_ul(ulong p) {
-    mpz_set_ui(Z(temp), p);
-    return _GMP_is_prob_prime(Z(temp)) ? 1 : 0;
-}
-
 /* Parse a "305" log line for initialization.
  * Input string should point after the initial "305 ".
  * If 'expanded' is true, expects a "315" expanded line instead.
@@ -1429,7 +1424,7 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
             if (pp.p == 1 || pp.e == 0)
                 ;
-            else if (pp.e == 1 && !is_prime_ul(pp.p)) {
+            else if (pp.e == 1 && !u64_bpsw(pp.p)) {
                 /* -I allows unfactored entries, but only small ones */
                 if (pp.p > UINT_MAX)
                     fail("517 unfactored entry %lu is too large", pp.p);
