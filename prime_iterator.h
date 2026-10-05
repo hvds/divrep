@@ -17,6 +17,7 @@ extern void prime_iterator_global_shutdown(void);
 
 extern void prime_iterator_init(prime_iterator *iter);
 extern void prime_iterator_destroy(prime_iterator *iter);
+/* croaks when there is no greater prime that fits in a UV */
 extern UV prime_iterator_next(prime_iterator *iter);
 extern UV prime_iterator_prev(prime_iterator *iter);
 extern void prime_iterator_setprime(prime_iterator *iter, UV n);

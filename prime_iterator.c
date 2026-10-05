@@ -220,19 +220,25 @@ static const unsigned char qinit30[30] = {
 };
 static const UV max_sieve_prime = (BITS_PER_WORD == 64) ? 4294967291U : 65521U;
 
+/* The first crossing is in range. Each advance after that is checked
+ * before its pointer is formed, and the bound of the bulk loop keeps the
+ * origin it leaves in range as well, so s never points past the end.
+ */
+#define CROSS_STEP(b, step) \
+    set_bit(s, b); if ((UV)(send - s) <= (step)) break; s += (step);
 #define CROSS_INDEX( \
     v, b0, b1, b2, b3, b4, b5, b6, b7, i0, i1, i2, i3, i4, i5, i6, i7, it \
 ) \
     while (1) { \
-        case (v + 0): if (s >= send) break; set_bit(s, b0); s += r * 6 + i0; \
-        case (v + 1): if (s >= send) break; set_bit(s, b1); s += r * 4 + i1; \
-        case (v + 2): if (s >= send) break; set_bit(s, b2); s += r * 2 + i2; \
-        case (v + 3): if (s >= send) break; set_bit(s, b3); s += r * 4 + i3; \
-        case (v + 4): if (s >= send) break; set_bit(s, b4); s += r * 2 + i4; \
-        case (v + 5): if (s >= send) break; set_bit(s, b5); s += r * 4 + i5; \
-        case (v + 6): if (s >= send) break; set_bit(s, b6); s += r * 6 + i6; \
-        case (v + 7): if (s >= send) break; set_bit(s, b7); s += r * 2 + i7; \
-        while (s + r * 28 + it - 1 < send) { \
+        case (v + 0): CROSS_STEP(b0, r * 6 + i0) \
+        case (v + 1): CROSS_STEP(b1, r * 4 + i1) \
+        case (v + 2): CROSS_STEP(b2, r * 2 + i2) \
+        case (v + 3): CROSS_STEP(b3, r * 4 + i3) \
+        case (v + 4): CROSS_STEP(b4, r * 2 + i4) \
+        case (v + 5): CROSS_STEP(b5, r * 4 + i5) \
+        case (v + 6): CROSS_STEP(b6, r * 6 + i6) \
+        case (v + 7): CROSS_STEP(b7, r * 2 + i7) \
+        while (s < bulk_end) { \
             set_bit(s + r *  0 +  0, b0); \
             set_bit(s + r *  6 + i0, b1); \
             set_bit(s + r * 10 + i0 + i1, b2); \
@@ -241,15 +247,18 @@ static const UV max_sieve_prime = (BITS_PER_WORD == 64) ? 4294967291U : 65521U;
             set_bit(s + r * 18 + i0 + i1 + i2 + i3 + i4, b5); \
             set_bit(s + r * 22 + i0 + i1 + i2 + i3 + i4 + i5, b6); \
             set_bit(s + r * 28 + i0 + i1 + i2 + i3 + i4 + i5 + i6, b7); \
-            s += r * 30 + it; \
+            s += prime; \
         } \
     }
 
 static void mark_primes(
     unsigned char* s, const unsigned char* send, UV startp, UV endp, UV prime
 ) {
-    UV p2, q, r;
+    UV p2, q, bytes;
+    /* a sieving prime fits in 32 bits, as does r * 28 + 29 */
+    uint32_t r;
     int index;
+    const unsigned char *bulk_end;
 
     q = prime;
     p2 = prime * prime;
@@ -262,7 +271,13 @@ static void mark_primes(
         return;
 
     s += (p2 - startp) / 30;
-    r = prime / 30;
+    bytes = (UV)(send - s);
+    r = (uint32_t)(prime / 30);
+    /* The bulk loop marks a whole cycle of 'prime' bytes and leaves s at
+     * the start of the next, so needs more than that many bytes left; a
+     * buffer too short for that gets none.
+     */
+    bulk_end = (bytes > prime) ? send - prime : s;
     index = qinit30[q % 30] + 8 * masknum30[prime % 30];
 
     switch (index) {
@@ -302,12 +317,19 @@ static int sieve_segment(
     UV prim_limit
 ) {
     unsigned char* sieve;
-    UV limit, p;
+    UV limit, p, sieve_bytes;
     UV startp = 30 * startd;
-    UV endp = (endd >= (UV_MAX / 30)) ? UV_MAX - 2 : 30 * endd + 29;
+    UV endp = (endd == UV_MAX / 30) ? UV_MAX : 30 * endd + 29;
+
+    if (endd < startd || endd > UV_MAX / 30)
+        croak("sieve_segment: bad range\n");
 
     /* Fill buffer with marked 7, 11, and 13 */
     sieve_prefill(mem, startd, endd);
+    /* the last byte there can be is partial: mark what is above UV_MAX */
+    if (endd == UV_MAX / 30)
+        for (UV m = UV_MAX % 30 + 1; m < 30; m++)
+            mem[endd - startd] |= masktab30[m];
 
     limit = isqrt(endp);
     if (limit > max_sieve_prime)
@@ -316,19 +338,28 @@ static int sieve_segment(
         ? prim_sieve
         : sieve_erat30(limit);
 
-    for (p = 17; p <= limit; p = next_prime_in_sieve(sieve,p))
-        mark_primes(mem, mem + endd - startd + 1, startp, endp, p);
+    /* The base sieve need have no prime after the last we want: look no
+     * further than what covers limit.
+     */
+    sieve_bytes = limit / 30 + ((limit % 30) != 0);
+    for (p = 17; p != 0 && p <= limit;
+        p = next_prime_in_segment(sieve, 0, sieve_bytes, p)
+    )
+        mark_primes(mem, mem + (endd - startd + 1), startp, endp, p);
 
     if (sieve != prim_sieve)
         free(sieve);
     return 1;
 }
 
-/* These sizes are a tradeoff.  For better memory use I think 16k,4k is good.
- * For performance, 32k,16k or 64k,16k is better.  To avoid threading hell,
- * this is just decided statically.  At 24k,16k we handle 736800 numbers in
- * the primary sieve and won't redo for segments until after 5*10^11.  Each
- * segment will store a range of 30*(16384-16) = 491040 numbers.
+/* These sizes are a tradeoff of memory against the speed of marking, and
+ * are fixed. The primary sieve covers 30 * (32768 - 16) = 982560 integers,
+ * and each segment up to 30 * (24576 - 16) = 736800. The primary sieve
+ * has the primes to sieve a segment with until the square root of the
+ * segment's end passes primary_limit, near 9.65e11; beyond that each
+ * segment needs a base sieve made for it.
+ * The memory of a segment is always SEGMENT_SIZE bytes, though the last
+ * segment below UV_MAX uses fewer.
  */
 #define PRIMARY_SIZE  (32768 - 16)
 #define SEGMENT_SIZE  (24576 - 16)
@@ -394,7 +425,7 @@ void prime_iterator_setprime(prime_iterator *iter, UV n) {
     /* Is it inside the current segment? */
     if (iter->segment_mem != 0
         && n >= iter->segment_start
-        && n <= iter->segment_start + 30*iter->segment_bytes - 1
+        && (n - iter->segment_start) / 30 < iter->segment_bytes
     ) {
         iter->p = n;
         return;
@@ -412,9 +443,11 @@ void prime_iterator_setprime(prime_iterator *iter, UV n) {
         /* Sieve this range */
         UV lod = n / 30;
         UV hid = lod + SEGMENT_SIZE - 1;
+        if (hid > UV_MAX / 30)
+            hid = UV_MAX / 30;
         iter->segment_mem = malloc(SEGMENT_SIZE * sizeof(unsigned char));
         iter->segment_start = lod * 30;
-        iter->segment_bytes = SEGMENT_SIZE;
+        iter->segment_bytes = hid - lod + 1;
         if (!sieve_segment(
             iter->segment_mem, lod, hid, primary_sieve, primary_limit
         ))
@@ -446,24 +479,27 @@ UV prime_iterator_next(prime_iterator *iter) {
     /* Current segment */
     if (sieve) {
         seg_beg = iter->segment_start;
-        seg_end = iter->segment_start + 30 * iter->segment_bytes - 1;
         n = next_prime_in_segment(sieve, seg_beg, iter->segment_bytes, iter->p);
         if (n > 0) {
             iter->p = n;
             return n;
         }
         /* Not found in this segment */
-        lod = (seg_end + 1) / 30;
+        lod = seg_beg / 30 + iter->segment_bytes;
+        if (lod > UV_MAX / 30)
+            croak("MPU: prime iterator exhausted native integer range\n");
     } else {
         lod = PRIMARY_SIZE;
         sieve = malloc(SEGMENT_SIZE * sizeof(unsigned char));
     }
 
     hid = lod + SEGMENT_SIZE - 1;
+    if (hid > UV_MAX / 30)
+        hid = UV_MAX / 30;
     iter->segment_start = lod * 30;
-    iter->segment_bytes = SEGMENT_SIZE;
+    iter->segment_bytes = hid - lod + 1;
     seg_beg = iter->segment_start;
-    seg_end = iter->segment_start + 30 * iter->segment_bytes - 1;
+    seg_end = (hid == UV_MAX / 30) ? UV_MAX : 30 * hid + 29;
 
     if (!sieve_segment(sieve, lod, hid, primary_sieve, primary_limit))
         croak("Could not segment sieve from %lu to %lu", seg_beg, seg_end);
@@ -474,6 +510,8 @@ UV prime_iterator_next(prime_iterator *iter) {
         iter->p = n;
         return n;
     }
+    if (hid == UV_MAX / 30)
+        croak("MPU: prime iterator exhausted native integer range\n");
     croak("MPU: segment size too small, could not find prime\n");
 }
 
@@ -655,9 +693,10 @@ unsigned long* sieve_to_n_ui(unsigned long n, unsigned long* count) {
         croak("UV is smaller than unsigned long, too many primes");
 
     parruv = sieve_to_n(n, &nprimesuv);
-    *count = nprimesuv;
+    if (count)
+        *count = nprimesuv;
     New(0, parr, nprimesuv, unsigned long);
-    for (i = 0; i < *count; i++)
+    for (i = 0; i < nprimesuv; i++)
         parr[i] = parruv[i];
     free(parruv);
     return parr;
