@@ -1,5 +1,7 @@
 #include <stdlib.h>
+#include <math.h>
 #include "coulfact.h"
+#include "builtins.h"
 #include "gmp_main.h"   /* prime_count */
 
 static mpz_t cp_z;  /* chinese_ppow_z */
@@ -189,6 +191,192 @@ ulong ppow_invert(ulong d, ulong p, ulong m) {
     }
     return i;
 }
+
+/* Primality of n < 2^64 in single limbs, by the BPSW test just as
+ * _GMP_BPSW() makes it: a strong probable prime test to base 2, then
+ * the "almost extra strong" Lucas test with Baillie's parameters
+ * (_GMP_is_almost_extra_strong_lucas_pseudoprime(n, 1)). Together they
+ * are exact below 2^64.
+ *
+ * The arithmetic is Montgomery's, mod odd n with R = 2^64: a value x is
+ * held as x.R (mod n), its "Montgomery form", which mont_mul() keeps,
+ * since (aR).(bR)/R = (ab)R; sums and differences of forms are forms of
+ * sums and differences. Every value held is in [0, n), as mont_mul()
+ * and mont_sub() require. ni = 1/n (mod R), and one = R (mod n) is the
+ * form of 1.
+ * This needs a 128-bit type (see types.h): without one bpsw_u64() leaves
+ * the test to _GMP_BPSW().
+ */
+#ifdef HAVE_UINT128
+
+/* ab/R (mod n), for a, b < n */
+static inline ulong mont_mul(ulong a, ulong b, ulong n, ulong ni) {
+    uint128 t = (uint128)a * b;
+    /* m.n == t (mod R), so t - m.n is a multiple of R */
+    ulong m = (ulong)t * ni;
+    /* (t - m.n)/R = h - mh, in (-n, n): h < n since t < n.R */
+    ulong h = (ulong)(t >> 64);
+    ulong mh = (ulong)(((uint128)m * n) >> 64);
+    /* for h < mh, h - mh + n wraps twice to land in (0, n) */
+    return (h >= mh) ? h - mh : h - mh + n;
+}
+
+/* 1/n (mod R) for odd n, by Newton's iteration mod R */
+static inline ulong mont_inv(ulong n) {
+    /* correct to 3 bits, since n.n == 1 (mod 8) */
+    ulong ni = n;
+    /* each step doubles the bits correct: 6, 12, 24, 48, 96 */
+    for (uint i = 0; i < 5; ++i)
+        ni *= 2 - n * ni;
+    return ni;
+}
+
+/* a - b (mod n), for a, b < n */
+static inline ulong mont_sub(ulong a, ulong b, ulong n) {
+    return (a >= b) ? a - b : a - b + n;
+}
+
+/* 2a (mod n), for a < n, without forming 2a, which may not fit */
+static inline ulong mont_dbl(ulong a, ulong n) {
+    return (a >= n - a) ? a - (n - a) : a + a;
+}
+
+/* strong probable prime to base 2, for odd n > 2 */
+static inline bool sprp2_u64(ulong n, ulong ni, ulong one) {
+    ulong mone = n - one;   /* the form of -1 */
+    ulong d = n - 1;
+    uint s = trailing_zeroes_u64(d);
+    d >>= s;
+    /* x = 2^d, left to right: square, and double for each bit set */
+    ulong x = one;
+    for (int b = 63 - leading_zeroes_u64(d); b >= 0; --b) {
+        x = mont_mul(x, x, n, ni);
+        if ((d >> b) & 1)
+            x = mont_dbl(x, n);
+    }
+    if (x == one || x == mone)
+        return 1;
+    /* x = 2^(d.2^r) for r = 1 .. s - 1 */
+    while (--s) {
+        x = mont_mul(x, x, n, ni);
+        if (x == mone)
+            return 1;
+        if (x == one)
+            return 0;
+    }
+    return 0;
+}
+
+/* the Jacobi symbol (a / n) for odd n */
+static inline int jacobi_u64(ulong a, ulong n) {
+    int t = 1;
+    a %= n;
+    while (a) {
+        uint z = trailing_zeroes_u64(a);
+        a >>= z;
+        if ((z & 1) && ((n & 7) == 3 || (n & 7) == 5))
+            t = -t;
+        if ((a & 3) == 3 && (n & 3) == 3)
+            t = -t;
+        ulong r = n % a;
+        n = a;
+        a = r;
+    }
+    return (n == 1) ? t : 0;
+}
+
+/* true if n is a square */
+static inline bool is_square_u64(ulong n) {
+    ulong r = (ulong)sqrtl((long double)n);
+    /* sqrtl() can round up to 2^32 near 2^64; keep r * r within 64 bits */
+    if (r > 0xffffffffUL)
+        r = 0xffffffffUL;
+    while (r * r > n)
+        --r;
+    while (r < 0xffffffffUL && (r + 1) * (r + 1) <= n)
+        ++r;
+    return r * r == n;
+}
+
+/* the almost extra strong Lucas test, for odd n >= 13 */
+static inline bool aeslucas_u64(ulong n, ulong ni, ulong one) {
+    /* Baillie's parameters: the least P >= 3 with ((P^2 - 4) / n) = -1 */
+    ulong P = 3;
+    while (1) {
+        ulong D = P * P - 4;
+        ulong g = simple_gcd(n, D);
+        if (g > 1 && g != n)
+            return 0;
+        if (jacobi_u64(D, n) == -1)
+            break;
+        /* a square has no such P, so check for one once a few have failed */
+        if (P == 23 && is_square_u64(n))
+            return 0;
+        if (++P > 65535)
+            return 0;   /* not reached: n is no square */
+    }
+    ulong d = n + 1;
+    /* n + 1 wraps only for n = 2^64 - 1 = 3.5.17.257.641.65537.6700417 */
+    if (d == 0)
+        return 0;
+    uint s = trailing_zeroes_u64(d);
+    d >>= s;
+    /* the forms of 2, P, and V = V_k, W = V_{k+1} from k = 1 */
+    ulong two = mont_dbl(one, n);
+    ulong Pm = (ulong)(((uint128)one * P) % n);
+    ulong V = Pm;
+    ulong W = mont_sub(mont_mul(Pm, Pm, n, ni), two, n);   /* P^2 - 2 */
+    for (int b = 62 - leading_zeroes_u64(d); b >= 0; --b) {
+        /* V_{2k+1} = V_k.V_{k+1} - P */
+        ulong T = mont_sub(mont_mul(V, W, n, ni), Pm, n);
+        if ((d >> b) & 1) {
+            V = T;
+            /* V_{2k+2} = V_{k+1}^2 - 2 */
+            W = mont_sub(mont_mul(W, W, n, ni), two, n);
+        } else {
+            W = T;
+            /* V_{2k} = V_k^2 - 2 */
+            V = mont_sub(mont_mul(V, V, n, ni), two, n);
+        }
+    }
+    /* V_d = +-2 */
+    if (V == two || V == n - two)
+        return 1;
+    /* the extra strong test takes r < s - 1 */
+    --s;
+    while (s--) {
+        /* V_{d.2^r} = 0 */
+        if (V == 0)
+            return 1;
+        if (s)
+            V = mont_sub(mont_mul(V, V, n, ni), two, n);
+    }
+    return 0;
+}
+
+bool bpsw_u64(ulong n) {
+    if (n < 13)
+        return n == 2 || n == 3 || n == 5 || n == 7 || n == 11;
+    if (!(n & 1))
+        return 0;
+    ulong ni = mont_inv(n);
+    /* R (mod n), as (R - n) (mod n): -n wraps to R - n */
+    ulong one = -n % n;
+    return sprp2_u64(n, ni, one) && aeslucas_u64(n, ni, one);
+}
+
+#else
+#include "primality.h"
+
+bool bpsw_u64(ulong n) {
+    mpz_t z;
+    mpz_init_set_ui(z, n);
+    bool r = _GMP_BPSW(z) != 0;
+    mpz_clear(z);
+    return r;
+}
+
+#endif
 
 /* CRT for a prime power: chinese_ppow() where it is known p | a.
  * If p^e divides a, v == s (mod m) is implied by v == r (mod a) or
