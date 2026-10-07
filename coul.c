@@ -4995,7 +4995,8 @@ static inline void reject_prep(t_level *prev, t_level *cur) {
     if (!mpz_fits_ulong_p(Z(temp)))
         return;
     cur->rj_mult = mpz_get_ui(Z(temp));
-    cur->rj_limb = (mpz_size(prev->aq) == 1 && mpz_size(prev->rq) <= 1);
+    /* rq < aq, so rq fits in a limb if aq does */
+    cur->rj_limb = (mpz_size(prev->aq) == 1);
     cur->rj_ok = 1;
 #endif
 }
