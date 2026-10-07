@@ -5032,9 +5032,12 @@ static inline void reject_mod(
 /* Returns true if allocating p^{x-1} at v_i over prev is sure to be
  * rejected for v_0 > zmax, or false if uncertain. The caller checks
  * that p is odd, and that reject_prep() set cur->rj_ok.
- * The multiple mult solves aq.mult == -i - rq (mod p^{x-1}). Mod p alone
- * that gives its last digit base p, mult0 <= mult, which rejects most;
- * and for p^2 the next digit follows from the same inverse mod p.
+ * The CRT gives v_0 = rq + mult.aq, where 0 <= mult < p^{x-1} and
+ *   mult == -(rq + i) / aq (mod p^{x-1}).
+ * Taken mod p, that gives mult0 = mult % p from an inverse mod p alone;
+ * mult >= mult0, so mult0 > rj_mult is enough to reject. Otherwise
+ * we need all of mult: for p^2 its other digit base p comes from the
+ * same inverse, and for higher powers we invert mod p^{x-1}.
  */
 static inline bool reject_single(
     t_level *prev, t_level *cur, uint vi, ulong p, uint x
