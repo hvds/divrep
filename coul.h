@@ -52,7 +52,7 @@ typedef struct s_level {
      * reject_single()), and whether aq is a single limb.
      */
     bool rj_ok, rj_limb;
-    ulong rj_k;
+    ulong rj_mult;
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;

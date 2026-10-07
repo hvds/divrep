@@ -4978,12 +4978,12 @@ typedef enum {
 } e_pux;
 
 /* Most primes tried by a loop of allocations are rejected for giving a
- * least v_0 = rq + t.aq > zmax, with t the multiple the CRT finds: that
- * is, for t > (zmax - rq) / aq, which is the same for every prime of
- * the loop. So where that bound fits in a limb, a prime can be rejected
- * on t alone, calculated in single limbs, without the cost of
- * apply_single(). As zmax can only fall, the bound found when the loop
- * is prepared stays valid, if no longer the least.
+ * least v_0 = rq + mult.aq > zmax, with mult the multiple the CRT finds:
+ * that is, for mult > floor((zmax - rq) / aq), which is the same for
+ * every prime of the loop. So where that bound (rj_mult) fits in a limb,
+ * a prime can be rejected on mult alone, calculated in single limbs,
+ * without the cost of apply_single(). As zmax can only fall, the bound
+ * found when the loop is prepared stays valid, if no longer the least.
  */
 static inline void reject_prep(t_level *prev, t_level *cur) {
     cur->rj_ok = 0;
@@ -4994,7 +4994,7 @@ static inline void reject_prep(t_level *prev, t_level *cur) {
     mpz_fdiv_q(Z(temp), Z(temp), prev->aq);
     if (!mpz_fits_ulong_p(Z(temp)))
         return;
-    cur->rj_k = mpz_get_ui(Z(temp));
+    cur->rj_mult = mpz_get_ui(Z(temp));
     cur->rj_limb = (mpz_size(prev->aq) == 1 && mpz_size(prev->rq) <= 1);
     cur->rj_ok = 1;
 #endif
@@ -5030,16 +5030,16 @@ static inline void reject_mod(
 
 /* True if allocating p^{x-1} at v_i below prev is sure to be rejected
  * for v_0 > zmax, given reject_prep(); if false, it may still be.
- * The multiple t solves aq.t == -i - rq (mod p^{x-1}). Mod p alone that
- * gives its last digit base p, k0 <= t, which rejects most; and for
- * p^2 the next digit follows from the same inverse mod p.
+ * The multiple mult solves aq.mult == -i - rq (mod p^{x-1}). Mod p alone
+ * that gives its last digit base p, mult0 <= mult, which rejects most;
+ * and for p^2 the next digit follows from the same inverse mod p.
  */
 static inline bool reject_single(
     t_level *prev, t_level *cur, uint vi, ulong p, uint x
 ) {
     if (!cur->rj_ok || !(p & 1) || x < 2)
         return 0;
-    ulong off = TYPE_OFFSET(vi), k = cur->rj_k, am, rm;
+    ulong off = TYPE_OFFSET(vi), am, rm;
     if (p < (1UL << 31)) {
         reject_mod(prev, cur->rj_limb, p, &am, &rm);
         if (am == 0)
@@ -5049,24 +5049,24 @@ static inline bool reject_single(
         ulong c = ((off < p ? off : off % p) + rm) % p;
         if (c)
             c = p - c;
-        ulong k0 = c * inv % p;
-        if (k0 > k)
+        ulong mult0 = c * inv % p;
+        if (mult0 > cur->rj_mult)
             return 1;
         if (x == 2)
             return 0;
         if (x == 3) {
-            /* aq.(k0 + p.k1) == c (mod p^2), so
-             * k1 == ((c - aq.k0) / p) / aq (mod p).
+            /* aq.(mult0 + p.mult1) == c (mod p^2), so
+             * mult1 == ((c - aq.mult0) / p) / aq (mod p).
              */
             ulong m = p * p;
             reject_mod(prev, cur->rj_limb, m, &am, &rm);
             c = (off % m + rm) % m;
             if (c)
                 c = m - c;
-            ulong d = c + m - mulmod_u64(am, k0, m);
+            ulong d = c + m - mulmod_u64(am, mult0, m);
             if (d >= m)
                 d -= m;
-            return k0 + p * (d / p * inv % p) > k;
+            return mult0 + p * (d / p * inv % p) > cur->rj_mult;
         }
     }
     /* as update_chinese(): m = p^{x-1} < 2^61, not dividing aq */
@@ -5084,7 +5084,7 @@ static inline bool reject_single(
     ulong c = (off % m + rm) % m;
     if (c)
         c = m - c;
-    return mulmod_u64(c, ppow_invert(am, p, m), m) > k;
+    return mulmod_u64(c, ppow_invert(am, p, m), m) > cur->rj_mult;
 }
 
 /* Prepare to allocate p^{x-1} at v_i for a range of p. The p value passed
