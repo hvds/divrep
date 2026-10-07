@@ -5001,21 +5001,6 @@ static inline void reject_prep(t_level *prev, t_level *cur) {
 #endif
 }
 
-/* the inverse of d mod prime p, for 0 < d < p < 2^32 */
-static inline ulong invert_u32(uint d, uint p) {
-    long t = 0, newt = 1;
-    uint r = p, newr = d;
-    while (newr) {
-        uint q = r / newr, tr = r - q * newr;
-        long tt = t - (long)q * newt;
-        r = newr;
-        newr = tr;
-        t = newt;
-        newt = tt;
-    }
-    return (t < 0) ? t + p : t;
-}
-
 /* aq and rq of prev, mod m */
 static inline void reject_mod(
     t_level *prev, bool limb, ulong m, ulong *am, ulong *rm
@@ -5047,7 +5032,7 @@ static inline bool reject_single(
         reject_mod(prev, cur->rj_limb, p, &am, &rm);
         if (am == 0)
             return 0;
-        ulong inv = invert_u32(am, p);
+        ulong inv = simple_invert(am, p);
         /* -(i + rq) mod p */
         ulong c = ((off < p ? off : off % p) + rm) % p;
         if (c)
