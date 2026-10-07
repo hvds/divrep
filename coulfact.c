@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <limits.h>
 #include <math.h>
 #include "coulfact.h"
 #include "gmp_main.h"   /* prime_count */
@@ -140,14 +141,40 @@ ulong simple_gcd(ulong a, ulong b) {
     return simple_gcd(b % a, a);
 }
 
+/* as invert_u64() for m < 2^32, where the divisions are faster */
+uint invert_u32(uint d, uint m) {
+    long t = 0;
+    long newt = 1;
+    uint r = m;
+    uint newr = (d < m) ? d : d % m;
+    while (newr != 0) {
+        uint q = r / newr;
+        long tmp = t - (long)q * newt;
+        t = newt;
+        newt = tmp;
+        uint rtmp = r - q * newr;
+        r = newr;
+        newr = rtmp;
+    }
+    if (r > 1)
+        return 0;
+    if (t < 0)
+        t += m;
+    return (uint)t;
+}
+
 /* Returns the inverse of d mod m, or 0 if no inverse exists. We expect
  * to call this only with prime m, but do not enforce that.
  */
-ulong simple_invert(ulong d, ulong m) {
+ulong invert_u64(ulong d, ulong m) {
+    if (d >= m)
+        d %= m;
+    if (m <= UINT_MAX)
+        return invert_u32((uint)d, (uint)m);
     long t = 0;
     long newt = 1;
     long r = (long)m;
-    long newr = (long)(d % m);
+    long newr = (long)d;
     while (newr != 0) {
         long q = r / newr;
         long tmp = t - q * newt;
@@ -168,7 +195,7 @@ ulong simple_invert(ulong d, ulong m) {
  */
 ulong small_divmod(mpz_t za, mpz_t zb, ulong p) {
     ulong zb_r = mpz_fdiv_ui(zb, p);
-    ulong inv = simple_invert(zb_r, p);
+    ulong inv = invert_u64(zb_r, p);
     if (inv == 0)
         return p;
     ulong za_r = mpz_fdiv_ui(za, p);
@@ -181,7 +208,7 @@ ulong small_divmod(mpz_t za, mpz_t zb, ulong p) {
  * each doubling the power of p it is correct to.
  */
 ulong ppow_invert(ulong d, ulong p, ulong m) {
-    ulong i = simple_invert(d % p, p);
+    ulong i = invert_u64(d % p, p);
     ulong pm = p;
     while (pm < m) {
         pm = (pm > m / pm) ? m : pm * pm;

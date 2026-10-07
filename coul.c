@@ -3653,7 +3653,7 @@ bool update_residues(t_level *old, t_level *new,
  */
 bool update_chinese(t_level *old, t_level *new, uint vi, ulong p, mpz_t px) {
     ulong off = TYPE_OFFSET(vi);
-    /* chinese_ppow() needs 2px < 2^62 for simple_invert() */
+    /* chinese_ppow() needs 2px < 2^62 for invert_u64() */
     if (mpz_cmp_ui(px, 1UL << 61) < 0) {
         ulong m = mpz_get_ui(px), s;
         if (m & 1) {
@@ -5032,7 +5032,7 @@ static inline bool reject_single(
         reject_mod(prev, cur->rj_limb, p, &am, &rm);
         if (am == 0)
             return 0;
-        ulong inv = simple_invert(am, p);
+        ulong inv = invert_u32(am, p);
         /* -(i + rq) mod p */
         ulong c = ((off < p ? off : off % p) + rm) % p;
         if (c)
