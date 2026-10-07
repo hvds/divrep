@@ -206,7 +206,7 @@ void _ts_prime(mpz_t a, uint k, ulong p) {
     ulong ke = (p - 1) / r;
     /* note: k is prime, so does not divide r unless r == 1; hence the
      * inverse must exist. */
-    mpz_powm_ui(Z(rm_r), a, simple_invert(k % r, r), Z(rm_p));
+    mpz_powm_ui(Z(rm_r), a, invert_u64(k % r, r), Z(rm_p));
     mpz_invert(Z(tsp_B), a, Z(rm_p));
     ulong ainv = mpz_get_ui(Z(tsp_B));
     mpz_powm_ui(Z(tsp_B), Z(rm_r), k, Z(rm_p));
@@ -281,7 +281,7 @@ void _allrootmod_prime(mpz_t za, uint k, ulong p) {
 
     /* If co-prime, there is exactly one root. */
     if (g == 1) {
-        ulong inverse = simple_invert(k, pm);
+        ulong inverse = invert_u64(k, pm);
         mpz_powm_ui(Z(rm_r), Z(armp_a), inverse, Z(rm_p));
         save_base(Z(rm_r));
         return;
