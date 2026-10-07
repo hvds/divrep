@@ -5030,7 +5030,8 @@ static inline void reject_mod(
 }
 
 /* Returns true if allocating p^{x-1} at v_i over prev is sure to be
- * rejected for v_0 > zmax, given reject_prep(), or false if uncertain.
+ * rejected for v_0 > zmax, or false if uncertain. The caller checks
+ * that p is odd, and that reject_prep() set cur->rj_ok.
  * The multiple mult solves aq.mult == -i - rq (mod p^{x-1}). Mod p alone
  * that gives its last digit base p, mult0 <= mult, which rejects most;
  * and for p^2 the next digit follows from the same inverse mod p.
@@ -5038,8 +5039,6 @@ static inline void reject_mod(
 static inline bool reject_single(
     t_level *prev, t_level *cur, uint vi, ulong p, uint x
 ) {
-    if (!cur->rj_ok || !(p & 1) || x < 2)
-        return 0;
     ulong off = TYPE_OFFSET(vi), am, rm;
     if (p < (1UL << 31)) {
         reject_mod(prev, cur->rj_limb, p, &am, &rm);
@@ -5894,7 +5893,7 @@ void recurse(e_is jump_continue) {
                     if (p == levels[li].p && levels[li].x > 1)
                         goto redo_unforced;
             /* p stays the cursor, as when apply_single() fails */
-            if (reject_single(
+            if (cur_level->rj_ok && (p & 1) && reject_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x
             )) {
                 cur_level->p = p;
