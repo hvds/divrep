@@ -5016,7 +5016,7 @@ static inline ulong invert_u32(uint d, uint p) {
     return (t < 0) ? t + p : t;
 }
 
-/* aq and rq below prev, mod m */
+/* aq and rq of prev, mod m */
 static inline void reject_mod(
     t_level *prev, bool limb, ulong m, ulong *am, ulong *rm
 ) {
@@ -5029,8 +5029,8 @@ static inline void reject_mod(
     }
 }
 
-/* True if allocating p^{x-1} at v_i below prev is sure to be rejected
- * for v_0 > zmax, given reject_prep(); if false, it may still be.
+/* Returns true if allocating p^{x-1} at v_i over prev is sure to be
+ * rejected for v_0 > zmax, given reject_prep(), or false if uncertain.
  * The multiple mult solves aq.mult == -i - rq (mod p^{x-1}). Mod p alone
  * that gives its last digit base p, mult0 <= mult, which rejects most;
  * and for p^2 the next digit follows from the same inverse mod p.
