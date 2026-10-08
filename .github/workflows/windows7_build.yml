@@ -17,7 +17,7 @@ jobs:
     - name: Set up Cygwin
       uses: cygwin/cygwin-install-action@master
       with:
-        packages: gcc-core,libgmp-devel,make,git,binutils
+        packages: gcc-core,libgmp-devel,make,git,binutils,perl
         # https://www.cygwin.com/install.html "How can I install the last
         # Cygwin version for an old, unsupported Windows version?" Windows 7
         site: http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2024/01/30/231215
@@ -34,15 +34,21 @@ jobs:
       shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
       run: |
         cd /cygdrive/c/cygwin/home
-        git clone https://github.com/hvds/Math-Prime-Util-GMP.git
+        git clone https://github.com/danaj/Math-Prime-Util-GMP.git
         cd Math-Prime-Util-GMP
-        git checkout simpqs-full
+        git checkout v0.54
 
     - name: Build pcoul
       shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
       run: |
         cd "$GITHUB_WORKSPACE"
-        MPUGMP=/cygdrive/c/cygwin/home/Math-Prime-Util-GMP MPUGMP_VER=2389dcbc44 PORTABLE=1 make pcoul
+        MPUGMP=/cygdrive/c/cygwin/home/Math-Prime-Util-GMP MPUGMP_VER=39982f872b PORTABLE=1 make pcoul
+
+    - name: Run tests
+      shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        MPUGMP=/cygdrive/c/cygwin/home/Math-Prime-Util-GMP MPUGMP_VER=39982f872b PORTABLE=1 TEST_PELL=1 TEST_TAU=1 make test
 
     - name: Strip executable
       shell: C:\cygwin\bin\bash.exe --login -o igncr '{0}'
