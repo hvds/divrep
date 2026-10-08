@@ -173,16 +173,16 @@ ulong invert_u64(ulong d, ulong m) {
         return invert_u32((uint)d, (uint)m);
     long t = 0;
     long newt = 1;
-    long r = (long)m;
-    long newr = (long)d;
+    ulong r = m;
+    ulong newr = d;
     while (newr != 0) {
-        long q = r / newr;
-        long tmp = t - q * newt;
+        ulong q = r / newr;
+        long tmp = t - (long)q * newt;
         t = newt;
         newt = tmp;
-        tmp = r - q * newr;
+        ulong rtmp = r - q * newr;
         r = newr;
-        newr = tmp;
+        newr = rtmp;
     }
     if (r > 1)
         return 0;
