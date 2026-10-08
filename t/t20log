@@ -5,8 +5,6 @@ use warnings;
 
 use Test::More;
 use File::Temp ();
-use lib 'lib';
-use Type;
 
 # Every progress line written to the log must be a usable recovery
 # point. With -dL, a 305 line is written at every progress report, and
@@ -21,8 +19,7 @@ use Type;
 # Progress may still show an allocation that then fails to apply, or
 # fails walk_1_set()'s checks. Recovery retries those, so that's fine.
 
-my $type = Type->new('o');
-my $prog = $type->prog('cul');
+my $prog = './pcoul';
 if ($ENV{DEBUG}) {
     $prog =~ s/pc/dpc/
             or die "Could not munge program name '$prog'";
