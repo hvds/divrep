@@ -8,7 +8,24 @@ use File::Temp ();
 our $type;
 my %PROG = (o => './pcoul');
 
-if (1) {
+# each of these tests one aspect of -I, of recovery, or of the two together
+test_init();
+test_recover();
+test_batch_id_64bit();
+test_recover_j0123();
+test_6x();
+test_recover_6x();
+test_flip();
+test_recover_j4();
+test_recover_failed_apply();
+test_recover_p0_tail();
+test_recover_complete_batch();
+test_recover_init();
+
+done_testing();
+exit 0;
+
+sub test_init {
     # Test cases for -I without recovery
     local $type = 'o';
 
@@ -147,7 +164,7 @@ if (1) {
     }
 }
 
-if (1) {
+sub test_recover {
     # Test cases for recovery without -I
     local $type = 'o';
 
@@ -203,7 +220,7 @@ if (1) {
     }
 }
 
-if (1) {
+sub test_batch_id_64bit {
     # batch ids are 64-bit
     local $type = 'o';
 
@@ -214,7 +231,7 @@ if (1) {
     );
 }
 
-if (1) {
+sub test_recover_j0123 {
     # -j0..-j3 are easy to recover
     local $type = 'o';
     my $args124 = [qw{ -x1e10 -f3 12 4 }];
@@ -231,7 +248,7 @@ if (1) {
     );
 }
 
-if (1) {
+sub test_6x {
     # STRATEGY_6X: allocation patterns like "...2^{4+} . 2z^2..." trigger
     # a strategy switch taking advantage of the maths to restrict to a much
     # smaller search space.
@@ -257,7 +274,7 @@ if (1) {
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 
-if (1) {
+sub test_recover_6x {
     # STRATEGY_6X recovery: a "6X(p,vi,a)" diag line (see above) must be
     # enough to resume best_6x()'s own search loop exactly where it left
     # off - including re-trying 'a' itself (hitting both of its walk_1()
@@ -280,7 +297,7 @@ if (1) {
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
 }
 
-if (1) {
+sub test_flip {
     # run_flip_pqsq(): when a p^z allocation is too high to leave any
     # (z,z,2) partitions, we deallocate it and instead exhaustively try
     # (2z,z) partitions directly (see its own comment for the maths).
@@ -313,7 +330,7 @@ if (1) {
         'b0: 2^2.3^2.5^2.7^2 . 2.11^2.13^2.79^5 F(2,3491)');
 }
 
-if (1) {
+sub test_recover_j4 {
     # -j4 and -js can allocated power p^{2^x-1}, a more complex pathway
     # that has more recover paths to consider.
     # For each testcase where they are relevant, these tests should show:
@@ -382,7 +399,7 @@ if (1) {
     );
 }
 
-if (1) {
+sub test_recover_failed_apply {
     # Progress may show an allocation that failed to apply (here 79^2 at
     # v_2, given the candidates so far). Recovery should retry it and move
     # on, not restart the loop.
@@ -400,7 +417,7 @@ if (1) {
     );
 }
 
-if (1) {
+sub test_recover_p0_tail {
     # In an expanded line, a forced prime with a p^0 tail (here 3 in b3)
     # shows no allocation for its level: the levels after it must still
     # be reapplied in the order shown.
@@ -417,7 +434,7 @@ if (1) {
     );
 }
 
-if (1) {
+sub test_recover_complete_batch {
     # A -I pattern or manually-constructed recovery line may indicate
     # that we've just allocated a complete batch, with no further progress.
     local $type = 'o';
@@ -429,7 +446,7 @@ if (1) {
 }
 
 
-if (1) {
+sub test_recover_init {
     # Test cases for recovery with -I
     local $type = 'o';
 
@@ -541,9 +558,6 @@ if (1) {
         'b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 1',
     );
 }
-
-done_testing();
-exit 0;
 
 sub temp_log {
     my($content) = @_;
