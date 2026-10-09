@@ -4208,24 +4208,24 @@ void walk_midp(t_level *prev_level, bool recover) {
         vi = midp_recover.vi;
 
         level_setp(cur_level, p);
-        mi = midppc;    /* guard */
         for (mi = 0 ; mi < midppc; ++mi) {
             mp = &midpp[mi];
             if (mp->vi != vi || mp->x != x)
                 continue;
             /* This is the (p,x,vi) tuple we were working on, we now
              * duplicate the tail of the main loop to continue the work.
-             * The apply succeeded before, so must succeed again; the next
-             * diag point should be what we recover to, so must not diag
-             * here if have_rwalk.
+             * The apply may fail again if progress showed it failing,
+             * but not below a partial walk; the next diag point should
+             * be what we recover to, so must not diag here if have_rwalk.
              */
-            if (!apply_single(prev_level, cur_level, vi, p, x))
+            if (apply_single(prev_level, cur_level, vi, p, x)) {
+                if (need_work && !have_rwalk)
+                    diag_plain(cur_level);
+                walk_v(cur_level, have_rwalk ? rwalk_from : Z(zero));
+                --cur_vlevel[vi];   /* unallocate */
+            } else if (have_rwalk)
                 fail("midp recovery: could not reapply %lu^%u at v_%u",
                         p, x, vi);
-            if (need_work && !have_rwalk)
-                diag_plain(cur_level);
-            walk_v(cur_level, have_rwalk ? rwalk_from : Z(zero));
-            --cur_vlevel[vi];   /* unallocate */
             /* we were working on p, so it is not already allocated */
             used = 0;
             goto next_mi;
@@ -4271,7 +4271,8 @@ void walk_midp(t_level *prev_level, bool recover) {
                     diag_plain(cur_level);
                 walk_v(cur_level, Z(zero));
                 --cur_vlevel[vi];   /* unallocate */
-            }
+            } else if (need_work)
+                diag_attempt(cur_level, vi, p, x);
           next_mi:
             ;
         }

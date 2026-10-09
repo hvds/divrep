@@ -143,7 +143,7 @@ sub test_init {
 
     {
         my $args124W = [qw{ -x1e12 -f3 -W100 -dW1 -Ls0 12 4 }];
-        my $expect = q{b0: 2^2.3 . 2 3 W(267259,3,2)};
+        my $expect = q{b0: 2^2.3 . 2 3 W(316223,3,2)};
         for (
             [q{start midp on init partial}, '2^2 . 2 .'],
             [q{start midp on init full}, '2^2.3 . 2 3']
@@ -203,6 +203,11 @@ sub test_recover {
     expect_recover(q{recover midp walk}, $args65W,
         ['305 b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263'],
         'b0: . 2 3^2 2^2 5^2 W(9929,3,0): 271419930 / 563529263',
+    );
+    # 31607^2 cannot be allocated at v_2; the sweep goes on to the next prime
+    expect_recover(q{recover midp from a prime that could not be allocated},
+        $args124W, ['305 b0: 2^2.3 . 2 3 W(31607,3,2)'],
+        'b0: 2^2.3 . 2 3 W(31601,3,2)',
     );
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
@@ -451,7 +456,7 @@ sub test_recover_complete_batch {
     expect_recover(q{recover a named batch id with no progress yet},
         [qw{ -x1e10 -f3 -W1000 12 4 }],
         ['305 b5: 2^2.3 . 2 3'],
-        'b5: 2^2.3 . 2 3 W(26723,3,2)',
+        'b5: 2^2.3 . 2 3 W(31607,3,2)',
     );
 }
 
