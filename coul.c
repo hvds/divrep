@@ -899,7 +899,7 @@ void mark_unsorted(void) {
          */
         uint vi = lp->vi;
         uint bvi = best_v(lp);
-        lp->unsorted = (bvi == BV_6X) ? 0 : (bvi == vi);
+        lp->unsorted = (bvi == BV_6X) ? 0 : (bvi != vi);
         lp->vi = vi;
     }
     strategy = save_strategy;

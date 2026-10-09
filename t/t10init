@@ -388,6 +388,16 @@ sub test_recover_j4 {
         'b0: 2^3 3.5.29.47.71.79 2.7',
     );
 
+    # A run stopped just after finding a candidate: the 315 line it wrote
+    # there must mark the level whose position the candidate changes. We
+    # start it close by, with the bound it had reached.
+    expect_recover_after_candidate(
+        q{recover -j4 from a line written after a candidate},
+        [qw{ -j4 -x2931871303 64 3 }],
+        ['305 b0: 2^3.19 3.5.11 2.7.13.23: 2 / 27'],
+        'b0: 2^3.19 3.5.11 2.7.13: 0 / 47',
+    );
+
     # -js (a fixed, user-specified allocation order) can also produce
     # "315" lines, but its own choices don't depend on the search bound
     # the way -j4's do, so a plain "305" line is enough to confirm its
@@ -588,6 +598,29 @@ sub expect_recover {
         diag($_) for @$gotlines;
     }
     return;
+}
+
+# Recover from $content, logging every progress line until the run has
+# found a candidate; then recover again from the log as it stood at the
+# first progress line after that.
+sub expect_recover_after_candidate {
+    my($legend, $args, $content, $expect) = @_;
+    my $fh = temp_log($content);
+    my $path = $fh->filename;
+    run_test($type, [ '-dL20', "-r$path", @$args ], 1)
+            // return;
+    open my $log, '<', $path or die "$path: $!";
+    my @log = <$log>;
+    close $log;
+    chomp @log;
+    my($found) = grep $log[$_] =~ /^202 /, scalar(@$content) .. $#log;
+    my($cut) = grep $log[$_] =~ /^3[01]5 /, ($found // @log) + 1 .. $#log;
+    if (!defined $cut) {
+        fail($legend);
+        diag('no progress line logged after a candidate');
+        return;
+    }
+    return expect_recover($legend, $args, [ @log[0 .. $cut] ], $expect);
 }
 
 sub expect_diag {
