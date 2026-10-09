@@ -333,16 +333,22 @@ sub test_flip {
         128, ['305 b7: 2^2.5^2 . 2.11^5 . F(2,23)'],
         [qw{ -j2 -x1e6 -b7 36 4 }]);
 
-    # A candidate logged after the last 305 line can lower zmax enough that
-    # the flip allocation now overflows; applying it should be deferred.
-    TODO: {
-        local $TODO = q{defer trailing 202 until flip reapply is done};
-        expect_recover(q{recover flip with trailing candidate},
-            [qw{ -j2 -x1e12 36 4 }],
-            [q{305 b6: 2^2.3.31^2 . 2.7^5.5443^2 3^8 F(2,587)},
-             q{202 Candidate 460546327700 (70.18s)}],
-            q{b6: 2^2.3.31^2 . 2.7^5 3^8 F(2,587)});
-    }
+    # A candidate logged after the last 305 line lowers zmax enough that
+    # the flip allocation would overflow: it is applied after that. It
+    # leaves the flip nothing that fits, so we see the next power at v_2.
+    expect_recover(q{recover flip with trailing candidate},
+        [qw{ -j2 -x1e12 36 4 }],
+        [q{305 b6: 2^2.3.31^2 . 2.7^5.5443^2 3^8 F(2,587)},
+         q{202 Candidate 460546327700 (70.18s)}],
+        q{b6: 2^2.3.31^2 . 2.5^8 3^8});
+
+    # This one leaves no room for 83^2 at v_0, above the flip, so we see
+    # the next power there.
+    expect_recover(q{recover flip with a trailing candidate that ends a level},
+        [qw{ -j2 -x1e10 36 3 }],
+        [q{305 b0: 2^2.83^2 . 2.3^5.251^2 F(2,89)},
+         q{202 Candidate 400001 (0.00s)}],
+        q{b0: 2^2.3^5 . 2});
 
     # From a real log: recovery carries on to the line the run wrote next.
     expect_recover(q{recover with trailing candidate, 36 3},

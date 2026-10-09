@@ -5886,10 +5886,13 @@ void recurse(e_is jump_continue) {
  * it on returning there, as after any new candidate.
  */
 e_is prune_stale(e_is jump) {
-    if (jump == IS_FINISH || jump == IS_BATCH || jump == IS_6X
-            || jump == IS_FLIP)
+    if (jump == IS_FINISH || jump == IS_BATCH || jump == IS_6X)
         return jump;
-    for (uint li = final_level + 1; li < level; ++li) {
+    /* a flip does not search below its hidden level, so that is not one
+     * to judge
+     */
+    uint top = (jump == IS_FLIP) ? level - 1 : level;
+    for (uint li = final_level + 1; li < top; ++li) {
         t_level *lp = &levels[li];
         if (lp->is_forced || lp->x < 2)
             continue;
@@ -5919,6 +5922,7 @@ e_is prune_stale(e_is jump) {
                 --cur_vlevel[up->vi];
         }
         have_rwalk = 0;
+        flip_recover.valid = 0;
         return IS_NEXT;
     }
     return jump;

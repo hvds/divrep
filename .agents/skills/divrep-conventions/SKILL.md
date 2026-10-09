@@ -394,10 +394,9 @@ Tests:
 - [firm] Tests make temporary files properly; no hard-coded /tmp.
 - [firm] The tests target the Makefile's current default MPUGMP_VER
   (39982f872b at present), not a fixed sha.
-- [inferred] Two tests are expected failures marked TODO ("recover flip
-  with trailing candidate", "recover midp with trailing candidate"). They
-  record recovery gaps left when CHECK_OVERFLOW became the default. Leave
-  them unless you are fixing the gap.
+- [inferred] A test marked TODO is an expected failure that records a
+  known gap. Leave it unless you are fixing the gap. (There are none at
+  present.)
 
 Code and files:
 

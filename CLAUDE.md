@@ -27,8 +27,7 @@ false result.
                                 # optimised behaviour matters
     TEST_TAU=1 make dtest       # soak test: only if tau code changed
     TEST_PELL=1 make dtest      # soak test: only if Pell code changed
-Expected: all ok apart from the 2 TODO tests ("recover flip with
-trailing candidate", "recover midp with trailing candidate").
+Expected: all ok.
 - If a change touches their dependencies, check that ftest, sq12,
   test_pell, test_tau and speed still build; they have no tests of
   their own.
