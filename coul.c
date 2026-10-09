@@ -4979,6 +4979,40 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     return mpz_get_ui(Z(lp_x));
 }
 
+/* The x of the previous allocation at v_i if it was unforced, else 0. */
+static inline uint prev_x(uint vi) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    return (ap->p > maxforce[vi]
+#ifdef TYPE_a
+        && (n % ap->p)
+#endif
+    ) ? ap->x : 0;
+}
+
+/* Returns true if a fresh x at v_i (leaving nextt) can be skipped, because
+ * the same powers taken in the other order have already covered it.
+ */
+static inline bool done_in_reverse(uint vi, uint x, uint nextt) {
+    uint prevx = prev_x(vi);
+    if (ispow2(x) || x == prevx)
+        return 0;
+    /* we already did this in reverse */
+    if (x < prevx && divisors[x].high == divisors[prevx].high)
+        return 1;
+    /* we already did any possible continuation in reverse */
+    return x > nextt && divisors[x].high == divisors[nextt].high;
+}
+
+/* The prime after which to start a fresh x at v_i. */
+static inline ulong start_p(uint vi, uint x) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    uint prevx = prev_x(vi);
+    /* powers of 2: increasing p, not decreasing powers */
+    if (ispow2(x) ? (prevx && ispow2(prevx)) : (x == prevx))
+        return ap->p;   /* skip smaller p */
+    return maxforce[vi];
+}
+
 typedef enum {
     PUX_NOTHING_TO_DO = 0,
     PUX_FLIP_PQSQ,
@@ -4986,61 +5020,23 @@ typedef enum {
     PUX_DO_THIS_X
 } e_pux;
 
-/* Prepare to allocate p^{x-1} at v_i for a range of p. The p value passed
- * in is 0 for a fresh start, the last prime done when recalculating after
- * an improved maximum, or the prime that was in progress on recovery.
+/* Act on the limit limp for p^{x-1} at cur_level, given the last prime
+ * done p (the prime before the first to try, if fresh).
  *
  * Returns:
  *   PUX_NOTHING_TO_DO if nothing more to do at this level for any x;
+ *   PUX_FLIP_PQSQ if this strategy is available now (see run_flip_pqsq());
  *   PUX_SKIP_THIS_X if nothing more to do for this x;
- *   PUX_DO_THIS_X if prepped for this x with work to do.
+ *   PUX_DO_THIS_X if there are p to allocate.
  */
-e_pux prep_unforced_x(
-    t_level *prev_level, t_level *cur_level, ulong p, bool forced
+e_pux limit_unforced_x(
+    t_level *prev_level, t_level *cur_level, ulong p, ulong limp, bool fresh
 ) {
     uint ti = cur_level->ti;
     uint x = divisors[ti].div[cur_level->di];
     uint vi = cur_level->vi;
-    t_value *vp = &value[vi];
-    uint vil = cur_vlevel[vi];
-    t_allocation *ap = &vp->alloc[vil - 1];
-    ulong limp = 0;
-    /* if part of an init_pattern, we don't care about the checks,
-     * we will never continue from this allocation */
-    if (forced)
-        goto force_unforced;
-
-    /* pick up any previous unforced x */
     uint nextt = ti / x;
-    bool fresh = (p == 0);
-    if (p == 0) {
-        uint prevx = (ap->p > maxforce[vi]
-#ifdef TYPE_a
-            && (n % ap->p)
-#endif
-        ) ? ap->x : 0;
-        if (ispow2(x)) {
-            /* powers of 2: increasing p, not decreasing powers */
-            if (prevx && ispow2(prevx))
-                p = ap->p;  /* skip smaller p */
-            else
-                p = maxforce[vi];
-        } else {
-            if (x == prevx)
-                p = ap->p;      /* skip smaller p, we already did the reverse */
-            else if (x < prevx && divisors[x].high == divisors[prevx].high)
-                return PUX_SKIP_THIS_X; /* we already did the reverse */
-            else if (x > nextt && divisors[x].high == divisors[nextt].high)
-                /* skip this x, we already did any possible continuation in
-                 * reverse. */
-                return PUX_SKIP_THIS_X;
-            else
-                p = maxforce[vi];
-        }
-    } /* else we're continuing from known p */
 
-    /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > zmax + i */
-    limp = limit_p(cur_level, vi, x, nextt);
     if (limp == 0) {
         /* force walk */
 #ifdef SQONLY
@@ -5050,21 +5046,15 @@ e_pux prep_unforced_x(
         walk_v(prev_level, Z(zero));
 #endif
         return PUX_NOTHING_TO_DO;
-    } else if (limp < p) {
-        if (nextt == 2 && prev_level->vi == vi) {
-            uint prevx = (ap->p > maxforce[vi]
-#ifdef TYPE_a
-                && (n % ap->p)
-#endif
-            ) ? ap->x : 0;
-            /* if tau at the previous level is 2p^2 and its current prime is
-             * already too high to split as (p, p, 2) then we can not only
-             * skip this x (== p) but also profitably invert the process for
-             * the remainder, splitting as (2p, p) rather than (p, 2p).
-             */
-            if (x == prevx)
-                return PUX_FLIP_PQSQ;
-        }
+    }
+    if (limp < p) {
+        /* if tau at the previous level is 2p^2 and its current prime is
+         * already too high to split as (p, p, 2) then we can not only
+         * skip this x (== p) but also profitably invert the process for
+         * the remainder, splitting as (2p, p) rather than (p, 2p).
+         */
+        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi))
+            return PUX_FLIP_PQSQ;
         return PUX_SKIP_THIS_X; /* nothing to do here */
     }
     /* TODO: rather than diverting odd-prime-tau positions to a walk under
@@ -5090,8 +5080,13 @@ e_pux prep_unforced_x(
         walk_1_set(prev_level, cur_level, vi, fresh ? p : p - 1, limp, x);
         return PUX_SKIP_THIS_X;
     }
+    return PUX_DO_THIS_X;
+}
 
-    /* apply gain heuristics to decide whether to walk or recurse */
+/* The gate: true if the gain heuristics say to walk prev_level, rather
+ * than recurse by allocating at v_i each prime after p up to limp.
+ */
+bool gate_walk(t_level *prev_level, uint vi, ulong p, ulong limp) {
     mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
 #ifdef LARGE_MIN
     mpz_sub(Z(r_walk), Z(r_walk), zmin);
@@ -5129,9 +5124,51 @@ e_pux prep_unforced_x(
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain);
     }
     ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
-    if (mpz_fits_ulong_p(Z(r_walk))
-        && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p)
-    ) {
+    return mpz_fits_ulong_p(Z(r_walk))
+            && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p);
+}
+
+/* Set cur_level to allocate its current x for the primes after p up to
+ * limp.
+ */
+static inline void set_unforced_x(t_level *cur_level, ulong p, ulong limp) {
+    level_setp(cur_level, p);
+    cur_level->x = divisors[cur_level->ti].div[cur_level->di];
+    cur_level->limp = limp;
+    cur_level->max_at = seen_best;
+    /* TODO: do some constant alloc stuff in advance */
+}
+
+/* Prepare to allocate p^{x-1} at v_i for a range of p. The p value passed
+ * in is 0 for a fresh start, the last prime done when recalculating after
+ * an improved maximum, or the prime that was in progress on recovery.
+ *
+ * Returns:
+ *   PUX_NOTHING_TO_DO if nothing more to do at this level for any x;
+ *   PUX_FLIP_PQSQ if this strategy is available now (see run_flip_pqsq());
+ *   PUX_SKIP_THIS_X if nothing more to do for this x;
+ *   PUX_DO_THIS_X if prepped for this x with work to do.
+ */
+e_pux prep_unforced_x(t_level *prev_level, t_level *cur_level, ulong p) {
+    uint ti = cur_level->ti;
+    uint x = divisors[ti].div[cur_level->di];
+    uint vi = cur_level->vi;
+    uint nextt = ti / x;
+    bool fresh = (p == 0);
+
+    if (fresh) {
+        if (done_in_reverse(vi, x, nextt))
+            return PUX_SKIP_THIS_X;
+        p = start_p(vi, x);
+    } /* else we're continuing from known p */
+
+    /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > zmax + i */
+    ulong limp = limit_p(cur_level, vi, x, nextt);
+    e_pux pux = limit_unforced_x(prev_level, cur_level, p, limp, fresh);
+    if (pux != PUX_DO_THIS_X)
+        return pux;
+
+    if (gate_walk(prev_level, vi, p, limp)) {
 #ifdef SQONLY
         if (prev_level->have_square)
             walk_v(prev_level, Z(zero));
@@ -5142,12 +5179,7 @@ e_pux prep_unforced_x(
 #endif
         return PUX_NOTHING_TO_DO;
     }
-  force_unforced:
-    level_setp(cur_level, p);
-    cur_level->x = x;
-    cur_level->limp = limp;
-    cur_level->max_at = seen_best;
-    /* TODO: do some constant alloc stuff in advance */
+    set_unforced_x(cur_level, p, limp);
     return PUX_DO_THIS_X;
 }
 
@@ -5334,7 +5366,13 @@ static inline bool insert_float(
     cur_level->ti = ti;
     cur_level->di = di;
 
-    e_pux pux = prep_unforced_x(prev_level, cur_level, p, init);
+    e_pux pux;
+    if (init) {
+        /* we never continue from an init pattern, so need no checks */
+        set_unforced_x(cur_level, p, 0);
+        pux = PUX_DO_THIS_X;
+    } else
+        pux = prep_unforced_x(prev_level, cur_level, p);
     switch (pux) {
       case PUX_FLIP_PQSQ:
       case PUX_SKIP_THIS_X:
@@ -5720,7 +5758,7 @@ void recurse(e_is jump_continue) {
         {
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
-            switch (prep_unforced_x(prev_level, cur_level, 0, 0)) {
+            switch (prep_unforced_x(prev_level, cur_level, 0)) {
               case PUX_NOTHING_TO_DO:
                 goto derecurse;
               case PUX_FLIP_PQSQ:
@@ -5774,7 +5812,7 @@ void recurse(e_is jump_continue) {
             /* recalculate limit if we have an improved maximum */
             if (improve_max && seen_best > cur_level->max_at)
                 switch (prep_unforced_x(
-                    prev_level, cur_level, cur_level->p, 0
+                    prev_level, cur_level, cur_level->p
                 )) {
                   case PUX_NOTHING_TO_DO:
                   case PUX_FLIP_PQSQ:
