@@ -5653,8 +5653,11 @@ void run_flip_pqsq(uint vi) {
         /* Failure most likely means it does not leave a valid square;
          * we pass the grandparent as prev_level to reflect our notional
          * deallocation of prev_level. */
-        if (!apply_single(anc_level, cur_level, vi, p, xl))
+        if (!apply_single(anc_level, cur_level, vi, p, xl)) {
+            /* only the recovered p resumes at the recovered inner prime */
+            recover = 0;
             continue;
+        }
         ap = &vp->alloc[cur_vlevel[vi] - 1];
         if (need_work)
             diag_plain(cur_level);
