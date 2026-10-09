@@ -352,6 +352,14 @@ sub test_flip {
          q{202 Candidate 1233095148 (0.01s)}],
         q{b0: 2^2.3^2 . 2.5^2.29^5});
 
+    # From a real log: 97 is the last prime to try here, so the flip is
+    # done and the search moves to the next power at v_2.
+    expect_recover(q{recover flip to its end, after a candidate},
+        [qw{ -j2 -x1e10 36 3 }],
+        [q{202 Candidate 323660348 (0.05s)},
+         q{305 b0: 2^2.109^2 . 2.7^5.97^2 F(2,89)}],
+        q{b0: 2^2.109^2 . 2.3^8}, 3);
+
     # there can be unforced allocations before the flip set
     expect_recover(q{recover flip past prior allocations to the same v_i},
         [qw{ -x103148643381388141823 -j2 -f3 -g20 324 3 }],
@@ -615,11 +623,13 @@ sub temp_log {
     return $fh;
 }
 
+# Expect the $dw'th progress line after recovery (default the first).
 sub expect_recover {
-    my($legend, $args, $content, $expect) = @_;
+    my($legend, $args, $content, $expect, $dw) = @_;
     my $fh = temp_log($content);
     my $path = $fh->filename;
-    my $lines = run_test($type, [ '-dW1', "-r$path", @$args ], 1)
+    $dw ||= 1;
+    my $lines = run_test($type, [ "-dW$dw", "-r$path", @$args ], 1)
             // return;
     my $gotlines = $lines->{''};
     if (!$gotlines) {

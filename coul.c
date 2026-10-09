@@ -5673,6 +5673,8 @@ void run_flip_pqsq(uint vi) {
         recover = 0;
         --cur_vlevel[vi];
     }
+    /* a candidate found meanwhile is no reason to recalculate limp */
+    prev_level->max_at = seen_best;
     prev_level->x = xs;
     ++cur_vlevel[vi];
     in_flip = 0;
