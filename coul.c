@@ -194,6 +194,7 @@ bool clock_is_realtime = 0;
 mpz_t zmin, zmax;   /* limits to check for v_0 */
 mpz_t best;         /* best solution seen */
 bool improve_max = 1;   /* reduce zmax when solution found */
+bool any_bound = 0;     /* apply_single() accepts rq > zmax */
 uint seen_best = 0; /* number of times we've improved zmax */
 ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
@@ -3812,7 +3813,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
 
 #ifdef CHECK_OVERFLOW
     /* if rq > zmax, no solution <= zmax is possible */
-    if (mpz_cmp(cur->rq, zmax) > 0)
+    if (mpz_cmp(cur->rq, zmax) > 0 && !any_bound)
         return 0;
 #endif
 
@@ -5470,7 +5471,13 @@ bool absorb_flip(uint vi, t_fact *rs) {
             break;
     cur_level->ti = ti;
     cur_level->di = di;
-    if (!apply_single(prev_level, cur_level, vi, flip_recover.oldp, xs))
+    /* The flip does not search below this level, so it need not fit: a
+     * candidate found during the flip can put it out of range.
+     */
+    any_bound = 1;
+    bool ok = apply_single(prev_level, cur_level, vi, flip_recover.oldp, xs);
+    any_bound = 0;
+    if (!ok)
         fail("panic: could not reapply %u^%u at %u for flip recovery",
                 flip_recover.oldp, xs, vi);
     ++level;
