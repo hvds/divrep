@@ -5398,8 +5398,13 @@ static inline bool insert_float(
         /* we never continue from an init pattern, so need no checks */
         set_unforced_x(cur_level, p, 0);
         pux = PUX_DO_THIS_X;
-    } else
-        pux = prep_unforced_x(prev_level, cur_level, p);
+    } else {
+        /* the log shows that we recursed here, so the gate is not asked */
+        ulong limp = limit_p(cur_level, vi, x, ti / x);
+        pux = limit_unforced_x(prev_level, cur_level, p, limp, 0);
+        if (pux == PUX_DO_THIS_X)
+            set_unforced_x(cur_level, p, limp);
+    }
     switch (pux) {
       case PUX_FLIP_PQSQ:
       case PUX_SKIP_THIS_X:
