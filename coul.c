@@ -80,6 +80,7 @@ typedef enum {
     w1_m, w1_mr,
     lp_x, lp_mint, lp_mint2,    /* limit_p */
     r_walk,                     /* recurse */
+    rec_cand, rec_lead, rec_trail,  /* recover */
 
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
@@ -343,7 +344,7 @@ bool start_seen = 0;    /* true if log file has been written to before */
 bool skip_recover = 0;  /* true if we should not attempt recovery */
 t_recover *rstack = NULL;  /* point reached in recovery log file */
 t_recover *istack = NULL;  /* point requested by -I */
-char *pend202 = NULL;   /* recovery candidate under highpow after last 3[01]5 */
+bool have_pend202 = 0;  /* true when Z(rec_trail) is trailing candidate */
 bool have_rwalk = 0;    /* true if recovery is mid-walk */
 mpz_t rwalk_from;
 mpz_t rwalk_to;
@@ -1579,25 +1580,33 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
     t0 -= dtime;
 }
 
-void apply_202(char *s) {
+/* Returns the candidate of a 202 line, as a string of digits. */
+char *digits_202(char *s) {
     int start, end, off = 0;
-    mpz_t cand;
     sscanf(s, "202 Candidate %n%*[0-9]%n (%*[0-9.]s)%n",
             &start, &end, &off);
     if (off == 0)
         fail("error parsing 202 line '%s'", s);
     s[end] = 0;
-    mpz_init_set_str(cand, &s[start], 10);
-    update_best(cand);
-    mpz_clear(cand);
+    return &s[start];
+}
+
+void apply_pend202(void) {
+    update_best(Z(rec_trail));
+    have_pend202 = 0;
 }
 
 void recover(FILE *fp) {
     char *last305 = NULL;   /* 305 or 315 */
     bool expanded = 0;      /* true if it's 315 */
-    char *last202 = NULL;
     char *curbuf = NULL;
-    size_t len = 120, len305 = 0, len202 = 0;
+    size_t len = 120, len305 = 0;
+    /* The least candidate up to the last progress line is Z(rec_lead),
+     * and the least since it Z(rec_trail); these are the digits in each,
+     * 0 if there is none. Candidates are written with no leading zeros,
+     * so one with more digits than the least need not be parsed.
+     */
+    size_t nlead = 0, ntrail = 0;
 
     while (1) {
         ssize_t nread = getline(&curbuf, &len, fp);
@@ -1628,22 +1637,23 @@ void recover(FILE *fp) {
             size_t lt = len305;
             len305 = len;
             len = lt;
-            if (last202) {
-                apply_202(last202);
-                free(last202);
-                last202 = NULL;
-                len202 = 0;
+            if (ntrail) {
+                if (!nlead || mpz_cmp(Z(rec_trail), Z(rec_lead)) < 0) {
+                    mpz_set(Z(rec_lead), Z(rec_trail));
+                    nlead = ntrail;
+                }
+                ntrail = 0;
             }
         } else if (strncmp("202 ", curbuf, 4) == 0) {
-            if (highpow) {
-                char *t = last202;
-                last202 = curbuf;
-                curbuf = t;
-                size_t lt = len202;
-                len202 = len;
-                len = lt;
-            } else
-                apply_202(curbuf);
+            char *d = digits_202(curbuf);
+            size_t nd = strlen(d);
+            if (!ntrail || nd <= ntrail) {
+                mpz_set_str(Z(rec_cand), d, 10);
+                if (!ntrail || mpz_cmp(Z(rec_cand), Z(rec_trail)) < 0) {
+                    mpz_set(Z(rec_trail), Z(rec_cand));
+                    ntrail = nd;
+                }
+            }
         } else if (strncmp("001 ", curbuf, 4) == 0) {
             /* TODO: parse and check for consistent options */
             start_seen = 1;
@@ -1654,10 +1664,14 @@ void recover(FILE *fp) {
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
+    /* apply best candidate seen before last305 */
+    if (nlead)
+        update_best(Z(rec_lead));
     if (last305)
         parse_305(last305 + 4, &rstack, expanded);
-    if (last202)
-        pend202 = last202;
+    /* save best candidate seen after last305 to apply after stack is rebuilt */
+    if (ntrail && (!nlead || mpz_cmp(Z(rec_trail), Z(rec_lead)) < 0))
+        have_pend202 = 1;
     free(curbuf);
     free(last305);
 }
@@ -4218,7 +4232,11 @@ void walk_midp(t_level *prev_level, bool recover) {
              * but not below a partial walk; the next diag point should
              * be what we recover to, so must not diag here if have_rwalk.
              */
-            if (apply_single(prev_level, cur_level, vi, p, x)) {
+            bool ok = apply_single(prev_level, cur_level, vi, p, x);
+            /* the stack is now rebuilt */
+            if (have_pend202)
+                apply_pend202();
+            if (ok) {
                 if (need_work && !have_rwalk)
                     diag_plain(cur_level);
                 walk_v(cur_level, have_rwalk ? rwalk_from : Z(zero));
@@ -6061,12 +6079,14 @@ int main(int argc, char **argv, char **envp) {
     e_is jump = IS_DEEPER;
     if (rstack || istack)
         jump = insert_stack();
-    if (pend202) {
-        apply_202(pend202);
-        free(pend202);
-    }
+    /* midp recovery reapplies its allocation inside walk_midp() */
+    if (have_pend202 && !midp_recover.valid)
+        apply_pend202();
     if (jump != IS_FINISH && setjmp(jmp_finish) == 0)
         recurse(jump);
+    /* it is still a candidate if nothing got as far as applying it */
+    if (have_pend202)
+        apply_pend202();
     keep_diag();
 
     if ((opt_alloc & 2) == 0) {

@@ -328,6 +328,14 @@ sub test_flip {
             q{b6: 2^2.3.31^2 . 2.7^5 3^8 F(2,587)});
     }
 
+    # From a real log: recovery carries on to the line the run wrote next.
+    expect_recover(q{recover with trailing candidate, 36 3},
+        [qw{ -j2 -x1000000000:3000000000 36 3 }],
+        [q{202 Candidate 1913700348 (0.01s)},
+         q{305 b0: 2^2.3^2 . 2.5^2.1877^2: 0 / 0 (0.01s) [815 398 311]},
+         q{202 Candidate 1233095148 (0.01s)}],
+        q{b0: 2^2.3^2 . 2.5^2.29^5});
+
     # there can be unforced allocations before the flip set
     expect_recover(q{recover flip past prior allocations to the same v_i},
         [qw{ -x103148643381388141823 -j2 -f3 -g20 324 3 }],
@@ -402,6 +410,15 @@ sub test_recover_j4 {
         ['305 b0: 2^3.19 3.5.11 2.7.13.23: 2 / 27'],
         'b0: 2^3.19 3.5.11 2.7.13: 0 / 47',
     );
+
+    # Under -X candidates are reported in no particular order; the least
+    # must survive recovery.
+    expect_recover_result(q{recover -j4 -X keeps the least candidate},
+        19940,
+        ['202 Candidate 19940 (0.01s)',
+         '202 Candidate 1873924 (0.02s)',
+         '305 b4: 2^2 5^2 2.3^2 11^2: 9 / 13 (0.02s) [2792 491 51 5]'],
+        [qw{ -j4 -X -x3e6 -f3 12 4 }]);
 
     # -js (a fixed, user-specified allocation order) can also produce
     # "315" lines, but its own choices don't depend on the search bound
@@ -558,15 +575,13 @@ sub test_recover_init {
         ['305 b0: 3.2^2 . 2 3.5^2 W(26479,3,2)'],
         'b0: 3.2^2 . 2 3.5^2 W(26479,3,2)'
     );
-    # As for flip, a trailing candidate can make the midp reapply fail.
-    TODO: {
-        local $TODO = q{defer trailing 202 until midp reapply is done};
-        expect_recover(q{recover midp with trailing candidate},
-            [qw{ -x1e10 -f3 -W1000 12 4 }],
-            [q{305 b0: 2^2.3 . 2 3 W(16963,3,3)},
-             q{202 Candidate 4309961844 (0.10s)}],
-            q{b0: 2^2.3 . 2 3 W(16963,3,3)});
-    }
+    # A candidate logged after the last 305 line lowers zmax enough that
+    # the midp allocation would overflow; it is applied after that.
+    expect_recover(q{recover midp with trailing candidate},
+        [qw{ -x1e10 -f3 -W1000 12 4 }],
+        [q{305 b0: 2^2.3 . 2 3 W(16963,3,3)},
+         q{202 Candidate 4309961844 (0.10s)}],
+        q{b0: 2^2.3 . 2 3 W(16963,3,3)});
     expect_recover(q{recover midp walk constrain 3+float},
         [q{-I"3 . . 3.5^2"}, @$args124W],
         ['305 b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 2'],
@@ -721,6 +736,21 @@ sub expect_recover_recurse_count {
         return;
     }
     is($1, $count, $legend);
+    return;
+}
+
+sub expect_recover_result {
+    my($legend, $expect, $content, $args) = @_;
+    my $fh = temp_log($content);
+    my $lines = run_test($type, [ '-r' . $fh->filename, @$args ], 1)
+            // return;
+    my $line = $lines->{200} && $lines->{200}[-1];
+    if (!$line || $line !~ / = (\d+)/) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    is($1, $expect, $legend);
     return;
 }
 
