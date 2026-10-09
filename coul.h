@@ -47,6 +47,12 @@ typedef struct s_level {
     bool next_best; /* vi is known stable result of best_v() */
     bool unsorted;  /* this level is not where best_v() would put it */
     uint choice_strategy;   /* the strategy in force when vi was chosen */
+    /* Loop of allocations at this level: whether, and above which
+     * multiple of aq, an allocation can be rejected early (see
+     * reject_single()), and whether aq is a single limb.
+     */
+    bool rj_ok, rj_limb;
+    ulong rj_mult;
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;

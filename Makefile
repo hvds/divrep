@@ -100,14 +100,17 @@ test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iter
 test_tau: Makefile test_tau.c coultau.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o test_tau -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_tau.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
-ftest: Makefile ftest.c coultau.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
-	gcc -o ftest -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ftest.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+test_prime: Makefile test_prime.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
+	gcc -o test_prime -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} test_prime.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+
+ftest: Makefile ftest.c coultau.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
+	gcc -o ftest -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ftest.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
 speed: Makefile speed.c prime_iterator.c ${HFACTOR} ${MPUGMP}/gmp_main.c
 	gcc -o speed -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} speed.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
-sq12 dsq12: Makefile sq12.c diag.c coultau.c prime_iterator.c diag.h coultau.h prime_iterator.h ${CFACTOR} ${HFACTOR}
-	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
+sq12 dsq12: Makefile sq12.c diag.c coultau.c coulfact.c prime_iterator.c diag.h coultau.h coulfact.h prime_iterator.h ${CFACTOR} ${HFACTOR}
+	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 # coul.h may need a type
 test_pell test_tau: DEFINES += -DTYPE_o
@@ -122,15 +125,20 @@ endif
 ifdef TEST_TAU
     SOAK += test_tau
 endif
+ifdef TEST_PRIME
+    SOAK += test_prime
+endif
 
 test: pcoul pcaul pcrul ${SOAK}
 	t/t10init
 	t/t20log
 	t/t50pell
 	t/t60tau
+	t/t70prime
 
 dtest: dpcoul dpcaul dpcrul ${SOAK}
 	DEBUG=1 t/t10init
 	DEBUG=1 t/t20log
 	DEBUG=1 t/t50pell
 	DEBUG=1 t/t60tau
+	DEBUG=1 t/t70prime

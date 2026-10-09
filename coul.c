@@ -1381,11 +1381,6 @@ void init_pre(void) {
     flip_recover.valid = 0;
 }
 
-static inline bool is_prime_ul(ulong p) {
-    mpz_set_ui(Z(temp), p);
-    return _GMP_is_prob_prime(Z(temp)) ? 1 : 0;
-}
-
 /* Parse a "305" log line for initialization.
  * Input string should point after the initial "305 ".
  * If 'expanded' is true, expects a "315" expanded line instead.
@@ -1429,7 +1424,7 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
             if (pp.p == 1 || pp.e == 0)
                 ;
-            else if (pp.e == 1 && !is_prime_ul(pp.p)) {
+            else if (pp.e == 1 && !u64_bpsw(pp.p)) {
                 /* -I allows unfactored entries, but only small ones */
                 if (pp.p > UINT_MAX)
                     fail("517 unfactored entry %lu is too large", pp.p);
@@ -3660,7 +3655,7 @@ bool update_residues(t_level *old, t_level *new,
  */
 bool update_chinese(t_level *old, t_level *new, uint vi, ulong p, mpz_t px) {
     ulong off = TYPE_OFFSET(vi);
-    /* chinese_ppow() needs 2px < 2^62 for simple_invert() */
+    /* chinese_ppow() needs 2px < 2^62 for invert_u64() */
     if (mpz_cmp_ui(px, 1UL << 61) < 0) {
         ulong m = mpz_get_ui(px), s;
         if (m & 1) {
@@ -4984,6 +4979,104 @@ typedef enum {
     PUX_DO_THIS_X
 } e_pux;
 
+/* Most primes tried by a loop of allocations are rejected for giving a
+ * least v_0 = rq + mult.aq > zmax, with mult the multiple the CRT finds:
+ * that is, for mult > floor((zmax - rq) / aq), which is the same for
+ * every prime of the loop. So where that bound (rj_mult) fits in a limb,
+ * a prime can be rejected on mult alone, calculated in single limbs,
+ * without the cost of apply_single(). As zmax can only fall, the bound
+ * found when the loop is prepared stays valid, if no longer the least.
+ */
+static inline void reject_prep(t_level *prev, t_level *cur) {
+    cur->rj_ok = 0;
+#ifdef CHECK_OVERFLOW
+    if (mpz_cmp(prev->rq, zmax) > 0)
+        return;
+    mpz_sub(Z(temp), zmax, prev->rq);
+    mpz_fdiv_q(Z(temp), Z(temp), prev->aq);
+    if (!mpz_fits_ulong_p(Z(temp)))
+        return;
+    cur->rj_mult = mpz_get_ui(Z(temp));
+    /* rq < aq, so rq fits in a limb if aq does */
+    cur->rj_limb = (mpz_size(prev->aq) == 1);
+    cur->rj_ok = 1;
+#endif
+}
+
+/* aq and rq of prev, mod m */
+static inline void reject_mod(
+    t_level *prev, bool limb, ulong m, ulong *am, ulong *rm
+) {
+    if (limb) {
+        *am = mpz_getlimbn(prev->aq, 0) % m;
+        *rm = mpz_get_ui(prev->rq) % m;
+    } else {
+        *am = mpz_fdiv_ui(prev->aq, m);
+        *rm = mpz_fdiv_ui(prev->rq, m);
+    }
+}
+
+/* Returns true if allocating p^{x-1} at v_i over prev is sure to be
+ * rejected for v_0 > zmax, or false if uncertain. The caller checks
+ * that p is odd, and that reject_prep() set cur->rj_ok.
+ * The CRT gives v_0 = rq + mult.aq, where 0 <= mult < p^{x-1} and
+ *   mult == -(rq + i) / aq (mod p^{x-1}).
+ * Taken mod p, that gives mult0 = mult % p from an inverse mod p alone;
+ * mult >= mult0, so mult0 > rj_mult is enough to reject. Otherwise
+ * we need all of mult: for p^2 its other digit base p comes from the
+ * same inverse, and for higher powers we invert mod p^{x-1}.
+ */
+static inline bool reject_single(
+    t_level *prev, t_level *cur, uint vi, ulong p, uint x
+) {
+    ulong off = TYPE_OFFSET(vi), am, rm;
+    if (p < (1UL << 31)) {
+        reject_mod(prev, cur->rj_limb, p, &am, &rm);
+        if (am == 0)
+            return 0;
+        ulong inv = invert_u32(am, p);
+        /* -(i + rq) mod p */
+        ulong c = ((off < p ? off : off % p) + rm) % p;
+        if (c)
+            c = p - c;
+        ulong mult0 = c * inv % p;
+        if (mult0 > cur->rj_mult)
+            return 1;
+        if (x == 2)
+            return 0;
+        if (x == 3) {
+            /* aq.(mult0 + p.mult1) == c (mod p^2), so
+             * mult1 == ((c - aq.mult0) / p) / aq (mod p).
+             */
+            ulong m = p * p;
+            reject_mod(prev, cur->rj_limb, m, &am, &rm);
+            c = (off % m + rm) % m;
+            if (c)
+                c = m - c;
+            ulong d = c + m - mulmod_u64(am, mult0, m);
+            if (d >= m)
+                d -= m;
+            return mult0 + p * (d / p * inv % p) > cur->rj_mult;
+        }
+    }
+    /* as update_chinese(): m = p^{x-1} < 2^61, not dividing aq */
+    ulong m = p;
+    for (uint e = 2; e < x; ++e) {
+        if (m >= (1UL << 61) / p)
+            return 0;
+        m *= p;
+    }
+    if (m >= (1UL << 61))
+        return 0;
+    reject_mod(prev, cur->rj_limb, m, &am, &rm);
+    if (am % p == 0)
+        return 0;
+    ulong c = (off % m + rm) % m;
+    if (c)
+        c = m - c;
+    return mulmod_u64(c, ppow_invert(am, p, m), m) > cur->rj_mult;
+}
+
 /* Prepare to allocate p^{x-1} at v_i for a range of p. The p value passed
  * in is 0 for a fresh start, the last prime done when recalculating after
  * an improved maximum, or the prime that was in progress on recovery.
@@ -5145,6 +5238,7 @@ e_pux prep_unforced_x(
     cur_level->x = x;
     cur_level->limp = limp;
     cur_level->max_at = seen_best;
+    reject_prep(prev_level, cur_level);
     /* TODO: do some constant alloc stuff in advance */
     return PUX_DO_THIS_X;
 }
@@ -5788,6 +5882,15 @@ void recurse(e_is jump_continue) {
                 for (uint li = 1; li < level; ++li)
                     if (p == levels[li].p && levels[li].x > 1)
                         goto redo_unforced;
+            /* p stays the cursor, as when apply_single() fails */
+            if (cur_level->rj_ok && (p & 1) && reject_single(
+                prev_level, cur_level, cur_level->vi, p, cur_level->x
+            )) {
+                cur_level->p = p;
+                if (need_work)
+                    diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
+                goto continue_unforced;
+            }
             /* note: this returns 0 if t=1 */
             if (!apply_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x

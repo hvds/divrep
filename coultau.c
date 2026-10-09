@@ -2,6 +2,7 @@
 
 #include "coul.h"
 #include "coultau.h"
+#include "coulfact.h"
 #include "factor.h"
 #include "gmp_main.h"
 #include "primality.h"
@@ -47,10 +48,21 @@ static inline ulong cgdiff(struct timespec *t0) {
 #define dz(...) 1
 #endif
 
+/* Primality: a value of a single limb is tested in single limbs, with
+ * the same result (see u64_bpsw()).
+ */
+static inline bool ct_isprime(mpz_t n) {
+    return (mpz_size(n) <= 1) ? u64_bpsw(mpz_get_ui(n))
+            : _GMP_is_prob_prime(n) != 0;
+}
+static inline bool ct_isbpsw(mpz_t n) {
+    return (mpz_size(n) <= 1) ? u64_bpsw(mpz_get_ui(n)) : _GMP_BPSW(n) != 0;
+}
+
 #ifdef VERBOSE
 static inline bool ct_prime(mpz_t n) {
     clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_is_prob_prime(n);
+    bool r = ct_isprime(n);
     gmp_printf("(%ld) p: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
 }
@@ -154,7 +166,7 @@ static inline bool ct_trial(factor_state *fs) {
     return r;
 }
 #else
-#   define ct_prime(n) _GMP_is_prob_prime(n)
+#   define ct_prime(n) ct_isprime(n)
 #   define ct_power(n) power_factor(n, n)
 #   define ct_ecm(n, f, b1, curves) _GMP_ECM_FACTOR(n, f, b1, curves)
 #   define ct_pminus1(n, f, b1, b2) _GMP_pminus1_factor(n, f, b1, b2)
@@ -1255,7 +1267,7 @@ uint tau_prime_run(uint first, uint count) {
     count = i;
     qsort(&taum[first], count - first, sizeof(t_tm), &taum_comparator);
     for (i = first; i < count; ++i) {
-        if (!_GMP_BPSW(taum[i].n)) {
+        if (!ct_isbpsw(taum[i].n)) {
             taum[first].vi = taum[i].vi;
             return count - i;
         }
