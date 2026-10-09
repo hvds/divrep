@@ -11,6 +11,7 @@ my %PROG = (o => './pcoul');
 # each of these tests one aspect of -I, of recovery, or of the two together
 test_init();
 test_recover();
+test_recover_trailing();
 test_batch_id_64bit();
 test_recover_j0123();
 test_6x();
@@ -223,6 +224,21 @@ sub test_recover {
         ok(scalar(grep /^202 Candidate 1477626075 /, @{ $lines->{202} // [] }),
                 q{-W: recovery mid-sweep tries the same p at later positions});
     }
+}
+
+sub test_recover_trailing {
+    # A candidate after the last progress line, such as one copied in from
+    # another run, is applied once the position shown has been restored.
+    local $type = 'o';
+
+    # It leaves no room for 211^2 at v_3, so the search moves to the next
+    # power there; no later line may show 211^2.
+    expect_recover(q{recover with a trailing candidate that ends a level},
+        [qw{ -x1e12 24 5 }],
+        ['202 Candidate 41139272 (0.00s)',
+         '305 b94: 2 3^2 2^2 211^2 2.3: 1 / 12 (0.76s)',
+         '202 Candidate 15537949 (0.00s)'],
+        'b94: 2 3^2 2^2 5^5 2.3');
 }
 
 sub test_batch_id_64bit {
@@ -576,12 +592,13 @@ sub test_recover_init {
         'b0: 3.2^2 . 2 3.5^2 W(26479,3,2)'
     );
     # A candidate logged after the last 305 line lowers zmax enough that
-    # the midp allocation would overflow; it is applied after that.
+    # the midp allocation would overflow: it is applied after that, and
+    # the sweep moves on.
     expect_recover(q{recover midp with trailing candidate},
         [qw{ -x1e10 -f3 -W1000 12 4 }],
         [q{305 b0: 2^2.3 . 2 3 W(16963,3,3)},
          q{202 Candidate 4309961844 (0.10s)}],
-        q{b0: 2^2.3 . 2 3 W(16963,3,3)});
+        q{b0: 2^2.3 . 2 3 W(16943,3,2)});
     expect_recover(q{recover midp walk constrain 3+float},
         [q{-I"3 . . 3.5^2"}, @$args124W],
         ['305 b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 2'],

@@ -4234,8 +4234,15 @@ void walk_midp(t_level *prev_level, bool recover) {
              */
             bool ok = apply_single(prev_level, cur_level, vi, p, x);
             /* the stack is now rebuilt */
-            if (have_pend202)
+            if (have_pend202) {
                 apply_pend202();
+                if (ok && mpz_cmp(cur_level->rq, zmax) > 0) {
+                    /* it no longer fits, so there is nothing to walk */
+                    --cur_vlevel[vi];
+                    have_rwalk = 0;
+                    ok = 0;
+                }
+            }
             if (ok) {
                 if (need_work && !have_rwalk)
                     diag_plain(cur_level);
@@ -5864,6 +5871,54 @@ void recurse(e_is jump_continue) {
     }
 }
 
+/* A trailing candidate has just lowered zmax below the bound under which
+ * the recovered stack was built. If an unforced level no longer fits (its
+ * residue exceeds zmax, or its prime exceeds the limit for its power),
+ * nothing below it can hold a solution: unwind to the shallowest such
+ * level, so that no progress line shows it. Returns where recurse() should
+ * pick up.
+ * A level that stays keeps its old limit for now: recurse() recalculates
+ * it on returning there, as after any new candidate.
+ */
+e_is prune_stale(e_is jump) {
+    if (jump == IS_FINISH || jump == IS_BATCH || jump == IS_6X
+            || jump == IS_FLIP)
+        return jump;
+    for (uint li = final_level + 1; li < level; ++li) {
+        t_level *lp = &levels[li];
+        if (lp->is_forced || lp->x < 2)
+            continue;
+        if (mpz_cmp(lp->rq, zmax) <= 0) {
+            /* find the limit with v_i as it was when this level was set */
+            uint vi = lp->vi;
+            t_allocation *alloc = value[vi].alloc;
+            uint save = cur_vlevel[vi];
+            uint d = 1;
+            while (d < save && alloc[d].level != li)
+                ++d;
+            if (d == save)
+                continue;
+            cur_vlevel[vi] = d;
+            ulong limp = limit_p(lp, vi, lp->x, lp->ti / lp->x);
+            cur_vlevel[vi] = save;
+            if (limp == 0 || lp->p <= limp)
+                continue;
+        }
+        while (level > li) {
+            levels[level + 1].next_best = 0;
+            --level;
+            t_level *up = &levels[level];
+            if (up->is_forced)
+                unapply_batch(next_fpi(&levels[level - 1]), up->bi, k);
+            else
+                --cur_vlevel[up->vi];
+        }
+        have_rwalk = 0;
+        return IS_NEXT;
+    }
+    return jump;
+}
+
 int main(int argc, char **argv, char **envp) {
     int i = 1;
 #ifdef HAVE_SETPROCTITLE
@@ -6080,8 +6135,10 @@ int main(int argc, char **argv, char **envp) {
     if (rstack || istack)
         jump = insert_stack();
     /* midp recovery reapplies its allocation inside walk_midp() */
-    if (have_pend202 && !midp_recover.valid)
+    if (have_pend202 && !midp_recover.valid) {
         apply_pend202();
+        jump = prune_stale(jump);
+    }
     if (jump != IS_FINISH && setjmp(jmp_finish) == 0)
         recurse(jump);
     /* it is still a candidate if nothing got as far as applying it */
