@@ -1662,9 +1662,11 @@ void recover(FILE *fp) {
     free(last305);
 }
 
+/* order by highest prime descending, then by value ascending */
 int cmp_high(const void *va, const void *vb) {
     uint a = *(uint *)va, b = *(uint *)vb;
-    return (int)divisors[b].high - (int)divisors[a].high;
+    int cmp = (int)divisors[b].high - (int)divisors[a].high;
+    return cmp ? cmp : (int)a - (int)b;
 }
 
 /* Note this is used only for prep_primes(), not at runtime */
