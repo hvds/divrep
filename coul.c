@@ -255,13 +255,13 @@ uint opt_flake = 0; /* test less before printing candidates */
  * the specified batch_alloc.
  */
 uint opt_alloc = 0;
-int opt_batch_min = -1, opt_batch_max;
-int batch_alloc = 0;    /* index of forced-prime allocations */
+slong opt_batch_min = -1, opt_batch_max;
+slong batch_alloc = 0;    /* index of forced-prime allocations */
 /* longjmp() here to end the search early, going on to the final reports:
  * the implication is that we have searched everything we were asked to.
  */
 jmp_buf jmp_finish;
-int last_batch_seen = -1;
+slong last_batch_seen = -1;
 uint cur_batch_level = 0;   /* for disp_batch, best_fixed */
 bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
 /* by default, we call walk_v() as soon as we have 2 values fixed to
@@ -514,8 +514,8 @@ uint know_target(uint vi) {
 void update_window(t_level *cur_level) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
-        uint this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
-        printf("\x1b]0;b%d:", this_batch);
+        slong this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
+        printf("\x1b]0;b%ld:", this_batch);
         uint pc = 0;
         for (uint i = 1; i <= cur_level->level && pc < 3; ++i) {
             if (levels[i].is_forced)
@@ -547,7 +547,7 @@ bool prep_show_v(t_level *cur_level, bool expanded) {
     if (in_midp)
         mid_vi = cur_level->vi;
     offset += (batch_alloc)
-        ? sprintf(&diag_buf[offset], "b%u: ", batch_alloc - 1)
+        ? sprintf(&diag_buf[offset], "b%ld: ", batch_alloc - 1)
         : sprintf(&diag_buf[offset], "b*: ");
     for (uint vi = 0; vi < k; ++vi) {
         uint vlevel = cur_vlevel[vi]
@@ -604,7 +604,7 @@ void diag_csv(t_level *cur_level) {
     uint tc[dp->alldiv];
     memset(&tc[0], 0, dp->alldiv * sizeof(uint));
     mpz_set_ui(Z(temp), 1);
-    printf("%u", batch_alloc);
+    printf("%ld", batch_alloc);
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
         uint vlevel = cur_vlevel[vi];
@@ -1215,7 +1215,7 @@ void free_stack(t_recover *stack) {
 void done(void) {
     /* update window title on completion */
     if (vt100)
-        printf("\x1b]2;b%d: done\a",
+        printf("\x1b]2;b%ld: done\a",
                 opt_batch_min < 0 ? batch_alloc : opt_batch_max);
 
     if (check)
@@ -1400,7 +1400,7 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
 
     if (s[0] == 'b') {
         int off = 0;
-        sscanf(s, "b%u: %n", &batch_alloc, &off);
+        sscanf(s, "b%ld: %n", &batch_alloc, &off);
         if (off == 0) {
             batch_alloc = -1;
             sscanf(s, "b*: %n", &off);
@@ -2497,11 +2497,11 @@ void report_init(FILE *fp, char *prog) {
     if (rough)
         fprintf(fp, " -h%u", rough);
     if (opt_batch_min >= 0) {
-        fprintf(fp, " -b%u", opt_batch_min);
+        fprintf(fp, " -b%ld", opt_batch_min);
         if (opt_batch_min != opt_batch_max) {
             fprintf(fp, ":");
-            if (opt_batch_max < INT_MAX)
-                fprintf(fp, "%u", opt_batch_max);
+            if (opt_batch_max < LONG_MAX)
+                fprintf(fp, "%ld", opt_batch_max);
         }
     }
     if (check > 1) {
@@ -2607,10 +2607,10 @@ void set_batch(char *s) {
     char *t = strchr(s, ':');
     if (t) {
         *t = 0;
-        opt_batch_min = *s ? strtoul(s, NULL, 10) : 0;
-        opt_batch_max = t[1] ? strtoul(&t[1], NULL, 10) : INT_MAX;
+        opt_batch_min = *s ? strtol(s, NULL, 10) : 0;
+        opt_batch_max = t[1] ? strtol(&t[1], NULL, 10) : LONG_MAX;
     } else {
-        opt_batch_min = strtoul(s, NULL, 10);
+        opt_batch_min = strtol(s, NULL, 10);
         opt_batch_max = opt_batch_min;
     }
     opt_alloc |= 1;
@@ -4421,7 +4421,7 @@ bool apply_batch(
  */
 bool process_batch(t_level *cur_level, bool recover) {
     if (!recover) {
-        uint batch_id = batch_alloc++;
+        slong batch_id = batch_alloc++;
         cur_batch_level = cur_level->level;
         seen_valid = 1;
         if (debugB)

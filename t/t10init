@@ -204,6 +204,17 @@ if (1) {
 }
 
 if (1) {
+    # batch ids are 64-bit
+    local $type = 'o';
+
+    expect_recover_next_batch(
+        q{batch numbering passes 2^32},
+        [qw{ -x1e12 12 4 }], ['305 b4294967295: 3 2^2 . 2.3'],
+        'b4294967296: 3 2^2 . 2.3^2',
+    );
+}
+
+if (1) {
     # -j0..-j3 are easy to recover
     local $type = 'o';
     my $args124 = [qw{ -x1e10 -f3 12 4 }];
