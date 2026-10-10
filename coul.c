@@ -3513,6 +3513,9 @@ bool update_residues(t_level *old, t_level *new,
         res_copy(new->level, old->level);
         return 1;
     }
+    /* under -a4, the square may be fully allocated: nothing to track */
+    if (vjp->alloc[jlevel].t == 1)
+        return 1;
     if (vi == vj) {
         /* Another allocation on our square. In the simple case, when
          * aq = aq' p^e, we must divide the known residues by
@@ -4340,12 +4343,10 @@ bool apply_batch(
     }
     cur_level->fp_need &= ~(1U << fpi);
 
-    if (terminal < k) {
+    if (terminal < k && !(opt_alloc & 4)) {
         /* we have a value fully allocated, so test it unless we are
          * in a mode only to report batches.
          */
-        if (opt_alloc & 4)
-            return 1;
         bool valid = 1;
         if (mpz_sgn(zmin)) {
             vp = &value[terminal];
