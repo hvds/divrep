@@ -12,6 +12,7 @@ my %PROG = (o => './pcoul');
 test_init();
 test_recover();
 test_recover_trailing();
+test_recover_ruled_out_batch();
 test_batch_id_64bit();
 test_recover_j0123();
 test_6x();
@@ -129,6 +130,8 @@ sub test_init {
             4, '. 2^2 5 2', $args124);
     count_batch(q{batches in combination 3+float},
             4, '. 3^2 5 .', $args124);
+    count_batch(q{no batches for a -I batch above the maximum},
+            0, '2^17 . 2 . 2^2', [qw{ -x100000 36 5 }]);
 
     # batch selection (-b) must be honoured for a batch that -I completes
     # entirely by itself, whether or not -W is also in use.
@@ -239,6 +242,23 @@ sub test_recover_trailing {
          '305 b94: 2 3^2 2^2 211^2 2.3: 1 / 12 (0.76s)',
          '202 Candidate 15537949 (0.00s)'],
         'b94: 2 3^2 2^2 5^5 2.3');
+}
+
+sub test_recover_ruled_out_batch {
+    # A run cannot log a batch after a candidate that leaves no room for
+    # it. Recovery must stop there, not carry on from some other batch.
+    local $type = 'o';
+    for (
+        [ 100000, 'b39: 2^17 3^8 2 . 2^2.3' ],
+        [ 1000, 'b32: 2^11 3^17 2 . 2^2.3' ],
+    ) {
+        my($cand, $line) = @$_;
+        expect_recover_fail(
+            qq{recovery stops at a batch that candidate $cand rules out},
+            [qw{ -x1e20 36 5 }],
+            ["202 Candidate $cand (0.00s)", "305 $line (0.00s)"],
+            qr{^failed to inject});
+    }
 }
 
 sub test_batch_id_64bit {
@@ -674,6 +694,28 @@ sub expect_recover_after_candidate {
         return;
     }
     return expect_recover($legend, $args, [ @log[0 .. $cut] ], $expect);
+}
+
+# Expect the run to stop with a message matching $expect, reporting no
+# result.
+sub expect_fail {
+    my($legend, $args, $expect) = @_;
+    my $lines = run_test($type, $args, 1)
+            // return;
+    my @said = map @$_, @$lines{ sort keys %$lines };
+    if (!$lines->{367} && grep $_ =~ $expect, @said) {
+        pass($legend);
+    } else {
+        fail($legend);
+        diag($_) for @said;
+    }
+    return;
+}
+
+sub expect_recover_fail {
+    my($legend, $args, $content, $expect) = @_;
+    my $fh = temp_log($content);
+    return expect_fail($legend, [ '-r' . $fh->filename, @$args ], $expect);
 }
 
 sub expect_diag {

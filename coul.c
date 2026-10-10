@@ -5259,9 +5259,9 @@ typedef enum {
 /* Given an init or recovery stack, check for the specified forced prime
  * and any related batch, and apply it removing the corresponding factors
  * from the stack.
- * Returns true if we are ok to continue, or false if we reached the end
- * of the stack.
- * May update *jump to IS_NEXT if we fail to apply a found element.
+ * Returns true if we are ok to continue, or false if no further inserts
+ * should be done: we reached the end of the stack, or we failed to apply
+ * a found element, in which case *jump is updated to IS_NEXT.
  */
 bool insert_forced(
     t_fact *stack, t_fact *stack2, uint fpi, e_is *jump, bool init
@@ -5324,6 +5324,7 @@ bool insert_forced(
     }
 
   have_batch: ;
+    bool applied = 1;
     if (!init || !is_tail(bp)) {
         t_level *prev_level = &levels[level - 1];
         t_level *cur_level = &levels[level];
@@ -5332,8 +5333,10 @@ bool insert_forced(
          * legitimate for the last one to fail */
         if (apply_batch(prev_level, cur_level, fpi, bi))
             ++level;
-        else
+        else {
             *jump = IS_NEXT;
+            applied = 0;
+        }
     }
 
     /* remove from stack */
@@ -5352,7 +5355,7 @@ bool insert_forced(
                 stack_remove(stack, stack2, vj, p, e);
         }
     }
-    return 1;
+    return applied;
 }
 
 /* Given an init or recovery stack, check for a floating prime to insert
@@ -5511,6 +5514,9 @@ e_is insert_stack(void) {
         for (uint fpi = 0; fpi < forcedp; ++fpi) {
             t_fact *rf = (rstack) ? rstack->f : NULL;
             insert_forced(istack->f, rf, fpi, &jump, 1);
+            /* failure should mean that there is nothing more to do */
+            if (jump != IS_DEEPER)
+                return IS_FINISH;
         }
 
         /* insert anything else */
