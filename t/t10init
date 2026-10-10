@@ -79,6 +79,11 @@ sub test_init {
             $result124b, '1 2 1 332', $args124);
     expect_result(q{constraint on 3 + sub-high for f(12,4)},
             $result124b, '. . 3 83', $args124);
+    # the range is min < v_0 <= max, wherever a walk happens to start
+    expect_result(q{a solution at the minimum is not in range},
+            49147, '', [qw{ -x19940:1e6 12 4 }]);
+    expect_result(q{nor is one below the minimum},
+            648475, '', [qw{ -x648474:2e6 6 3 }]);
     # v + 1 = 64013.100003^2: with nothing for trial division to find,
     # the ladder finds 64013 and is left with the square of a prime
     {

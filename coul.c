@@ -955,6 +955,9 @@ bool candidate(mpz_t c) {
     if (mpz_fits_ulong_p(c) && mpz_get_ui(c) == n)
         return 0;
 #endif
+    /* a walk can start at or before the minimum */
+    if (mpz_cmp(c, zmin) <= 0)
+        return 0;
     keep_diag();
     double t1 = utime();
     report("202 Candidate %Zu (%.2fs)\n", c, seconds(t1));
