@@ -1,0 +1,47 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+
+use Test::More;
+
+# Tests of the batches listed by -a.
+
+my $prog = './pcoul';
+if ($ENV{DEBUG}) {
+    $prog =~ s/pc/dpc/
+            or die "Could not munge program name '$prog'";
+}
+
+test_restrict();
+
+done_testing();
+exit 0;
+
+sub test_restrict {
+    # -fr applies the caps of -p and -px to the forced primes
+    my @args = qw{ -x1e20 -f3 12 4 };
+    my $all = batches(@args);
+    is(scalar(@$all), 52, 'D(12,4) has 52 batches');
+    is_deeply(batches('-fr', @args), $all,
+            '-fr with no cap restricts nothing');
+    is_deeply(batches(qw{ -fr -p100 }, @args), $all,
+            '-fr with cap above the forced primes restricts nothing');
+
+    # -p caps only 3^2, 3^5, 3^11
+    my $capped = [ grep !/\b3\^(?:2|5|11)\b/, @$all ];
+    is_deeply(batches(qw{ -fr -p2 }, @args), $capped,
+            '-fr -p2 removes only batches with capped powers of 3');
+    my $capped3 = [ grep !/\b3\^3\b/, @$capped ];
+    is_deeply(batches(qw{ -fr -p2 -px2^3 }, @args), $capped3,
+            '-fr -p2 -px2^3 also removes batches with 3^3');
+    is_deeply(batches('-fr', '-p2', '-px2^3,2^1', @args), [],
+            '-fr with every power of 3 capped leaves no batches');
+}
+
+# returns an arrayref of the batches listed, in order
+sub batches {
+    my(@args) = @_;
+    my @lines = `$prog -Ls0 -a @args 2>&1`;
+    return [ map /^203 b\d+: (.*?)(?: \[sq=\d+\])? \[aq=/ ? $1 : (), @lines ];
+}

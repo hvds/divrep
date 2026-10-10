@@ -126,11 +126,13 @@ endif
 test: pcoul pcaul pcrul ${SOAK}
 	t/t10init
 	t/t20log
+	t/t30batch
 	t/t50pell
 	t/t60tau
 
 dtest: dpcoul dpcaul dpcrul ${SOAK}
 	DEBUG=1 t/t10init
 	DEBUG=1 t/t20log
+	DEBUG=1 t/t30batch
 	DEBUG=1 t/t50pell
 	DEBUG=1 t/t60tau

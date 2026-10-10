@@ -2072,7 +2072,8 @@ void prep_forcep(void) {
                 uint fx = d->div[di];
                 if (fx == 1)
                     continue;
-                if (restrict_forced && maxp[fx - 1] < p)
+                /* a cap of 0 means no cap, as in limit_p() */
+                if (restrict_forced && maxp[fx - 1] && maxp[fx - 1] < p)
                     continue;
                 uint status = test_forcep(fbp, p, vi, fx);
                 if (status == TFP_BAD)
