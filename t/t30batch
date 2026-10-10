@@ -41,17 +41,18 @@ sub test_restrict {
 }
 
 sub test_fixed {
-    # -a4 also lists the batches that fully allocate some value, as long
-    # as any value forced square can still be one: "3^5 2 ." cannot be
-    # listed, since v_1 = 2x^2 would need x^2 == 2 (mod 3).
+    # -a4 also lists the batches that fully allocate some value, each as
+    # soon as it does so: "2^5 . 2" and ". 2^5 ." are listed before 3 is
+    # allocated. Any value forced square must still be able to be one:
+    # "3^5 2 ." cannot be listed, since v_1 = 2x^2 would need x^2 == 2
+    # (mod 3).
     my @args = qw{ -x1e30 6 3 };
     my %plain = map +($_ => 1), @{ batches('-jp', @args) };
     my @fixed = grep !$plain{$_}, @{ batches('-a4', @args) };
     is_deeply(\@fixed, [
-        '2^5 . 2.3^2', '3^5 2^2 .', '. 2^2.3 .', '. 2^2 3^5',
-        '3^2 2^5 .', '3^5 2^5 .', '. 2^5 3^2', '. 2^5 3^5',
+        '2^5 . 2', '3^5 2^2 .', '. 2^2.3 .', '. 2^2 3^5', '. 2^5 .',
         '. 2.3^2 .', '. 2 3^5', '2.3^2 . 2^2', '2 3^5 2^2',
-    ], '-a4 lists batches with a value fully allocated');
+    ], '-a4 lists a batch once it fully allocates a value');
 }
 
 # returns an arrayref of the batches listed, in order

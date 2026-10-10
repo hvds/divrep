@@ -4433,10 +4433,14 @@ bool apply_batch(
         unapply_batch(fpi, bi, k);
         return 0;
     }
+    /* under -a4, a value fully allocated ends the batch: list it now */
+    if (terminal < k)
+        cur_level->fp_need = 0;
     return 1;
 }
 
-/* A complete set of forced primes has been allocated. We may process
+/* A complete set of forced primes has been allocated, or under -a4 a
+ * set cut short by a value fully allocated. We may process
  * this batch or skip it, according to batch options; we also handle
  * midp ("-W") here, and skip the rest (i.e. allocation of unforced
  * primes) if midp_only. Returns FALSE if there is nothing more to
