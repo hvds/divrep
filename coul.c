@@ -5123,6 +5123,7 @@ e_pux limit_unforced_x(
 bool gate_walk(t_level *prev_level, uint vi, ulong p, ulong limp) {
     mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
 #ifdef LARGE_MIN
+    /* needs zmin <= zmax */
     mpz_sub(Z(r_walk), Z(r_walk), zmin);
 #endif
     if (prev_level->have_square) {
@@ -6123,6 +6124,8 @@ int main(int argc, char **argv, char **envp) {
         fail("wrong number of arguments");
     if (force_all > k)
         fail("require force_all <= k");
+    if (mpz_cmp(zmin, zmax) >= 0)
+        fail("require min < max, not %Zu:%Zu", zmin, zmax);
 
     init_post();
     if (opt_alloc & 2)

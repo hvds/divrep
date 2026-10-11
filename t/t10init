@@ -36,6 +36,10 @@ sub test_init {
     my $args124 = [qw{ -x1e20 -f3 -jp 12 4 }];
     my $args124b = [qw{ -x1e20 -f2 -jp 12 4 }];
 
+    expect_fail(q{fail if the minimum is above the maximum},
+            [qw{ -x1e6:1e5 12 4 }], qr{^require min < max});
+    expect_fail(q{fail if the range is empty},
+            [qw{ -x1e6:1e6 12 4 }], qr{^require min < max});
     expect_log(q{fail if not enough elements},
             502, '2 . 2^2 .', $args65);
     expect_log(q{fail if too many elements},
