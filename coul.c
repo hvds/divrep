@@ -1800,6 +1800,8 @@ void prep_fact(void) {
             if (i % j)
                 continue;
             dp->div[dp->alldiv++] = j;
+            if (j * j == i)
+                dp->sqrt = j;
             if (dp->high > 1 && (j % dp->high) == 0)
                 ++dp->highdiv;
         }
