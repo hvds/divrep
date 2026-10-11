@@ -6273,6 +6273,8 @@ int main(int argc, char **argv, char **envp) {
         jump = IS_FINISH;   /* nothing to search */
     else if (rstack || istack)
         jump = insert_stack();
+    else if (forcedp == 0)
+        jump = IS_BATCH;    /* the whole search is one batch */
     /* midp recovery reapplies its allocation inside walk_midp() */
     if (have_pend202 && !midp_recover.valid) {
         apply_pend202();

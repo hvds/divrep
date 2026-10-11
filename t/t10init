@@ -24,6 +24,7 @@ test_committed_after_candidate();
 test_recover_p0_tail();
 test_recover_complete_batch();
 test_recover_last_batch();
+test_no_forced_primes();
 test_recover_init();
 test_divisors_of_n();
 
@@ -290,8 +291,8 @@ sub test_recover_ruled_out {
     expect_recover(q{recover beneath a value whose least is the candidate},
         [qw{ -j4 -x1e12 20 2 }],
         ['202 Candidate 5264 (0.00s)',
-         '315 b*: 2^4.11(4) 3^4.5 (0.00s)'],
-        'b*: 2^4 3^4.7');
+         '315 b0: 2^4.11(4) 3^4.5 (0.00s)'],
+        'b0: 2^4 3^4.7');
 
     # The candidates below are not solutions, which recovery cannot know:
     # each is the one value that gives the line that property.
@@ -408,7 +409,7 @@ sub test_flip {
     # out of reach: a flip at 37^3 here would miss 61^3.67.71.73. Recovery
     # is used only to start close to that point.
     expect_recover_result(q{-j4 does not flip at p^3},
-        78821649041, ['305 b*: 37^3'],
+        78821649041, ['305 b0: 37^3'],
         [qw{ -j4 -g100 -x78821649040:78821709041 32 1 }]);
 
     expect_recover_recurse_count(q{recover flip from its own diag point, 36 4},
@@ -460,8 +461,8 @@ sub test_flip {
     expect_recover(q{recover flip at a composite power, 72 2},
         [qw{ -x1e12 72 2 }],
         [q{202 Candidate 6481475 (0.02s)},
-         q{305 b*: 3^5 2^11.5^5 F(1,5)}],
-        q{b*: 3^5 2^8}, 3);
+         q{305 b0: 3^5 2^11.5^5 F(1,5)}],
+        q{b0: 3^5 2^8}, 3);
 
     # A line that -j4 could write when it still flipped at p^3: that run
     # may already have missed values.
@@ -630,6 +631,19 @@ sub test_recover_last_batch {
     expect_recover_log(q{recovery in the last batch reports a search},
         500, ['305 b23: . 2 . 2^3: 612 / 624 (0.00s)'],
         [qw{ -dl -x10000 12 4 }]);
+}
+
+sub test_no_forced_primes {
+    # With k = 2 and 4 | n no prime is forced. The whole search is then one
+    # batch, and must be treated as one.
+    local $type = 'o';
+    count_batch(q{a search with no forced primes is one batch},
+        1, '', [qw{ -x1e6 72 2 }]);
+    expect_log(q{it reports a search when it finds nothing},
+        500, '', [qw{ -dl -x1000 72 2 }]);
+    # 735 = 3.5.7^2 and 736 = 2^5.23 need primes that only -W can supply
+    expect_result(q{it makes the -W walk},
+        735, '', [qw{ -W3 -x1e4 12 2 }]);
 }
 
 sub test_recover_init {
