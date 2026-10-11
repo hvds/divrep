@@ -20,6 +20,7 @@ test_recover_6x();
 test_flip();
 test_recover_j4();
 test_recover_failed_apply();
+test_walk_after_candidate();
 test_recover_p0_tail();
 test_recover_complete_batch();
 test_recover_init();
@@ -514,6 +515,21 @@ sub test_recover_failed_apply {
          '202 Candidate 1048792224 (0.00s)',
          '305 b0: 2^5.3 5^2 2.79^2 3.7^2 2^2 (0.00s)'],
         'b0: 2^5.3 5^2 2.83^2 3.7^2 2^2',
+    );
+}
+
+sub test_walk_after_candidate {
+    # The candidate found here makes it cheaper to walk "17^2 2^2.3 . 2 3^2"
+    # than to go on allocating at v_2. That walk (9 lines) covers every
+    # power there, so the next line moves on at v_0: it does not try 5^5
+    # at v_2. Recovery is used only to start close to that point.
+    local $type = 'o';
+    expect_recover(q{a walk chosen after a candidate ends that level},
+        [qw{ -x1e20 12 5 }],
+        ['202 Candidate 39679072 (0.00s)',
+         '305 b11: 17^2 2^2.3 5^2 2 3^2: 0 / 75 (0.00s)'],
+        'b11: 19^2 2^2.3 . 2 3^2',
+        11,
     );
 }
 

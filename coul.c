@@ -5872,6 +5872,7 @@ void recurse(e_is jump_continue) {
                     prev_level, cur_level, cur_level->p
                 )) {
                   case PUX_NOTHING_TO_DO:
+                    goto derecurse;
                   case PUX_FLIP_PQSQ:
                   case PUX_SKIP_THIS_X:
                     goto continue_unforced_x;
