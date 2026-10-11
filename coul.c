@@ -4937,7 +4937,13 @@ uint best_v(t_level *cur_level) {
     return strategies[strategy](cur_level);
 }
 
-/* return the maximum prime to iterate to */
+/* Returns the greatest p for which p^{x-1} needs to be tried at v_i
+ * leaving remaining tau nextt: 1 signifies no primes, 0 that the answer
+ * is 2^64 or more.
+ * A lower zmax never gives a higher result, all else being equal, with 0
+ * counted as greater than any other: recurse() relies on this when it
+ * recalculates a limit.
+ */
 ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
@@ -5182,9 +5188,9 @@ static inline void set_unforced_x(t_level *cur_level, ulong p, ulong limp) {
     /* TODO: do some constant alloc stuff in advance */
 }
 
-/* Prepare to allocate p^{x-1} at v_i for a range of p. The p value passed
- * in is 0 for a fresh start, the last prime done when recalculating after
- * an improved maximum, or the prime that was in progress on recovery.
+/* Prepare to allocate p^{x-1} at v_i for a range of p, starting a fresh x.
+ * This is the one place we choose between walking and recursing: once we
+ * recurse here we stay committed to it, whatever the maximum does.
  *
  * Returns:
  *   PUX_NOTHING_TO_DO if nothing more to do at this level for any x;
@@ -5192,22 +5198,19 @@ static inline void set_unforced_x(t_level *cur_level, ulong p, ulong limp) {
  *   PUX_SKIP_THIS_X if nothing more to do for this x;
  *   PUX_DO_THIS_X if prepped for this x with work to do.
  */
-e_pux prep_unforced_x(t_level *prev_level, t_level *cur_level, ulong p) {
+e_pux prep_unforced_x(t_level *prev_level, t_level *cur_level) {
     uint ti = cur_level->ti;
     uint x = divisors[ti].div[cur_level->di];
     uint vi = cur_level->vi;
     uint nextt = ti / x;
-    bool fresh = (p == 0);
 
-    if (fresh) {
-        if (done_in_reverse(vi, x, nextt))
-            return PUX_SKIP_THIS_X;
-        p = start_p(vi, x);
-    } /* else we're continuing from known p */
+    if (done_in_reverse(vi, x, nextt))
+        return PUX_SKIP_THIS_X;
+    ulong p = start_p(vi, x);
 
     /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > zmax + i */
     ulong limp = limit_p(cur_level, vi, x, nextt);
-    e_pux pux = limit_unforced_x(prev_level, cur_level, p, limp, fresh);
+    e_pux pux = limit_unforced_x(prev_level, cur_level, p, limp, 1);
     if (pux != PUX_DO_THIS_X)
         return pux;
 
@@ -5268,12 +5271,56 @@ typedef enum {
     IS_FLIP     /* Resume run_flip_pqsq(), possibly with partial progress */
 } e_is;
 
+/* Discard whatever a recovery line shows beyond the point reached. */
+void stack_drop(t_fact *s) {
+    for (uint vi = 0; vi < k; ++vi)
+        s[vi].count = 0;
+    have_rwalk = 0;
+    midp_recover.valid = 0;
+    b6x_recover.valid = 0;
+    flip_recover.valid = 0;
+}
+
+/* On recovery, true if p^{x-1} at v_i is out of range below prev only
+ * because the least value it allows is the best candidate.
+ *
+ * A run finds a candidate beneath the allocations then in place, and stays
+ * committed to them until it returns to each: the progress lines written
+ * meanwhile still show them, with whatever is tried beneath. Each was in
+ * range while that candidate was, but the maximum is now one less, which
+ * can rule an allocation out along with everything beneath it. This and
+ * limit_was_best() recognise the two ways that can happen.
+ */
+bool least_is_best(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
+    if (!improve_max || !seen_best)
+        return 0;
+    mpz_ui_pow_ui(px, p, x - 1);
+    return update_chinese(prev, cur, vi, p, px)
+            && mpz_cmp(cur->rq, best) == 0;
+}
+
+/* On recovery, true if p is above the limit for p^{x-1} at v_i leaving
+ * nextt only because the best candidate is no longer in range: see
+ * least_is_best().
+ */
+bool limit_was_best(t_level *cur, uint vi, ulong p, uint x, uint nextt) {
+    if (!improve_max || !seen_best)
+        return 0;
+    /* the limit as it was with the best candidate still in range */
+    mpz_add_ui(zmax, zmax, 1);
+    ulong limp = limit_p(cur, vi, x, nextt);
+    mpz_sub_ui(zmax, zmax, 1);
+    return limp == 0 || p <= limp;
+}
+
 /* Given an init or recovery stack, check for the specified forced prime
  * and any related batch, and apply it removing the corresponding factors
  * from the stack.
  * Returns true if we are ok to continue, or false if no further inserts
  * should be done: we reached the end of the stack, or we failed to apply
- * a found element, in which case *jump is updated to IS_NEXT.
+ * a found element, in which case *jump is updated to IS_NEXT. If that
+ * was only because the best candidate rules the batch out, the rest of
+ * a recovery stack is discarded.
  */
 bool insert_forced(
     t_fact *stack, t_fact *stack2, uint fpi, e_is *jump, bool init
@@ -5336,7 +5383,7 @@ bool insert_forced(
     }
 
   have_batch: ;
-    bool applied = 1;
+    bool applied = 1, ruled_out = 0;
     if (!init || !is_tail(bp)) {
         t_level *prev_level = &levels[level - 1];
         t_level *cur_level = &levels[level];
@@ -5348,6 +5395,9 @@ bool insert_forced(
         else {
             *jump = IS_NEXT;
             applied = 0;
+            ruled_out = (!init && maxx && least_is_best(
+                prev_level, cur_level, mini, p, maxx
+            ));
         }
     }
 
@@ -5367,6 +5417,8 @@ bool insert_forced(
                 stack_remove(stack, stack2, vj, p, e);
         }
     }
+    if (ruled_out)
+        stack_drop(stack);
     return applied;
 }
 
@@ -5375,8 +5427,9 @@ bool insert_forced(
  * from the stack.
  * Returns true if we are ok to continue, or false if no further inserts
  * should be done.
- * May update *jump if we fail to apply a found element to the appropriate
- * selection of IS_NEXTX or IS_NEXT.
+ * If we fail to apply a found element, may update *jump to IS_NEXTX or
+ * IS_NEXT. If that was only because the best candidate rules the element out,
+ * the rest of a recovery stack is discarded.
  */
 static inline bool insert_float(
     t_fact *stack, t_fact *stack2, uint vi, e_is *jump, bool init
@@ -5432,6 +5485,12 @@ static inline bool insert_float(
             *jump = IS_NEXTX;
             return 0;
         }
+        if (limit_was_best(cur_level, vi, p, x, ti / x)) {
+            /* as recurse() will find on returning here */
+            stack_drop(stack);
+            *jump = IS_NEXTX;
+            return 0;
+        }
         fail("prep_nextt %u for %lu^%u at %u\n", pux, p, x, vi);
       case PUX_NOTHING_TO_DO:
         /* we have now acted on this */
@@ -5443,6 +5502,8 @@ static inline bool insert_float(
     /* progress is shown just before we apply, so on recovery it is
      * legitimate for the last one to fail */
     if (!apply_single(prev_level, cur_level, vi, p, x)) {
+        if (!init && least_is_best(prev_level, cur_level, vi, p, x))
+            stack_drop(stack);
         *jump = IS_NEXT;
         return 0;
     }
@@ -5822,7 +5883,7 @@ void recurse(e_is jump_continue) {
         {
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
-            switch (prep_unforced_x(prev_level, cur_level, 0)) {
+            switch (prep_unforced_x(prev_level, cur_level)) {
               case PUX_NOTHING_TO_DO:
                 goto derecurse;
               case PUX_FLIP_PQSQ:
@@ -5874,16 +5935,17 @@ void recurse(e_is jump_continue) {
       continue_unforced:
         {
             /* recalculate limit if we have an improved maximum */
-            if (improve_max && seen_best > cur_level->max_at)
-                switch (prep_unforced_x(
-                    prev_level, cur_level, cur_level->p
-                )) {
-                  case PUX_NOTHING_TO_DO:
-                    goto derecurse;
-                  case PUX_FLIP_PQSQ:
-                  case PUX_SKIP_THIS_X:
-                    goto continue_unforced_x;
-                }
+            if (improve_max && seen_best > cur_level->max_at) {
+                ulong limp = limit_p(cur_level, cur_level->vi, cur_level->x,
+                        cur_level->ti / cur_level->x);
+                /* see limit_p(): it was not 0, so cannot be now */
+                if (limp == 0 || limp > cur_level->limp)
+                    fail("panic: limit for p^%u at v_%u rose from %lu to %lu",
+                            cur_level->x - 1, cur_level->vi, cur_level->limp,
+                            limp);
+                cur_level->limp = limp;
+                cur_level->max_at = seen_best;
+            }
             /* note: only valid to use from just below here */
           redo_unforced: ;
             ulong p = prime_iterator_next(&cur_level->piter);
