@@ -1442,6 +1442,9 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             sscanf(s, "b*: %n", &off);
             if (off == 0)
                 fail("501 error parsing 305 line '%s'", s);
+        } else {
+            /* the run that logged this had reached a valid batch */
+            seen_valid = 1;
         }
         s += off;
         ++batch_alloc;  /* we always point to the next batch */

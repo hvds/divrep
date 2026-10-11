@@ -23,6 +23,7 @@ test_recover_failed_apply();
 test_committed_after_candidate();
 test_recover_p0_tail();
 test_recover_complete_batch();
+test_recover_last_batch();
 test_recover_init();
 test_divisors_of_n();
 
@@ -621,6 +622,16 @@ sub test_recover_complete_batch {
 }
 
 
+sub test_recover_last_batch {
+    # Nothing is found up to 10000, and b23 is the last batch, so the
+    # recovered run reaches no batch of its own. It must still report that
+    # it searched (500), not that there was nothing to search (406).
+    local $type = 'o';
+    expect_recover_log(q{recovery in the last batch reports a search},
+        500, ['305 b23: . 2 . 2^3: 612 / 624 (0.00s)'],
+        [qw{ -dl -x10000 12 4 }]);
+}
+
 sub test_recover_init {
     # Test cases for recovery with -I
     local $type = 'o';
@@ -938,6 +949,15 @@ sub expect_log {
     my($legend, $code, $I, $args) = @_;
     my $fargs = length($I) ? qq{-I"$I"} : undef;
     my $lines = run_test($type, [ grep defined, $fargs, @$args ])
+            // return;
+    ok($lines->{$code}, $legend) or diag_lines($lines);
+    return;
+}
+
+sub expect_recover_log {
+    my($legend, $code, $content, $args) = @_;
+    my $fh = temp_log($content);
+    my $lines = run_test($type, [ '-r' . $fh->filename, @$args ], 1)
             // return;
     ok($lines->{$code}, $legend) or diag_lines($lines);
     return;
