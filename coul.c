@@ -807,7 +807,7 @@ void diag_any(t_level *cur_level, bool need_disp) {
             diag("%s%s", diag_buf, aux_buf);
         if (debugw) {
             keep_diag();
-            if (debugw_count) {
+            if (debugw_count && need_disp) {
                 --debugw_count;
                 if (debugw_count == 0) {
                     report("301 Stopping: debug count exhausted\n");
@@ -6051,6 +6051,7 @@ int main(int argc, char **argv, char **envp) {
                     debugW = 1;
                 else
                     debugw = 1;
+                break;
               }
               case 'w':
                 debugw = 1;
