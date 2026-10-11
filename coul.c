@@ -5571,6 +5571,8 @@ bool absorb_flip(uint vi, t_fact *rs) {
             break;
     cur_level->ti = ti;
     cur_level->di = di;
+    /* the flip will end this level by its limit, which needs the iterator */
+    level_setp(cur_level, flip_recover.oldp);
     /* The flip does not search below this level, so it need not fit: a
      * candidate found during the flip can put it out of range.
      */
@@ -5712,8 +5714,8 @@ static inline uint flip_xs_tau(uint t) {
  * instead manually run partitions (2z, z) - this should be more efficient
  * than running a much higher number of (z, 2z) partitions, especially
  * since if z is odd each p^{2z} allocation fixes a square.
- * On completion, we restore the p^z allocation but set limp = 0 to mark
- * the allocation as fully handled.
+ * On completion, we restore the p^z allocation but with p as its limit, to
+ * mark that power as fully handled.
  */
 void run_flip_pqsq(uint vi) {
     t_level *anc_level = &levels[level - 2];
@@ -5738,7 +5740,7 @@ void run_flip_pqsq(uint vi) {
     flip_vi = vi;
     flip_oldp = oldp;
     prev_level->x = 0;      /* hide entry from level[] walkers */
-    prev_level->limp = 0;   /* ensure prev will know it is complete on return */
+    prev_level->limp = oldp;    /* prev will see this x is complete on return */
     --cur_vlevel[vi];       /* temp deallocate */
 
     t_value *vp = &value[vi];
