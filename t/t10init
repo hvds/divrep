@@ -403,6 +403,13 @@ sub test_flip {
         'b7: 2^2.5^2 . 2.11^5 . F(2,23)',
     );
 
+    # Under -j4 there is more than p^7.q^3 left to try once p^3.q^3.r is
+    # out of reach: a flip at 37^3 here would miss 61^3.67.71.73. Recovery
+    # is used only to start close to that point.
+    expect_recover_result(q{-j4 does not flip at p^3},
+        78821649041, ['305 b*: 37^3'],
+        [qw{ -j4 -g100 -x78821649040:78821709041 32 1 }]);
+
     expect_recover_recurse_count(q{recover flip from its own diag point, 36 4},
         128, ['305 b7: 2^2.5^2 . 2.11^5 . F(2,23)'],
         [qw{ -j2 -x1e6 -b7 36 4 }]);

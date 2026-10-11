@@ -5061,6 +5061,16 @@ static inline ulong start_p(uint vi, uint x) {
     return maxforce[vi];
 }
 
+/* True if run_flip_pqsq() can take over from p^{x-1} at a v_i left with
+ * tau 2x: that relies on x and 2x being the only powers still to try there.
+ * Powers of 2 are instead tried in order of p, whatever the power, so they
+ * do not qualify. (That reasoning spares x = 2, but a flip there could
+ * arise only when a candidate has just lowered the maximum.)
+ */
+static inline bool can_flip(uint x) {
+    return !ispow2(x);
+}
+
 typedef enum {
     PUX_NOTHING_TO_DO = 0,
     PUX_FLIP_PQSQ,
@@ -5101,7 +5111,8 @@ e_pux limit_unforced_x(
          * skip this x (== p) but also profitably invert the process for
          * the remainder, splitting as (2p, p) rather than (p, 2p).
          */
-        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi))
+        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
+                && can_flip(x))
             return PUX_FLIP_PQSQ;
         return PUX_SKIP_THIS_X; /* nothing to do here */
     }
