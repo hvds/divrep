@@ -1778,6 +1778,7 @@ void prep_target(void) {
  * multiplicity.
  * When a square is fixed, walk_v() wants gcddm, the gcd{d_j-1} of all
  * divisors d_j of t_i.
+ * Flip recovery wants sqrt, the square root of t_i where it is a square.
  */
 void prep_fact(void) {
     t_fact f;
@@ -5064,10 +5065,10 @@ static inline ulong start_p(uint vi, uint x) {
 }
 
 /* True if run_flip_pqsq() can take over from p^{x-1} at a v_i left with
- * tau 2x: that relies on x and 2x being the only powers still to try there.
- * Powers of 2 are instead tried in order of p, whatever the power, so they
- * do not qualify. (That reasoning spares x = 2, but a flip there could
- * arise only when a candidate has just lowered the maximum.)
+ * tau 2z: that relies on z and 2z being the only powers still to try there,
+ * every smaller one having been done in reverse (see done_in_reverse()).
+ * z does not need to be prime. Powers of 2 are instead tried in order
+ * of p, whatever the power, so they do not qualify.
  */
 static inline bool can_flip(uint x) {
     return !ispow2(x);
@@ -5108,10 +5109,11 @@ e_pux limit_unforced_x(
         return PUX_NOTHING_TO_DO;
     }
     if (limp < p) {
-        /* if tau at the previous level is 2p^2 and its current prime is
-         * already too high to split as (p, p, 2) then we can not only
-         * skip this x (== p) but also profitably invert the process for
-         * the remainder, splitting as (2p, p) rather than (p, 2p).
+        /* If tau at the previous level is 2z^2 and its current prime is
+         * already too high to split as (z, z, 2) then we can not only
+         * skip this z but also profitably invert the process for the
+         * remainder, splitting as (2z, z) rather than (z, 2z). That holds
+         * for any z that can_flip(), prime or not.
          */
         if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
                 && can_flip(x))
@@ -5539,22 +5541,22 @@ bool absorb_flip(uint vi, t_fact *rs) {
         return 0;   /* Current tau is not valid for us to kick in */
     uint xl = 2 * xs;
 
-    /* Conditions are met, remaining allocations should be only the ones
-     * needed for flip recovery.
+    /* An earlier tau here can be of the same form, so the allocations
+     * still to make must also be just those of the flip: p^{xl-1}, then
+     * maybe q^{xs-1}.
      */
-    t_ppow *outerp = (rs->count) ? &rs->ppow[rs->count - 1] : NULL;
-    if (!outerp || outerp->e != xl - 1)
-        fail("panic: flip outer recovery expected p^%u, not %lu^%u",
-                xl - 1, outerp ? outerp->p : 1, outerp ? outerp->e : 0);
+    uint c = rs->count;
+    if (c == 0 || c > 2 || rs->ppow[c - 1].e != xl - 1
+            || (c == 2 && rs->ppow[0].e != xs - 1))
+        return 0;
+
+    t_ppow *outerp = &rs->ppow[c - 1];
     flip_recover.p_outer = outerp->p;
     stack_remove(rstack->f, NULL, vi, outerp->p, outerp->e);
 
     if (rs->count) {
         t_ppow *innerp = &rs->ppow[rs->count - 1];
         flip_recover.p_inner = innerp->p;
-        if (innerp->e != xs - 1)
-            fail("panic: flip inner recovery expected p^%u, not %lu^%u",
-                    xs - 1, innerp->p, innerp->e);
         stack_remove(rstack->f, NULL, vi, innerp->p, innerp->e);
     }
 
@@ -5675,6 +5677,8 @@ e_is insert_stack(void) {
                 fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
             }
         }
+        if (flip_recover.valid && jump != IS_FLIP)
+            fail("failed to inject flip at v_%u", flip_recover.vi);
     }
 
     if (jump == IS_DEEPER) {
@@ -5692,21 +5696,22 @@ e_is insert_stack(void) {
     return jump;
 }
 
-/* If t (which must be a factor of n) is of the form 2p^2, returns p, else
- * returns 0. Non-zero implies this is valid for run_flip_pqsq recovery.
+/* If t is of the form 2x^2 for an x that can_flip(), returns x, else
+ * returns 0.
  */
 static inline uint flip_xs_tau(uint t) {
-    uint h = divisors[t].high;
-    return (t == 2 * h * h) ? h : 0;
+    uint x = (t & 1) ? 0 : divisors[t / 2].sqrt;
+    return (x && can_flip(x)) ? x : 0;
 }
 
-/* We have an allocation of eg p^z leaving t = 2z (z prime), and p is high
- * enough that there are no partitions (z, z, 2) left to try so all remaining
- * candidates represent a (z, 2z) partition.
+/* We have an allocation of eg p^z leaving t = 2z for some z that can_flip(),
+ * and p is high enough that there are no partitions (z, z, 2) left to try
+ * so all remaining candidates for that power represent a (z, 2z) partition.
+ *
  * We leave the entry for p^z in the level stack but deallocate it, and
  * instead manually run partitions (2z, z) - this should be more efficient
  * than running a much higher number of (z, 2z) partitions, especially
- * since each p^{2z} allocation fixes a square.
+ * since if z is odd each p^{2z} allocation fixes a square.
  * On completion, we restore the p^z allocation but set limp = 0 to mark
  * the allocation as fully handled.
  */

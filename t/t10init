@@ -452,6 +452,23 @@ sub test_flip {
         [qw{ -x103148643381388141823 -j2 -f3 -g20 324 3 }],
         ['305 b0: 2^2.3^2.5^2.7^2 . 2.11^2.13^2.79^5 F(2,3491)'],
         'b0: 2^2.3^2.5^2.7^2 . 2.11^2.13^2.79^5 F(2,3491)');
+
+    # From a real log: the flip need not be at a prime power. This one is
+    # done once it has tried 5^5 beneath 2^11, so the search moves to the
+    # next power at v_1.
+    expect_recover(q{recover flip at a composite power, 72 2},
+        [qw{ -x1e12 72 2 }],
+        [q{202 Candidate 6481475 (0.02s)},
+         q{305 b*: 3^5 2^11.5^5 F(1,5)}],
+        q{b*: 3^5 2^8}, 3);
+
+    # A line that -j4 could write when it still flipped at p^3: that run
+    # may already have missed values.
+    expect_recover_fail(q{refuse to recover a flip at p^3 under -j4},
+        [qw{ -j4 -x1e12 32 2 }],
+        [q{202 Candidate 58695 (0.01s)},
+         q{305 b*: 3 2^7 F(1,5)}],
+        qr{^failed to inject flip});
 }
 
 sub test_recover_j4 {
