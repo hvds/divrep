@@ -6004,7 +6004,7 @@ void recurse(e_is jump_continue) {
  * it on returning there, as after any new candidate.
  */
 e_is prune_stale(e_is jump) {
-    if (jump == IS_FINISH || jump == IS_BATCH || jump == IS_6X)
+    if (jump == IS_FINISH || jump == IS_BATCH)
         return jump;
     /* a flip does not search below its hidden level, so that is not one
      * to judge
@@ -6041,6 +6041,7 @@ e_is prune_stale(e_is jump) {
         }
         have_rwalk = 0;
         flip_recover.valid = 0;
+        b6x_recover.valid = 0;
         return IS_NEXT;
     }
     return jump;

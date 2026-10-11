@@ -392,6 +392,15 @@ sub test_recover_6x {
     expect_recover_recurse_count(q{recover 6x from its own diag point, 90 4},
         55, ['305 b4: 2^4.5^2.7^2 . 2.3^4 . 6X(613,0,12)'],
         [q{-I"2^4 . 2 ."}, qw{ -g1000 -x142838800 -f2 -jp -b4 90 4 }]);
+
+    # A trailing candidate can leave no room for a level above the 6X
+    # search, here 659^2 at v_0: the search must move on from that level,
+    # not resume beneath it.
+    expect_recover(q{recover 6x with a trailing candidate that ends a level},
+        [qw{ -g1000 -jp -x1e13 30 4 }],
+        ['305 b2: 2^4.659^2 . 2.3^4 . 6X(868561,0,6)',
+         '202 Candidate 1000000000000 (0.00s)'],
+        'b2: 2^4.5^5 . 2.3^4 .');
 }
 
 sub test_flip {
