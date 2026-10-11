@@ -53,7 +53,7 @@ typedef struct s_level {
     uint x;
     uint have_square;   /* number of v_i residues forced square so far */
     uint nextpi;    /* index of least prime not yet allocated */
-    ulong maxp;     /* highest prime allocated so far */
+    ulong maxp;     /* highest prime allocated so far, or never_unforced() */
     uint vi_depth;  /* depth of this allocation */
     uint *pfreev;   /* bit vector of available primes */
     /* (optional) union */

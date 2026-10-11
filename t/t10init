@@ -6,7 +6,7 @@ use warnings;
 use Test::More;
 use File::Temp ();
 our $type;
-my %PROG = (o => './pcoul');
+my %PROG = (o => './pcoul', a => './pcaul');
 
 # each of these tests one aspect of -I, of recovery, or of the two together
 test_init();
@@ -24,6 +24,7 @@ test_walk_after_candidate();
 test_recover_p0_tail();
 test_recover_complete_batch();
 test_recover_init();
+test_divisors_of_n();
 
 done_testing();
 exit 0;
@@ -672,6 +673,18 @@ sub test_recover_init {
         ['305 b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 2'],
         'b0: 3.2^2 . 2 3.5^2 W(2633,3,2): 1 / 1',
     );
+}
+
+sub test_divisors_of_n {
+    # For tau(d + in) = n, a prime dividing n divides every value or none.
+    # The batches settle which, so it is never tried at one value alone:
+    # here the first prime tried at v_0 is 5, not 3.
+    local $type = 'a';
+    my $args = [qw{ -x1e6 6 3 }];
+    expect_diag(q{a prime dividing n is not tried at one value alone},
+        3, $args, 'b0: 5^2 . .');
+    expect_recover_result(q{recover an ordinary line},
+        6413, ['305 b0: 5^2 7^2 . (0.00s)'], $args);
 }
 
 sub temp_log {

@@ -490,6 +490,33 @@ uint know_target(uint vi) {
 #endif
 }
 
+/* True if p is never allocated as an unforced prime, wherever it lies:
+ * under TYPE_a each p | n divides every v_i or none, as the batch has it.
+ * Needs checking only for p <= level.maxp, which starts high enough.
+ */
+static inline bool never_unforced(ulong p) {
+#if defined(TYPE_a)
+    return (n % p) == 0;
+#else
+    return 0;
+#endif
+}
+
+/* Returns true if p is "known" at the given level, so should not be
+ * permitted as an additional unforced allocation.
+ */
+static inline bool known_prime(t_level *lp, ulong p) {
+    /* all known primes are <= maxp */
+    if (p > lp->maxp)
+        return 0;
+    if (never_unforced(p))
+        return 1;
+    for (uint li = 1; li <= lp->level; ++li)
+        if (p == levels[li].p && levels[li].x > 1)
+            return 1;
+    return 0;
+}
+
 #ifdef TRACK_STATS
     ulong* count_bad;
     static inline void TRACK_GOOD(uint vk, uint vi) { }
@@ -997,7 +1024,11 @@ void init_levels(void) {
     levels[0].have_min = (sminp || sminpx) ? 0 : 1;
     levels[0].next_best = 0;
     levels[0].nextpi = 0;
+#if defined(TYPE_a)
+    levels[0].maxp = divisors[n].high;  /* covers never_unforced() */
+#else
     levels[0].maxp = 0;
+#endif
     levels[0].is_forced = 2;    /* special value for dummy entry */
     levels[0].vi_depth = 1;
     if (forcedp + 1 > 8 * sizeof(levels[0].fp_need))
@@ -3441,25 +3472,13 @@ void walk_1_set(
             need_other[noc++] = vj;
     }
 
-    /* we must skip already allocated primes */
-    ulong maxused = prev_level->maxp;
-    uint maxl = prev_level->level;
-
     level_setp(cur_level, plow);
     while (1) {
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > phigh)
             break;
-        if (p <= maxused) {
-            bool used = 0;
-            for (uint li = 1; li <= maxl; ++li)
-                if (p == levels[li].p && levels[li].x > 1) {
-                    used = 1;
-                    break;
-                }
-            if (used)
-                continue;
-        }
+        if (known_prime(prev_level, p))
+            continue;
         /* Must diag before need_mod checks, which can reject a high
          * proportion of primes.
          */
@@ -4268,14 +4287,7 @@ void walk_midp(t_level *prev_level, bool recover) {
         /* If p is already allocated must still prune any completed powers,
          * skipping only the apply.
          */
-        used = 0;
-        if (p <= prev_level->maxp)
-            for (uint li = 1; li <= prev_level->level; ++li)
-                if (p == levels[li].p && levels[li].x > 1) {
-                    used = 1;
-                    break;
-                }
-
+        used = known_prime(prev_level, p);
         for (mi = 0; mi < midppc; ++mi) {
           redo_mi:
             mp = &midpp[mi];
@@ -5016,11 +5028,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
 /* The x of the previous allocation at v_i if it was unforced, else 0. */
 static inline uint prev_x(uint vi) {
     t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
-    return (ap->p > maxforce[vi]
-#ifdef TYPE_a
-        && (n % ap->p)
-#endif
-    ) ? ap->x : 0;
+    return (ap->p > maxforce[vi] && !never_unforced(ap->p)) ? ap->x : 0;
 }
 
 /* Returns true if a fresh x at v_i (leaving nextt) can be skipped, because
@@ -5672,10 +5680,9 @@ void run_flip_pqsq(uint vi) {
         ulong p = prime_iterator_next(&cur_level->piter);
         if (p > cur_level->limp)
             break;
-        if (p <= anc_level->maxp)
-            for (uint li = 1; li < level; ++li)
-                if (p == levels[li].p && levels[li].x > 1)
-                    goto redo_flip;
+        if (known_prime(anc_level, p))
+            goto redo_flip;
+
         /* Failure most likely means it does not leave a valid square;
          * we pass the grandparent as prev_level to reflect our notional
          * deallocation of prev_level. */
@@ -5882,10 +5889,9 @@ void recurse(e_is jump_continue) {
             ulong p = prime_iterator_next(&cur_level->piter);
             if (p > cur_level->limp)
                 goto continue_unforced_x;
-            if (p <= prev_level->maxp)
-                for (uint li = 1; li < level; ++li)
-                    if (p == levels[li].p && levels[li].x > 1)
-                        goto redo_unforced;
+            if (known_prime(prev_level, p))
+                goto redo_unforced;
+
             /* note: this returns 0 if t=1 */
             if (!apply_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x
