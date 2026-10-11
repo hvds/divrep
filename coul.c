@@ -6169,7 +6169,16 @@ int main(int argc, char **argv, char **envp) {
     prep_presquare();
 
     e_is jump = IS_DEEPER;
-    if (rstack || istack)
+    /* If a pending candidate would leave an empty search range, apply now
+     * and finish; else wait until after we have built the stack against
+     * the previous search range, to ensure we create the levels in the
+     * correct order.
+     */
+    if (have_pend202 && mpz_cmp(zmin, Z(rec_trail)) >= 0)
+        apply_pend202();
+    if (mpz_cmp(zmin, zmax) >= 0)
+        jump = IS_FINISH;   /* nothing to search */
+    else if (rstack || istack)
         jump = insert_stack();
     /* midp recovery reapplies its allocation inside walk_midp() */
     if (have_pend202 && !midp_recover.valid) {

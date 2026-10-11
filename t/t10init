@@ -251,6 +251,15 @@ sub test_recover_trailing {
          '305 b94: 2 3^2 2^2 211^2 2.3: 1 / 12 (0.76s)',
          '202 Candidate 15537949 (0.00s)'],
         'b94: 2 3^2 2^2 5^5 2.3');
+
+    # One not above the minimum leaves nothing to search: it is the result.
+    my $args = [qw{ -x19940:1e6 12 4 }];
+    my $log = ['305 b0: 2^2.3 13^2 2 3: 75 / 246 (0.00s)',
+        '202 Candidate 19940 (0.00s)'];
+    expect_recover_result(q{a trailing candidate at the minimum is the result},
+        19940, $log, $args);
+    expect_recover_recurse_count(q{and nothing more is searched},
+        0, $log, $args);
 }
 
 sub test_recover_ruled_out_batch {
