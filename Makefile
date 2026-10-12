@@ -12,9 +12,9 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
-    coulvec.c trace.c
+    coulvec.c trace.c bench.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
-    coulvec.h trace.h coulint.h
+    coulvec.h trace.h bench.h coulint.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"
@@ -62,7 +62,7 @@ ifdef CHECK_OVERFLOW
     DEFINES += -DCHECK_OVERFLOW
 endif
 # Makes instrumentation available, selected at runtime with -dv<bits>
-# (see trace.h).
+# (see trace.h), and the benches (see bench.c).
 ifdef VERBOSE
     DEFINES += -DVERBOSE
 endif

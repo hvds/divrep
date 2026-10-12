@@ -824,6 +824,11 @@ static inline bool prep_abort(t_tm *tm, bool result) {
     return result;
 }
 
+/* primality as tau_multi_prep() tests it, for the benches */
+bool tau_isprime(mpz_t n) {
+    return ct_prime(n);
+}
+
 /* Effectively identical to _GMP_is_prob_prime(), but with VERBOSE
  * diagnostics for debugging/calibration.
  */
@@ -1085,7 +1090,6 @@ const t_tmf tmfa[] = {
 };
 #define TM_TERM 0
 /* leave room for possible power check at tmf_1() */
-#define TM_INIT 2
 #define TM_MAX (sizeof(tmfa) / sizeof(t_tmf))
 typedef struct s_tmf_bits {
     uint maxlen;
@@ -1156,6 +1160,17 @@ static inline ulong _find_tmfb(uint size) {
     if (size <= tmfb_maxb)
         return tmfbl[size];
     return tmfb_lim;
+}
+
+/* the ladder for the benches (bench.c) */
+uint tm_rungs(void) {
+    return TM_MAX;
+}
+bool tm_rung(uint i, t_tm *tm) {
+    return (*tmfa[i])(tm);
+}
+ulong tm_rungmask(uint bits) {
+    return _find_tmfb(bits);
 }
 
 /* see also other_comparator() in coul.c */
