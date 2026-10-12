@@ -11,7 +11,8 @@ extern const char cm_default_table[];   /* timings.c, from timings */
 extern const char *cm_table_sha(const char *section);
 extern double cm_const(uint which);
 enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
-        CM_W1SITER, CM_W1SCHECK, CM_LINSETUP, CM_CAPPLY, CM_COUNT };
+        CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
+        CM_LINSETUP, CM_CAPPLY, CM_COUNT };
 
 /* For mock.c: the model of what the candidates of a walk cost, see
  * coulcost.c.

@@ -3657,6 +3657,9 @@ void walk_1_set(
     t_level *prev_level, t_level *cur_level,
     uint vi, ulong plow, ulong phigh, uint x
 ) {
+#ifdef MOCK
+    mock_leaf_w1s(prev_level->level);
+#endif
 #ifdef SQONLY
     if (!cur_level->have_square)
         return;
@@ -6632,6 +6635,9 @@ void recurse(e_is jump_continue) {
               case PUX_SKIP_THIS_X:
                 goto continue_unforced_x;
               case PUX_DO_THIS_X:
+#ifdef MOCK
+                mock_loop_start(level);
+#endif
                 ;
             }
             goto continue_unforced;
@@ -6674,6 +6680,10 @@ void recurse(e_is jump_continue) {
         }
       continue_unforced:
         {
+#ifdef MOCK
+            if (mock_loop_leaf(level, cur_level))
+                goto continue_unforced_x;
+#endif
             /* recalculate limit if we have an improved maximum */
             if (improve_max && seen_best > cur_level->max_at) {
                 ulong limp = limit_p(cur_level, cur_level->vi, cur_level->x,
@@ -6692,6 +6702,17 @@ void recurse(e_is jump_continue) {
             ulong p = prime_iterator_next(&cur_level->piter);
             if (p > cur_level->limp)
                 goto continue_unforced_x;
+#ifdef MOCK
+            switch (mock_loop_prime(level, prev_level, cur_level, p)) {
+              case MOCK_LOOP_GO:
+                break;
+              case MOCK_LOOP_SKIP:
+                goto redo_unforced;
+              case MOCK_LOOP_END:
+                cur_level->p = p;
+                goto continue_unforced_x;
+            }
+#endif
 #ifdef VERBOSE
             if (VB(VB_GATE))
                 gs_rec_prime(level, p);
@@ -6784,8 +6805,8 @@ e_is prune_stale(e_is jump) {
  */
 void cost_table_check(void) {
     static const char *mpu[] = { "scan", "prime", "multi", "ladder", "qs" };
-    static const char *coul[] = { "walk", "w1s" };
-    for (uint i = 0; i < 7; ++i) {
+    static const char *coul[] = { "walk", "w1s", "leaf", "tail" };
+    for (uint i = 0; i < 9; ++i) {
         bool is_mpu = i < 5;
         const char *sec = is_mpu ? mpu[i] : coul[i - 5];
         const char *sha = cm_table_sha(sec);
