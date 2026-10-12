@@ -193,6 +193,7 @@ static inline int ct_pretest(mpz_t n) {
 static inline bool ct_bpsw(mpz_t n) {
     if (!VB(VB_TRACE))
         return ct_isbpsw(n);
+    clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = ct_isbpsw(n);
     gmp_printf("(%ld) bpsw: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
