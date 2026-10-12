@@ -458,6 +458,24 @@ sub test_flip {
          q{305 b0: 2^2.109^2 . 2.7^5.97^2 F(2,89)}],
         q{b0: 2^2.109^2 . 2.3^8}, 3);
 
+    # A candidate found during a flip need not leave room for the
+    # allocation the flip replaced, here 23^2 at v_2: recovery reapplies
+    # that only to rebuild its level. The flip then has nothing left to
+    # try, and the search moves to the next power at v_2.
+    expect_recover(q{recover flip when a candidate rules out what it replaced},
+        [qw{ -j2 -x1e6 36 4 }],
+        [q{202 Candidate 333333 (0.00s)},
+         q{305 b7: 2^2.37^2 . 2.3^5.41^2 . F(2,23)}],
+        q{b7: 2^2.37^2 . 2.3^8 .});
+
+    # An edited line, which the run could not have written: 11^5 cannot be
+    # applied at v_0. The flip moves on to 17^5, and beneath that it must
+    # start again from 41, not from the 53 that was recovered.
+    expect_recover(q{only the recovered prime resumes inside a flip},
+        [qw{ -x1e14 54 2 }],
+        [q{305 b0: 2^2.11^5.53^2 3^2.7^2 F(0,41)}],
+        q{b0: 2^2.17^5.41^2 3^2.7^2 F(0,41)}, 2);
+
     # there can be unforced allocations before the flip set
     expect_recover(q{recover flip past prior allocations to the same v_i},
         [qw{ -x103148643381388141823 -j2 -f3 -g20 324 3 }],
