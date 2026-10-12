@@ -78,9 +78,112 @@ static inline uint test_multi_run(tau_failure_handler tfh) {
 
 /* for the planner (coulplan.c) */
 
+/* Sentinel values returned by best_v() and strategies[] functions.
+ * Any real v_i is < BV_SPECIAL; BV_WALK means there is no v_i to allocate
+ * to; BV_NEXTX means there is no work left to do for this x.
+ */
+#define BV_SPECIAL k
+#define BV_WALK (BV_SPECIAL + 0)
+
+/* What -k does in the current batch, worked out once the batch is
+ * complete: whether it applies at all, and as bit vectors the positions
+ * it applies to and those passed over.
+ * It applies to a batch that fixes exactly one square, unless that is
+ * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
+ * at v_{i-2} and gains nothing from the pass.
+ */
+typedef struct {
+    int id;
+    uint level;
+    bool on;
+    ulong at, passed;   /* needs MAXK_KERN <= 64 */
+} t_kern;
+
+/* The outcomes of classify_x() */
+typedef enum {
+    XR_WALK = 0,    /* no p: the node must be walked */
+    XR_SKIP,        /* nothing to do for this x */
+    /* Nothing to do for this x, and the rest of the loop above is best
+     * done by run_flip_pqsq().
+     */
+    XR_FLIP,
+    XR_WALK1,       /* the range is for walk_1_set(): v_i is then complete */
+    XR_RANGE        /* the range is for a loop of allocations */
+} e_xr;
+
 extern void walk_v_inner(t_level *cur_level, mpz_t start);
 
+extern mpz_t best;
 extern uint auto_level;
+extern bool highpow;
+extern ulong limp_cap;
+extern bool midp_only, in_midp, need_maxp, need_midp;
+extern ulong kern_b;
+extern uint strategy;
+extern uint *maxforce;
+extern void done(void);
+extern t_kern *kern_state(void);
+extern bool kern_passed(uint vi);
+extern ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt);
+extern e_xr classify_x(
+    t_level *prev_level, uint vi, uint x, ulong p, ulong limp
+);
+
+/* True if p is never allocated as an unforced prime, wherever it lies:
+ * under TYPE_a each p | n divides every v_i or none, as the batch has it.
+ * Needs checking only for p <= level.maxp, which starts high enough.
+ */
+static inline bool never_unforced(ulong p) {
+#if defined(TYPE_a)
+    return (n % p) == 0;
+#else
+    return 0;
+#endif
+}
+
+/* true if -k applies to this batch */
+static inline bool kern_batch(void) {
+    return kern_b && kern_state()->on;
+}
+
+/* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
+ * applies to: walk_midp() has tried each prime up to kern_b as the odd
+ * power, classify_x() refuses the rest, and with the squares left to the
+ * walk a strategy would otherwise loop over p^1 wherever else it could.
+ */
+static inline bool kern_highpow(void) {
+    return highpow && !kern_batch();
+}
+
+/* The x of the previous allocation at v_i if it was unforced, else 0. */
+static inline uint prev_x(uint vi) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    return (ap->p > maxforce[vi] && !never_unforced(ap->p)) ? ap->x : 0;
+}
+
+/* Returns true if a fresh x at v_i (leaving nextt) can be skipped, because
+ * the same powers taken in the other order have already covered it.
+ */
+static inline bool done_in_reverse(uint vi, uint x, uint nextt) {
+    uint prevx = prev_x(vi);
+    if (ispow2_u64(x) || x == prevx)
+        return 0;
+    /* we already did this in reverse */
+    if (x < prevx && divisors[x].high == divisors[prevx].high)
+        return 1;
+    /* we already did any possible continuation in reverse */
+    return x > nextt && divisors[x].high == divisors[nextt].high;
+}
+
+/* The prime after which to start a fresh x at v_i. */
+static inline ulong start_p(uint vi, uint x) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    uint prevx = prev_x(vi);
+    /* powers of 2: increasing p, not decreasing powers */
+    if (ispow2_u64(x) ? (prevx && ispow2_u64(prevx)) : (x == prevx))
+        return ap->p;   /* skip smaller p */
+    return maxforce[vi];
+}
 
 /* True if run_flip_pqsq() can take over from p^{x-1} at a v_i left with
  * tau 2z: that relies on z and 2z being the only powers still to try there,

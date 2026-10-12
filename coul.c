@@ -249,7 +249,6 @@ bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
  */
 ulong kern_b = 0;
 uint kern_keep = 0;     /* -K: positions to keep of those -k would pass over */
-bool kern_passed(uint vi);
 bool in_b6x = 0;        /* true while a STRATEGY_6X candidate is on trial */
 uint b6x_vi;            /* the v_i it is on trial for */
 bool in_flip = 0;       /* true while run_flip_pqsq() is proceeding */
@@ -317,12 +316,6 @@ uint prev_strategy;     /* for special-case strategy override */
 uint fixed_level = 0;   /* number of values specified for -js */
 uint *fixed_v = NULL;   /* values specified for -js */
 
-/* Sentinel values returned by best_v() and strategies[] functions.
- * Any real v_i is < BV_SPECIAL; BV_WALK means there is no v_i to allocate
- * to; BV_NEXTX means there is no work left to do for this x.
- */
-#define BV_SPECIAL k
-#define BV_WALK (BV_SPECIAL + 0)
 #define BV_NEXTX (BV_SPECIAL + 1)
 #define BV_6X (BV_SPECIAL + 2)
 
@@ -484,18 +477,6 @@ uint know_target(uint vi) {
     return t;
 #else
     return n;
-#endif
-}
-
-/* True if p is never allocated as an unforced prime, wherever it lies:
- * under TYPE_a each p | n divides every v_i or none, as the batch has it.
- * Needs checking only for p <= level.maxp, which starts high enough.
- */
-static inline bool never_unforced(ulong p) {
-#if defined(TYPE_a)
-    return (n % p) == 0;
-#else
-    return 0;
 #endif
 }
 
@@ -4533,36 +4514,6 @@ void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
     mintau_restricted_r(0, mint, t, r, ri);
 }
 
-/* What -k does in the current batch, worked out once the batch is
- * complete: whether it applies at all, and as bit vectors the positions
- * it applies to and those passed over.
- * It applies to a batch that fixes exactly one square, unless that is
- * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
- * at v_{i-2} and gains nothing from the pass.
- */
-typedef struct {
-    int id;
-    uint level;
-    bool on;
-    ulong at, passed;   /* needs MAXK_KERN <= 64 */
-} t_kern;
-static t_kern *kern_state(void);
-
-/* true if -k applies to this batch */
-static inline bool kern_batch(void) {
-    return kern_b && kern_state()->on;
-}
-
-/* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
- * applies to: walk_midp() has tried each prime up to kern_b as the odd
- * power, limit_unforced_x() refuses the rest, and with the squares left
- * to the walk a strategy would otherwise loop over p^1 wherever else it
- * could.
- */
-static inline bool kern_highpow(void) {
-    return highpow && !kern_batch();
-}
-
 /* the tau left at v_i once the current batch was complete */
 static inline uint kern_tau(uint vi) {
     t_value *vp = &value[vi];
@@ -4607,7 +4558,7 @@ static bool kern_6x(void) {
  * walks cover it. (Recursion counts were unchanged by this for D(n,4),
  * D(n,5), n in 18, 30, 54, 90, 126.)
  */
-static t_kern *kern_state(void) {
+t_kern *kern_state(void) {
     static t_kern ks = { -1, ~0U, 0, 0, 0 };
     if (ks.id != batch_alloc || ks.level != cur_batch_level) {
         bool later = 0;
@@ -5364,8 +5315,6 @@ void diag_6x(t_level *cur_level, uint vi, uint a) {
     in_b6x = 0;
 }
 
-ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt);
-
 /* The limit of the loop at v_i for its first x, the highest prime of
  * tau: that dominates the primes recursion there would try, the later x
  * needing at least a (2h-1)th root. A limit of 2^64 or more (0 from
@@ -5681,42 +5630,39 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     return mpz_get_ui(Z(lp_x));
 }
 
-/* The x of the previous allocation at v_i if it was unforced, else 0. */
-static inline uint prev_x(uint vi) {
-    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
-    return (ap->p > maxforce[vi] && !never_unforced(ap->p)) ? ap->x : 0;
-}
-
-/* Returns true if a fresh x at v_i (leaving nextt) can be skipped, because
- * the same powers taken in the other order have already covered it.
- */
-static inline bool done_in_reverse(uint vi, uint x, uint nextt) {
-    uint prevx = prev_x(vi);
-    if (ispow2_u64(x) || x == prevx)
-        return 0;
-    /* we already did this in reverse */
-    if (x < prevx && divisors[x].high == divisors[prevx].high)
-        return 1;
-    /* we already did any possible continuation in reverse */
-    return x > nextt && divisors[x].high == divisors[nextt].high;
-}
-
-/* The prime after which to start a fresh x at v_i. */
-static inline ulong start_p(uint vi, uint x) {
-    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
-    uint prevx = prev_x(vi);
-    /* powers of 2: increasing p, not decreasing powers */
-    if (ispow2_u64(x) ? (prevx && ispow2_u64(prevx)) : (x == prevx))
-        return ap->p;   /* skip smaller p */
-    return maxforce[vi];
-}
-
 typedef enum {
     PUX_NOTHING_TO_DO = 0,
     PUX_FLIP_PQSQ,
     PUX_SKIP_THIS_X,
     PUX_DO_THIS_X
 } e_pux;
+
+/* Classify the range of primes after p up to limp (from limit_p()) for
+ * which to allocate p^{x-1} at v_i below prev_level. This has no side
+ * effects, so can also be used to cost the choices.
+ */
+e_xr classify_x(t_level *prev_level, uint vi, uint x, ulong p, ulong limp) {
+    uint nextt = value[vi].alloc[cur_vlevel[vi] - 1].t / x;
+
+    /* under -k walk_midp() has tried every such power that can apply */
+    if (!(x & 1) && kern_at(vi))
+        return XR_SKIP;
+    if (limp == 0)
+        return XR_WALK;
+    if (limp < p) {
+        /* If tau at the previous level is 2z^2 and its current prime is
+         * already too high to split as (z, z, 2) then we can not only
+         * skip this z but also profitably invert the process for the
+         * remainder, splitting as (2z, z) rather than (z, 2z). That holds
+         * for any z that can_flip(), prime or not, except where -k applies.
+         */
+        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
+                && can_flip(x) && !kern_at(vi))
+            return XR_FLIP;
+        return XR_SKIP; /* nothing to do here */
+    }
+    return (nextt == 1) ? XR_WALK1 : XR_RANGE;
+}
 
 /* Most primes tried by a loop of allocations are rejected for giving a
  * least v_0 = rq + mult.aq > zmax, with mult the multiple the CRT finds:
@@ -5828,15 +5774,11 @@ static inline bool reject_single(
 e_pux limit_unforced_x(
     t_level *prev_level, t_level *cur_level, ulong p, ulong limp, bool fresh
 ) {
-    uint ti = cur_level->ti;
-    uint x = divisors[ti].div[cur_level->di];
+    uint x = divisors[cur_level->ti].div[cur_level->di];
     uint vi = cur_level->vi;
-    uint nextt = ti / x;
 
-    /* under -k walk_midp() has tried every such power that can apply */
-    if (!(x & 1) && kern_at(vi))
-        return PUX_SKIP_THIS_X;
-    if (limp == 0) {
+    switch (classify_x(prev_level, vi, x, p, limp)) {
+      case XR_WALK:
         /* force walk */
         GS_ORIGIN('F');
 #ifdef SQONLY
@@ -5846,41 +5788,36 @@ e_pux limit_unforced_x(
         walk_v(prev_level, Z(zero));
 #endif
         return PUX_NOTHING_TO_DO;
-    }
-    if (limp < p) {
-        /* If tau at the previous level is 2z^2 and its current prime is
-         * already too high to split as (z, z, 2) then we can not only
-         * skip this z but also profitably invert the process for the
-         * remainder, splitting as (2z, z) rather than (z, 2z). That holds
-         * for any z that can_flip(), prime or not, except where -k applies.
+      case XR_SKIP:
+        return PUX_SKIP_THIS_X;
+      case XR_FLIP:
+        return PUX_FLIP_PQSQ;
+      case XR_WALK1:
+        /* TODO: rather than diverting odd-prime-tau positions to a walk
+         * under need_maxp, consider handling them always via walk_1_set(),
+         * as the uncapped search does. That would mean not applying the
+         * maxp cap in limit_p() when nextt == 1 with t prime (so
+         * walk_1_set() covers every p itself, even under -W/-p), and
+         * removing the "skip prime powers when capped" checks from
+         * best_v0() .. best_v4() and best_fixed(); prep_midp() skip would
+         * remain valid, and capped and uncapped runs would then choose
+         * positions identically. Correctness should be unaffected, but
+         * performance would change in both directions: walk_1_set() does
+         * a CRT check for every prime up to (zmax/q)^{1/(t-1)}, while a
+         * square walk visits only the rc residue classes mod qq.
+         * Note also that this path is taken before the gate, so
+         * walk_1_set() is never weighed against a walk. Ideally the cost
+         * model would make that choice, as the gate does for walk vs
+         * recurse.
+         * This probably needs more progress on calibration before we
+         * consider it.
          */
-        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
-                && can_flip(x) && !kern_at(vi))
-            return PUX_FLIP_PQSQ;
-        return PUX_SKIP_THIS_X; /* nothing to do here */
-    }
-    /* TODO: rather than diverting odd-prime-tau positions to a walk under
-     * need_maxp, consider handling them always via walk_1_set(), as the
-     * uncapped search does. That would mean not applying the maxp cap in
-     * limit_p() when nextt == 1 with t prime (so walk_1_set() covers every p
-     * itself, even under -W/-p), and removing the "skip prime powers when
-     * capped" checks from best_v0() .. best_v4() and best_fixed();
-     * prep_midp() skip would remain valid, and capped and uncapped runs
-     * would then choose positions identically. Correctness should be
-     * unaffected, but performance would change in both directions:
-     * walk_1_set() does a CRT check for every prime up to (zmax/q)^{1/(t-1)},
-     * while a square walk visits only the rc residue classes mod qq.
-     * Note also that the nextt == 1 path in prep_unforced_x() is taken
-     * before the gate, so walk_1_set() is never weighed against a walk.
-     * Ideally the cost model would make that choice, as the gate does
-     * for walk vs recurse.
-     * This probably needs more progress on calibration before we consider it.
-     */
-    if (nextt == 1) {
         cur_level->have_min = prev_level->have_min;
         /* a recovered p is the one in progress, so still to try */
         walk_1_set(prev_level, cur_level, vi, fresh ? p : p - 1, limp, x);
         return PUX_SKIP_THIS_X;
+      case XR_RANGE:
+        break;
     }
     return PUX_DO_THIS_X;
 }
@@ -6638,9 +6575,23 @@ void recurse(e_is jump_continue) {
 
             if (cur_level->next_best)
                 goto walk_now;
+            cur_level->ja_on = 0;
             uint vi = best_v(cur_level);
             cur_level->choice_strategy = strategy;
             cur_level->unsorted = 0;
+            /* -ja2: choose by estimated cost (with -dv8, report the choice) */
+            if (vi < BV_SPECIAL && (auto_level >= 2
+#ifdef VERBOSE
+                        || (auto_level && VB(VB_CHOICE))
+#endif
+                    ) && !prev_level->have_square
+                    && strategy != STRATEGY_6X && strategy != STRATEGY_FIXED) {
+                uint sv = vi;
+                vi = ja_choose(prev_level, cur_level, vi);
+                if (vi == BV_WALK)
+                    goto walk_now;  /* not stable, so not next_best */
+                cur_level->unsorted = (vi != sv);
+            }
             if (vi >= BV_SPECIAL) {
                 switch (vi - BV_SPECIAL) {
                   default:
@@ -6694,9 +6645,13 @@ void recurse(e_is jump_continue) {
         if (VB(VB_GATE))
             gs_rec_end(level);
 #endif
+        if (cur_level->ja_on)
+            ja_learnx(cur_level);
         ++cur_level->di;
       have_unforced_x:
         {
+            if (cur_level->ja_on)
+                cur_level->ja_xt0 = gr_clock();
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
             switch (prep_unforced_x(prev_level, cur_level)) {
@@ -6718,6 +6673,12 @@ void recurse(e_is jump_continue) {
         break;
       /* entry point, must set prev_level/cur_level before using */
       derecurse:
+        if (levels[level].ja_t0 > 0)
+            ja_learnt(&levels[level]);
+        if (levels[level].ja_on) {
+            ja_learnx(&levels[level]);
+            levels[level].ja_on = 0;
+        }
         levels[level + 1].next_best = 0;
         --level;
         if (level <= final_level)
@@ -7067,8 +7028,8 @@ int main(int argc, char **argv, char **envp) {
             else if (arg[2] == 'a') {
                 /* -ja<level>: automate choices by estimated cost */
                 auto_level = strtoul(&arg[3], NULL, 10);
-                if (auto_level != 1)
-                    fail("-ja: only -ja1 is supported so far");
+                if (auto_level < 1 || auto_level > 2)
+                    fail("-ja: only -ja1 and -ja2 are supported so far");
             } else if (arg[2] == 's') {
                 set_fixed_strategy(&arg[3]);
             } else {
@@ -7129,6 +7090,9 @@ int main(int argc, char **argv, char **envp) {
         ct_pprep_record = &gs_pprep_record;
     }
 #endif
+    /* -ja2 chooses positions, as -js does */
+    if (auto_level >= 2 && strategy == STRATEGY_FIXED)
+        fail("-ja2 is not supported with -js");
 
     init_post();
     if (opt_alloc & 2)
