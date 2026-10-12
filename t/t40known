@@ -1,0 +1,34 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+
+use Test::More;
+
+# Tests that a full search of a small range (under -X) reports exactly
+# the solutions known in that range. Solutions listed here were found
+# independently, by sieving tau over the whole range.
+
+my $debug = $ENV{DEBUG} ? 'd' : '';
+
+test_pcrul();
+
+done_testing();
+exit 0;
+
+sub test_pcrul {
+    # tau(d .. d + 4) = 8, 8, 4, 4, 18 needs mintau() restricted for
+    # repeated 3s, as the lcm of the targets (72) shows but n does not
+    is_deeply(found('pcrul', qw{ -x2000 296 5 }), [ 1112 ],
+            'pcrul finds f(296, 5)');
+}
+
+# returns an arrayref of the candidates reported, in the order found,
+# or a string describing how the run failed to complete
+sub found {
+    my($prog, @args) = @_;
+    my @lines = `./$debug$prog -Ls0 -X @args 2>&1`;
+    return "exit status $?" if $?;
+    return 'no final line' unless grep /^367 /, @lines;
+    return [ map /^202 Candidate (\d+)/ ? $1 : (), @lines ];
+}

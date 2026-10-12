@@ -1130,7 +1130,7 @@ void prep_mintau(void) {
         uint h = divisors[d].high;
         if (h <= 2)
             break;
-        if ((n / d) % h)
+        if ((target_lcm / d) % h)
             continue;
         restricted = realloc(restricted, (restricted_count + 1) * sizeof(uint));
         restricted[restricted_count++] = d;
