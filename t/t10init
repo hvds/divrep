@@ -424,7 +424,9 @@ sub test_6x {
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }],
         'b6: 2^8.7^2 . 2.3^8 . 6X(1567,0,6)',
     );
-    expect_recurse_count(q{6x search is exhaustively correct, 54 4}, 180,
+    # (94 fewer than without reject_square(): it passes over 14 of the q^2
+    # at v_0 from 457^2 on, with no root of the square at v_1 in range)
+    expect_recurse_count(q{6x search is exhaustively correct, 54 4}, 86,
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }]);
 
     # With tau 6 left at v_0, 6X gives way to p^10 at v_1 (expect a recursion
@@ -448,7 +450,7 @@ sub test_recover_6x {
     local $type = 'o';
 
     expect_recover_recurse_count(q{recover 6x from its own diag point, 54 4},
-        174, ['305 b6: 2^8.7^2 . 2.3^8 . 6X(1567,0,6)'],
+        80, ['305 b6: 2^8.7^2 . 2.3^8 . 6X(1567,0,6)'],
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }]);
 
     # A trailing candidate can leave no room for a level above the 6X
