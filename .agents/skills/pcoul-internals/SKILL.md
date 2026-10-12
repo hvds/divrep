@@ -101,7 +101,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   own addition on top of the imported forward-iteration code.
 - `trace.c` - instrumentation records, in a build with `VERBOSE=1`,
   chosen at run time with `-dv<bits>` (see `trace.h`).
-- `coulint.h` - internals of `coul.c` shared with it.
+- `bench.c` - benches of the tests and of the factoring ladder
+  (`$MULTIBENCH`), in the same build.
+- `coulint.h` - internals of `coul.c` shared with those.
 
 ### Key vocabulary / concepts
 
