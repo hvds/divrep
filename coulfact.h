@@ -73,6 +73,17 @@ static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
 }
 #endif
 
+/* a^e mod m */
+static inline ulong powmod_u64(ulong a, ulong e, ulong m) {
+    ulong r = 1;
+    for (a %= m; e; e >>= 1) {
+        if (e & 1)
+            r = mulmod_u64(r, a, m);
+        a = mulmod_u64(a, a, m);
+    }
+    return r;
+}
+
 /* CRT for a prime power: as chinese_ppow() but with known inverse ai */
 static inline void chinese_ppow_ai(
     mpz_t rp, mpz_t r, mpz_t a, ulong m, ulong s, ulong ai
