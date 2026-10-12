@@ -3636,8 +3636,10 @@ bool update_residues(t_level *old, t_level *new,
     mpz_set_si(Z(ur_a), off);
     mpz_t *ppx;
     if (p == 2) {
+        /* v_i == 2^e (mod 2^{e+1}) for the whole power e = x - 1 + retry */
         ++x;
-        mpz_add(Z(ur_a), Z(ur_a), px);
+        mpz_mul_2exp(Z(ur_ipg), px, retry);
+        mpz_add(Z(ur_a), Z(ur_a), Z(ur_ipg));
         mpz_mul_2exp(Z(ur_ipg), px, 1);
         ppx = ZP(ur_ipg);
     } else {

@@ -15,6 +15,7 @@ if ($ENV{DEBUG}) {
 
 test_restrict();
 test_fixed();
+test_square_init();
 
 done_testing();
 exit 0;
@@ -53,6 +54,16 @@ sub test_fixed {
         '2^5 . 2', '3^5 2^2 .', '. 2^2.3 .', '. 2^2 3^5', '. 2^5 .',
         '. 2.3^2 .', '. 2 3^5', '2.3^2 . 2^2', '2 3^5 2^2',
     ], '-a4 lists a batch once it fully allocates a value');
+}
+
+sub test_square_init {
+    # -I makes v_0 = 7^3.z^2 before the batch for 2 is chosen; with
+    # 2^2 at v_0 and 2^5 at v_4, v_4 / 2^5 = (343z^2 + 1) / 8 is odd
+    # for z == +-1 (mod 8)
+    is_deeply(batches(q{-I"7^3 . . . ."}, qw{ -x1e16 36 5 }), [
+        '7^3 2^5 . 2 .', '7^3 2^8 . 2 .', '7^3 2^17 . 2 .',
+        '7^3.2^2 . 2 . 2^5', '7^3.2^2 . 2 . 2^8', '7^3.2^2 . 2 . 2^17',
+    ], 'a square from -I keeps batches where 2^2 of 2^5 hits it');
 }
 
 # returns an arrayref of the batches listed, in order

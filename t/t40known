@@ -21,6 +21,13 @@ sub test_pcrul {
     # repeated 3s, as the lcm of the targets (72) shows but n does not
     is_deeply(found('pcrul', qw{ -x2000 296 5 }), [ 1112 ],
             'pcrul finds f(296, 5)');
+
+    # 484 = 22^2 makes v_0 square, here with batch "2^2 . 2 . 2^3"
+    is_deeply(found('pcrul', qw{ -x273600000 484 5 }), [ 273505444 ],
+            'pcrul finds f(484, 5): square v_0 takes 2^2 of 2^3');
+    # 1764 = 42^2 makes v_4 square, here with batch "2^3 . 2 . 2^2"
+    is_deeply(found('pcrul', qw{ -x100000 1760 5 }), [],
+            'pcrul reports no false f(1760, 5): square v_4 takes 2^2 of 2^3');
 }
 
 # returns an arrayref of the candidates reported, in the order found,
