@@ -108,7 +108,7 @@ The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
       [-g<damp:gain>] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
-      [-j<strategy>] [-k<bound>] [-K<count>] <n> <k>
+      [-j<strategy>] [-ja<level>] [-k<bound>] [-K<count>] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
 you will usually invoke it as "pcoul" or as "pcoul.exe".
@@ -241,6 +241,24 @@ some position was a) unforced, and b) the square root of the remaining
 "-j1" is the default when n is divisible by at least two distinct odd
 primes; "-j0" is the default in all other cases.
 
+If "-ja1" is specified (experimental), choices are automated by
+estimated cost, to the level given; level 1 automates only the
+transition from recursion to walking (see "-g" above): walking now is
+weighed against recursing one more level with every resulting case
+walked, using the cost of a walk per iteration learnt during the run.
+That covers every loop where no square is fixed, unless a flip may
+follow (tau 2q^2 for an odd prime q). The gain then applies only to
+what is left.
+
+The costs "-ja" learns are counted rather than timed, so that identical
+runs make identical choices, whatever else the machine is doing: walk
+iterations, primes tried and tests made are each charged their cost from
+a cost table (see multibench-table). A default table is built into pcoul
+from the file "timings"; set $COST_TABLE to the path of another to use
+that instead. Since only the relative costs matter, a table made on one
+machine should serve on others. With "-dT", pcoul notes in the log each
+section of the table made by a different build of divrep or MPU::GMP.
+
 If "-I..." is specified, the argument should be a pattern of the same
 form as that generated for progress lines. All prime powers specified
 are then forced into place.
@@ -262,10 +280,12 @@ In a build with VERBOSE=1, "-dv<bits>" selects instrumentation, as the
 sum of: 1 for a trace of the recursion, walks and factoring tests to
 stdout; 2 for records of each gate decision, recursion loop and walk
 (and more) to the file named by $GATE_STATS (default gate_stats.log); 4
-to add, with 2, the time spent in each stage of a walk's tests. See
-trace.h and trace.c. The default is none, and the build is then only a
-few percent slower than a normal one. The same build runs the
-benchmarks behind the cost tables of multibench-table (see bench.c).
+to add, with 2, the time spent in each stage of a walk's tests; 16 and
+32 for records of test preparations and of the run's counted costs, to
+the same file. See trace.h and trace.c. The default is none, and the
+build is then only a few percent slower than a normal one. The same
+build runs the benchmarks behind the cost tables of multibench-table
+(see bench.c).
 
 <n> and <k> are mandatory arguments, specifying that we want to search
 for D(n, k) (equivalently T(n/2, k) in the terminology of A292580).

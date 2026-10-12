@@ -25,6 +25,7 @@ test_recover_p0_tail();
 test_recover_complete_batch();
 test_recover_last_batch();
 test_no_forced_primes();
+test_recover_ja();
 test_recover_init();
 test_divisors_of_n();
 
@@ -104,6 +105,9 @@ sub test_init {
         like($lines->{367}[-1] // '', qr{ walkc 0 },
             q{a walk does not try the minimum});
     }
+    # -ja1 below an -I pattern
+    expect_result(q{-ja1 below a constraint for f(24,5)},
+            '266624899224', '2^3.3 . 2 3^2 2^2', [qw{ -ja1 -x1e12 24 5 }]);
     # -k tries primes to an odd power first, where that leaves a Pell equation
     expect_result(q{-k find f(6,5)},
             $result65, '', [qw{ -k1000 -x1e20 6 5 }]);
@@ -724,6 +728,30 @@ sub test_no_forced_primes {
     # 735 = 3.5.7^2 and 736 = 2^5.23 need primes that only -W can supply
     expect_result(q{it makes the -W walk},
         735, '', [qw{ -W3 -x1e4 12 2 }]);
+}
+
+sub test_recover_ja {
+    # Recovery honours the recursion the recovery line shows, rather than
+    # asking the gate again, so -ja1 can be turned on or off mid-run (it
+    # learns its costs during the run, so its decisions would differ).
+    local $type = 'o';
+    my $args245 = [qw{ -x1e12 24 5 }];
+    expect_recover(q{recover a recursion, turning -ja1 on},
+        [ '-ja1', @$args245 ],
+        ['305 b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2'],
+        'b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2',
+    );
+    expect_recover(q{recover -ja1 after a candidate},
+        [ '-ja1', @$args245 ],
+        ['202 Candidate 15537948 (0.10s)',
+         '305 b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2'],
+        'b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2',
+    );
+    expect_recover(q{recover a recursion, turning -ja1 off},
+        $args245,
+        ['305 b0: 2^5.3 271^2 2 3.17^2 2^2'],
+        'b0: 2^5.3 271^2 2 3.17^2 2^2: 0 / 245',
+    );
 }
 
 sub test_recover_init {

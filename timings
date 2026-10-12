@@ -7,6 +7,7 @@ V walk 755663e(64415bc)*;f94aeff
 V w1s 755663e(64415bc)*;f94aeff
 V leaf 134f11e(64415bc)*;f94aeff
 V tail 134f11e(64415bc)*;f94aeff
+V situ decca44(64415bc)*;f94aeff
 S 24 3 0.2657 0.1538 0.0000
 S 24 5 0.2949 0.1597 0.0577
 S 24 7 0.2964 0.1570 0.0517
@@ -759,3 +760,21 @@ C w1scheck 0.33034
 C cprime 0.1373
 C cprimesq 2.3532
 C ctail 0.1249
+K prepcall 0.00000
+K prepstep1 0.00703
+K prepstep2 0.01110
+K prepstep3 0.00000
+K prepgcd0 0.19790
+K prepgcd1 0.21617
+K prepgcd2 0.32713
+K prepgcd3 0.39758
+K prepgcd4 0.69792
+K preppbit 0.01750
+K preppower 0.40966
+K prepzbit 0.28670
+K pprep0 0.000000
+K pprep0bit 0.005696
+K pprep1 0.000000
+K pprep1bit 0.007870
+K pprep2 0.010619
+K pprep2bit 0.009865
