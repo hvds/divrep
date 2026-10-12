@@ -258,7 +258,8 @@ The strategy remains the choice where the costs cannot be estimated
 are corrected as the run proceeds by the costs measured for the choices
 made. Since the choices then depend on costs learnt during the run,
 progress lines (315) mark each position chosen against the strategy, so
-that recovery can reproduce it.
+that recovery can reproduce it. What "-ja" has learnt is logged before
+each progress line (316), and a recovered run carries on from it.
 
 The costs "-ja" learns are counted rather than timed, so that identical
 runs make identical choices, whatever else the machine is doing: walk
