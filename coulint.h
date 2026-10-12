@@ -1,12 +1,14 @@
 #ifndef COULINT_H
 #define COULINT_H
 
-/* Internals of coul.c shared with its helpers (coulcost.c, mock.c,
- * trace.c, bench.c), not needed by the other modules.
+/* Internals of coul.c shared with its helpers (coulcost.c, coulplan.c,
+ * mock.c, trace.c, bench.c), not needed by the other modules.
  */
 
 #include "coul.h"
 #include "coultau.h"
+#include "coulfact.h"
+#include "builtins.h"
 
 /* the offset of the i-th value: v_i = v_0 + TYPE_OFFSET(i) */
 #if defined(TYPE_o) || defined(TYPE_r)
@@ -24,6 +26,18 @@
 extern uint maxfact, sq0, *sqg, *cur_vlevel, *oc_t, seen_best;
 extern mpz_t zmin, zmax, *wv_o, *wv_qq;
 extern int other_comparator(const void *va, const void *vb);
+
+/* What the run has done, counted for costing it (see cc_work()); tests
+ * outside tau_multi_prep(), tau_prime_prep() and tau_multi_run(), which
+ * price their own, are priced as they are made.
+ */
+typedef struct {
+    bool on;
+    ulong lin_walks, lin_iter, lin_inv, sq_walks, sq_iter, sq_inv,
+            pell_iter, w1s_prime, w1s_check, rec_prime, rec_applied;
+    double test;
+} t_cc;
+extern t_cc cc;
 
 /* Test values in batch: append each (test_*_append() steals the input,
  * and returns FALSE if it is already known to fail), then run the batch.
@@ -60,6 +74,22 @@ static inline uint test_prime_run(uint first) {
 }
 static inline uint test_multi_run(tau_failure_handler tfh) {
     return tau_multi_run(tm_count, tfh);
+}
+
+/* for the planner (coulplan.c) */
+
+extern void walk_v_inner(t_level *cur_level, mpz_t start);
+
+extern uint auto_level;
+
+/* True if run_flip_pqsq() can take over from p^{x-1} at a v_i left with
+ * tau 2z: that relies on z and 2z being the only powers still to try there,
+ * every smaller one having been done in reverse (see done_in_reverse()).
+ * z does not need to be prime. Powers of 2 are instead tried in order
+ * of p, whatever the power, so they do not qualify.
+ */
+static inline bool can_flip(uint x) {
+    return !ispow2_u64(x);
 }
 
 #endif

@@ -1,6 +1,6 @@
 ---
 name: pcoul-calibration
-description: How pcoul costs its own work - the cost table, the mocks and calibrate - with what was measured and what was tried and dropped
+description: How pcoul costs its own work - the cost table, the mocks, calibrate, and the option that decides by cost (-ja) - with what was measured and what was tried and dropped
 ---
 ## Calibration and cost models for pcoul
 
@@ -88,7 +88,9 @@ lower it mid-run. Everything here is costed at the requested zmax.
 ### Instrumentation
 
 A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
-(trace.h): 1 the trace, 2 the records, 4 stage timing.
+(trace.h): 1 the trace, 2 the records, 4 stage timing, 16 the test
+preparations (T and U records), 32 the run's counts and CPU time (a W
+record).
 
 - -dv2: one record per gate decision, recursion subtree, walk,
   walk_1_set(), flip and midp phase (trace.c). With -dv6 its clock
@@ -123,11 +125,11 @@ inputs each; above that (with -f only) the single ECM rung is benched
 from 12-30 inputs and is rough. Rungs after QS count as never reached.
 
 The table is in sections (scan, prime, multi, ladder, qs, walk, w1s,
-leaf, tail), each stamped with the build that made it ("V section
+leaf, tail, situ), each stamped with the build that made it ("V section
 sha"): `-s<sections>` rebuilds only some, and `-u<table>` takes the
 rest from an existing table, so a new MPUGMP needs only scan, prime,
-ladder and qs (and multi), a change to coul.c only walk, w1s, leaf
-and tail. pcoul builds in a default table from the file timings,
+ladder and qs (and multi), a change to coul.c only walk, w1s, leaf,
+tail and situ. pcoul builds in a default table from the file timings,
 used unless $COST_TABLE names another; `-dT` notes sections from a
 different build.
 
@@ -185,11 +187,76 @@ coordinate search over -j, -g and -W. Since every setting runs on the
 same batches, differences between settings are far more precise than
 the absolute predictions.
 
+### -ja1 (runtime cost gate, coulplan.c)
+
+At a node with no fixed square (and not a flippable 2q^2 loop), walk or
+recurse is decided by estimated cost instead of gain: walking costs a
+setup plus Z/aq iterations at a cost per iteration learnt per level
+during the run; recursing costs GR_APPLY per prime tried (0.2us then,
+0.12us since primes are rejected in single limbs) plus the children's
+walks, as if every child walks. On every non-square batch tried (8
+D(96,8), 3 of them at 10x zmax, and 5 D(48,10)) it matched or beat the
+best gain tried within a few %, with no tuning; the user's -g24 on
+D(96,8) was 20-35% slower than both. Recovery honours the recursion the
+recovery line shows, without asking the gate again, so -ja1 can be
+turned on or off mid-run; tested by recovering D(12,4) and D(24,5) from
+100 random log points, and in t/t10init.
+
+The estimate of recursing is too high near the root, where a wrong
+choice to walk costs most: D(64,3) -j4 -x1e15 took 29s under -ja1,
+walking at level 1, against 0.04s with no -ja. So the gate scales that
+estimate by 1/4 (GR_RSCALE): 0.05s there, D(60,3) -j2 -x1e13 1.02s to
+0.59s, D(48,4) -j2 -x1e12 0.68s to 0.28s, and the other 26 runs of the
+benchmark set within 3% either way. For n = 2^x.3 it is what lets -j4
+pay as x grows (-ja1, seconds without and with the factor, 90s
+allowed):
+
+| run | -j0 | -j2 | -j4 |
+|---|---|---|---|
+| D(24,6) -x1e13 | 4.00, 4.08 | 3.47, 3.48 | 3.84, 3.80 |
+| D(48,4) -x1e15 | 0.33, 0.31 | 0.67, 0.28 | 0.33, 0.34 |
+| D(96,3) -x1e15 | 5.88, 5.97 | 13.44, 13.27 | 5.85, 0.73 |
+| D(96,4) -x1e16 | 42.43, 40.30 | 45.09, 35.79 | 37.60, 12.48 |
+| D(192,3) -x1e16 | >90, >90 | >90, >90 | >90, 27.66 |
+
+### Costs counted, not timed
+
+-ja1 learns from costs counted from what the run did, not from its
+timings, so that identical runs make identical choices: walk
+setups, iterations and inverse entries tested, fixed-power walks, roots
+and entries, walk_1_set() primes iterated and passing the check, and
+recursion primes tried and applied, each at its table cost; each test's
+preparation by the steps it took (trial primes by limbs, gcds by band,
+bits tested for primality, power tests), at the K rows' costs fitted in
+situ; prime tests' preparations by outcome and size, likewise; and the
+ladder at its expected cost from the G rows on the values pending. A
+`369` line reports the total, for comparison with the run's time.
+
+Against CPU time over 22 runs the counted total first ranged 0.56-1.41
+(coefficient of variation 0.25), pricing each preparation from the
+bench rows by where it stopped: in situ preparation cost 0.8-2.6x that
+price, varying by run, from caches and branch prediction in the full
+program, the coarse S sizes, and skip_trial_bands(). Priced by its
+steps from the K rows, each run's preparations come within 0.94-1.07
+of their time (D(64,3) -j4 -x1e15, whose time is almost all
+preparation, among them), and the whole run's counted total within
+0.82-1.28 over 30 runs (mostly 0.95-1.13). What remains is in the walk
+and recursion constants, fitted outside the full program or not at all
+(capply); a -dv32 N record per run allows a regression of the run's
+CPU time on all the counts, but over 30 runs it barely improves on
+that (0.79-1.13) and the constants are poorly determined, so it is
+left as a check. With counted costs D(64,3) -j4 -x1e15 took 7.9s,
+then 29s as the pricing improved, then 5.2s: its choices at the root
+are made before any learning, so they turned on small differences in
+the estimates, until the learnt ratio for recursing was given a prior
+of 1/4 (0.1s).
+
 ### Findings under a fixed gain (to 2026-09-25)
 
-These were measured with the gain set by hand, from the gate's records
-(-dv2), on D(48,10) -x22911293821947932 -j2 and nqc == 0 walks unless
-stated, with two complete units that take 27-50s:
+These predate -ja. They were measured with the gain set by hand and
+CHECK_OVERFLOW on (now the default), from the gate's records (-dv2), on
+D(48,10) -x22911293821947932 -j2 and nqc == 0 walks unless stated, with
+two complete units that take 27-50s:
 
 - I: `-I"3^2 2^5 . 2.3.5 7^2 2^2 3 2 5^2 2^3.3^2"`
 - J: `-I"2^5.3^3 5^2.7 2 3 2^2 . 2.3.5 . 2^3.7 3^2"` (b0's forced part
@@ -402,6 +469,18 @@ substantially, the calibrated options may no longer be optimal.
   too slow for batches with huge X.
 - MOCK_LADDER (coulmock.c): a per-residual chain model of the ladder
   from Dickman's rho; superseded by the measured G rows.
+- For -ja1: fixed-square nodes with the same estimate (lost 12-40%), a
+  per-level correction learnt from timed recursions (wrong shape: the
+  big recursions set it, the marginal ones suffer), and a two-level
+  estimate (no gain over one level).
+- WALK_FROM (once a child of a loop walks, later children walk
+  without the gate) as a speedup: the gate costs ~1us, so skipping it
+  gains nothing measurable. Its check mode found the gate monotone
+  within a loop apart from flips.
+- Learning from timed costs: choices then depend on the machine's load
+  and on rare costly factorizations, and identical runs differ. D(60,4)
+  -j2 -x5e14 took 4.6s in most runs but 100s in about 1 in 7. Hence
+  costs counted.
 - In the leaf mock, stubbing rejected primes one by one: once
   update_chinese() used chinese_ppow() a real reject cost only about
   0.045us more than the mock's own test of it. The stubbed ends of

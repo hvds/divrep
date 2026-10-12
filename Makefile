@@ -12,9 +12,10 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
-    coulvec.c coulcost.c trace.c bench.c timings.c
+    coulvec.c coulcost.c coulplan.c trace.c bench.c timings.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
-    coulvec.h types.h builtins.h coulcost.h mock.h trace.h bench.h coulint.h
+    coulvec.h types.h builtins.h coulcost.h coulplan.h mock.h trace.h bench.h \
+    coulint.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"
