@@ -8,7 +8,7 @@ use H::Diag qw{ diag keep_diag };
 
 =head1 multibench-table: tabulate this machine's costs for pcoul
 
-  multibench-table [-v<verbose>] [-b<bits,...>] [-f<flake>]
+  multibench-table [-v<verbose>] [-m<mock>] [-b<bits,...>] [-f<flake>]
           [-s<sections> | -o | -M] [-u<table>] [-w<file>] n k
 
 Writes to stdout, or to I<file> with C<-w> (when progress is shown on
@@ -16,12 +16,13 @@ stdout as runs done / total), the cost table that pcoul's cost model
 (F<coulcost.c>) works from, so that the model carries no costs of its
 own: one table per machine, MPUGMP build and n. pcoul reads it from
 C<$COST_TABLE>, or as the file F<timings> has it built in. Times in the
-table are in microseconds. It needs a pcoul built with C<VERBOSE=1>,
-given by C<-v> (default F<./pcoul>), which runs the benches and the
-instrumented calibration runs.
-The table is in sections (scan, prime, multi, ladder, qs, walk, w1s),
-each stamped with the build that made it. C<-s> makes only the sections
-named, and C<-u> copies the rest from an existing table.
+table are in microseconds. It needs two builds of pcoul, given by C<-v>
+(C<VERBOSE=1>, default F<./pcoul>), which runs the benches and the
+instrumented calibration runs, and C<-m> (C<MOCK=1>), with which the
+sections leaf and tail are timed.
+The table is in sections (scan, prime, multi, ladder, qs, walk, w1s,
+leaf, tail), each stamped with the build that made it. C<-s> makes only
+the sections named, and C<-u> copies the rest from an existing table.
 
 The model costs the trial division stage of each test itself, since
 how often the values a walk tests are divisible by each trial prime
@@ -64,8 +65,12 @@ Then the remaining costs:
   C sqsetup us      fixed-power walk, per walk
   C sqloop0 us      fixed-power walk, per root
   C sqtest us       fixed-power walk, per inverse-filter entry tested
+  C cprime us       innermost recurse loop, per prime
+  C cprimesq us     likewise, for loops walking a fixed power
   C w1siter us      walk_1_set(), per prime
   C w1scheck us     walk_1_set(), per prime reaching the tests
+  C ctail us        recurse loop, per prime in the stubbed end of a
+                    loop whose primes are almost all rejected on rq > zmax
   G bits rung reach us hit fbits cprime
                     the factoring ladder of tau_multi_run()
   G bits 0 none     likewise, the fraction for which it found no factor
@@ -76,6 +81,14 @@ tests, against iterations, expected inverse entries tested and
 inverse-filter passes, the last absorbing the instrumentation's own
 clock reads), and the walk_1_set() costs likewise to its calls in one
 of those and a third run.
+
+C<cprime> and C<cprimesq> are each found by timing a calibration batch
+with the mock pcoul, once with leaf loops stubbed and once with them run
+for real: the difference in real (unmocked) time over the number of
+primes stubbed. C<ctail> likewise, from a batch of D(162, 3) deep
+enough that almost every prime its recursion tries is rejected on
+rq > zmax, timed with the ends of such loops stubbed and run (and leaf
+loops run for real in both, so that none of those primes is strided).
 
 The G rows come from running the ladder on random composites of the
 given size with no factor up to L, each alone and stopping at the
@@ -125,9 +138,9 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 
 =cut
 
-my($verbose, $outfile, $flake, $update)
-        = ('./pcoul', undef, 0, undef);
-my @sections = qw{ scan prime multi ladder qs walk w1s };
+my($verbose, $mock, $outfile, $flake, $update)
+        = ('./pcoul', undef, undef, 0, undef);
+my @sections = qw{ scan prime multi ladder qs walk w1s leaf tail };
 my %want = map +($_ => 1), @sections;
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
@@ -137,6 +150,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
     $verbose = $1, next if $arg =~ /^-v(.+)$/;
+    $mock = $1, next if $arg =~ /^-m(.+)$/;
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
     $flake = $1, next if $arg =~ /^-f(\d+)$/;
     $outfile = $1, next if $arg =~ /^-w(.+)$/;
@@ -160,9 +174,11 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     }
     die "Unknown option '$arg'";
 }
-@ARGV == 2
-        or die "500 Usage: $0 [-v<verbose>] [-b<bits,...>] [-f<flake>]"
-                . " [-s<sections> | -o | -M] [-u<table>] [-w<file>] n k";
+my $need_mock = grep $want{$_}, qw{ leaf tail };
+@ARGV == 2 && ($mock || !$need_mock)
+        or die "500 Usage: $0 [-v<verbose>] [-m<mock>] [-b<bits,...>]"
+                . " [-f<flake>] [-s<sections> | -o | -M] [-u<table>]"
+                . " [-w<file>] n k";
 my($n, $k) = @ARGV;
 
 # with -u, the existing table: its lines by section
@@ -184,13 +200,19 @@ if (defined $outfile) {
     $out = $fh;
 }
 
-# calibration runs: walks under a fixed power (nqc == 1) and linear
-# walks
+# calibration runs: walks under a fixed power (nqc == 1), linear walks,
+# and a batch rich in leaf loops
 my @cal_sq = ('-x1e17', 18, 4);
 my @cal_lin = ('-j4', '-f5', '-g24', '-x393643805345636319',
         '-I2^2.3 . 2.5^5 3 2^7 . 2.3^5 5', '-b8', 96, 8);
+my @cal_leaf = @cal_lin;
+# and one rich in leaf loops walking a fixed power
+my @cal_leafsq = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b1', 18, 4);
 # walk_1_set() with every prime reaching the tests
 my @cal_w1s = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b3', 18, 4);
+# deep recursion where almost every prime fails on rq > zmax
+my @cal_tail = ('-j2', '-f3', '-g60', '-x3068295382408046177023',
+        '-I3^2.5^2.7^2.397^2 2^2 .', 162, 3);
 
 my $tmp = "/tmp/multibench-table.$$";
 $| = 1;
@@ -236,6 +258,8 @@ $total += @qs_bits if $want{qs};
 $total += 1 if $want{walk} || $want{w1s};
 $total += 1 if $want{walk};
 $total += 1 if $want{w1s};
+$total += 12 if $want{leaf};
+$total += 6 if $want{tail};
 
 # the lines built, by section
 my %new;
@@ -318,6 +342,11 @@ if ($want{w1s}) {
     $new{w1s} = [ sprintf('C w1siter %.5f', $w1s[0]),
             sprintf('C w1scheck %.5f', $w1s[1]) ];
 }
+$new{leaf} = [ sprintf('C cprime %.4f', cprime('leaf', @cal_leaf)),
+        sprintf('C cprimesq %.4f', cprime('sq', @cal_leafsq)) ]
+        if $want{leaf};
+$new{tail} = [ sprintf('C ctail %.4f', cprime('tail', @cal_tail)) ]
+        if $want{tail};
 
 # each section rebuilt is marked with the build that made it
 my $sha = build_sha();
@@ -344,6 +373,8 @@ sub section_of {
         : /^Q / ? 'qs'
         : /^C (?:linsetup|loop0|looptest|sqsetup|sqloop0|sqtest) / ? 'walk'
         : /^C w1s/ ? 'w1s'
+        : /^C cprime/ ? 'leaf'
+        : /^C ctail / ? 'tail'
         : undef;
 }
 
@@ -497,4 +528,50 @@ sub lsq {
         $x[$i] = $s / $A[$i][$i];
     }
     return map $x[$_] / $scale[$_], 0 .. $m - 1;
+}
+
+# The cost per prime stubbed of the given kind ("leaf" for leaf loops
+# with linear walks, "sq" for those with fixed powers, "tail" for the
+# ends of loops of primes rejected on rq > zmax), from a calibration
+# batch run with and without MOCK_LEAF_OFF (MOCK_TAIL_OFF for "tail"):
+# the difference in real (unmocked) time over the number of primes
+# stubbed. Leaf loops are calibrated with loop tails left to run, since
+# the real loops include them, and loop tails with leaf loops run for
+# real, so that none of their primes is strided.
+sub cprime {
+    my($kind, @args) = @_;
+    my($var, $other) = ($kind eq 'tail')
+            ? ('MOCK_TAIL_OFF', 'MOCK_LEAF_OFF')
+            : ('MOCK_LEAF_OFF', 'MOCK_TAIL_OFF');
+    my @table = map lines_of($_), @sections;
+    open my $fh, '>', $tmp or die "$tmp: $!";
+    print $fh "$_\n" for @table, map "C $_ 0",
+            grep !(grep /^C $_ /, @table), qw{ cprime cprimesq ctail };
+    close $fh;
+    local $ENV{COST_TABLE} = $tmp;
+    local $ENV{$other} = 1;
+    my(%real, $primes);
+    for my $rep (1 .. 3) {
+        for my $off (1, 0) {
+            local $ENV{$var};
+            if ($off) {
+                $ENV{$var} = 1;
+            } else {
+                delete $ENV{$var};
+            }
+            progress("mock @args" . ($off ? " ($kind off)" : ''));
+            my $out = `'$mock' -X @{[ map quote($_), @args ]} 2>&1`;
+            my($m, $pl, $ps, $pt) = $out
+                    =~ /^368 mock ([\d.]+)s \(overhead [\d.]+s\), leaf primes (\d+), sq primes (\d+), strided \d+, tail (\d+)/m
+                    or die "no 368 line from $mock";
+            my($t) = $out =~ /^367 .*\(([\d.]+)s\)/m
+                    or die "no 367 line from $mock";
+            my $r = $t - $m;
+            $real{$off} = $r if !defined($real{$off}) || $r < $real{$off};
+            $primes = { leaf => $pl, sq => $ps, tail => $pt }->{$kind}
+                    unless $off;
+        }
+    }
+    $primes or die "calibration batch stubbed no $kind primes";
+    return 1e6 * ($real{1} - $real{0}) / $primes;
 }

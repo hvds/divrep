@@ -27,4 +27,15 @@ extern bool mock_w1s_prime(ulong p, ulong phigh);
 extern void mock_w1s_pass(mpz_t v, uint *t, uint *need_prime, uint npc,
         uint *need_other, uint noc);
 
+typedef enum {
+    MOCK_LOOP_GO = 0,   /* try this prime as usual */
+    MOCK_LOOP_SKIP,     /* skip this prime, its cost charged */
+    MOCK_LOOP_END       /* end the loop, the rest charged */
+} e_mock_loop;
+extern void mock_leaf_w1s(uint level);
+extern void mock_loop_start(uint level);
+extern bool mock_loop_leaf(uint level, t_level *cur_level);
+extern e_mock_loop mock_loop_prime(uint level, t_level *prev_level,
+        t_level *cur_level, ulong p);
+
 #endif
