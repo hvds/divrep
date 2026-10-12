@@ -3585,6 +3585,7 @@ uint gr_n[GR_MAXL];
 #define GQ_SETUP 1.7e-6
 #define GQ_PRIME 2.2e-6
 #define GQ_APPLY 0.5e-6
+#define GQ_ROOT 0.6e-6      /* per root taken by reject_square() */
 #define GQ_RSCALE 1.0
 #define GQ_DEFIT 1e-6       /* per root, until a level has samples */
 double gq_t[GR_MAXL], gq_i[GR_MAXL];
@@ -3622,6 +3623,7 @@ static inline double cc_work(void) {
             + cc.w1s_prime * c[CM_W1SITER] + cc.w1s_check * c[CM_W1SCHECK]
             + cc.rec_prime * c[CM_CPRIME]
             + cc.rec_sq * (c[CM_CPRIMESQ] - c[CM_CPRIME])
+            + cc.rec_root * GQ_ROOT
             + cc.rec_applied * c[CM_CAPPLY]
             + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
@@ -3821,6 +3823,10 @@ static bool gr_walk(
  * their roots extended, and about half of those are then walked: all up
  * to the root of zl = zmax / aq, and above it only those giving a least
  * v_0 within zmax, each with chance zl / q^{x-1}.
+ * For q^2 against a square, reject_square() lets through only the half
+ * that can divide, each then walked, and once q^2 passes the greatest
+ * root only those with a root in range, each with chance 2.endr / q^2,
+ * at the cost of a root mod q for that half.
  */
 static double gq_recurse(t_level *prev_level, ulong p, ulong cap, uint x) {
     uint L = prev_level->level;
@@ -3829,6 +3835,21 @@ static double gq_recurse(t_level *prev_level, ulong p, ulong cap, uint x) {
     double ci = gq_cit(L + 1);
     double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
     double np = gr_li(b) - gr_li(a) + 1;
+    uint sql = cur_vlevel[sq0];
+    if (x == 3 && sqg[sql - 1] == 2) {
+        double endr = sqrt(mpz_get_d(zmax)
+                / mpz_get_d(value[sq0].alloc[sql - 1].q));
+        /* the scale that binds first, and where */
+        double c = (zl < 2 * endr) ? zl : 2 * endr, qc = sqrt(c);
+        double mA = (qc < b) ? qc : b, mB = (qc > a) ? qc : a;
+        double ns = (((mA > a) ? gr_li(mA) - gr_li(a) : 0)
+                + c * gr_psum(mB, b, s)) / 2;
+        double se = sqrt(endr), mR = (se > a) ? se : a;
+        double nr = (b > mR) ? (gr_li(b) - gr_li(mR)) / 2 : 0;
+        return np * GR_APPLY + nr * GQ_ROOT
+                + ns * (GQ_PRIME + GQ_APPLY + GQ_SETUP)
+                + ci * za * gr_psum(a, b, s);
+    }
     double ql = pow(zl, 1 / s);
     double mA = (ql < b) ? ql : b, mB = (ql > a) ? ql : a;
     double ns = ((mA > a) ? gr_li(mA) - gr_li(a) : 0)
@@ -5011,6 +5032,9 @@ void prep_midp(t_level *cur_level) {
     return;
 }
 
+static ulong square_endr(t_level *lv);
+static inline bool reject_square(ulong p, long d, ulong endr);
+
 /* Try all ways of allocating p^{x-1} at v_i for any p above the selected
  * -W limit.
  * If 'recover' is true, we initialize the state from midp_recover, and
@@ -5034,6 +5058,8 @@ void walk_midp(t_level *prev_level, bool recover) {
     prep_midp(cur_level);
     if (midppc == 0)
         goto walk_midp_done;
+    /* for reject_square() */
+    ulong endr = square_endr(prev_level);
 
     level_setp(cur_level, midpp[0].maxp);
     /* setp has set to a prime <= target */
@@ -5108,6 +5134,9 @@ void walk_midp(t_level *prev_level, bool recover) {
             vi = mp->vi;
             x = mp->x;
             GS_INC(gs_mp_tried);
+            if (endr && x == 3 && vi != sq0 && reject_square(p,
+                    (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi), endr))
+                continue;
             if (apply_single(prev_level, cur_level, vi, p, x)) {
                 if (need_work)
                     diag_plain(cur_level);
@@ -6436,6 +6465,110 @@ static inline void reject_prep(t_level *prev, t_level *cur) {
 #endif
 }
 
+/* The greatest root z of a fixed square v_j = q.z^2 within zmax, given
+ * exactly one fixed and that a square; else 0, or if it would not fit.
+ */
+static ulong square_endr(t_level *lv) {
+    if (lv->have_square != 1)
+        return 0;
+    uint sql = cur_vlevel[sq0];
+    if (sqg[sql - 1] != 2)
+        return 0;
+    mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(sq0));
+    mpz_fdiv_q(Z(temp), Z(temp), value[sq0].alloc[sql - 1].q);
+    mpz_sqrt(Z(temp), Z(temp));
+    return mpz_fits_ulong_p(Z(temp)) ? mpz_get_ui(Z(temp)) : 0;
+}
+
+/* prepare for reject_square() on a loop of p^{x-1} at v_i below prev */
+static inline void reject_prep_square(
+    t_level *prev, t_level *cur, uint vi, uint x
+) {
+    cur->rs_ok = 0;
+    if (x != 3 || vi == sq0)
+        return;
+    cur->rs_endr = square_endr(prev);
+    if (!cur->rs_endr)
+        return;
+    cur->rs_d = (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi);
+    cur->rs_ok = 1;
+}
+
+/* a square root of the quadratic residue a mod an odd prime p */
+static inline ulong sqrtmod_u64(ulong a, ulong p) {
+    if ((p & 3) == 3)
+        return powmod_u64(a, (p + 1) >> 2, p);
+    /* Tonelli-Shanks */
+    ulong q = p - 1, n = 2;
+    uint s = trailing_zeroes_u64(q);
+    q >>= s;
+    while (jacobi_u64(n, p) != -1)
+        ++n;
+    ulong c = powmod_u64(n, q, p);
+    ulong r = powmod_u64(a, (q + 1) >> 1, p);
+    ulong t = powmod_u64(a, q, p);
+    while (t != 1) {
+        uint i = 0;
+        for (ulong u = t; u != 1; u = mulmod_u64(u, u, p))
+            ++i;
+        ulong b = c;
+        for (uint j = i + 1; j < s; ++j)
+            b = mulmod_u64(b, b, p);
+        r = mulmod_u64(r, b, p);
+        c = mulmod_u64(b, b, p);
+        t = mulmod_u64(t, c, p);
+        s = i;
+    }
+    return r;
+}
+
+/* True if allocating p^2 at a position d places before the fixed square
+ * v_j = q.z^2 is sure to be rejected for having no root z up to endr; if
+ * false, it may still be. We need q.z^2 == d (mod p^2). Half the primes
+ * fail that mod p, which the Jacobi symbol shows without extending the
+ * residues of z to p. Of the rest, once p^2 > endr at most the two roots
+ * +-z mod p^2 can be in range, and usually neither is: one root mod p,
+ * lifted to p^2, shows that. Only what is left need have the residues
+ * extended.
+ */
+static inline bool reject_square(ulong p, long d, ulong endr) {
+    if (!(p & 1))
+        return 0;
+    mpz_t *q = &value[sq0].alloc[cur_vlevel[sq0] - 1].q;
+    ulong qm = mpz_fdiv_ui(*q, p);
+    ulong dm = (d < 0) ? (ulong)(-d) % p : (ulong)d % p;
+    if (qm == 0 || dm == 0)
+        return 0;
+    if (d < 0)
+        dm = p - dm;
+    if (jacobi_u64(mulmod_u64(dm, qm, p), p) != 1)
+        return 1;
+    if (p <= endr / p)
+        return 0;
+#ifdef HAVE_UINT128
+    ++cc.rec_root;
+    /* z == s (mod p) */
+    ulong s = sqrtmod_u64(mulmod_u64(dm, invert_u64(qm, p), p), p);
+    /* z == s + p.t (mod p^2), with 2.q.s.t == (d - q.s^2) / p (mod p) */
+    mpz_mul_ui(Z(temp), *q, s);
+    mpz_mul_ui(Z(temp), Z(temp), s);
+    if (d < 0)
+        mpz_add_ui(Z(temp), Z(temp), (ulong)(-d));
+    else
+        mpz_sub_ui(Z(temp), Z(temp), (ulong)d);
+    mpz_neg(Z(temp), Z(temp));
+    mpz_divexact_ui(Z(temp), Z(temp), p);
+    ulong u = mpz_fdiv_ui(Z(temp), p);
+    ulong den = mulmod_u64(mulmod_u64(2, qm, p), s, p);
+    ulong t = mulmod_u64(u, invert_u64(den, p), p);
+    uint128 z = (uint128)p * t + s;
+    return z > endr && (uint128)p * p - z > endr;
+#else
+    /* that needs 128 bits: without them, p is not rejected here */
+    return 0;
+#endif
+}
+
 /* aq and rq of prev, mod m */
 static inline void reject_mod(
     t_level *prev, bool limb, ulong m, ulong *am, ulong *rm
@@ -6658,11 +6791,13 @@ bool gate_walk(
 static inline void set_unforced_x(
     t_level *prev_level, t_level *cur_level, ulong p, ulong limp
 ) {
+    uint x = divisors[cur_level->ti].div[cur_level->di];
     level_setp(cur_level, p);
-    cur_level->x = divisors[cur_level->ti].div[cur_level->di];
+    cur_level->x = x;
     cur_level->limp = limp;
     cur_level->max_at = seen_best;
     reject_prep(prev_level, cur_level);
+    reject_prep_square(prev_level, cur_level, cur_level->vi, x);
     /* TODO: do some constant alloc stuff in advance */
 }
 
@@ -7500,6 +7635,8 @@ void recurse(e_is jump_continue) {
                 cur_level->limp = limp;
                 cur_level->max_at = seen_best;
                 reject_prep(prev_level, cur_level);
+                reject_prep_square(prev_level, cur_level, cur_level->vi,
+                        cur_level->x);
             }
             /* note: only valid to use from just below here */
           redo_unforced: ;
@@ -7525,8 +7662,10 @@ void recurse(e_is jump_continue) {
             if (known_prime(prev_level, p))
                 goto redo_unforced;
             /* p stays the cursor, as when apply_single() fails */
-            if (cur_level->rj_ok && (p & 1) && reject_single(
+            if ((cur_level->rj_ok && (p & 1) && reject_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x
+            )) || (cur_level->rs_ok
+                && reject_square(p, cur_level->rs_d, cur_level->rs_endr)
             )) {
                 cur_level->p = p;
                 if (need_work)

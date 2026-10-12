@@ -295,23 +295,6 @@ static inline bool sprp2_u64(ulong n, ulong ni, ulong one) {
 }
 
 /* the Jacobi symbol (a / n) for odd n */
-static inline int jacobi_u64(ulong a, ulong n) {
-    int t = 1;
-    a %= n;
-    while (a) {
-        uint z = trailing_zeroes_u64(a);
-        a >>= z;
-        if ((z & 1) && ((n & 7) == 3 || (n & 7) == 5))
-            t = -t;
-        if ((a & 3) == 3 && (n & 3) == 3)
-            t = -t;
-        ulong r = n % a;
-        n = a;
-        a = r;
-    }
-    return (n == 1) ? t : 0;
-}
-
 /* true if n is a square */
 static inline bool is_square_u64(ulong n) {
     ulong r = (ulong)sqrtl((long double)n);
