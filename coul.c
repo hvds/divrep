@@ -120,9 +120,16 @@ t_divisors *divisors = NULL;
  *
  * The "primary" of a batch is the least index v_i at which the greatest
  * power of p appears.
+ *
+ * The primary has exactly p^e, so v_primary / p^e is one of the p - 1
+ * units mod p; each other v_j with the same power excludes one more.
+ * When only one remains, "fold" is that unit, and the allocation can
+ * fix v_0 mod p^{e+1} rather than mod p^e; else it is 0. For p = 2 it
+ * is always 1.
  */
 typedef struct s_forcebatch {
     uint primary;   /* x[primary] is first max */
+    uint fold;      /* v_primary / p^e == fold (mod p), if non-zero */
     uint x[0];      /* allocate p^{x-1} at v_i for i: 0..k-1 */
 } t_forcebatch;
 static inline size_t size_forcebatch(void) {
@@ -1875,6 +1882,7 @@ static inline bool has_tail(t_forcep *fp) {
 
 static inline void fpb_init(t_forcebatch *fpb, uint vi, uint x) {
     fpb->primary = vi;
+    fpb->fold = 0;
     memset(&fpb->x[0], 0, k * sizeof(uint));
     if (x)
         fpb->x[vi] = x;
@@ -2026,6 +2034,9 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
     if (seen_same == 0)
         /* all moduli seen, so one must have a higher power of p */
         return TFP_BAD;
+    /* with one modulus b left, v_i / p^e_i == -b (mod p) */
+    if (ispow2_u64(seen_same) && p == 2)
+        fpb->fold = p - trailing_zeroes_u64(seen_same);
 
     if (unforce_all && p >= unforce_all && !seen_odd)
         return TFP_SINGLE;
@@ -3019,9 +3030,9 @@ void walk_v(t_level *cur_level, mpz_t start) {
         mpz_divexact(wv_o[vi], wv_o[vi], *q[vi]);
         for (uint ai = 1; ai < vlevel; ++ai) {
             t_allocation *ap = &vp->alloc[ai];
-            /* the case for p=2 is handled in advance by update_chinese */
-            if (ap->p == 2)
-                continue;
+            /* No inverse exists if p | aq / q_i, when the CRT has already
+             * fixed v_i / q_i (mod p), as for p = 2 and other folds.
+             */
             ulong inverse = small_divmod(wv_o[vi], wv_qq[vi], ap->p);
             if (inverse < ap->p) {
                 t_mod *ip = &inv[inv_count++];
@@ -3541,14 +3552,17 @@ void walk_1_set(
  * case cannot lead to a solution.
  * For a batch allocation where we apply p^x at v_i and a secondary
  * p^x' at v_j, we call this twice: first with (j, p, x') and then
- * with (i, p, x - x'). For the second call we set retry=1.
+ * with (i, p, x - x'). For the second call we set retry=x'.
+ * If fold is non-zero, v_i is known to be fold.p^e (mod p^{e+1}) for
+ * its whole power p^e (see t_forcebatch); when called twice, the first
+ * call passes 0.
  * This function was originally designed around the assumption that,
- * other than for the retry=1 case, p would not previously have been
+ * other than for the retry case, p would not previously have been
  * seen; however modular fixes via -m or -c change that, requiring a
  * rethink of the logic as a whole.
  */
 bool update_residues(t_level *old, t_level *new,
-        uint vi, ulong p, uint x, mpz_t px, uint retry) {
+        uint vi, ulong p, uint x, mpz_t px, uint retry, uint fold) {
     uint vj = sq0;
     t_value *vjp = &value[vj];
     uint jlevel = cur_vlevel[vj] - 1;
@@ -3603,17 +3617,23 @@ bool update_residues(t_level *old, t_level *new,
         }
         rdest->count = rsrc->count;
 
-        if (p == 2) {
-            /* We have residues mod p^e x, but we need them mod p^{e+1} x.
-             * So we take the odd one of (r, r + m) before doubling m. */
-            for (uint i = 0; i < rdest->count; ++i) {
-                if (mpz_odd_p(rdest->r[i]))
-                    continue;
-                mpz_add(rdest->r[i], rdest->r[i], Z(ur_m));
-            }
+        if (fold) {
+            /* We have residues mod m, but the fold makes aq / q_j
+             * (p.m): v_j / q_j == fold / q'_j (mod p), with q'_j the
+             * old q_j. So extend them by the roots mod p of that.
+             * For p = 2 that takes the odd one of (r, r + m).
+             */
+            ulong a = mulmod_u64(fold, invert_u64(
+                mpz_fdiv_ui(vjp->alloc[jlevel - 1].q, p), p
+            ), p);
+            mpz_set_ui(Z(ur_a), a);
+            mpz_set_ui(Z(ur_ipg), p);
+            zroot_extend(new->level, new->level, Z(ur_m), Z(ur_a),
+                    oldg, p, 1, Z(ur_ipg));
+            if (res_array(new->level)->count == 0)
+                return 0;
             /* update ur_m for passing to zroot_extract */
-            if (oldg != newg)
-                mpz_mul_2exp(Z(ur_m), Z(ur_m), 1);
+            mpz_mul_ui(Z(ur_m), Z(ur_m), p);
         }
 
         sqg[jlevel] = newg;
@@ -3635,19 +3655,22 @@ bool update_residues(t_level *old, t_level *new,
         : (int)TYPE_OFFSET(vj - vi);
     mpz_set_si(Z(ur_a), off);
     mpz_t *ppx;
-    if (p == 2) {
-        /* v_i == 2^e (mod 2^{e+1}) for the whole power e = x - 1 + retry */
+    if (fold) {
+        /* v_i == fold.p^e (mod p^{e+1}) for its whole power p^e,
+         * e = x - 1 + retry
+         */
         ++x;
-        mpz_mul_2exp(Z(ur_ipg), px, retry);
-        mpz_add(Z(ur_a), Z(ur_a), Z(ur_ipg));
-        mpz_mul_2exp(Z(ur_ipg), px, 1);
+        mpz_ui_pow_ui(Z(ur_ipg), p, retry);
+        mpz_mul(Z(ur_ipg), Z(ur_ipg), px);
+        mpz_addmul_ui(Z(ur_a), Z(ur_ipg), fold);
+        mpz_mul_ui(Z(ur_ipg), px, p);
         ppx = ZP(ur_ipg);
     } else {
         ppx = PARAM_TO_PTR(px);
     }
 
-    /* in the non-retry case, m = old->aq * 2c(p==2) / q_j; in the retry
-     * case, we need to take the previous value of q_j */
+    /* in the non-retry case, m = old->aq / q_j; in the retry case, we
+     * need to take the previous value of q_j */
     uint mlevel = retry ? jlevel - 1 : jlevel;
     if (retry) {
         mpz_ui_pow_ui(Z(ur_m), p, retry);
@@ -3706,36 +3729,39 @@ bool update_residues(t_level *old, t_level *new,
  * with old->rq, old->aq into new->rq, new->aq; returns FALSE if they
  * are inconsistent. p usually does not divide old->aq, but it may via
  * a modfix, a 2^0 tail (apply_null()) or a clashing -I pattern.
+ * If fold is non-zero, v_i / px == fold (mod p), so we can combine
+ * instead v_0 == fold.px - i (mod p.px): see t_forcebatch.
  */
-bool update_chinese(t_level *old, t_level *new, uint vi, ulong p, mpz_t px) {
+bool update_chinese(
+    t_level *old, t_level *new, uint vi, ulong p, mpz_t px, uint fold
+) {
     ulong off = TYPE_OFFSET(vi);
-    /* chinese_ppow() needs 2px < 2^62 for invert_u64() */
-    if (mpz_cmp_ui(px, 1UL << 61) < 0) {
-        ulong m = mpz_get_ui(px), s;
-        if (m & 1) {
-            s = off % m;
-            if (s)
-                s = m - s;
-        } else {
-            /* v_0 == -i (mod 2^e) can be upgraded to
-             * v_0 == 2^e - i (mod 2^{e + 1})
-             */
-            s = (m + 2 * m - off % (2 * m)) % (2 * m);
-            m *= 2;
-        }
+    /* chinese_ppow() needs m < 2^62 for invert_u64() */
+    if (mpz_cmp_ui(px, (1UL << 62) / p) < 0) {
+        ulong m = mpz_get_ui(px);
+        ulong s = fold * m;
+        if (fold)
+            m *= p;
+        s = (s + m - off % m) % m;
         return chinese_ppow(new->rq, new->aq, old->rq, old->aq, p, m, s);
     }
-    /* px > off, so px - off is -i (mod px), and 2^e - i as above
-     * (mod 2^{e + 1}) for p = 2
-     */
-    mpz_sub_ui(Z(uc_minusvi), px, off);
-    if (p == 2) {
-        mpz_mul_2exp(Z(uc_px), px, 1);
+    /* px > off, so fold.px - off is a valid residue, or px - off */
+    mpz_mul_ui(Z(uc_minusvi), px, fold ? fold : 1);
+    mpz_sub_ui(Z(uc_minusvi), Z(uc_minusvi), off);
+    if (fold) {
+        mpz_mul_ui(Z(uc_px), px, p);
         return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p,
                 Z(uc_px), Z(uc_minusvi));
     }
     return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p,
             px, Z(uc_minusvi));
+}
+
+/* An unforced allocation of p^e at one v_i fixes v_i / p^e (mod p)
+ * only for p = 2: see t_forcebatch.
+ */
+static inline uint single_fold(ulong p) {
+    return (p == 2) ? 1 : 0;
 }
 
 /* Allocate p^{x-1} to v_{vi}. Returns FALSE if it is invalid.
@@ -3826,7 +3852,7 @@ void apply_null(t_level *prev, t_level *cur, ulong p) {
         mpz_set(cur->aq, prev->aq);
     }
     if (prev->have_square)
-        update_residues(prev, cur, vi, p, 0, Z(zone), 0);
+        update_residues(prev, cur, vi, p, 0, Z(zone), 0, 0);
     cur->vi_depth = cur_vlevel[vi];
 }
 
@@ -3838,7 +3864,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
     cur->have_min = prev->have_min || (minp[x - 1] && p > minp[x - 1]);
     mpz_ui_pow_ui(px, p, x - 1);
-    if (!update_chinese(prev, cur, vi, p, px))
+    if (!update_chinese(prev, cur, vi, p, px, single_fold(p)))
         return 0;
 
 #ifdef CHECK_OVERFLOW
@@ -3862,7 +3888,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
 
     /* did we already have a square? */
     if (prev->have_square) {
-        if (!update_residues(prev, cur, vi, p, x, px, 0)) {
+        if (!update_residues(prev, cur, vi, p, x, px, 0, single_fold(p))) {
             --cur_vlevel[vi];
             return 0;
         }
@@ -3889,12 +3915,14 @@ bool apply_secondary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
-bool apply_primary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
+bool apply_primary(
+    t_level *prev, t_level *cur, uint vi, ulong p, uint x, uint fold
+) {
     apply_level(prev, cur, vi, p, x);
     mpz_ui_pow_ui(px, p, x - 1);
     /* this is wasted effort if x does not divide v_i.t, but we need it
      * for the alloc_square() calculation */
-    if (!update_chinese(prev, cur, vi, p, px))
+    if (!update_chinese(prev, cur, vi, p, px, fold))
         return 0;
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
@@ -4379,7 +4407,7 @@ bool apply_batch(
     cur_level->have_min = prev_level->have_min;
 
     uint ep = bp->x[vi] - 1;
-    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1))
+    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1, bp->fold))
         return 0;
     vp = &value[vi];
     if (vp->alloc[ cur_vlevel[vi] - 1 ].t == 1)
@@ -4430,7 +4458,7 @@ bool apply_batch(
         if (vi == sq0 || bp->x[sq0] == 0) {
             mpz_ui_pow_ui(px, fp->p, ep);
             if (!update_residues(
-                prev_level, cur_level, vi, fp->p, ep + 1, px, 0
+                prev_level, cur_level, vi, fp->p, ep + 1, px, 0, bp->fold
             )) {
                 unapply_batch(fpi, bi, k);
                 return 0;
@@ -4438,18 +4466,27 @@ bool apply_batch(
         } else {
             /* apply the secondary first, then the primary */
             uint eq = bp->x[sq0] - 1;
+            uint e2 = ep - eq;
+            /* a square with the primary's power has a fold of its own */
+            uint fold = 0;
+            if (e2 == 0 && bp->fold) {
+                ulong d = TYPE_OFFSET(sq0 - vi);
+                for (uint e = 0; e < ep; ++e)
+                    d /= fp->p;
+                fold = (bp->fold + d) % fp->p;
+            }
             mpz_ui_pow_ui(px, fp->p, eq);
             if (!update_residues(
-                prev_level, cur_level, sq0, fp->p, eq + 1, px, 0
+                prev_level, cur_level, sq0, fp->p, eq + 1, px, 0, fold
             )) {
                 unapply_batch(fpi, bi, k);
                 return 0;
             }
-            uint e2 = ep - eq;
             if (e2 > 0) {
                 mpz_ui_pow_ui(px, fp->p, e2);
                 if (!update_residues(
-                    prev_level, cur_level, vi, fp->p, e2 + 1, px, eq
+                    prev_level, cur_level, vi, fp->p, e2 + 1, px, eq,
+                    bp->fold
                 )) {
                     unapply_batch(fpi, bi, k);
                     return 0;
@@ -5419,11 +5456,13 @@ void stack_drop(t_fact *s) {
  * can rule an allocation out along with everything beneath it. This and
  * limit_was_best() recognise the two ways that can happen.
  */
-bool least_is_best(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
+bool least_is_best(
+    t_level *prev, t_level *cur, uint vi, ulong p, uint x, uint fold
+) {
     if (!improve_max || !seen_best)
         return 0;
     mpz_ui_pow_ui(px, p, x - 1);
-    return update_chinese(prev, cur, vi, p, px)
+    return update_chinese(prev, cur, vi, p, px, fold)
             && mpz_cmp(cur->rq, best) == 0;
 }
 
@@ -5524,7 +5563,7 @@ bool insert_forced(
             *jump = IS_NEXT;
             applied = 0;
             ruled_out = (!init && maxx && least_is_best(
-                prev_level, cur_level, mini, p, maxx
+                prev_level, cur_level, mini, p, maxx, bp->fold
             ));
         }
     }
@@ -5630,7 +5669,9 @@ static inline bool insert_float(
     /* progress is shown just before we apply, so on recovery it is
      * legitimate for the last one to fail */
     if (!apply_single(prev_level, cur_level, vi, p, x)) {
-        if (!init && least_is_best(prev_level, cur_level, vi, p, x))
+        if (!init && least_is_best(
+            prev_level, cur_level, vi, p, x, single_fold(p)
+        ))
             stack_drop(stack);
         *jump = IS_NEXT;
         return 0;
