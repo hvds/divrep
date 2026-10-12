@@ -35,7 +35,8 @@ extern int other_comparator(const void *va, const void *vb);
 typedef struct {
     bool on;
     ulong lin_walks, lin_iter, lin_inv, sq_walks, sq_iter, sq_inv,
-            pell_iter, w1s_prime, w1s_check, rec_prime, rec_applied;
+            pell_iter, w1s_prime, w1s_check, rec_prime, rec_applied,
+            rec_sq;
     double test, base;
 } t_cc;
 extern t_cc cc;
@@ -124,6 +125,7 @@ extern uint strategy;
 extern uint *maxforce;
 extern void done(void);
 extern t_kern *kern_state(void);
+extern bool kern_at(uint vi);
 extern bool kern_passed(uint vi);
 extern ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt);
 extern e_xr classify_x(

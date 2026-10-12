@@ -6605,7 +6605,8 @@ void recurse(e_is jump_continue) {
 #ifdef VERBOSE
                         || (auto_level && VB(VB_CHOICE))
 #endif
-                    ) && !prev_level->have_square
+                    ) && (!prev_level->have_square
+                        || (prev_level->have_square == 1 && kern_batch()))
                     && strategy != STRATEGY_6X && strategy != STRATEGY_FIXED) {
                 uint sv = vi;
                 vi = ja_choose(prev_level, cur_level, vi);
@@ -6784,7 +6785,9 @@ void recurse(e_is jump_continue) {
                     diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
                 goto redo_unforced;
             }
-
+            /* below a fixed square, the roots are extended to each prime */
+            if (prev_level->have_square)
+                ++cc.rec_sq;
             /* note: this returns 0 if t=1 */
             if (!apply_single(
                 prev_level, cur_level, cur_level->vi, p, cur_level->x
