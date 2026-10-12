@@ -821,6 +821,9 @@ void diag_any(t_level *cur_level, bool need_disp) {
          * clutter on-screen display with that.
          */
         char *code = prep_show_v(cur_level, 1) ? "315" : "305";
+        /* recovery from this line carries on from what -ja has learnt */
+        if (auto_level)
+            ja_save(rfp);
 #ifdef TRACK_STATS
         fprintf(rfp, "%s %s%s (%.2fs) [", code, diag_buf, aux_buf, seconds(t1));
         for (uint i = 0; i < k; ++i) {
@@ -1725,8 +1728,10 @@ void apply_pend202(void) {
 void recover(FILE *fp) {
     char *last305 = NULL;   /* 305 or 315 */
     bool expanded = 0;      /* true if it's 315 */
+    char *last316 = NULL;   /* the 316 before last305, if any */
+    char *pend316 = NULL;   /* a 316 not yet followed by a 305 or 315 */
     char *curbuf = NULL;
-    size_t len = 120, len305 = 0;
+    size_t len = 120, len305 = 0, len316 = 0;
     /* The least candidate up to the last progress line is Z(rec_lead),
      * and the least since it Z(rec_trail); these are the digits in each,
      * 0 if there is none. Candidates are written with no leading zeros,
@@ -1771,6 +1776,11 @@ void recover(FILE *fp) {
                 }
                 ntrail = 0;
             }
+            /* what was learnt goes with the line it precedes */
+            free(last316);
+            last316 = pend316;
+            pend316 = NULL;
+            len316 = 0;
         } else if (strncmp("202 ", curbuf, 4) == 0) {
             char *d = digits_202(curbuf);
             size_t nd = strlen(d);
@@ -1781,6 +1791,13 @@ void recover(FILE *fp) {
                     ntrail = nd;
                 }
             }
+        } else if (strncmp("316 ", curbuf, 4) == 0) {
+            char *t = pend316;
+            pend316 = curbuf;
+            curbuf = t;
+            size_t lt = len316;
+            len316 = len;
+            len = lt;
         } else if (strncmp("001 ", curbuf, 4) == 0) {
             /* TODO: parse and check for consistent options */
             start_seen = 1;
@@ -1799,8 +1816,12 @@ void recover(FILE *fp) {
     /* save best candidate seen after last305 to apply after stack is rebuilt */
     if (ntrail && (!nlead || mpz_cmp(Z(rec_trail), Z(rec_lead)) < 0))
         have_pend202 = 1;
+    if (last316 && auto_level)
+        ja_restore(last316 + 4);
     free(curbuf);
     free(last305);
+    free(last316);
+    free(pend316);
 }
 
 /* order by highest prime descending, then by value ascending */
