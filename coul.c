@@ -2936,11 +2936,14 @@ int prime_comparator(const void *va, const void *vb) {
 }
 
 /* Sort need_other by tau (power of 2 ascending, then size ascending),
- * then by qq multiplier ascending, then by index
+ * then by size of the value to test ascending, then by index.
+ * Size is given by oc_size[]: in walk_v() the qq multiplier, in walk_1()
+ * the value itself.
  * TODO: if we implement trial division to higher levels to show
  * a given tau is not reachable, we may want tau by size descending.
  */
 uint *oc_t;
+mpz_t *oc_size;
 int other_comparator(const void *va, const void *vb) {
     uint a = *(uint *)va;
     uint b = *(uint *)vb;
@@ -2954,7 +2957,7 @@ int other_comparator(const void *va, const void *vb) {
         return -1;
     if (oc_t[a] > oc_t[b])
         return 1;
-    int cmp = mpz_cmp(wv_qq[a], wv_qq[b]);
+    int cmp = mpz_cmp(oc_size[a], oc_size[b]);
     return cmp ? cmp : (a > b) - (a < b);
 }
 
@@ -3040,6 +3043,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
     qsort(need_prime, npc, sizeof(uint), &prime_comparator);
 #endif
     oc_t = t;
+    oc_size = wv_qq;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
 
     if (nqc) {
@@ -3407,6 +3411,7 @@ void walk_1(t_level *cur_level, uint vi) {
     if (!test_1primes(need_prime, npc))
         return;
     oc_t = t;
+    oc_size = wv_o;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
     if (!test_1multi(need_other, noc, t, walk_1_failure))
         return;
@@ -3518,6 +3523,7 @@ void walk_1_set(
         if (!test_1primes(need_prime, npc))
             goto reject_this_one;
         oc_t = t;
+        oc_size = wv_o;
         qsort(need_other, noc, sizeof(uint), &other_comparator);
         if (!test_1multi(need_other, noc, t, walk_1_failure))
             goto reject_this_one;
