@@ -102,7 +102,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 - `bench.c` - the benches behind the cost table (`$MULTIBENCH`), in the
   same build.
 - `coulint.h` - internals of `coul.c` shared with those.
-- `multibench-table` (Perl) - makes a cost table for a machine.
+- `multibench-table`, `calibrate` (Perl) - make a cost table for a
+  machine; choose options for a whole run from mocked samples of its
+  batches.
 
 ### Key vocabulary / concepts
 
