@@ -19,6 +19,7 @@
 #include <sys/resource.h>
 
 #include "coul.h"
+#include "builtins.h"
 #include "coulfact.h"
 #include "diag.h"
 #include "rootmod.h"
@@ -52,17 +53,6 @@ uint n, k;
 static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
     return (mpz_t *)z;
 }
-
-/* We assume x != 0 */
-#ifdef __GNUC__
-    static inline bool ispow2(ulong x) {
-        return __builtin_popcountl(x) == 1;
-    }
-#else
-    static inline bool ispow2(ulong x) {
-        return (x & (x - 1)) == 0;
-    }
-#endif
 
 /* stash of mpz_t, initialized once at start */
 typedef enum {
@@ -948,7 +938,7 @@ void updated_zmax(void) {
                 t_value *v = &value[vi];
                 for (uint ai = 1; ai < cur_vlevel[vi]; ++ai) {
                     t_allocation *ap = &v->alloc[ai];
-                    if (!ispow2(ap->t))
+                    if (!ispow2_u64(ap->t))
                         continue;
                     mpz_add_ui(ap->lim, zmax, TYPE_OFFSET(vi));
                     if (ap->t > 1) {
@@ -1987,7 +1977,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
         return TFP_GOOD;
     }
 
-    if (!ispow2(x))
+    if (!ispow2_u64(x))
         seen_odd = 1;
 
     uint ei = x - 1;
@@ -2001,7 +1991,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
             return TFP_BAD;
         fpb->x[vj] = ej + 1;
         seen_any = 1;
-        if (!ispow2(ej + 1))
+        if (!ispow2_u64(ej + 1))
             seen_odd = 1;
         if (ej < ei)
             continue;
@@ -2020,7 +2010,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
         if (ej == 0)
             continue;
         seen_any = 1;
-        if (!ispow2(ej + 1))
+        if (!ispow2_u64(ej + 1))
             seen_odd = 1;
         if (ej > ei) {
             /* p^e_i + p^e_j will have valuation e_i */
@@ -2225,7 +2215,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
             mpz_ui_pow_ui(Z(temp), p, e);
             for (uint di = 0; di < dp->alldiv; ++di) {
                 uint dm = dp->div[di] - 1;
-                if (highpow ? dm == 0 : ispow2(dm + 1))
+                if (highpow ? dm == 0 : ispow2_u64(dm + 1))
                     break;
                 mpz_root(Z(wv_cand), Z(temp), dm);
                 if (mpz_fits_ulong_p(Z(wv_cand)))
@@ -2237,7 +2227,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
             ulong p = ulston(sp);
             for (uint di = 0; di < dp->alldiv; ++di) {
                 uint dm = dp->div[di] - 1;
-                if (highpow ? dm == 0 : ispow2(dm + 1))
+                if (highpow ? dm == 0 : ispow2_u64(dm + 1))
                     break;
                 (*mp)[dm] = p;
             }
@@ -2275,7 +2265,7 @@ void disp_px(char *name, ulong *mp) {
     t_divisors *dp = &divisors[target_lcm];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint dm = dp->div[di] - 1;
-        if (highpow ? dm == 0 : ispow2(dm + 1))
+        if (highpow ? dm == 0 : ispow2_u64(dm + 1))
             break;
         if (di)
             report("; ");
@@ -2721,7 +2711,7 @@ uint find_nextpi(t_level *cur, uint pi) {
     uint bit = pi & 0x1f;
     while (off < pfree_vecsize) {
         uint v = pv[off] & ~((1U << bit) - 1);
-        int ffs = __builtin_ffs((int)v);
+        int ffs = ffs_u32(v);
         if (ffs)
             return (off << 5) + ffs - 1;
         ++off;
@@ -2732,7 +2722,7 @@ uint find_nextpi(t_level *cur, uint pi) {
 
 /* Find index of next unused forced prime */
 static inline uint next_fpi(t_level *prev) {
-    return __builtin_ffs((signed int)prev->fp_need) - 1;
+    return ffs_u32(prev->fp_need) - 1;
 }
 
 uint taum_fail(char *legend, mpz_t target, uint count, t_tm *tm) {
@@ -3764,7 +3754,7 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
     cur->level = cur_level->level;
     mpz_mul(cur->q, prev->q, px);
 
-    if (highpow && ispow2(cur->t)) {
+    if (highpow && ispow2_u64(cur->t)) {
         mpz_add_ui(cur->lim, zmax, TYPE_OFFSET(vi));
         if (cur->t > 1) {
             mpz_fdiv_q(cur->lim, cur->lim, cur->q);
@@ -3930,7 +3920,7 @@ static inline void state_extend(signed short i) {
     while (depth <= i) {
         assert(nextoff < pfree_vecsize && nextbit < 8 * sizeof(uint));
         uint v = pv[nextoff] & ~((1U << nextbit) - 1);
-        nextbit = __builtin_ffs((int)v);
+        nextbit = ffs_u32(v);
         if (nextbit) {
             s->pfreei[depth] = (nextoff << 5) + (nextbit - 1);
             ++depth;
@@ -4175,7 +4165,7 @@ void prep_midp(t_level *cur_level) {
         uint vil = cur_vlevel[vi];
         t_allocation *ap = &vp->alloc[vil - 1];
         uint t = ap->t;
-        if (highpow ? t == 1 : ispow2(t))
+        if (highpow ? t == 1 : ispow2_u64(t))
             continue;
         /* Under need_maxp no strategy allocates at a position whose
          * remaining tau is an odd prime: best_v0() .. best_v4() skip it
@@ -4189,7 +4179,7 @@ void prep_midp(t_level *cur_level) {
         /* try all divisors until we reach the powers of 2 */
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
-            if (highpow ? x == 1 : ispow2(x))
+            if (highpow ? x == 1 : ispow2_u64(x))
                 break;
             if (maxp[x - 1] == 0)
                 continue;
@@ -4719,7 +4709,7 @@ uint best_v4(t_level *cur_level) {
                     if (tj < ti || (tj == ti && mpz_cmp(*qj, *qi) <= 0))
                         continue;
                 } else {
-                    minj = ispow2(apj->x) ? apj->p : maxforce[vj];
+                    minj = ispow2_u64(apj->x) ? apj->p : maxforce[vj];
                     if (mini > minj)
                         mpz_sub_ui(Z(temp), *limi, mini - minj);
                     else
@@ -4729,7 +4719,7 @@ uint best_v4(t_level *cur_level) {
                 }
             }
         } else if (hj == 2) {
-            minj = ispow2(apj->x) ? apj->p : maxforce[vj];
+            minj = ispow2_u64(apj->x) ? apj->p : maxforce[vj];
         }
         vi = vj;
         ti = tj;
@@ -4962,7 +4952,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
     mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
     mpz_div(Z(lp_x), Z(lp_x), ap->q);
 
-    if (ispow2(x)) {
+    if (ispow2_u64(x)) {
         /* This implies highpow = true.
          * We will allocate p^{x - 1} leaving nextt = 2^b, knowing that
          * we are not divisible by any smaller p. So the contributions
@@ -5053,7 +5043,7 @@ static inline uint prev_x(uint vi) {
  */
 static inline bool done_in_reverse(uint vi, uint x, uint nextt) {
     uint prevx = prev_x(vi);
-    if (ispow2(x) || x == prevx)
+    if (ispow2_u64(x) || x == prevx)
         return 0;
     /* we already did this in reverse */
     if (x < prevx && divisors[x].high == divisors[prevx].high)
@@ -5067,7 +5057,7 @@ static inline ulong start_p(uint vi, uint x) {
     t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
     uint prevx = prev_x(vi);
     /* powers of 2: increasing p, not decreasing powers */
-    if (ispow2(x) ? (prevx && ispow2(prevx)) : (x == prevx))
+    if (ispow2_u64(x) ? (prevx && ispow2_u64(prevx)) : (x == prevx))
         return ap->p;   /* skip smaller p */
     return maxforce[vi];
 }
@@ -5079,7 +5069,7 @@ static inline ulong start_p(uint vi, uint x) {
  * of p, whatever the power, so they do not qualify.
  */
 static inline bool can_flip(uint x) {
-    return !ispow2(x);
+    return !ispow2_u64(x);
 }
 
 typedef enum {

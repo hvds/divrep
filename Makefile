@@ -13,7 +13,7 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
-    coulvec.h
+    coulvec.h types.h builtins.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"

@@ -50,13 +50,12 @@ extern bool chinese_ppow_z(mpz_t rp, mpz_t ap, mpz_t r, mpz_t a,
         ulong p, mpz_t m, mpz_t s);
 extern int _mpz_comparator(const void *va, const void *vb);
 
-/* 64x64->64 modular multiply. __uint128_t is a GCC/clang extension
- * (widely available on 64-bit targets); portable fallback avoids
- * overflow via repeated doubling for other compilers.
+/* 64x64->64 modular multiply, in 128 bits where we have them (see
+ * types.h); the fallback avoids overflow by repeated doubling.
  */
-#ifdef __GNUC__
+#ifdef HAVE_UINT128
 static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
-    return (ulong)(((__uint128_t)a * (__uint128_t)b) % m);
+    return (ulong)(((uint128)a * b) % m);
 }
 #else
 static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
