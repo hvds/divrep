@@ -88,9 +88,9 @@ lower it mid-run. Everything here is costed at the requested zmax.
 ### Instrumentation
 
 A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
-(trace.h): 1 the trace, 2 the records, 4 stage timing, 16 the test
-preparations (T and U records), 32 the run's counts and CPU time (a W
-record).
+(trace.h): 1 the trace, 2 the records, 4 stage timing, 8 the -ja2
+choices, 16 the test preparations (T and U records), 32 the run's
+counts and CPU time (an N record).
 
 - -dv2: one record per gate decision, recursion subtree, walk,
   walk_1_set(), flip and midp phase (trace.c). With -dv6 its clock
@@ -205,11 +205,11 @@ turned on or off mid-run; tested by recovering D(12,4) and D(24,5) from
 The estimate of recursing is too high near the root, where a wrong
 choice to walk costs most: D(64,3) -j4 -x1e15 took 29s under -ja1,
 walking at level 1, against 0.04s with no -ja. So the gate scales that
-estimate by 1/4 (GR_RSCALE): 0.05s there, D(60,3) -j2 -x1e13 1.02s to
-0.59s, D(48,4) -j2 -x1e12 0.68s to 0.28s, and the other 26 runs of the
-benchmark set within 3% either way. For n = 2^x.3 it is what lets -j4
-pay as x grows (-ja1, seconds without and with the factor, 90s
-allowed):
+estimate by 1/4 (GR_RSCALE; -ja2 learns the scale instead): 0.05s there,
+D(60,3) -j2 -x1e13 1.02s to 0.59s, D(48,4) -j2 -x1e12 0.68s to 0.28s,
+and the other 26 runs of the benchmark set within 3% either way.
+For n = 2^x.3 it is what lets -j4 pay as x grows (-ja1, seconds without
+and with the factor, 90s allowed):
 
 | run | -j0 | -j2 | -j4 |
 |---|---|---|---|
@@ -221,8 +221,8 @@ allowed):
 
 ### Costs counted, not timed
 
--ja1 learns from costs counted from what the run did, not from its
-timings, so that identical runs make identical choices: walk
+-ja1 and -ja2 learn from costs counted from what the run did, not from
+its timings, so that identical runs make identical choices: walk
 setups, iterations and inverse entries tested, fixed-power walks, roots
 and entries, walk_1_set() primes iterated and passing the check, and
 recursion primes tried and applied, each at its table cost; each test's
@@ -250,6 +250,219 @@ then 29s as the pricing improved, then 5.2s: its choices at the root
 are made before any learning, so they turned on small differences in
 the estimates, until the learnt ratio for recursing was given a prior
 of 1/4 (0.1s).
+
+### -ja2 (choosing positions by cost)
+
+At a node with no fixed square, walking it costs W whichever position
+is chosen, and recursing over some x then walking is never better, so
+the choice is between walking and recursing over every x of some
+position (ja_choose()): W and the strategy's choice are incumbents, and
+other positions are costed (classify_x() and the -ja1 estimate) until they
+pass the incumbent; positions alike in (t, q, last p, x, maxforce) cost
+the same. An x leaving a square is costed as if it did not (an
+overestimate, corrected by learning, below); where a position has an x
+the model cannot cost (a flip), the strategy's choice stands. On four
+D(96,8) batches at the usual zmax, -ja2 matched the best of -j0..-j2
+under -ja1 on each (whichever it falls back on), beat all of them on
+one by 20%, and took 26-45% less time than -j4 -g24. There, 99% of its
+choices walk the node, and under 1% choose another position. On
+D(48,10) batches 1-12 at -x22911293821947932 -j2 -f7 -g30 it took
+25-60% less time than -ja1 on every batch that took measurable time,
+and on runs with many squares 45-50% less (D(36,5) -j2 -x1e12: 85s
+against 169s; D(60,4) -j0 -x1e15: 2.2s against 4.2s).
+
+Choosing has a cost of its own, about 1us for each position weighed
+(limit_p()'s integer root and the sum over primes, for each x), which
+is as much as a whole node where nodes are cheap: D(96,3) -j4 -x1e15
+made much the same search as under -ja1 (415k recursions against 399k,
+the same tests) in 1.10s against 0.74s. By the -dv8 records, at nodes
+that would cost under 10us to walk (60-90% of them) the choice is
+estimated to save 0.03-0.9us a node, and from 100us tens of us or
+more. So where walking would cost under 100us (JA_MIN_WALK) the
+strategy's choice stands and the gate decides, as under -ja1. Over 42
+runs (the benchmark set, and n = 24, 48, 96, 192 at -j0, -j2, -j4) that
+was never slower beyond noise (1.02x at worst), up to 2x faster
+(D(48,4) -j4 -x1e15: 0.76s to 0.38s) and 9% less time in all. A
+threshold of 10us did much the same; 1ms lost up to 60% on D(36,5) and
+D(36,6) at -j2, where the choices matter.
+
+### What -ja learns
+
+-ja2 learns from its choices: each choice made by cost is costed (at
+first by thread CPU time, now by what it did, see above), a walk whole
+and a position by each of its x, and per level the actual cost against
+the estimate, in four parts (walking, recursing, recursing into a
+square, walk_1_set()), gives a ratio by which later estimates of each
+part are corrected (starting from 1ms of evidence at ratio 1). Each x is
+of a single part, so the attribution is exact: splitting a whole
+subtree's cost between its parts in proportion to their estimates
+contaminated the ratios (walk_1_set() at 40-65x), and once squares were
+costed, sent D(60,4) -j4 -x1e15 from 2.1s to 190s. On D(36,5) -j4 -x1e10
+the ratios found were 0.00-0.01 for recursing at level 2, 0.1 at 3, 0.4
+at 4 and about 1 at 5 (the depth-1 estimate assumes every child walks),
+about 2 for walk_1_set() (now charged 2us per prime reaching its tests,
+as measured, not 1us), and 1.2-1.5 for walking. Without that, -ja2 -j4
+on D(36,5) chose vast walk_1_set() ranges: -x3e10 took 87s against 14.5s
+under -ja1, -x1e11 over 300s against 44s; learning, 5.5s and 15s.
+Elsewhere learning changed nothing beyond noise. Costing positions that
+leave a square helps where the strategy is poor: D(60,4) -j2 -x3e14 took
+3.6s against 133s (-j0 takes 1.6s), and on the other runs tried it
+changed nothing beyond noise. The square ratios learnt are small (1e-5
+at level 2, 0.01 at level 4, 0.6 at level 5).
+
+The -ja1 gate, still deciding walk or recurse for each x of a position
+-ja2 has chosen, applies the same learnt ratios. Without them, it used
+the raw depth-1 estimate, so could walk a node that -ja2 had learnt to
+recurse: choices then depending on timing noise, D(60,4) -j2 -x5e14
+took 4.6s in most runs but 100s in about 1 in 7, from two walks at
+level 3 of 27M and 103M iterations, and -x1e15 196s; D(60,4) -j0
+-x1e15 once took 188s against 2s. With the ratios applied there too,
+16 runs of -x5e14 all took 4.3-4.7s, -x1e15 takes 6.6s (-ja1: over
+300s), and D(60,4) -j0 1.8s; the other runs tried are unchanged.
+
+With all that, 13 runs repeated 5 times each varied by under 10%, and
+the strategy chosen matters much less (D(60,4) -x1e15 at -j0/-j2/-j4:
+1.8/6.2/1.9s against 3.7/295/2.0s under -ja1; D(36,5) -x3e10 4.8-5.6s
+for each, against 9.1-14.1s). Tiny runs lose a little: at a zmax far
+above the answer to the known weakness below, as before learning
+(D(24,5) -j0 -x1e13: 0.19s against 0.15s), and at one just below it to
+the cost of choosing (-x15537947: 0.11s against 0.09s). On the D(96,8)
+batches at -x393643805345636319 -f5 (b5, b50, b5000, b350000), -ja2
+took 10.3-10.7, 30-31.7, 4.3-4.5 and 12.6-13.5s with -j0 or -j2, about
+10% less than before learning and up to 25% less than -ja1; with -j4 it
+was 3% slower than -ja1 on b50, faster on the rest.
+
+The ratio for recursing was at first learnt per level, like the rest,
+but nodes of one level differ far more than nodes of one size. From
+175k records of estimate against actual cost on D(96,4) -j4 -x1e16,
+actual/estimated falls smoothly with the size of the node: 0.6 for
+nodes that would cost 0.1-1ms to walk, 0.06 at 0.1-1s, 0.004 at 1000s.
+The ratios per level, each dominated by the largest nodes of its level,
+were 0.000 at levels 2-4, 0.57 at level 5 and 0.016 at level 6, so that
+at level 5 it walked what -ja1 recursed (20.7M walk iterations against
+8.7M, 17.6s against 12.5s). Correcting each record by its level's ratio
+left a cost-weighted error of 3.1 decades there and 0.15-2.3 on eight
+other runs; by decade of size 0.33, and 2-8x less than by level on
+every one. So the two recursing parts are now learnt in bands of the
+node's estimated cost to walk, a factor of 8 each (ja_rsize()), a band
+with no evidence starting from 0.4 of the ratio in use for the band
+below (0.25 and 0.6 do the same within 3%). Over the same 42 runs that
+was never slower beyond noise and 4% less time in all: D(96,4) -j4
+-x1e16 17.6s to 11.9s, D(48,4) -j4 -x1e15 0.38s to 0.28s, D(96,3) -j4
+-x1e15 0.77s to 0.64s, D(60,4) -j0 -x1e15 2.04s to 1.77s, D(96,8) b50
+-j4 36.0s to 33.4s. Keying by the position's own estimate instead fits
+the records as well, but chooses worse (D(60,4) -j0 -x1e15: 9.5s): it
+shrinks large estimates more than small ones, so distorts the
+comparison between positions at a node, where a ratio shared by the
+node cancels.
+
+#### Two costs the counts exposed
+
+Broken into components, the counted cost of -ja2 -j4 runs was about
+half in the recursion loops' primes on the production-like batches
+(D(96,8) b5, b50, b350000 and D(48,10) b7: 46-50%, with 43-51% in
+tests and 2-7% in walk loops), where 200-360 primes are tried for each
+one that applies; D(60,4) -x1e16 58%, D(12,8) 42%, D(96,4) 26%.
+
+That led to reject_single(), which rejects most of a loop's primes in
+single limbs, and then to bpsw_u64(), which tests the primality of a
+single limb in single limbs. Both went to master ahead of this work,
+with their measurements there in their commit messages. Under -ja2 the
+42 runs of the benchmark set took 12% less time with the first and 19%
+less with both, and the production-like batches more: D(96,8) b5 11.3s
+to 8.8s to 6.5s, b50 33.7s to 26.5s to 19.3s. Under -ja1 the benchmark
+set took 24% less with the first and 35% less with both. Runs whose
+values are small or whose time is in walk loops gain little (D(96,4),
+D(192,3), D(48,4): within 5% either way).
+
+With the first, cprime and ctail were measured again (0.22us to
+0.14us, 0.23us to 0.12us), and the gate's cost per prime lowered to
+match (GR_APPLY, 0.2us to 0.12us). A table made before that has cprime
+and ctail too high: rebuild its leaf and tail sections.
+
+Values of more than a limb still go to MPU::GMP, and there the cost of
+a preparation steps up sharply (about 20us for a 65-70 bit value that
+reaches the primality test), so the K rows price the bits tested apart
+(preppbit for a single limb, prepzbit beyond). The calibration run
+that was to supply such values gave only 19 records in its minute, so
+the situ section now takes them from the D(162,3) batch and from
+D(36,5) -x1e22. And tau_prime_run()'s own tests, which the K rows had
+left uncharged, are now charged as tau_multi_prep()'s are.
+
+#### Where -ja2 pays
+
+Each run under -ja1 and -ja2 at four strategies (seconds, 120s
+allowed; the D(48,10) batches at -x22911293821947932 -f7 -g30, the
+D(96,8) batches at -x393643805345636319 -f5), with primes rejected
+early and primality tested in single limbs:
+
+| run | -ja1: -j0 | -j1 | -j2 | -j4 | -ja2: -j0 | -j1 | -j2 | -j4 |
+|---|---|---|---|---|---|---|---|---|
+| D(24,6) -x1e13 | 2.92 | 2.94 | 2.65 | 3.09 | 2.46 | 2.46 | 2.56 | 2.56 |
+| D(48,4) -x1e15 | 0.31 | 0.30 | 0.32 | 0.30 | 0.31 | 0.31 | 0.31 | 0.29 |
+| D(96,3) -x1e15 | 6.36 | 6.37 | 14.05 | 0.72 | 6.31 | 6.36 | 6.38 | 0.61 |
+| D(96,4) -x1e16 | 40.70 | 39.93 | 36.23 | 11.17 | 38.34 | 38.30 | 38.07 | 11.13 |
+| D(192,3) -x1e16 | >120 | >120 | >120 | 28.54 | >120 | >120 | >120 | 31.03 |
+| D(40,5) -x1e17 | 0.80 | 0.80 | 0.66 | 0.84 | 0.74 | 0.75 | 0.78 | 0.76 |
+| D(80,5) -x1e16 | 2.41 | 2.39 | 2.08 | 2.39 | 2.26 | 2.24 | 2.42 | 2.33 |
+| D(20,6) -x1e18 | 1.60 | 1.60 | 1.33 | 1.59 | 1.22 | 1.22 | 1.22 | 1.22 |
+| D(64,3) -x1e15 | 30.35 | 30.39 | 30.66 | 0.05 | 30.87 | 31.17 | 31.06 | 0.07 |
+| D(32,5) -x1e14 | 51.99 | 48.53 | 49.06 | 1.15 | 48.85 | 49.07 | 48.78 | 1.09 |
+| D(36,5) -x1e10 | 4.90 | 4.81 | 3.41 | 4.90 | 1.73 | 1.72 | 1.86 | 1.78 |
+| D(36,6) -x1e11 | 14.07 | 14.00 | 8.66 | 13.69 | 4.25 | 4.27 | 4.72 | 4.22 |
+| D(18,4) -x1e16 | 3.44 | 3.60 | 26.70 | 3.42 | 3.46 | 3.45 | 26.43 | 3.43 |
+| D(100,3) -x1e18 | 1.75 | 1.77 | 1.97 | 1.74 | 1.29 | 1.27 | 1.97 | 1.26 |
+| D(100,4) -x1e18 | 6.95 | 6.99 | 3.09 | 6.91 | 1.91 | 1.90 | 1.81 | 1.92 |
+| D(90,3) -x1e15 | 5.65 | 4.30 | 76.00 | 4.33 | 4.47 | 4.44 | 27.21 | 4.40 |
+| D(144,3) -x1e15 | 3.09 | 3.15 | 3.02 | 3.23 | 2.11 | 2.16 | 2.75 | 2.14 |
+| D(60,4) -x1e15 | 2.64 | 1.48 | >120 | 1.46 | 1.25 | 1.25 | 5.16 | 1.28 |
+| D(60,4) -x1e16 | 14.06 | 6.53 | >120 | 6.55 | 5.28 | 5.21 | 17.13 | 5.16 |
+| D(120,4) -x1e16 | 13.36 | 7.12 | >120 | 7.12 | 6.33 | 6.33 | 14.46 | 6.20 |
+| D(12,8) -x1e12 | 16.62 | 16.65 | 16.56 | 16.80 | 12.99 | 12.71 | 12.71 | 12.82 |
+| D(12,7) -x1e9 | 0.17 | 0.17 | 0.15 | 0.17 | 0.14 | 0.14 | 0.14 | 0.14 |
+| D(24,5) -x1e12 | 0.16 | 0.13 | 0.13 | 0.14 | 0.14 | 0.14 | 0.14 | 0.15 |
+| D(48,10) b1 | 1.25 | 1.25 | 2.56 | 1.30 | 0.92 | 0.91 | 0.91 | 0.92 |
+| D(48,10) b7 | 1.25 | 1.23 | 2.58 | 1.24 | 1.15 | 1.16 | 1.16 | 1.18 |
+| D(96,8) b5 | 9.19 | 9.23 | 6.35 | 9.31 | 6.73 | 6.71 | 6.65 | 6.65 |
+| D(96,8) b50 | 23.32 | 23.21 | 19.29 | 23.23 | 19.38 | 19.54 | 19.54 | 19.60 |
+| D(96,8) b5000 | 2.85 | 2.86 | 3.45 | 2.91 | 2.80 | 2.80 | 2.83 | 2.80 |
+| D(96,8) b350000 | 10.28 | 10.26 | 12.60 | 10.53 | 8.18 | 8.10 | 8.11 | 8.20 |
+
+Taking the best strategy for each:
+
+- -ja2 is 1.7-2.0x faster than -ja1 on D(36,5), D(36,6) and D(100,4);
+  1.15-1.45x on D(144,3), D(100,3), D(48,10) b1, D(12,8), D(60,4),
+  D(96,8) b350000, D(96,3) and D(120,4). Those are mostly n with an odd
+  square, or two odd primes, or small n with large k.
+- They are level (within 10%) on the other D(96,8) and D(48,10)
+  batches, n = 20, 24 and 48, D(32,5), D(96,4), D(18,4), D(90,3),
+  D(80,5) and D(192,3).
+- -ja1 is ahead by 12% on D(40,5) (at -j2), and by 0.02s on D(64,3).
+
+But the best strategy is not known beforehand, and -ja1 depends on it
+far more: its worst strategy takes over 10x its best on 7 of the 29
+runs, and over 120s on 4 of them; -ja2's only where -j4 is needed
+under either (D(96,3) and the powers of 2). -ja2 at -j4 is never more
+than 15% behind the best of -ja1's four (D(64,3) apart, 0.07s against
+0.05s), nor more than 7% behind -ja2's own best.
+
+Two things still tie -ja2 to the strategy. Only -j4 lets it allocate
+p^{2^x-1}, without which D(96,k), D(192,3) and the powers of 2 take
+3-600x longer whatever chooses the positions. And at nodes with a
+square already fixed the strategy still chooses: that is why -j2 costs
+it 2-8x on D(18,4), D(90,3), D(60,4) and D(120,4) (on D(60,4) -x1e15,
+strategy 2 takes the position with tau 3 left, for walk_1_set() over
+600k primes at a time). With another strategy little time goes there
+(square walks and walk_1_set() under 1.5% of 13 runs of 14, D(18,4)
+apart), so a cost model for those nodes has little to gain beyond
+avoiding that; and overriding strategy 2 at them still leaves D(90,3),
+D(100,3) and D(144,3) slower at -j2, where it also chooses the nodes
+that a flip may follow.
+
+### Recovery under -ja
+
+315 lines mark only levels chosen against the strategy, the rest
+replayed by it.
 
 ### Findings under a fixed gain (to 2026-09-25)
 
@@ -477,6 +690,9 @@ substantially, the calibrated options may no longer be optimal.
   without the gate) as a speedup: the gate costs ~1us, so skipping it
   gains nothing measurable. Its check mode found the gate monotone
   within a loop apart from flips.
+- Never walking a loop whose children can flip (t = 2q^2): D(60,3) -j2
+  -x1e13 7x slower under -ja1, D(36,5) -j0 -x3e10 3x slower under
+  either, D(36,4) -j4 1.7-3x; only D(64,3) -j4 gained, by 1.5%.
 - Learning from timed costs: choices then depend on the machine's load
   and on rare costly factorizations, and identical runs differ. D(60,4)
   -j2 -x5e14 took 4.6s in most runs but 100s in about 1 in 7. Hence
