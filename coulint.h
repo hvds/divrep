@@ -80,6 +80,7 @@ static inline uint test_multi_run(tau_failure_handler tfh) {
 
 /* for the planner (coulplan.c) */
 
+#define MAXK_KERN 64    /* under -k: positions are bits of a ulong */
 /* Sentinel values returned by best_v() and strategies[] functions.
  * Any real v_i is < BV_SPECIAL; BV_WALK means there is no v_i to allocate
  * to; BV_NEXTX means there is no work left to do for this x.
@@ -104,6 +105,14 @@ typedef struct {
     uint level;
     bool on;
     ulong at, passed;   /* needs MAXK_KERN <= 64 */
+    /* Under -ka: whether a choice was made for this batch, with the bound
+     * of -k (0 if it is not to apply), of -W (0 for as the options gave)
+     * and count of -K chosen, and the estimated cost.
+     */
+    bool planned;
+    ulong b, w;
+    uint keep;
+    double est, price;
 } t_kern;
 
 /* The outcomes of classify_x() */
@@ -119,6 +128,14 @@ typedef enum {
 } e_xr;
 
 extern void walk_v_inner(t_level *cur_level, mpz_t start);
+#if defined(TYPE_r)
+    extern uint *target_tau;
+    extern uint target_lcm;
+    static inline uint target_t(uint vi) { return target_tau[vi]; }
+#else
+#   define target_lcm (n)
+    static inline uint target_t(uint vi) { return n; }
+#endif
 
 extern double zmax_given;
 extern mpz_t best;
@@ -128,11 +145,22 @@ extern bool highpow;
 extern ulong limp_cap;
 extern bool midp_only, in_midp, need_maxp, need_midp;
 extern ulong kern_b;
+extern uint kern_keep;
+extern bool kern_auto;
+extern bool kern_opt_keep_given, kern_opt_need_maxp, kern_opt_need_midp;
+extern uint kern_opt_keep;
+extern ulong *kern_opt_maxp, *kern_opt_midp;
+extern slong batch_alloc;
 extern uint cur_batch_level;
 extern uint strategy;
 extern t_fact nf;
 extern uint *maxforce;
 extern void done(void);
+extern bool walk_v_price_prep(t_level *cur_level);
+extern double walk_v_price(uint *t);
+extern bool kern_6x(void);
+extern void kern_sets(uint keep, ulong *atp, ulong *passedp);
+extern t_kern kern_ks;
 extern t_kern *kern_state(void);
 extern bool kern_at(uint vi);
 extern bool kern_passed(uint vi);
@@ -155,7 +183,9 @@ static inline bool never_unforced(ulong p) {
 
 /* true if -k applies to this batch */
 static inline bool kern_batch(void) {
-    return kern_b && kern_state()->on;
+    /* under -ka, kern_state() sets kern_b */
+    t_kern *ks = kern_state();
+    return kern_b && ks->on;
 }
 
 /* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
@@ -183,6 +213,12 @@ static inline mpz_t *kern_q(uint vi) {
     while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
         --vil;
     return &vp->alloc[vil - 1].q;
+}
+
+/* true if kern_ks holds a choice made under -ka for the current batch */
+static inline bool kern_planned(void) {
+    return kern_auto && kern_ks.planned && kern_ks.id == batch_alloc
+            && kern_ks.level == cur_batch_level;
 }
 
 /* The x of the previous allocation at v_i if it was unforced, else 0. */

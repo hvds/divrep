@@ -15,8 +15,8 @@
 
 /* The cost table and the models built on it are compiled into every
  * build: -ja learning charges the factoring ladder its expected cost
- * from them (cm_ladder_cost()), -ja prices tests and walks from them,
- * and the mocks (mock.c) charge them in place of the work.
+ * from them (cm_ladder_cost()), -ja and -ka price tests and walks from
+ * them, and the mocks (mock.c) charge them in place of the work.
  *
  * A walk costs, per iteration: loop + P_inv * (C_p + P_prime * C_m) for
  * a linear walk, loop_sq + P_inv * (C_sq + P_sq * (C_p + P_prime * C_m))
@@ -1535,4 +1535,23 @@ double cm_root_cost(
                     noc, &wk, inv, inv_count, &m);
     }
     return CMC(CM_SQLOOP0) + tests * CMC(CM_SQTEST) + pinv * after;
+}
+
+/* The modelled cost per root of walking a single fixed power at position
+ * sqi, for a search to z: as cm_root_cost(), for the caller to estimate
+ * with. Returns a negative value if there is no cost table, or it lacks
+ * a row for one of the tests.
+ */
+double cm_root_price(
+    double z, mpz_t **q, uint *t, uint sqi, uint *need_prime, uint npc,
+    uint *need_other, uint noc, t_mod *inv, uint inv_count
+) {
+    if (!cm_have_table())
+        return -1;
+    ulong missing = cm_missing;
+    double hi = pow((z + TYPE_OFFSET(sqi)) / mpz_get_d(*q[sqi]),
+            1.0 / divisors[t[sqi]].gcddm);
+    double cost = cm_root_cost(log2(z), log2(hi > 2 ? hi : 2), q, t, sqi,
+            need_prime, npc, need_other, noc, inv, inv_count);
+    return (cm_missing == missing) ? cost : -1;
 }

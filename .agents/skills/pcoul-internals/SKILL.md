@@ -101,12 +101,12 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   own addition on top of the imported forward-iteration code.
 - `coulcost.c` - the cost table (the file `timings`, built in as
   `timings.c`, unless `$COST_TABLE` names another) and the models that
-  price tests and walks from it, for `-ja`. See the pcoul-calibration
-  skill for all of the cost work.
+  price tests and walks from it, for `-ja` and `-ka`. See the
+  pcoul-calibration skill for all of the cost work.
 - `coulplan.c` - the planner: estimates of what parts of the search
   would cost, and the choices made by them: the `-ja` gate
   (`ja_gate()`); its choice of position (`ja_choose()`) and what `-ja`
-  learns.
+  learns; `-ka` (`kern_plan()`).
 - `mock.c` - calibration-only stubs of the walks and of the innermost
   recursion loops, compiled only with `MOCK=1`. Never for a real
   search: no candidate is tested.
@@ -390,7 +390,10 @@ easy to confuse by mnemonic alone:
 - `-k<bound>` / `-K<count>`: in a batch that leaves exactly one
   position needing a square, first try each prime up to the bound to
   an odd power at each other position that needs one, by Pell; `-K`
-  keeps positions `-k` would pass over.
+  keeps positions `-k` would pass over. `-ka` chooses the bounds of
+  `-k` and `-W` and the count of `-K` for each batch by estimated
+  cost, and implies `-ja1`. `-ap` is `-a` with, for each such batch,
+  what it is estimated to cost and what that is made of.
 - `-dv<bits>`: instrumentation, in a `VERBOSE=1` build only (`-dc` and
   `-dC` are the modular-constraint debugging that `-dv`/`-dV` used to
   be).
