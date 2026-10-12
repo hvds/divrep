@@ -247,7 +247,8 @@ transition from recursion to walking (see "-g" above): walking now is
 weighed against recursing one more level with every resulting case
 walked, using the cost of a walk per iteration learnt during the run.
 That covers every loop where no square is fixed, unless a flip may
-follow (tau 2q^2 for an odd prime q). The gain then applies only to
+follow (tau 2q^2 for an odd prime q); and with one square fixed, every
+loop in a batch that "-k" applies to. The gain then applies only to
 what is left.
 "-ja2" also chooses the next position to which to allocate by estimated
 cost, instead of by the strategy, in the same places, wherever the node
