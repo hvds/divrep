@@ -48,6 +48,15 @@ typedef struct s_level {
     bool next_best; /* vi is known stable result of best_v() */
     bool unsorted;  /* this level is not where best_v() would put it */
     uint choice_strategy;   /* the strategy in force when vi was chosen */
+    /* -ja2 learning: for a walk chosen by cost, when and its estimate;
+     * for a position, the estimate and part for each x, when the
+     * current x began, and the estimated cost of walking the node.
+     */
+    double ja_t0, ja_ew;
+    bool ja_on;
+    double ja_xt0, ja_w;
+    double *ja_ex;
+    unsigned char *ja_xp;
     /* Loop of allocations at this level: whether, and above which
      * multiple of aq, an allocation can be rejected early (see
      * reject_single()), and whether aq is a single limb.

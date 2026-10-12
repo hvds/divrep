@@ -312,10 +312,12 @@ easy to confuse by mnemonic alone:
 - `-o` (`opt_print`): print candidates instead of fully testing them -
   also unrelated to `-p` despite the mnemonic overlap.
 - `-a`/`-b`: batch selection (see "Batches" above).
-- `-ja1` (`auto_level`, experimental): decide walk or recurse at the
-  gate by estimated cost, from the cost table, in place of the gain.
-  Identical runs make identical choices, since the costs are counted,
-  not timed.
+- `-ja1` / `-ja2` (`auto_level`, experimental): decide by estimated
+  cost, from the cost table, instead of by fixed options. `-ja1`
+  decides walk or recurse at the gate, in place of the gain; `-ja2`
+  also chooses the position to allocate at next, in place of the
+  strategy. Identical runs make identical choices, since the costs
+  are counted, not timed.
 - `-k<bound>` / `-K<count>`: in a batch that leaves exactly one
   position needing a square, first try each prime up to the bound to
   an odd power at each other position that needs one, by Pell; `-K`
