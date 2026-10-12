@@ -43,6 +43,7 @@
  * (TYPE_t not yet supported.)
  */
 #define MAXK 66     /* nextprime(8 * sizeof(ulong)) - 1 */
+#define MAXK_KERN 64    /* under -k: positions are bits of a ulong */
 uint n, k;
 
 /* mpz_t passed as function parameter decays to pointer in a way that
@@ -210,6 +211,13 @@ char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
 bool highpow = 0;   /* allocate even p^{2^x-1} (based on roughness) */
 ulong limp_cap = 0;
 bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
+/* -k: where a batch fixes one square, each position with tau == 2 (mod 4)
+ * left takes one more prime to an odd power, and that power leaves a
+ * second square. walk_midp() tries every such power with p <= kern_b,
+ * each a Pell equation; elsewhere those primes are known to exceed kern_b.
+ */
+ulong kern_b = 0;
+bool kern_passed(uint vi);
 bool in_b6x = 0;        /* true while a STRATEGY_6X candidate is on trial */
 uint b6x_vi;            /* the v_i it is on trial for */
 bool in_flip = 0;       /* true while run_flip_pqsq() is proceeding */
@@ -378,6 +386,7 @@ typedef struct s_mint_state {
     ushort pfreedepth;  /* number of free primes found */
 } t_mint_state;
 size_t pfree_vecsize;
+uint mint_maxdepth;     /* size of pfreei[], mint_best[] and mint_px[] */
 t_mint **mint_base;
 uint *restricted;
 uint restricted_count;
@@ -1153,10 +1162,17 @@ void prep_mintau(void) {
             mint_init_base(&mint_base_restricted[i]);
     }
 
+    /* mintau() is asked for t dividing n/h(n); or under -k for t dividing
+     * n/2, since that fixes the prime to an odd power before any other
+     * (see mintau_at()).
+     */
     uint maxtau = target_lcm / divisors[target_lcm].high;
+    if (kern_b && !(target_lcm & 1))
+        maxtau = target_lcm / 2;
     dp = &divisors[maxtau];
     uint maxdepth = dp->sumpm;
     pfree_vecsize = (nsprimes + 31) >> 5;
+    mint_maxdepth = maxdepth;
     t_mint_state *s = &mint_state;
     s->pfreei = calloc(maxdepth, sizeof(ushort));
 
@@ -1677,8 +1693,8 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         ++s;
     if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
         fail("511 unexpected text at end of init/recovery pattern: %s", s);
-    if (is_W && !need_midp)
-        fail("512 recovery expected -W option");
+    if (is_W && !need_midp && !kern_b)
+        fail("512 recovery expected -W or -k option");
     t0 -= dtime;
 }
 
@@ -2640,6 +2656,8 @@ void report_init(FILE *fp, char *prog) {
         char *ww = midp_only ? "W" : "";
         fprintf(fp, " -W%sx%s", ww, smidpx);
     }
+    if (kern_b)
+        fprintf(fp, " -k%lu", kern_b);
     if (force_all)
         fprintf(fp, " -f%u", force_all);
     if (unforce_all) {
@@ -4086,6 +4104,7 @@ static inline void state_extend(signed short i) {
         uint v = pv[nextoff] & ~((1U << nextbit) - 1);
         nextbit = ffs_u32(v);
         if (nextbit) {
+            assert(depth < mint_maxdepth);
             s->pfreei[depth] = (nextoff << 5) + (nextbit - 1);
             ++depth;
         } else {
@@ -4312,6 +4331,137 @@ void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
     mintau_restricted_r(0, mint, t, r, ri);
 }
 
+/* What -k does in the current batch, worked out once the batch is
+ * complete: whether it applies at all, and as bit vectors the positions
+ * it applies to and those passed over.
+ * It applies to a batch that fixes exactly one square, unless that is
+ * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
+ * at v_{i-2} and gains nothing from the pass.
+ */
+typedef struct {
+    int id;
+    uint level;
+    bool on;
+    ulong at, passed;   /* needs MAXK_KERN <= 64 */
+} t_kern;
+static t_kern *kern_state(void);
+
+/* true if -k applies to this batch */
+static inline bool kern_batch(void) {
+    return kern_b && kern_state()->on;
+}
+
+/* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
+ * applies to: walk_midp() has tried each prime up to kern_b as the odd
+ * power, limit_unforced_x() refuses the rest, and with the squares left
+ * to the walk a strategy would otherwise loop over p^1 wherever else it
+ * could.
+ */
+static inline bool kern_highpow(void) {
+    return highpow && !kern_batch();
+}
+
+/* the tau left at v_i once the current batch was complete */
+static inline uint kern_tau(uint vi) {
+    t_value *vp = &value[vi];
+    uint vil = cur_vlevel[vi];
+    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
+        --vil;
+    return vp->alloc[vil - 1].t;
+}
+
+/* true if the current batch is one STRATEGY_6X takes, see apply_secondary() */
+static bool kern_6x(void) {
+#if defined(TYPE_o)
+    if ((n & 3) == 2 && sq0 >= 2) {
+        t_value *vp = &value[sq0];
+        for (uint i = 1; i < cur_vlevel[sq0]; ++i)
+            if (vp->alloc[i].p == 2)
+                return vp->alloc[i].x == 2;
+    }
+#endif
+    return 0;
+}
+
+/* See t_kern. The positions -k applies to are those that needed a prime
+ * to an odd power and something more besides once the batch was
+ * complete.
+ * A position with tau 6 left takes a single p^2 besides, with p up to
+ * the square root of what is left, far too many to loop over until
+ * little else remains. Where another position will take a square as its
+ * last allocation after others, that square has a lower limit and
+ * leaves a smaller walk, so it is always preferred, and by then the
+ * walk is too small for more. So the first is then passed over: nothing
+ * is allocated there at all, by walk_midp() or by any strategy, and the
+ * walks cover it. (Recursion counts were unchanged by this for D(n,4),
+ * D(n,5), n in 18, 30, 54, 90, 126.)
+ */
+static t_kern *kern_state(void) {
+    static t_kern ks = { -1, ~0U, 0, 0, 0 };
+    if (ks.id != batch_alloc || ks.level != cur_batch_level) {
+        bool later = 0;
+        ks.id = batch_alloc;
+        ks.level = cur_batch_level;
+        ks.at = 0;
+        ks.passed = 0;
+        ks.on = (levels[cur_batch_level].have_square == 1 && !kern_6x());
+        if (!ks.on)
+            return &ks;
+        /* the rest need MAXK_KERN <= 64 */
+        for (uint vi = 0; vi < k; ++vi) {
+            uint t = kern_tau(vi);
+            if (t > 2 && (t & 3) == 2) {
+                ks.at |= 1UL << vi;
+                if (t > 6 && t % 6 == 0)
+                    later = 1;
+            }
+        }
+        if (later)
+            for (uint vi = 0; vi < k; ++vi)
+                if (kern_tau(vi) == 6) {
+                    ks.at &= ~(1UL << vi);
+                    ks.passed |= 1UL << vi;
+                }
+    }
+    return &ks;
+}
+
+/* True if v_i is a position that -k applies to in this batch; needs
+ * MAXK_KERN <= 64, as does kern_passed().
+ */
+bool kern_at(uint vi) {
+    return kern_batch() && ((kern_state()->at >> vi) & 1);
+}
+
+/* true if v_i is passed over in this batch */
+bool kern_passed(uint vi) {
+    return kern_batch() && ((kern_state()->passed >> vi) & 1);
+}
+
+/* As mintau() for the tau t left at v_i, but under -k the prime taking
+ * the odd power exceeds kern_b: the powers that could be less were all
+ * tried by walk_midp().
+ * Here t / 2 need not divide n/h(n): prep_mintau() allows for that.
+ */
+void mintau_at(t_level *cur_level, mpz_t mint, uint t, uint vi) {
+    if ((t & 3) == 2 && kern_at(vi)) {
+        mintau(cur_level, mint, t >> 1);
+        mpz_mul_ui(mint, mint, kern_b);
+    } else
+        mintau(cur_level, mint, t);
+}
+
+/* as mintau_restricted() for the tau t left at v_i, see mintau_at() */
+void mintau_restricted_at(
+    t_level *cur_level, mpz_t mint, uint t, uint r, uint vi
+) {
+    if ((t & 3) == 2 && kern_at(vi)) {
+        mintau_restricted(cur_level, mint, t >> 1, r);
+        mpz_mul_ui(mint, mint, kern_b);
+    } else
+        mintau_restricted(cur_level, mint, t, r);
+}
+
 /* Order by maxp descending, then by vi ascending, then x in the order
  * of divisors[].div (cmp_high), which is the order prep_midp() pushes
  * them. Midp recovery resumes by position in this list.
@@ -4336,7 +4486,46 @@ void prep_midp(t_level *cur_level) {
         uint vil = cur_vlevel[vi];
         t_allocation *ap = &vp->alloc[vil - 1];
         uint t = ap->t;
+        bool kern = kern_at(vi) && (t & 3) == 2;
+        if (kern) {
+            /* Each even x leaves a square here: try them all, but p^1
+             * only as far as kern_b.
+             */
+            t_divisors *dp = &divisors[t];
+            for (uint di = 0; di < dp->alldiv; ++di) {
+                uint x = dp->div[di];
+                if (x & 1)
+                    continue;
+                ulong target_maxp = (x == 2) ? kern_b : 0;
+                mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
+                mintau(prev_level, Z(wv_cand), t / x);
+                mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
+                mpz_fdiv_q(Z(temp), Z(temp), ap->q);
+                mpz_root(Z(temp), Z(temp), x - 1);
+                if (mpz_fits_ulong_p(Z(temp))) {
+                    ulong target_limit = mpz_get_ui(Z(temp));
+                    if (!target_maxp || target_limit < target_maxp)
+                        target_maxp = target_limit;
+                } else if (!target_maxp)
+                    fail("prep_midp target %Zu out of range for %u:%u",
+                            Z(temp), vi, x - 1);
+                if (target_maxp <= maxforce[vi])
+                    continue;
+                t_midpp *this = &midpp[midppc++];
+                this->vi = vi;
+                this->x = x;
+                this->maxp = target_maxp;
+                this->minp = maxforce[vi];
+            }
+        }
+        if (!need_midp)
+            continue;
         if (highpow ? t == 1 : ispow2_u64(t))
+            continue;
+        /* Under -k no strategy allocates at any square, see below, nor
+         * at a position passed over.
+         */
+        if (((t & 1) && kern_batch()) || kern_passed(vi))
             continue;
         /* Under need_maxp no strategy allocates at a position whose
          * remaining tau is an odd prime: best_v0() .. best_v4() skip it
@@ -4354,9 +4543,12 @@ void prep_midp(t_level *cur_level) {
                 break;
             if (maxp[x - 1] == 0)
                 continue;
+            /* already done above for every p */
+            if (kern && !(x & 1))
+                continue;
             /* find range of p for allocating p^e at v_i */
             mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
-            mintau(prev_level, Z(wv_cand), t / x);
+            mintau_at(prev_level, Z(wv_cand), t / x, vi);
             mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
@@ -4675,7 +4867,7 @@ bool process_batch(t_level *cur_level, bool recover) {
         }
     }
   do_process:
-    if (need_midp) {
+    if (need_midp || kern_b) {
         walk_midp(cur_level, recover);
         if (midp_only)
             return 0;
@@ -4707,10 +4899,13 @@ uint best_v0(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
-        /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip prime powers when capped, and any square under -k */
+        if ((tj & 1) && (kern_batch()
+                || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         if (ti) {
             /* skip if not higher tau, or same tau with higher q */
@@ -4744,10 +4939,13 @@ uint best_v1(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
-        /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip prime powers when capped, and any square under -k */
+        if ((tj & 1) && (kern_batch()
+                || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         if (ti) {
             uint hi = divisors[ti].high;
@@ -4783,10 +4981,13 @@ uint best_v2(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
-        /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip prime powers when capped, and any square under -k */
+        if ((tj & 1) && (kern_batch()
+                || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         if (ti) {
             /* skip if not lower tau, or same tau with higher q */
@@ -4818,10 +5019,13 @@ uint best_v3(t_level *cur_level) {
         mpz_t *qj = &apj->q;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
-        /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip prime powers when capped, and any square under -k */
+        if ((tj & 1) && (kern_batch()
+                || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         /* shortcircuit if single allocation of (even) sqrt(n) */
         if ((tj & 1) == 0 && apj->x == apj->t) {
@@ -4875,10 +5079,13 @@ uint best_v4(t_level *cur_level) {
         ulong minj;
 
         /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
+        if (divisors[tj].high <= (kern_highpow() ? 1 : 2))
             continue;
-        /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip prime powers when capped, and any square under -k */
+        if ((tj & 1) && (kern_batch()
+                || (need_maxp && divisors[tj].alldiv == 2)))
+            continue;
+        if (kern_passed(vj))
             continue;
         uint hj = divisors[tj].high;
         if (ti) {
@@ -5130,8 +5337,12 @@ uint best_fixed(t_level *cur_level) {
     uint t = ap_last->t;
     if (t == 1)
         return BV_WALK;
-    /* skip prime powers when capped (invariant) */
-    if (need_maxp && (t & 1) && divisors[t].alldiv == 2)
+    /* skip prime powers when capped, and any square under -k (invariant) */
+    if ((t & 1) && (kern_batch()
+            || (need_maxp && divisors[t].alldiv == 2)))
+        return BV_WALK;
+    /* nor a -k position with only its odd power to come, or passed over */
+    if ((t == 2 && kern_at(vi)) || kern_passed(vi))
         return BV_WALK;
     return vi;
 }
@@ -5194,7 +5405,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
          */
         t_level *prev_level = &levels[cur_level->level - 1];
         /* this is mintau using hb: b > a */
-        mintau_restricted(prev_level, Z(lp_mint), nextt, x);
+        mintau_restricted_at(prev_level, Z(lp_mint), nextt, x, vi);
         bool have_value = 0;
         if (mpz_sgn(Z(lp_mint))) {
             have_value = 1;
@@ -5204,7 +5415,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
         while ((itert % x) == 0) {
             ++iter;
             itert /= x;
-            mintau_restricted(prev_level, Z(lp_mint2), itert, x);
+            mintau_restricted_at(prev_level, Z(lp_mint2), itert, x, vi);
             if (mpz_sgn(Z(lp_mint2))) {
                 mpz_div(Z(lp_mint2), Z(lp_x), Z(lp_mint2));
                 mpz_root(Z(lp_mint2), Z(lp_mint2), iter);
@@ -5223,7 +5434,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
          * remaining tau */
         if (nextt > 1) {
             t_level *prev_level = &levels[cur_level->level - 1];
-            mintau(prev_level, Z(lp_mint), nextt);
+            mintau_at(prev_level, Z(lp_mint), nextt, vi);
             mpz_div(Z(lp_x), Z(lp_x), Z(lp_mint));
         }
         mpz_root(Z(lp_x), Z(lp_x), x - 1);
@@ -5400,6 +5611,9 @@ e_pux limit_unforced_x(
     uint vi = cur_level->vi;
     uint nextt = ti / x;
 
+    /* under -k walk_midp() has tried every such power that can apply */
+    if (!(x & 1) && kern_at(vi))
+        return PUX_SKIP_THIS_X;
     if (limp == 0) {
         /* force walk */
 #ifdef SQONLY
@@ -5415,10 +5629,10 @@ e_pux limit_unforced_x(
          * already too high to split as (z, z, 2) then we can not only
          * skip this z but also profitably invert the process for the
          * remainder, splitting as (2z, z) rather than (z, 2z). That holds
-         * for any z that can_flip(), prime or not.
+         * for any z that can_flip(), prime or not, except where -k applies.
          */
         if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
-                && can_flip(x))
+                && can_flip(x) && !kern_at(vi))
             return PUX_FLIP_PQSQ;
         return PUX_SKIP_THIS_X; /* nothing to do here */
     }
@@ -6385,6 +6599,8 @@ int main(int argc, char **argv, char **envp) {
             set_cap(&arg[2]);
         else if (arg[1] == 'P')
             limp_cap = strtoul(&arg[2], NULL, 10);
+        else if (arg[1] == 'k')
+            kern_b = ulston(&arg[2]);
         else if (arg[1] == 'W') {
             need_midp = 1;
             char *w = &arg[2];
@@ -6532,6 +6748,8 @@ int main(int argc, char **argv, char **envp) {
             fail("require k >= 1, not %lu", k);
         if (k > MAXK)
             fail("require k <= %u, not %u", MAXK, k);
+        if (kern_b && k > MAXK_KERN)
+            fail("-k requires k <= %u, not %u", MAXK_KERN, k);
     } else
         fail("wrong number of arguments");
     if (force_all > k)

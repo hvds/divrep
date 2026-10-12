@@ -297,6 +297,9 @@ easy to confuse by mnemonic alone:
 - `-o` (`opt_print`): print candidates instead of fully testing them -
   also unrelated to `-p` despite the mnemonic overlap.
 - `-a`/`-b`: batch selection (see "Batches" above).
+- `-k<bound>`: in a batch that leaves exactly one position needing a
+  square, first try each prime up to the bound to an odd power at each
+  other position that needs one, by Pell.
 - `-I`: recovery/injection pattern (see "recovery patterns" above).
 - `-dw<n>` / `-dW<n>` / `-dL<n>` (debug): show every progress line
   (`-dw` leaves out the steps of a walk, `-dW` includes them), or
