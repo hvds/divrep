@@ -982,7 +982,7 @@ bool candidate(mpz_t c) {
     if (mpz_fits_ulong_p(c) && mpz_get_ui(c) == n)
         return 0;
 #endif
-    /* a walk can start at or before the minimum */
+    /* no walk should start at or before the minimum, but make sure */
     if (mpz_cmp(c, zmin) <= 0)
         return 0;
     keep_diag();
@@ -3011,8 +3011,10 @@ void walk_v(t_level *cur_level, mpz_t start) {
     if (mpz_sgn(start)) {
         mpz_set(Z(wv_ati), start);
     } else {
+        /* the first with v_0 > zmin */
         mpz_sub(Z(wv_ati), zmin, *m);
-        mpz_cdiv_q(Z(wv_ati), Z(wv_ati), *aq);
+        mpz_fdiv_q(Z(wv_ati), Z(wv_ati), *aq);
+        mpz_add_ui(Z(wv_ati), Z(wv_ati), 1);
     }
 
     for (uint vi = 0; vi < k; ++vi) {
@@ -3089,10 +3091,12 @@ void walk_v(t_level *cur_level, mpz_t start) {
 
             /* FIXME: handle recovery too */
             if (mpz_cmp_ui(zmin, 0) > 0) {
-                mpz_fdiv_q(Z(temp), zmin, *qi);
+                /* v_0 > zmin needs x^2 > (zmin + i) / q_i, rounded down */
+                mpz_add_ui(Z(temp), zmin, TYPE_OFFSET(sqi));
+                mpz_fdiv_q(Z(temp), Z(temp), *qi);
                 mpz_sqrt(Z(temp), Z(temp));
                 while (next_pell(Z(wv_x), Z(wv_y))) {
-                    if (mpz_cmp(Z(temp), Z(wv_x)) <= 0)
+                    if (mpz_cmp(Z(temp), Z(wv_x)) < 0)
                         goto continue_pell;
                     ++pc;
                 }
@@ -3368,7 +3372,7 @@ void walk_1(t_level *cur_level, uint vi) {
         mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
     }
 
-    if (mpz_cmp(Z(w1_v), zmin) < 0)
+    if (mpz_cmp(Z(w1_v), zmin) <= 0)
         return;
     ++countw;
     if (check && !cvec_testv(cx0, Z(w1_v)))
@@ -3440,14 +3444,15 @@ void walk_1_set(
     uint vil = cur_vlevel[vi];
     t_allocation *aip = &vip->alloc[vil - 1];
     if (mpz_sgn(zmin) > 0) {
+        /* v_0 > zmin needs p^{x-1} > (zmin + i) / q_i, rounded down */
         mpz_add_ui(Z(temp), zmin, TYPE_OFFSET(vi));
-        mpz_cdiv_q(Z(temp), Z(temp), aip->q);
+        mpz_fdiv_q(Z(temp), Z(temp), aip->q);
         mpz_root(Z(temp), Z(temp), x - 1);
         if (!mpz_fits_ulong_p(Z(temp)))
             return;
         ulong pmin = mpz_get_ui(Z(temp));
-        if (plow < pmin - 1)
-            plow = pmin - 1;
+        if (plow < pmin)
+            plow = pmin;
     }
 
     mpz_divexact(Z(w1_m), prev_level->aq, aip->q);
