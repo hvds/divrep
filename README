@@ -249,6 +249,16 @@ walked, using the cost of a walk per iteration learnt during the run.
 That covers every loop where no square is fixed, unless a flip may
 follow (tau 2q^2 for an odd prime q). The gain then applies only to
 what is left.
+"-ja2" also chooses the next position to which to allocate by estimated
+cost, instead of by the strategy, in the same places, wherever the node
+is not too cheap for the choice to pay: walking now is weighed against
+recursing over each eligible position, with every resulting case walked.
+The strategy remains the choice where the costs cannot be estimated
+(when a flip may follow); it is not supported with "-js". The estimates
+are corrected as the run proceeds by the costs measured for the choices
+made. Since the choices then depend on costs learnt during the run,
+progress lines (315) mark each position chosen against the strategy, so
+that recovery can reproduce it.
 
 The costs "-ja" learns are counted rather than timed, so that identical
 runs make identical choices, whatever else the machine is doing: walk
@@ -280,12 +290,12 @@ In a build with VERBOSE=1, "-dv<bits>" selects instrumentation, as the
 sum of: 1 for a trace of the recursion, walks and factoring tests to
 stdout; 2 for records of each gate decision, recursion loop and walk
 (and more) to the file named by $GATE_STATS (default gate_stats.log); 4
-to add, with 2, the time spent in each stage of a walk's tests; 16 and
-32 for records of test preparations and of the run's counted costs, to
-the same file. See trace.h and trace.c. The default is none, and the
-build is then only a few percent slower than a normal one. The same
-build runs the benchmarks behind the cost tables of multibench-table
-(see bench.c).
+to add, with 2, the time spent in each stage of a walk's tests; 8, 16
+and 32 for records of -ja2's choices, of test preparations and of the
+run's counted costs, to the same file. See trace.h and trace.c. The
+default is none, and the build is then only a few percent slower than a
+normal one. The same build runs the benchmarks behind the cost tables of
+multibench-table (see bench.c).
 
 <n> and <k> are mandatory arguments, specifying that we want to search
 for D(n, k) (equivalently T(n/2, k) in the terminology of A292580).

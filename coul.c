@@ -3537,7 +3537,8 @@ static void walk_v(t_level *cur_level, mpz_t start) {
  * iterations, or if that is below 1, one iteration with that chance, the
  * sums over primes in closed form. At the leaf recursion that estimate
  * is right (actual/estimated 0.84-1.07 on D(96,8), D(48,10)); higher up
- * it overestimates recursion, so the estimate is scaled by GR_RSCALE.
+ * it overestimates recursion, so the estimate is scaled by GR_RSCALE
+ * (-ja2 learns the scale instead, see ja_rsize()).
  * The cost per iteration is learnt per level from 1 in GR_SAMPLE of the
  * walks made, by the cost counted for each (see gr_clock()).
  */
@@ -3645,10 +3646,31 @@ static double gr_cit(uint L) {
     return GR_DEFIT;
 }
 
-/* the number of primes up to x, estimated */
+/* The number of primes up to x: exact below GR_PIMAX, where the
+ * asymptotic estimate is poor (and not even increasing).
+ */
+#define GR_PIMAX 10000
+static uint *gr_pi = NULL;
 static double gr_li(double x) {
     if (x < 2)
         return 0;
+    if (x < GR_PIMAX) {
+        if (!gr_pi) {
+            gr_pi = calloc(GR_PIMAX, sizeof(uint));
+            char *comp = calloc(GR_PIMAX, 1);
+            uint c = 0;
+            for (uint i = 2; i < GR_PIMAX; ++i) {
+                if (!comp[i]) {
+                    ++c;
+                    for (uint j = i * i; j < GR_PIMAX; j += i)
+                        comp[j] = 1;
+                }
+                gr_pi[i] = c;
+            }
+            free(comp);
+        }
+        return gr_pi[(uint)x];
+    }
     double l = log(x);
     return x / l * (1 + 1 / l + 2 / (l * l));
 }
@@ -3693,16 +3715,20 @@ static inline double gr_wcost(t_level *lv) {
 }
 
 /* -ja1: walk the node at prev_level now, rather than recurse over
- * p^{x-1} for p in [p, cap]?
+ * p^{x-1} for p in [p, cap]? Walking is estimated to cost w0; rw and
+ * rr correct the estimates of walking and recursing.
  */
-static bool gr_walk(t_level *prev_level, ulong p, ulong cap, uint x) {
+static bool gr_walk(
+    t_level *prev_level, ulong p, ulong cap, uint x, double w0, double rw,
+    double rr
+) {
     if (cap < p)
         return 0;
-    double W = gr_wcost(prev_level);
+    double W = w0 * rw;
     /* quick answer when the walk costs less than trying the primes */
     if (W < (gr_li(cap) - gr_li(p) + 1) * GR_APPLY)
         return 1;
-    return W < gr_recurse(prev_level, p, cap, x) * GR_RSCALE;
+    return W < gr_recurse(prev_level, p, cap, x) * rr;
 }
 
 /* test the case where v_i has all divisors accounted for */
@@ -4617,9 +4643,8 @@ static inline bool kern_batch(void) {
 
 /* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
  * applies to: walk_midp() has tried each prime up to kern_b as the odd
- * power, limit_unforced_x() refuses the rest, and with the squares left
- * to the walk a strategy would otherwise loop over p^1 wherever else it
- * could.
+ * power, classify_x() refuses the rest, and with the squares left to the
+ * walk a strategy would otherwise loop over p^1 wherever else it could.
  */
 static inline bool kern_highpow(void) {
     return highpow && !kern_batch();
@@ -5764,6 +5789,355 @@ typedef enum {
     PUX_DO_THIS_X
 } e_pux;
 
+/* The outcomes of classify_x() */
+typedef enum {
+    XR_WALK = 0,    /* no p: the node must be walked */
+    XR_SKIP,        /* nothing to do for this x */
+    /* Nothing to do for this x, and the rest of the loop above is best
+     * done by run_flip_pqsq().
+     */
+    XR_FLIP,
+    XR_WALK1,       /* the range is for walk_1_set(): v_i is then complete */
+    XR_RANGE        /* the range is for a loop of allocations */
+} e_xr;
+
+/* Classify the range of primes after p up to limp (from limit_p()) for
+ * which to allocate p^{x-1} at v_i below prev_level. This has no side
+ * effects, so can also be used to cost the choices.
+ */
+e_xr classify_x(t_level *prev_level, uint vi, uint x, ulong p, ulong limp) {
+    uint nextt = value[vi].alloc[cur_vlevel[vi] - 1].t / x;
+
+    /* under -k walk_midp() has tried every such power that can apply */
+    if (!(x & 1) && kern_at(vi))
+        return XR_SKIP;
+    if (limp == 0)
+        return XR_WALK;
+    if (limp < p) {
+        /* If tau at the previous level is 2z^2 and its current prime is
+         * already too high to split as (z, z, 2) then we can not only
+         * skip this z but also profitably invert the process for the
+         * remainder, splitting as (2z, z) rather than (z, 2z). That holds
+         * for any z that can_flip(), prime or not, except where -k applies.
+         */
+        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
+                && can_flip(x) && !kern_at(vi))
+            return XR_FLIP;
+        return XR_SKIP; /* nothing to do here */
+    }
+    return (nextt == 1) ? XR_WALK1 : XR_RANGE;
+}
+
+/* -ja2 learns the actual cost of what it chose against the estimate, in
+ * four parts: walking the node, walk_1_set(), recursing, and recursing
+ * where a square is left. A walk is timed whole, and a position chosen
+ * one x at a time, each x being of a single part. The estimates are
+ * then corrected by the ratios found.
+ * Walking and walk_1_set() are off by small factors, learnt per level.
+ * Recursing is estimated as if every child walks, which is about right
+ * for the smallest nodes and far too high for the rest, by a factor
+ * that depends on the size of the node and hardly on its level: on
+ * D(96,4) -j4 -x1e16 actual/estimated was 0.6 for nodes that would cost
+ * 0.1-1ms to walk, 0.06 at 0.1-1s and 0.004 at 1000s, and nodes of all
+ * those sizes share a level. So those two parts are learnt by the
+ * node's estimated cost to walk, in bands of a factor of 8 from
+ * 2^JA_BLOW seconds.
+ * Each ratio starts from JA_PRIOR seconds of evidence at a prior ratio:
+ * 1 per level; and by size, 1 up to band JA_BFULL, then JA_BDECAY of
+ * the ratio in use for the band below, so that what is learnt of small
+ * nodes carries up to the large ones. The first of those are chosen
+ * with no evidence, yet cost the most; and recursing where walking was
+ * cheaper costs little, since each child chooses again and may walk,
+ * while walking where recursing was cheaper can cost far more (D(64,3)
+ * -j4 -x1e15: 29s walking at level 1, 0.1s recursing).
+ * The -ja1 gate learns nothing, and scales its estimate of recursing
+ * by GR_RSCALE throughout.
+ */
+#define JA_PRIOR 1e-3
+#define JA_WALK 0
+#define JA_W1 1
+#define JA_LPARTS 2     /* the parts learnt by level come first */
+#define JA_RECURSE 2
+#define JA_SQUARE 3
+#define JA_PARTS 4
+#define JA_NB 24
+#define JA_BLOW (-36)
+#define JA_BFULL 7
+#define JA_BDECAY 0.4
+static double ja_A[GR_MAXL][JA_LPARTS], ja_E[GR_MAXL][JA_LPARTS];
+static double ja_SA[JA_NB][JA_PARTS - JA_LPARTS];
+static double ja_SE[JA_NB][JA_PARTS - JA_LPARTS];
+/* the ratios in use by size, and whether they need recalculating */
+static double ja_SR[JA_NB][JA_PARTS - JA_LPARTS];
+static bool ja_stale = 1;
+/* the ratios in use at the node being costed */
+static double ja_rr = 1, ja_rs = 1, ja_r1 = 1;
+/* The raw estimate and part for each x, of the last position costed and
+ * of the best so far.
+ */
+static uint ja_nd = 0;
+static double *ja_cx, *ja_bx;
+static unsigned char *ja_cp, *ja_bp;
+
+/* the ratio for walking or walk_1_set() at level L */
+static inline double ja_ratio(uint L, uint part) {
+    if (L >= GR_MAXL)
+        return 1;
+    return (ja_A[L][part] + JA_PRIOR) / (ja_E[L][part] + JA_PRIOR);
+}
+
+/* the band of a node estimated to cost w to walk */
+static inline uint ja_band(double w) {
+    int b = (ilogb(w) - JA_BLOW) / 3;
+    return (b < 0) ? 0 : (b >= JA_NB) ? JA_NB - 1 : b;
+}
+
+/* The ratio for recursing (part JA_RECURSE or JA_SQUARE) from a node
+ * estimated to cost w to walk.
+ */
+static double ja_rsize(uint part, double w) {
+    if (ja_stale) {
+        for (uint s = 0; s < JA_PARTS - JA_LPARTS; ++s)
+            for (uint b = 0; b < JA_NB; ++b) {
+                double r0 = (b <= JA_BFULL) ? 1
+                        : ja_SR[b - 1][s] * JA_BDECAY;
+                ja_SR[b][s] = (ja_SA[b][s] + JA_PRIOR * r0)
+                        / (ja_SE[b][s] + JA_PRIOR);
+            }
+        ja_stale = 0;
+    }
+    return ja_SR[ja_band(w)][part - JA_LPARTS];
+}
+
+/* Learn from a choice at level L, at a node estimated to cost w to
+ * walk, of a part estimated to cost est that cost dt.
+ */
+static inline void ja_learn(
+    uint L, uint part, double w, double est, double dt
+) {
+    if (est <= 0)
+        return;
+    if (part >= JA_LPARTS) {
+        uint b = ja_band(w);
+        ja_SA[b][part - JA_LPARTS] += dt;
+        ja_SE[b][part - JA_LPARTS] += est;
+        ja_stale = 1;
+    } else if (L < GR_MAXL) {
+        ja_A[L][part] += dt;
+        ja_E[L][part] += est;
+    }
+}
+
+/* the walk chosen at lp is done: learn from its cost */
+static void ja_learnt(t_level *lp) {
+    ja_learn(lp->level - 1, JA_WALK, lp->ja_ew, lp->ja_ew,
+            gr_clock() - lp->ja_t0);
+    lp->ja_t0 = 0;
+}
+
+/* the current x of the position chosen at lp is done: learn from it */
+static void ja_learnx(t_level *lp) {
+    uint di = lp->di;
+    if (di < ja_nd)
+        ja_learn(lp->level - 1, lp->ja_xp[di], lp->ja_w, lp->ja_ex[di],
+                gr_clock() - lp->ja_xt0);
+}
+
+#define JA_MIN_WALK 100e-6  /* least cost of walking, to choose by cost */
+#define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
+#define JA_W1T 2e-6         /* walk_1_set(), per prime reaching its tests */
+/* -ja2: the estimated cost of choosing position vi at the node at
+ * prev_level, recursing over every x of t_i with every resulting case
+ * walked, as for the -ja1 gate, corrected by the ratios learnt. Returns
+ * HUGE_VAL if some x would walk the node (so walking it now is cheaper),
+ * or stops early once past bound; sets *blind if some x is outside the
+ * model (where the loop above may flip), when the result is meaningless.
+ */
+static double ja_cost(
+    t_level *prev_level, t_level *cur_level, uint vi, double bound,
+    bool *blind
+) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    uint ti = ap->t;
+    t_divisors *dp = &divisors[ti];
+    double total = 0;
+    *blind = 0;
+    /* all, since the level's x index can pass the last x of this t */
+    memset(ja_cx, 0, ja_nd * sizeof(double));
+    for (uint di = 0; di < dp->highdiv; ++di) {
+        uint x = dp->div[di];
+        uint nextt = ti / x;
+        if (done_in_reverse(vi, x, nextt))
+            continue;
+        ulong p = start_p(vi, x);
+        ulong limp = limit_p(cur_level, vi, x, nextt);
+        switch (classify_x(prev_level, vi, x, p, limp)) {
+          case XR_WALK:
+            return HUGE_VAL;
+          case XR_SKIP:
+            continue;
+          case XR_FLIP:
+            *blind = 1;
+            return 0;
+          case XR_WALK1: {
+            /* About 1 in m of the primes pass the check mod m = aq / q_i
+             * to reach the tests.
+             */
+            double m = mpz_get_d(prev_level->aq) / mpz_get_d(ap->q);
+            double c1 = (gr_li(limp) - gr_li(p) + 1)
+                    * (JA_W1S + JA_W1T / (m < 1 ? 1 : m));
+            ja_cx[di] = c1;
+            ja_cp[di] = JA_W1;
+            total += c1 * ja_r1;
+            break;
+          }
+          case XR_RANGE: {
+            ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+            if (ti == 2 * x * x && can_flip(x)) {
+                *blind = 1;
+                return 0;
+            }
+            /* Leaving a square, the children are costed as if they did
+             * not, which overestimates them, but learning corrects that
+             * by a ratio of its own.
+             */
+            bool sq = ((ti / x) & 1) && !(ti & 1);
+            if (cap > p) {
+                double cr = gr_recurse(prev_level, p, cap, x);
+                ja_cx[di] = cr;
+                ja_cp[di] = sq ? JA_SQUARE : JA_RECURSE;
+                total += cr * (sq ? ja_rs : ja_rr);
+            }
+            break;
+          }
+        }
+        if (total >= bound)
+            return total;
+    }
+    return total;
+}
+
+/* keep the estimates by x of the last position costed as the best */
+static inline void ja_swap(void) {
+    double *x = ja_cx;
+    ja_cx = ja_bx;
+    ja_bx = x;
+    unsigned char *p = ja_cp;
+    ja_cp = ja_bp;
+    ja_bp = p;
+}
+
+/* true if positions vi and vj are alike, so cost the same */
+static inline bool ja_alike(uint vi, uint vj) {
+    t_allocation *ai = &value[vi].alloc[cur_vlevel[vi] - 1];
+    t_allocation *aj = &value[vj].alloc[cur_vlevel[vj] - 1];
+    return ai->t == aj->t && ai->p == aj->p && ai->x == aj->x
+            && maxforce[vi] == maxforce[vj] && mpz_cmp(ai->q, aj->q) == 0;
+}
+
+/* -ja2: given the strategy's choice sv of position at the node at
+ * prev_level, return the position to choose by estimated cost, or
+ * BV_WALK to walk the node now. Walking costs W whichever position is
+ * chosen, and recursing over some x then walking is never cheaper, so
+ * the choice is between walking and recursing over every x of some
+ * position: W is a bound any position must beat. On equal cost, the
+ * least position is chosen. Positions the model cannot cost stay
+ * unchosen, unless the strategy chose one, when its choice stands.
+ * Where walking would cost less than JA_MIN_WALK the strategy's choice
+ * stands too, and nothing is learnt: weighing a position costs about
+ * 1us (an integer root and a sum over primes for each x), and below
+ * there the choice saves less than that.
+ * With just -dv8 (and -ja1), it reports the choice without making it.
+ */
+uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
+    uint L = prev_level->level;
+    if (!ja_nd) {
+        ja_nd = divisors[n].alldiv;
+        ja_cx = malloc(ja_nd * sizeof(double));
+        ja_bx = malloc(ja_nd * sizeof(double));
+        ja_cp = malloc(ja_nd);
+        ja_bp = malloc(ja_nd);
+    }
+    double W0 = gr_wcost(prev_level);
+    double W = W0 * ja_ratio(L, JA_WALK);
+    /* not worth choosing: leave it to the strategy and the gate */
+    if (W < JA_MIN_WALK && auto_level >= 2)
+        return sv;
+    ja_rr = ja_rsize(JA_RECURSE, W0);
+    ja_rs = ja_rsize(JA_SQUARE, W0);
+    ja_r1 = ja_ratio(L, JA_W1);
+    bool blind, sblind;
+    double sT = ja_cost(prev_level, cur_level, sv, HUGE_VAL, &sblind);
+    uint best = sv, nblind = 0, neval = 1;
+    double bT = sT;
+    ja_swap();
+    if (sblind)
+        goto done;
+    if (W <= bT) {
+        best = BV_WALK;
+        bT = W;
+    }
+    for (uint vi = 0; vi < k; ++vi) {
+        if (vi == sv)
+            continue;
+        t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+        uint ti = ap->t;
+        /* eligible as for the strategies */
+        if (divisors[ti].high <= (kern_highpow() ? 1 : 2))
+            continue;
+        if ((ti & 1) && (kern_batch()
+                || (need_maxp && divisors[ti].alldiv == 2)))
+            continue;
+        if (kern_passed(vi))
+            continue;
+        /* A position alike to one before it (or to the strategy's
+         * choice) cannot improve on it.
+         */
+        bool seen = ja_alike(vi, sv);
+        for (uint vj = 0; !seen && vj < vi; ++vj)
+            if (ja_alike(vi, vj))
+                seen = 1;
+        if (seen)
+            continue;
+        ++neval;
+        double T = ja_cost(prev_level, cur_level, vi, bT, &blind);
+        if (blind) {
+            ++nblind;
+            continue;
+        }
+        if (T < bT || (T == bT && best < BV_SPECIAL && vi < best)) {
+            best = vi;
+            bT = T;
+            ja_swap();
+        }
+    }
+  done:
+    /* time what was chosen by cost: a walk whole, a position by x */
+    if (auto_level >= 2 && !sblind) {
+        if (best == BV_WALK) {
+            cur_level->ja_ew = W0;
+            cur_level->ja_t0 = gr_clock();
+        } else {
+            if (!cur_level->ja_ex) {
+                cur_level->ja_ex = malloc(ja_nd * sizeof(double));
+                cur_level->ja_xp = malloc(ja_nd);
+            }
+            memcpy(cur_level->ja_ex, ja_bx, ja_nd * sizeof(double));
+            memcpy(cur_level->ja_xp, ja_bp, ja_nd);
+            cur_level->ja_w = W0;
+            cur_level->ja_on = 1;
+        }
+    }
+#ifdef VERBOSE
+    if (VB(VB_CHOICE))
+        fprintf(gs_file(), "J %u %u %.4g %u %.4g %d %.4g %u %u %u\n",
+                L, strategy, W * 1e6, sv, sblind ? -1.0
+                : sT * 1e6, best < BV_SPECIAL ? (int)best : -1, bT * 1e6,
+                neval, nblind, auto_level);
+#endif
+    return (auto_level >= 2) ? best : sv;
+}
+
 /* Most primes tried by a loop of allocations are rejected for giving a
  * least v_0 = rq + mult.aq > zmax, with mult the multiple the CRT finds:
  * that is, for mult > floor((zmax - rq) / aq), which is the same for
@@ -5874,15 +6248,11 @@ static inline bool reject_single(
 e_pux limit_unforced_x(
     t_level *prev_level, t_level *cur_level, ulong p, ulong limp, bool fresh
 ) {
-    uint ti = cur_level->ti;
-    uint x = divisors[ti].div[cur_level->di];
+    uint x = divisors[cur_level->ti].div[cur_level->di];
     uint vi = cur_level->vi;
-    uint nextt = ti / x;
 
-    /* under -k walk_midp() has tried every such power that can apply */
-    if (!(x & 1) && kern_at(vi))
-        return PUX_SKIP_THIS_X;
-    if (limp == 0) {
+    switch (classify_x(prev_level, vi, x, p, limp)) {
+      case XR_WALK:
         /* force walk */
         GS_ORIGIN('F');
 #ifdef SQONLY
@@ -5892,41 +6262,36 @@ e_pux limit_unforced_x(
         walk_v(prev_level, Z(zero));
 #endif
         return PUX_NOTHING_TO_DO;
-    }
-    if (limp < p) {
-        /* If tau at the previous level is 2z^2 and its current prime is
-         * already too high to split as (z, z, 2) then we can not only
-         * skip this z but also profitably invert the process for the
-         * remainder, splitting as (2z, z) rather than (z, 2z). That holds
-         * for any z that can_flip(), prime or not, except where -k applies.
+      case XR_SKIP:
+        return PUX_SKIP_THIS_X;
+      case XR_FLIP:
+        return PUX_FLIP_PQSQ;
+      case XR_WALK1:
+        /* TODO: rather than diverting odd-prime-tau positions to a walk
+         * under need_maxp, consider handling them always via walk_1_set(),
+         * as the uncapped search does. That would mean not applying the
+         * maxp cap in limit_p() when nextt == 1 with t prime (so
+         * walk_1_set() covers every p itself, even under -W/-p), and
+         * removing the "skip prime powers when capped" checks from
+         * best_v0() .. best_v4() and best_fixed(); prep_midp() skip would
+         * remain valid, and capped and uncapped runs would then choose
+         * positions identically. Correctness should be unaffected, but
+         * performance would change in both directions: walk_1_set() does
+         * a CRT check for every prime up to (zmax/q)^{1/(t-1)}, while a
+         * square walk visits only the rc residue classes mod qq.
+         * Note also that this path is taken before the gate, so
+         * walk_1_set() is never weighed against a walk. Ideally the cost
+         * model would make that choice, as the gate does for walk vs
+         * recurse.
+         * This probably needs more progress on calibration before we
+         * consider it.
          */
-        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
-                && can_flip(x) && !kern_at(vi))
-            return PUX_FLIP_PQSQ;
-        return PUX_SKIP_THIS_X; /* nothing to do here */
-    }
-    /* TODO: rather than diverting odd-prime-tau positions to a walk under
-     * need_maxp, consider handling them always via walk_1_set(), as the
-     * uncapped search does. That would mean not applying the maxp cap in
-     * limit_p() when nextt == 1 with t prime (so walk_1_set() covers every p
-     * itself, even under -W/-p), and removing the "skip prime powers when
-     * capped" checks from best_v0() .. best_v4() and best_fixed();
-     * prep_midp() skip would remain valid, and capped and uncapped runs
-     * would then choose positions identically. Correctness should be
-     * unaffected, but performance would change in both directions:
-     * walk_1_set() does a CRT check for every prime up to (zmax/q)^{1/(t-1)},
-     * while a square walk visits only the rc residue classes mod qq.
-     * Note also that the nextt == 1 path in prep_unforced_x() is taken
-     * before the gate, so walk_1_set() is never weighed against a walk.
-     * Ideally the cost model would make that choice, as the gate does
-     * for walk vs recurse.
-     * This probably needs more progress on calibration before we consider it.
-     */
-    if (nextt == 1) {
         cur_level->have_min = prev_level->have_min;
         /* a recovered p is the one in progress, so still to try */
         walk_1_set(prev_level, cur_level, vi, fresh ? p : p - 1, limp, x);
         return PUX_SKIP_THIS_X;
+      case XR_RANGE:
+        break;
     }
     return PUX_DO_THIS_X;
 }
@@ -5991,8 +6356,16 @@ bool gate_walk(
      * p^{q-1}), or with a square fixed, which keep the gain.
      */
     if (auto_level && !prev_level->have_square
-            && !(ti == 2 * x * x && can_flip(x)))
-        do_walk = gr_walk(prev_level, p, cap, x);
+            && !(ti == 2 * x * x && can_flip(x))) {
+        uint L = prev_level->level;
+        bool sq = ((ti / x) & 1) && !(ti & 1);
+        /* under -ja2, as corrected by what it has learnt */
+        double w0 = gr_wcost(prev_level);
+        double rw = (auto_level >= 2) ? ja_ratio(L, JA_WALK) : 1;
+        double rr = (auto_level >= 2)
+                ? ja_rsize(sq ? JA_SQUARE : JA_RECURSE, w0) : GR_RSCALE;
+        do_walk = gr_walk(prev_level, p, cap, x, w0, rw, rr);
+    }
     return do_walk;
 }
 
@@ -6688,9 +7061,23 @@ void recurse(e_is jump_continue) {
 
             if (cur_level->next_best)
                 goto walk_now;
+            cur_level->ja_on = 0;
             uint vi = best_v(cur_level);
             cur_level->choice_strategy = strategy;
             cur_level->unsorted = 0;
+            /* -ja2: choose by estimated cost (with -dv8, report the choice) */
+            if (vi < BV_SPECIAL && (auto_level >= 2
+#ifdef VERBOSE
+                        || (auto_level && VB(VB_CHOICE))
+#endif
+                    ) && !prev_level->have_square
+                    && strategy != STRATEGY_6X && strategy != STRATEGY_FIXED) {
+                uint sv = vi;
+                vi = ja_choose(prev_level, cur_level, vi);
+                if (vi == BV_WALK)
+                    goto walk_now;  /* not stable, so not next_best */
+                cur_level->unsorted = (vi != sv);
+            }
             if (vi >= BV_SPECIAL) {
                 switch (vi - BV_SPECIAL) {
                   default:
@@ -6744,9 +7131,13 @@ void recurse(e_is jump_continue) {
         if (VB(VB_GATE))
             gs_rec_end(level);
 #endif
+        if (cur_level->ja_on)
+            ja_learnx(cur_level);
         ++cur_level->di;
       have_unforced_x:
         {
+            if (cur_level->ja_on)
+                cur_level->ja_xt0 = gr_clock();
             if (cur_level->di >= divisors[cur_level->ti].highdiv)
                 goto derecurse;
             switch (prep_unforced_x(prev_level, cur_level)) {
@@ -6768,6 +7159,12 @@ void recurse(e_is jump_continue) {
         break;
       /* entry point, must set prev_level/cur_level before using */
       derecurse:
+        if (levels[level].ja_t0 > 0)
+            ja_learnt(&levels[level]);
+        if (levels[level].ja_on) {
+            ja_learnx(&levels[level]);
+            levels[level].ja_on = 0;
+        }
         levels[level + 1].next_best = 0;
         --level;
         if (level <= final_level)
@@ -7110,8 +7507,8 @@ int main(int argc, char **argv, char **envp) {
             else if (arg[2] == 'a') {
                 /* -ja<level>: automate choices by estimated cost */
                 auto_level = strtoul(&arg[3], NULL, 10);
-                if (auto_level != 1)
-                    fail("-ja: only -ja1 is supported so far");
+                if (auto_level < 1 || auto_level > 2)
+                    fail("-ja: only -ja1 and -ja2 are supported so far");
             } else if (arg[2] == 's') {
                 set_fixed_strategy(&arg[3]);
             } else {
@@ -7172,6 +7569,9 @@ int main(int argc, char **argv, char **envp) {
         ct_pprep_record = &gs_pprep_record;
     }
 #endif
+    /* -ja2 chooses positions, as -js does */
+    if (auto_level >= 2 && strategy == STRATEGY_FIXED)
+        fail("-ja2 is not supported with -js");
 
     init_post();
     if (opt_alloc & 2)
