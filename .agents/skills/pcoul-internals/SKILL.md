@@ -23,37 +23,30 @@ runs.
 ### Build
 
     git clone <this repo>
-    git clone https://github.com/hvds/Math-Prime-Util-GMP mpu-gmp
-    cd mpu-gmp && git checkout simpqs-full   # commit b363d69b10
+    git clone https://github.com/danaj/Math-Prime-Util-GMP mpu-gmp
+    cd mpu-gmp && git checkout v0.54   # commit 39982f872b
     apt-get install libgmp-dev   # or platform equivalent
-    make MPUGMP=/path/to/mpu-gmp MPUGMP_VER=2389dcbc44 pcoul
+    make MPUGMP=/path/to/mpu-gmp pcoul
 
-Confirmed working end-to-end with exactly this recipe (built `dpcoul`,
-ran a known test case from `t/t10init`, got the expected `f(6,3) =
-242`). Two things that aren't obvious from the Makefile alone:
-- **`danaj/Math-Prime-Util-GMP`'s current `master` does NOT contain the
-  pinned commit** (`2389dcbc44` and friends) - that history only
-  exists on **`hvds`'s own fork**, branch `simpqs-full`, whose tip
-  (`b363d69b10`) is the Makefile-comment-documented equivalent of
-  `2389dcbc44`. Cloning danaj's repo as the skill previously suggested
-  will fail to find the commit at all.
-- `MPUGMP_VER` must be passed explicitly (matching one of the
-  Makefile's recognised strings, e.g. `2389dcbc44`) even when checking
-  out the fork's hash directly - the Makefile keys its extra-source-file
+Confirmed working with exactly this recipe: `make MPUGMP=... dtest`
+then passes. Two things that aren't obvious from the Makefile alone:
+- The MPUGMP dependency is pinned to a specific commit, named by the
+  Makefile's default `MPUGMP_VER`: at present the v0.54 release. For
+  any other checkout `MPUGMP_VER` must be passed explicitly, matching
+  one of the strings the Makefile lists - it keys its extra-source-file
   logic (`lucas_seq.c`/`rootmod.c`/`random_prime.c` etc.) off this
   string, not off what's actually checked out, so a mismatch produces
   confusing linker errors (`undefined reference to lucas_seq` etc.)
   even though compilation itself succeeds cleanly.
+- To rebuild an older commit of this repo, check out the MPUGMP commit
+  that its own Makefile names as the default. Those are all in danaj's
+  repository, except `b363d69b10`, which is on hvds's fork (branch
+  `simpqs-full`) and is equivalent to `2389dcbc44`.
 
-The MPUGMP dependency is pinned to a specific commit because there was
-no official Math::Prime::Util / Math::Prime::Util::GMP release for several
-years. There have been releases in 2026, so catching up to those is
-a short-term target.  (see "Known sharp edges" below).
-
-For the full test suite (`make test`, runs t/t10init): also build the
--O0 debug binaries (`make dpcoul dpcaul dpcrul`), and ensure
-Math::GMP and Math::Prime::Util perl modules are installed (the test
-harness is Perl, separate from the C search program).
+For the test suite: `make test` uses the optimised binaries and
+`make dtest` the -O0 debug ones (`dpcoul dpcaul dpcrul`). Both run
+every file in `t/`, and need only core Perl modules. The soak tests
+there skip themselves unless asked for (`TEST_PELL=1`, `TEST_TAU=1`).
 
 For the Perl DB/harness layer (`ful`, `inject`, `report`, anything
 under `lib/Seq/`), on a fresh Debian/Ubuntu host `apt-get install
@@ -72,8 +65,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 ### File map
 
 - `coul.c` - the main search: CLI parsing, `main()`, the core
-  recursion (`recurse()`), the walk-vs-recurse gate
-  (`prep_unforced_x()`), the direct-walk implementation (`walk_v()`),
+  recursion (`recurse()`), the walk-vs-recurse gate (`gate_walk()`,
+  asked from `prep_unforced_x()`), the direct-walk implementation
+  (`walk_v()`),
   and several special-case accelerators (`-W`/`walk_midp()` for large
   primes, `run_flip_pqsq()` for a specific tau-factorization pattern).
 - `coultau.c` - "does n^e have exactly tau=t divisors?" testing,
@@ -113,15 +107,22 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 - **walk vs recurse**: at each point with remaining primes to
   allocate, the search can either recurse (try allocating another
   prime, branching further) or "walk" (fix everything else and
-  directly iterate candidate values). `prep_unforced_x()` estimates
-  the cost of walking (`r_walk`) to decide which is cheaper; this
+  directly iterate candidate values). `prep_unforced_x()` sets up a
+  fresh power x at a position: it finds the limit for p (`limit_p()`)
+  and asks `gate_walk()` whether a walk (whose cost it estimates as
+  `r_walk`) would be cheaper than recursing over those primes; this
   decision is evaluated extremely frequently (anticipated in the
   order of 10^12 times over the lifetime of the codebase),
   so correctness AND per-call cost of this
-  estimate both matter a lot. Forced-prime batch dispatch and
-  unforced/walk processing are cleanly separated: `limit_p()` (which
-  `prep_unforced_x()` consults for this decision) has exactly one call
-  site in the whole file, reached only *after* every forced prime's
+  estimate both matter a lot. **The decision is made once, at a fresh
+  x, and the search stays committed to it** until unwinding removes
+  the level: when a new candidate lowers the maximum, `recurse()` only
+  recalculates the limit of each level it returns to, and recovery
+  rebuilds a logged level without asking the gate. Both rely on what
+  `limit_p()` guarantees: a lower maximum never gives a greater limit
+  (0 stands for 2^64 or more). Forced-prime batch dispatch and
+  unforced/walk processing are cleanly separated: `limit_p()` is
+  reached only *after* every forced prime's
   own batch choice has already been made; `test_forcep()`/the forced-
   batch construction never calls `limit_p()`/`mintau()` at all - which
   batches exist for a given prime, and which one gets chosen, is
@@ -131,6 +132,23 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   `level_setp()` to the min bound and return if `!have_min`) - despite
   being defined hundreds of lines apart, so any similar extension point
   needs adding to all three, not just `walk_v()`.
+- **Order of powers at one position**: the powers p^{x-1} that make up
+  a position's tau are tried in a fixed order, so that each set of
+  them is searched once. The next x is always a multiple of the
+  highest prime dividing the tau still to place (`divisors[t].high`;
+  the choices are `div[0..highdiv)`). Among x with the same highest
+  prime they go in ascending order (`done_in_reverse()` skips the
+  rest), and equal x go in increasing order of p (`start_p()`).
+  **Powers of 2 are the exception**: recursion allocates them only
+  under *highpow* (`-j4`, or a fixed order `-js`), and then in
+  increasing order of p whatever the power. Anything that relies on
+  the ascending order must leave powers of 2 out, as `can_flip()` does.
+- **The flip (`run_flip_pqsq()`)**: once p^{z-1} has left tau 2z at a
+  position, and no q > p fits as q^{z-1}, the order above leaves only
+  [z, 2z] for this p and for every larger one. That is searched the
+  other way round, as q^{2z-1} then r^{z-1} with r >= p, which is
+  cheaper. z need not be prime, but not a power of 2. The flip ends
+  only the x = z branch of its level: later x there go on as usual.
 - **`mintau()`'s memoization is keyed purely by content, not tree
   position.** Its cache (`mint_base`, a lazily-grown `t_mint` trie
   indexed by `off` - the *gap* between consecutive available-prime
@@ -179,7 +197,10 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   *truncates* `forcedp` itself (`forcedp = fpi; break;`) rather than
   ever letting an entry have `count == 0` with more forced primes
   to follow - a higher prime that would have no real batches becomes
-  genuinely unforced instead. `prep_presquare()` (run
+  genuinely unforced instead. `forcedp` can end up 0 (k = 1, or k = 2
+  with 4 | n and no `-f`): the whole search is then one batch, `b0`,
+  and it still goes through `process_batch()`, since `-W`, `-a` and
+  the batch count all depend on that call. `prep_presquare()` (run
   once, before any of this) inserts that extra level - shifting where
   the chain starts by one - whenever some position needs an odd number
   of divisors (`target_t(vi) & 1`); for `TYPE_o` that's the same for
@@ -191,14 +212,33 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   forcedp` in absolute terms.
 - **-I / recovery patterns**: a textual format (`parse_305`) for
   pre-specifying or resuming specific prime allocations per position,
-  used both for `-I` (start from a specific point) and internal
-  recovery/resume logic. Recovery replays a forced batch by calling
+  used both for `-I` (start from a specific point) and for recovery
+  from a log (`-r`). Recovery replays a forced batch by calling
   `apply_batch()` directly from `insert_stack()`/`insert_forced()`,
   *not* through the normal `recurse()` loop - so it deliberately skips
-  the loop's own call to `process_batch()`, and `recurse()`'s `e_is`
-  jump value (`IS_DEEPER` vs `IS_MIDP`) is what tells it whether that
-  call still needs to happen fresh, or has already partly happened and
-  only needs resuming via `process_batch(cur_level, is_recover=1)`.
+  the loop's own call to `process_batch()`, and the `e_is` value that
+  `insert_stack()` returns tells `recurse()` where to pick up:
+  `IS_BATCH` when that call still has to be made (fresh, or to resume
+  a partial `walk_midp()`); `IS_RWALK`, `IS_6X` or `IS_FLIP` to resume
+  a walk, a 6X search or a flip; `IS_NEXT` or `IS_NEXTX` to move on
+  from the last allocation shown.
+- **Recovery and candidates**: the levels are rebuilt under the
+  maximum that held when the last progress line was written, because
+  under highpow the position chosen at a level can depend on the
+  maximum (a 315 line marks only the levels that `best_v()` would not
+  have reproduced at the time). So a candidate logged before that line
+  is applied first, and one logged after it - such as one copied in
+  from another shard - only once the stack is rebuilt; `prune_stale()`
+  then unwinds the levels it has ruled out. A run that stays committed
+  can also log an allocation which a candidate found beneath it has
+  since ruled out, and recovery resumes after that allocation
+  (`least_is_best()`, `limit_was_best()`). Recovery aims to honour
+  every line a run could have written; one it could not have written
+  may be refused with `fail()`. Do not lower `-x` by hand for a
+  recovery: under `-j4` or `-js` the levels can then be rebuilt in a
+  different order, and part of the search skipped without complaint.
+  To force the maximum down, append a `202 Candidate <v>` line to the
+  log instead.
 - **-h / roughness**: this can be manually set to specify a tau value
   (more precisely a `divisors[t].sumpm` value) that `coultau.c` should
   recognize as best resolved by trial factorization. In future this is
@@ -206,10 +246,20 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 - **Batches**: the outer recursion works through "batches" of forced-
   prime allocations (see `t_forcep`/`t_forcebatch`); `-a` and `-b`
   operate at this batch granularity, for sharding or inspecting specific
-  parts of a search. Note: some batches are handled immedately and thus
-  never listed, such as those that fully fix one value and those that
-  `have_square>=2` (Pell). To reach one directly, construct an explicit
-  `-I` pattern instead (see example below).
+  parts of a search. Note: some batches are handled immediately, and
+  are then neither counted nor listed: those that fully fix one value,
+  and those with `have_square>=2` (Pell). `-jp` (`defer_pell`) makes
+  the Pell ones wait for the full batch, so that `-a` lists them
+  (marked `[sq=2]` or more) and `-b` can run one; the batch ids are
+  then not those of a run without `-jp`. `-a4` lists the ones that fix
+  a value as well. A Pell case that needs an unforced allocation is
+  not a batch at all: to reach one, construct an explicit `-I` pattern
+  (see example below). A run that ends with no
+  candidate reports `406` (no valid arrangement of powers) only if no
+  batch was ever valid, in this process or in the log it recovered
+  from (`seen_valid`); otherwise, under `-dl`, it reports
+  `500 f(n, k) > max`. The harness records a 406 as the case being
+  impossible, so the two must not be confused.
 
 ### CLI flags (n/k are positional, and come AFTER all `-` options)
 
@@ -218,7 +268,22 @@ easy to confuse by mnemonic alone:
 
 - `-x<max>` / `-x<min>:<max>` (`set_minmax()`): the search bound - bare
   `-x<v>` means "search 0..v". This is the one to set to a specific
-  claimed value when re-confirming a result.
+  claimed value when re-confirming a result. The range is min < v_0 <=
+  max; min >= max is refused, which includes giving no `-x` at all.
+  Every walk starts at the first value above min, and `candidate()`
+  checks again.
+- `-X` (clears `improve_max`): do not lower the maximum when a
+  candidate is found, so that every solution in the range is reported.
+  The same value can then be reported more than once: that is
+  accepted, since avoiding it would cost more time than it saves.
+- `-j<n>` / `-js<v,v,...>` (`strategy`): how `best_v()` picks the
+  position to allocate at next; `-js` gives a fixed order. `-j4` and
+  `-js` set `highpow` (see "Order of powers" above). `-jp`
+  (`defer_pell`) is a separate switch, not a strategy (see "Batches"
+  above).
+- `-g<n>` (`gain`): tunes the walk-vs-recurse gate; a higher gain
+  means more recursion before walking. `-G<n>` sets it separately for
+  walks with a fixed square.
 - `-f<n>` (`force_all`): forces every prime `<= n` to be tracked as its
   own explorable batch (see "the tail" below) rather than allowing a
   synthetic catch-all tail batch for singleton cases.
@@ -233,6 +298,10 @@ easy to confuse by mnemonic alone:
   also unrelated to `-p` despite the mnemonic overlap.
 - `-a`/`-b`: batch selection (see "Batches" above).
 - `-I`: recovery/injection pattern (see "recovery patterns" above).
+- `-dw<n>` / `-dW<n>` / `-dL<n>` (debug): show every progress line
+  (`-dw` leaves out the steps of a walk, `-dW` includes them), or
+  write every one to the log (`-dL`), and stop after n of them if n
+  is given. The tests are built on these.
 
 `report_init()` echoes whichever of these were actually in effect back
 onto the log's `001` line (e.g. `-p<min>:<max>`, each `-m` entry, `-f`
@@ -265,11 +334,12 @@ actually used, more reliable than reconstructing it from other sources.
 
 ### Forced primes, batches, and the "tail" (forcep/forcebatch)
 
-- **`t_forcep`/`t_forcebatch`** (built by the function around coul.c:1900,
-  historically unnamed in comments - search for `forcep = malloc`): for
+- **`t_forcep`/`t_forcebatch`** (built by `prep_forcep()`): for
   each prime `p <= k`, the set of ways `p` could be allocated across
   positions is precomputed into a list of "batches" (`fp->batch[0..count)`).
-  `-a`/`-b` index into this list (see "Batches" above).
+  `-a`/`-b` index into this list (see "Batches" above). pcaul also
+  forces every prime dividing n: each divides every v_i or none, the
+  batches settle which, and it is never tried as an unforced prime.
 - Each batch has a `primary` position and a `x[]` array of per-position
   exponents-plus-one. `test_forcep()` classifies each candidate
   (vi, fx) as `TFP_BAD` (impossible), `TFP_SINGLE` (only one valid
@@ -292,10 +362,10 @@ actually used, more reliable than reconstructing it from other sources.
 
 ### Known sharp edges (durable, still true as of the last check)
 
-- **Math-Prime-Util-GMP pin is stale.** Catching up to a current
-  release would pull in newer helpers for free (e.g. a fast native
-  mulmod) and may let `pell.c`/`rootmod.c` be replaced or thinned
-  against better-tested upstream equivalents.
+- **Math-Prime-Util-GMP is pinned to its v0.54 release.** Its newer
+  helpers (e.g. a fast native mulmod) may let code here be replaced,
+  and `pell.c`/`rootmod.c` thinned against better-tested upstream
+  equivalents.
 - **`small_divmod()` (coul.c) and `simple_invert()` (rootmod.c)** both
   use full GMP bignum inversion (`mpz_invert`) for what is fundamentally
   a native 64-bit modular inverse, on paths called from every
@@ -312,7 +382,9 @@ actually used, more reliable than reconstructing it from other sources.
   comment - currently `tlim` silently keeps its earlier default in
   that case, which has not been reasoned through.
 - **Reproducing a `have_square>=2` (Pell) case for testing/
-  instrumentation**: since these never appear in `-a` batch listings,
+  instrumentation**: where forced primes alone give the two squares,
+  `-jp -a` lists the batch and `-jp -b<id>` runs it, e.g.
+  `./pcoul -jp -b0 -x1e6 30 4`. Where it takes an unforced allocation,
   use an explicit `-I` pattern with two positions forced to leave an
   ODD remaining divisor count each (so both need a square-completing
   factor), e.g. for a D(12,3) search:

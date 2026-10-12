@@ -6,7 +6,8 @@ description: hv's coding conventions, review record and delivery rules for divre
 
 Compiled by Claude from hv's review comments and decisions in earlier
 sessions on divrep (August to October 2026), and from a reading of master
-at ce8f669 (built against Math-Prime-Util-GMP v0.54, 39982f872b).
+at ce8f669 (built against Math-Prime-Util-GMP v0.54, 39982f872b). Added
+to at e638eab, after the recovery work of October 2026.
 
 Tags:
 - [firm]: hv stated it, or enforced it in review.
@@ -107,9 +108,23 @@ applied himself, so nothing here was ever stated about pull requests.
 - [firm] Rebuild derived state through the function that normally builds
   it. I restored a hidden level by copying fields; it had to be recreated
   with apply_single() so that .ti and .di were right.
-- [firm] Use what the tables already hold. flip_valid_tau() is
-  `return (t == 2*h*h) ? h : 0` with h = divisors[t].high; my version
-  called mpz_sqrt().
+- [firm] Use what the tables already hold, and add to them sooner than
+  search. flip_xs_tau() reads the x of a tau 2x^2 from
+  divisors[t / 2].sqrt. One version of mine called mpz_sqrt() and a
+  later one looped over x; hv was "unhappy with the loop" and asked
+  for the root directly, or "'square root, or 0 if not square' as
+  another field in divisors[]".
+- [firm] An mpz_t temporary in coul.c goes in the zstash (a `Z(name)`
+  entry), for every use after the stash is initialized, not in a local
+  with its own init and clear: fewer lines, and less to think about.
+- [firm] Avoid pointer arguments as a way to return extra results.
+  Where one cannot be avoided it is the first argument, and it must be
+  clear whether it is read-write or write-only.
+- [firm] Two related checks compare the same pair in the same order:
+  `mpz_cmp(zmin, zmax)` in both, not `mpz_cmp(zmax, zmin)` in one.
+  Reversing it is "an unnecessary confusion".
+- [firm] Nothing may depend on how qsort() orders equal elements:
+  Cygwin's differs from glibc's.
 - [inferred] One enum-dispatched state in place of parallel flags:
   have_rwalk became IS_RWALK, hv merged IS_MIDP into IS_BATCH and
   reordered insert_stack() to avoid repeated IS_DEEPER tests.
@@ -331,8 +346,24 @@ Series and delivery:
 
 Where hv accepted a "no": he asked for is_prime_ul() to come from
 coulfact.h; it could not be a static inline there because of its mpz_t
-temporary, I said so, and he left it. A reasoned refusal is fine; a
-silent one is not.
+temporary, I said so, and he left it. Likewise he asked whether a
+failed insert_forced() was "not more easily tested by the return
+value"; under -I that value also means the pattern has nothing
+further, I showed which tests then fail, and he left it. A reasoned
+refusal is fine; a silent one is not.
+
+Later additions:
+
+24. Asking the gate again after a candidate. I measured three options
+    and recommended re-deciding. hv: "my first instinct is that we
+    should stay committed to previous decisions, the same as we had
+    already decided for recovery", with calibrate as the place to
+    reassess. Small cases do not settle it: the one that matters is a
+    maximum of 10^120 and a first candidate at 10^118 after months of
+    work. Master now stays committed.
+25. How much to test is hv's call when a check is a side track. His
+    answers ranged from "worth doing light testing of" to "only for
+    targeted n at which we suspect the possibility of problems".
 
 ---
 
@@ -361,6 +392,17 @@ Search and logs:
   is a full search that finds nothing. Optimize and calibrate for that,
   on the requested zmax (as under -X).
 - [firm] Changing options across a recovery is not generally supported.
+  In particular -x is not lowered by hand: to force the maximum down,
+  a candidate line is added at the end of the log (pcoul-internals
+  SKILL.md, "Recovery and candidates").
+- [firm] The search stays committed to a choice between walking and
+  recursing until unwinding removes that level, as recovery does. The
+  cost model on calibrate is the place to reassess that, where the
+  cost of staying can be weighed against the cost of changing.
+- [firm] Recovery "should be aware of the cases that can legitimately
+  arise and aim to honour them". A line the run could not have written
+  need not be supported; a candidate line added by hand is supported
+  only at the end of the log.
 - [firm] Run with a range, `-x<min>:<max>`, not only a maximum.
 - [firm] 10^43 is not a large number here.
 - [firm] n = 2^x matters only as an extreme case; do not optimize for it
@@ -392,6 +434,16 @@ Tests:
   TEST_TAU), which also adds its program to the dependencies. Run as
   `TEST_TAU=1 make test`.
 - [firm] Tests make temporary files properly; no hard-coded /tmp.
+- [firm] A test starts close to the point it tests. hv finds one
+  fragile if it depends on a long run of earlier output staying the
+  same. Recovery from a log of a line or two is the usual way in, and
+  -dW<n> asks for no more lines than the test needs.
+- [firm] Where real cases are too rare to find, a test may use an
+  invented candidate or an edited line, and says so. hv on 6X resumes:
+  "It would be worth exercising this with invented candidates, I don't
+  think it is worth trying to locate real candidates."
+- [firm] t/t10init covers -I, recovery, and the two together. Each
+  group of tests is a sub called from the list at the top.
 - [firm] The tests target the Makefile's current default MPUGMP_VER
   (39982f872b at present), not a fixed sha.
 - [inferred] A test marked TODO is an expected failure that records a
@@ -502,6 +554,10 @@ Before saying it works:
   line.
 - [inferred] A change that could alter results is checked against known
   values, and `inject -yo -n` is the independent check of a value.
+- [inferred] A change to what is searched is compared value for value
+  (under -X, as sets) with a build that lacks it; a control build
+  whose change is known to lose values shows that the comparison can
+  fail.
 
 Reporting:
 
