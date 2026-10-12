@@ -108,7 +108,7 @@ The Makefile will typically build a binary called 'pcoul'. The standard
 way to run it is:
   pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
       [-g<damp:gain>] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
-      [-j<strategy>] [-ja<level>] [-k<bound>] [-K<count>] <n> <k>
+      [-j<strategy>] [-ja<level>] [-k<bound>|-ka] [-K<count>] <n> <k>
 
 On a Unix-like system you will usually invoke it as "./pcoul". On Windows
 you will usually invoke it as "pcoul" or as "pcoul.exe".
@@ -196,6 +196,36 @@ the special strategy for "2z^2" two places after a power of 2 can take
 is left to it, unless the search under "-k" is estimated to cost less.
 In a batch "-k" applies to, "-j4" and "-js" allocate no p^{2^z-1}.
 Default is not to do this.
+
+If "-ka" is specified, the bound of "-k" is chosen for each batch it
+applies to by estimated cost, along with the bound of "-W" and the count
+of "-K" unless those are given. Each choice is estimated by following
+the search of the batch in the abstract under "-ja1", which "-ka"
+implies. A batch is left without "-k" if it would take under 10ms to
+walk whole, or if no choice is estimated to cost less than that walk.
+The cost of walking a root is taken from the cost table, for a walk of
+the batch with the tau that would then be left at each position, if the
+table has rows for each tau to be tested (see multibench-table); else it
+is a fixed guess. The choice is shown on a line for the batch (203), as
+"[k=<bound>]" ("[k=0]" if "-k" is not to apply), "[W=<bound>]" if a
+sweep was chosen, "[K=<count>]", "[est=<seconds>]", and
+"[rootus=<microseconds>]" for the cost per root of walking the batch
+whole, if that came from the cost table. It is also logged with each
+progress line (in 316), and a recovered run continues the batch with
+what was logged rather than choosing again. With "-a" the choices are
+listed without running anything.
+
+If "-ap" is specified, it does as "-a" does, and after each batch that
+fixes exactly one square shows on a line (205) what the batch is
+estimated to cost: under "-k", with the bounds "-ka" chose or those
+given, the total in seconds and what it is made of (the pass, the
+sweep of "-W" and the rest of the search, with the nodes and the roots
+expected in all); under the special strategy for "2z^2", where that can
+take the batch ("6x"); and walked whole, which the search can always
+do, and may improve on by far. A last line (205) gives the total for
+the batches estimated under "-k", or else under that strategy, and the
+number of each kind. So "-ap" with "-ka" shows what its choices rest
+on, and with "-k", "-W" and "-K" what those would cost instead.
 
 "-p" and "-W" may also be specified in the form "100^2" rather than
 as a simple integer, in which case it expresses a limit on the
