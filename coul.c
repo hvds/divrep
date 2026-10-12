@@ -28,6 +28,7 @@
 #include "coulvec.h"
 #include "assume.h"
 #include "trace.h"
+#include "bench.h"
 
 /* from MPUG */
 #include "factor.h"
@@ -6933,7 +6934,13 @@ int main(int argc, char **argv, char **envp) {
         fail("wrong number of arguments");
     if (force_all > k)
         fail("require force_all <= k");
-    if (mpz_cmp(zmin, zmax) >= 0)
+#ifdef VERBOSE
+    char *bench_spec = getenv("MULTIBENCH");
+#else
+    char *bench_spec = NULL;
+#endif
+    /* a bench searches nothing, so needs no range */
+    if (!bench_spec && mpz_cmp(zmin, zmax) >= 0)
         fail("require min < max, not %Zu:%Zu", zmin, zmax);
 
     init_post();
@@ -6976,6 +6983,12 @@ int main(int argc, char **argv, char **envp) {
             check = 1;
     }
     prep_presquare();
+#ifdef VERBOSE
+    if (bench_spec) {
+        multibench(bench_spec);
+        return 0;
+    }
+#endif
 
     e_is jump = IS_DEEPER;
     /* If a pending candidate would leave an empty search range, apply now

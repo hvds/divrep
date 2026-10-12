@@ -94,6 +94,8 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
   walk_1_set(), flip and midp phase (trace.c). With -dv6 its clock
   reads inflate walks (~10% on D(48,10)); use it for structure and
   ratios, not absolute walk times.
+- $MULTIBENCH: benches of the tests and of the factoring ladder
+  (bench.c).
 
 ### Findings under a fixed gain (to 2026-09-25)
 
@@ -277,3 +279,9 @@ substantially, the calibrated options may no longer be optimal.
 - Build without PORTABLE (it is for distribution binaries).
 - Per-node comparisons across runs need the node set to be the same:
   pair by order only at levels whose parents decide identically.
+
+### Tried and dropped
+
+- rungbench, a standalone bench of single rungs of the ladder: its pq
+  mode built n = p*q, so multiplicity was 1 by construction and said
+  nothing of real inputs. The ladder bench in bench.c replaced it.
