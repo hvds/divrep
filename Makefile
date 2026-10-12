@@ -14,7 +14,7 @@ MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
     coulvec.c coulcost.c trace.c bench.c timings.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
-    coulvec.h coulcost.h trace.h bench.h coulint.h
+    coulvec.h types.h builtins.h coulcost.h mock.h trace.h bench.h coulint.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"
@@ -65,6 +65,12 @@ endif
 # (see trace.h), and the benches (see bench.c).
 ifdef VERBOSE
     DEFINES += -DVERBOSE
+endif
+# For calibration only: walks are replaced by their modelled cost (see
+# mock.h).
+ifdef MOCK
+    DEFINES += -DMOCK
+    COUL += mock.c
 endif
 # Optional optimization when lower bound for search is a significant
 # proportion of the upper bound.

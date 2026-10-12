@@ -91,8 +91,11 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   `prime_iterator_prev()`/`prev_prime_in_segment()` are this project's
   own addition on top of the imported forward-iteration code.
 - `coulcost.c` - the cost table (the file `timings`, built in as
-  `timings.c`, unless `$COST_TABLE` names another). See the
-  pcoul-calibration skill for all of the cost work.
+  `timings.c`, unless `$COST_TABLE` names another) and the models that
+  price tests and walks from it. See the pcoul-calibration skill for
+  all of the cost work.
+- `mock.c` - calibration-only stubs of the walks, compiled only with
+  `MOCK=1`. Never for a real search: no candidate is tested.
 - `trace.c` - instrumentation records, in a build with `VERBOSE=1`,
   chosen at run time with `-dv<bits>` (see `trace.h`).
 - `bench.c` - the benches behind the cost table (`$MULTIBENCH`), in the
