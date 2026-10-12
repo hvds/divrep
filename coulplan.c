@@ -49,6 +49,7 @@ uint gr_n[GR_MAXL];
 #define GQ_SETUP 1.7e-6
 #define GQ_PRIME 2.2e-6
 #define GQ_APPLY 0.5e-6
+#define GQ_ROOT 0.6e-6      /* per root taken by reject_square() */
 #define GQ_RSCALE 1.0
 #define GQ_DEFIT 1e-6       /* per root, until a level has samples */
 double gq_t[GR_MAXL], gq_i[GR_MAXL];
@@ -86,6 +87,7 @@ double cc_work(void) {
             + cc.w1s_prime * c[CM_W1SITER] + cc.w1s_check * c[CM_W1SCHECK]
             + cc.rec_prime * c[CM_CPRIME]
             + cc.rec_sq * (c[CM_CPRIMESQ] - c[CM_CPRIME])
+            + cc.rec_root * GQ_ROOT
             + cc.rec_applied * c[CM_CAPPLY]
             + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
@@ -275,6 +277,10 @@ static bool gr_walk(
  * their roots extended, and about half of those are then walked: all up
  * to the root of zl = zmax / aq, and above it only those giving a least
  * v_0 within zmax, each with chance zl / q^{x-1}.
+ * For q^2 against a square, reject_square() lets through only the half
+ * that can divide, each then walked, and once q^2 passes the greatest
+ * root only those with a root in range, each with chance 2.endr / q^2,
+ * at the cost of a root mod q for that half.
  */
 static double gq_recurse(t_level *prev_level, ulong p, ulong cap, uint x) {
     uint L = prev_level->level;
@@ -283,6 +289,21 @@ static double gq_recurse(t_level *prev_level, ulong p, ulong cap, uint x) {
     double ci = gq_cit(L + 1);
     double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
     double np = gr_li(b) - gr_li(a) + 1;
+    uint sql = cur_vlevel[sq0];
+    if (x == 3 && sqg[sql - 1] == 2) {
+        double endr = sqrt(mpz_get_d(zmax)
+                / mpz_get_d(value[sq0].alloc[sql - 1].q));
+        /* the scale that binds first, and where */
+        double c = (zl < 2 * endr) ? zl : 2 * endr, qc = sqrt(c);
+        double mA = (qc < b) ? qc : b, mB = (qc > a) ? qc : a;
+        double ns = (((mA > a) ? gr_li(mA) - gr_li(a) : 0)
+                + c * gr_psum(mB, b, s)) / 2;
+        double se = sqrt(endr), mR = (se > a) ? se : a;
+        double nr = (b > mR) ? (gr_li(b) - gr_li(mR)) / 2 : 0;
+        return np * GR_APPLY + nr * GQ_ROOT
+                + ns * (GQ_PRIME + GQ_APPLY + GQ_SETUP)
+                + ci * za * gr_psum(a, b, s);
+    }
     double ql = pow(zl, 1 / s);
     double mA = (ql < b) ? ql : b, mB = (ql > a) ? ql : a;
     double ns = ((mA > a) ? gr_li(mA) - gr_li(a) : 0)
