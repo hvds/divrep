@@ -1,8 +1,8 @@
 #ifndef COULINT_H
 #define COULINT_H
 
-/* Internals of coul.c shared with its helpers (trace.c, bench.c), not
- * needed by the other modules.
+/* Internals of coul.c shared with its helpers (coulcost.c, trace.c,
+ * bench.c), not needed by the other modules.
  */
 
 #include "coul.h"

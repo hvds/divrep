@@ -99,11 +99,15 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 - `prime_iterator.c` - adapted from Math::Prime::Util's C sources;
   `prime_iterator_prev()`/`prev_prime_in_segment()` are this project's
   own addition on top of the imported forward-iteration code.
+- `coulcost.c` - the cost table (the file `timings`, built in as
+  `timings.c`, unless `$COST_TABLE` names another). See the
+  pcoul-calibration skill for all of the cost work.
 - `trace.c` - instrumentation records, in a build with `VERBOSE=1`,
   chosen at run time with `-dv<bits>` (see `trace.h`).
-- `bench.c` - benches of the tests and of the factoring ladder
-  (`$MULTIBENCH`), in the same build.
+- `bench.c` - the benches behind the cost table (`$MULTIBENCH`), in the
+  same build.
 - `coulint.h` - internals of `coul.c` shared with those.
+- `multibench-table` (Perl) - makes a cost table for a machine.
 
 ### Key vocabulary / concepts
 
