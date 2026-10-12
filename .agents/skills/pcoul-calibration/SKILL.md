@@ -1,6 +1,6 @@
 ---
 name: pcoul-calibration
-description: How pcoul costs its own work - the cost table and the mocks - with what was measured and what was tried and dropped
+description: How pcoul costs its own work - the cost table, the mocks and calibrate - with what was measured and what was tried and dropped
 ---
 ## Calibration and cost models for pcoul
 
@@ -176,6 +176,15 @@ the walk, test and ladder models are right there, and the rest is in
 the leaf stubs (~5%) and striding (~3%). Mock runs vary ~4% run to run
 (stride samples), as do real ones.
 
+### calibrate
+
+Lists a range's batches (-a), groups them into strata by log10 of
+X = (zmax - zmin)/aq and fixed power, times 3 per stratum under each
+candidate setting with the mock, and predicts the full run; a
+coordinate search over -j, -g and -W. Since every setting runs on the
+same batches, differences between settings are far more precise than
+the absolute predictions.
+
 ### Findings under a fixed gain (to 2026-09-25)
 
 These were measured with the gain set by hand, from the gate's records
@@ -338,6 +347,27 @@ the flip also matters more) is not yet known.
 Calibration assumes no candidate lowers zmax during the run; if one does
 substantially, the calibrated options may no longer be optimal.
 
+### Why some of this is hard
+
+- The upper levels are discrete: forced primes, the first unforced
+  allocations, mintau exclusions and best_v()'s choices depend on the
+  path. Density arguments fail there, so they have to be enumerated
+  (the mock runs them for real).
+- Walk or recurse is a threshold, so the tree's shape changes abruptly
+  with the options. Estimates of whole subtrees compound their errors
+  with depth.
+- Walk costs depend on residues, not only sizes: inverse-filter pass
+  rates, fixed-power root counts, and where a loop starts failing on
+  rq > zmax. These are computed exactly per walk, not averaged.
+- The per-iteration cost of a walk varies with level and shape (0.9us
+  per root at level 2 against 1.8us at level 3 on D(90,4)), so it
+  cannot be borrowed between levels.
+- Factoring costs are heavy-tailed: rare inputs reach rungs costing
+  seconds to hours, so sampling needs weighting, and means need many
+  samples.
+- Costs step with limb count (at 65 bits a t=15 prep costs 2.4x that
+  at 64) and with QS parameters by decimal digits.
+
 ### Methodology lessons
 
 - LARGE_MIN (on by default in the Makefile) makes the gate use
@@ -365,6 +395,11 @@ substantially, the calibrated options may no longer be optimal.
 
 ### Tried and dropped
 
+- An analytic recursion estimator (lib/Calibrate, Mertens-style sums
+  per level): exact at the top decision, but 2-8x spread per batch on
+  D(12,9) and up to 49000x wrong on fixed-square batches.
+- batch-estimate (idealised recursion from batch records): 1.1-1.8x,
+  too slow for batches with huge X.
 - MOCK_LADDER (coulmock.c): a per-residual chain model of the ladder
   from Dickman's rho; superseded by the measured G rows.
 - In the leaf mock, stubbing rejected primes one by one: once
