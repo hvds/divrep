@@ -2146,7 +2146,7 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
         /* all moduli seen, so one must have a higher power of p */
         return TFP_BAD;
     /* with one modulus b left, v_i / p^e_i == -b (mod p) */
-    if (ispow2_u64(seen_same) && p == 2)
+    if (ispow2_u64(seen_same))
         fpb->fold = p - trailing_zeroes_u64(seen_same);
 
     if (unforce_all && p >= unforce_all && !seen_odd)

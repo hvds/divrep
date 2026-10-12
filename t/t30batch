@@ -16,6 +16,7 @@ if ($ENV{DEBUG}) {
 test_restrict();
 test_fixed();
 test_square_init();
+test_fold();
 
 done_testing();
 exit 0;
@@ -66,10 +67,34 @@ sub test_square_init {
     ], 'a square from -I keeps batches where 2^2 of 2^5 hits it');
 }
 
+sub test_fold {
+    # When the values with the primary's power p^e leave only one unit
+    # for v_primary / p^e (mod p), the batch fixes v_0 (mod p^{e+1}),
+    # as it always has for p = 2. The modulus listed shows it.
+    my $aq = aqs('pcoul', qw{ -x1e30 12 5 });
+    is($aq->{'2^5 3 2 . 2^2.3'}, 576,
+            '3 at v_1 and v_4 fixes v_0 (mod 3^2)');
+    is($aq->{'3 2^2 . 2.3^2 .'}, 72,
+            '3^2 only at v_3 fixes v_0 (mod 3^2) only');
+    # under pcaul, v_0 and v_3 differ by 3n = 2^2.3^2
+    $aq = aqs('pcaul', qw{ -x1e30 12 5 });
+    is($aq->{'3^2 3 3 3^2 3'}, 54,
+            'pcaul: 3^2 at v_0 and v_3 fixes v_0 (mod 3^3)');
+}
+
 # returns an arrayref of the batches listed, in order
 sub batches {
     my(@args) = @_;
     my @lines = `$prog -Ls0 -a @args 2>&1`;
     return [ map /^203 b\d+: (.*?)(?: \[sq=\d+\])?(?: \[rc=\d+\])? \[aq=/
             ? $1 : (), @lines ];
+}
+
+# returns a hashref of the modulus listed for each batch
+sub aqs {
+    my($name, @args) = @_;
+    my $p = $ENV{DEBUG} ? "d$name" : $name;
+    my @lines = `./$p -Ls0 -a @args 2>&1`;
+    return +{ map /^203 b\d+: (.*?)(?: \[sq=\d+\])? \[aq=(\d+)\]/
+            ? ($1 => $2) : (), @lines };
 }
