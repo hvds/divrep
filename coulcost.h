@@ -2,14 +2,27 @@
 #define COULCOST_H
 
 /* The cost table (see multibench-table) and the models built on it, in
- * every build. See coulcost.c.
+ * every build: -ja counts the cost of what a run does, and prices what
+ * it might do, from them. See coulcost.c.
  */
 
 #include "coul.h"
 
+/* The expected cost of tau_multi_run() on these values, or -1 without a
+ * cost table: in every build, for learning costs.
+ */
+extern double cm_ladder_cost(uint count, t_tm *tm);
+/* The same table's prices of the tests and its scalar costs, for
+ * counting the cost of what a run does.
+ */
+extern bool cm_have_table(void);
 extern const char cm_default_table[];   /* timings.c, from timings */
 extern const char *cm_table_sha(const char *section);
+extern double cm_price_prime(mpz_t n);
 extern double cm_const(uint which);
+extern double cm_prep_price(uint nbits, const t_ct_work *w);
+extern double cm_pprep_price(uint nbits, int res);
+extern double cm_ptest_price(uint nbits);
 enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
         CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
         CM_LINSETUP, CM_CAPPLY, CM_COUNT };
