@@ -11,9 +11,10 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   a2907ae3b7 (danaj master 2025-07-11)
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 MPUGMP_VER ?= 39982f872b
-COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c
-HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
-    coulvec.h types.h builtins.h
+COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
+    coulvec.c trace.c
+HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
+    coulvec.h trace.h coulint.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"
@@ -60,7 +61,8 @@ endif
 ifdef CHECK_OVERFLOW
     DEFINES += -DCHECK_OVERFLOW
 endif
-# Produces factorization debugging output to stdout.
+# Makes instrumentation available, selected at runtime with -dv<bits>
+# (see trace.h).
 ifdef VERBOSE
     DEFINES += -DVERBOSE
 endif
@@ -113,7 +115,7 @@ sq12 dsq12: Makefile sq12.c diag.c coultau.c coulfact.c prime_iterator.c diag.h 
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 # coul.h may need a type
-test_pell test_tau: DEFINES += -DTYPE_o
+test_pell test_tau ftest sq12 dsq12: DEFINES += -DTYPE_o
 
 # The tests from t/t50 on are soak tests, each of a program of its own:
 # they take longer, and are for when we have changed what they test. Each
