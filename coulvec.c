@@ -632,12 +632,12 @@ static inline void splice_sc(t_context *cx, uint m, uint sci) {
         }
 }
 
-/* sort by potency descending */
+/* sort by potency descending, then by modulus ascending */
 t_context *sortcx;
 int cmp_potency(const void *va, const void *vb) {
     uint a = *(uint *)va, b = *(uint *)vb;
     double pa = sortcx->vec[a]->potency, pb = sortcx->vec[b]->potency;
-    return (pa > pb) ? -1 : (pa < pb) ? 1 : 0;
+    return (pa > pb) ? -1 : (pa < pb) ? 1 : (a > b) - (a < b);
 }
 
 /* Pack vector for modulus ms into that for modulus md, given that md

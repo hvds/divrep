@@ -1,0 +1,93 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+
+use Test::More;
+use File::Temp ();
+our $type = 'o';
+my %PROG = (o => './pcoul');
+
+# Work done in a different order would number batches differently, and
+# would recover from the same log differently: so the order must not
+# depend on how the C library's qsort() orders equal elements. glibc keeps
+# them in input order, so on Linux these tests pass regardless; newlib
+# (Cygwin) does not once it sorts 7 or more elements, so each case here
+# sorts at least that many, with some equal.
+
+test_midp_order();
+
+done_testing();
+exit 0;
+
+sub test_midp_order {
+    # Under -p1000 the p^2 allocations at v_1, v_2, v_3 all have their
+    # range capped at 1000, so they sort equal.
+    my $args = [qw{ -x1e15 -W100 -p1000 120 4 }];
+    expect_recover(q{-W: positions with the same cap are tried in order},
+        $args, ['305 b0: 2^4.3^2 . 2 3 W(997,3,1): 3493149 / 3493149'],
+        'b0: 2^4.3^2 . 2 3 W(997,3,2)', 2,
+    );
+    expect_recover(q{-W: ... and on to the next p in the same order},
+        $args, ['305 b0: 2^4.3^2 . 2 3 W(997,3,3): 3493149 / 3493149'],
+        'b0: 2^4.3^2 . 2 3 W(991,3,1)', 2,
+    );
+}
+
+sub temp_log {
+    my($content) = @_;
+    my $fh = File::Temp->new;
+    print $fh "$_\n" for @$content;
+    $fh->close;
+    return $fh;
+}
+
+# Expect the $dw'th progress line after recovery (default the first).
+sub expect_recover {
+    my($legend, $args, $content, $expect, $dw) = @_;
+    my $fh = temp_log($content);
+    my $path = $fh->filename;
+    $dw ||= 1;
+    my $lines = run_test($type, [ "-dW$dw", "-r$path", @$args ], 1)
+            // return;
+    my $gotlines = $lines->{''};
+    if (!$gotlines) {
+        fail($legend);
+        diag_lines($lines);
+        return;
+    }
+    if ($gotlines->[-1] eq $expect) {
+        pass($legend);
+    } else {
+        fail($legend);
+        diag_lines($lines);
+        diag($_) for @$gotlines;
+    }
+    return;
+}
+
+sub diag_lines {
+    my($lines) = @_;
+    diag("saw log lines: @{[ join ', ', sort keys %$lines ]}");
+    return;
+}
+
+sub run_test {
+    my($type, $args, $loose) = @_;
+    my $prog = $PROG{$type} // die "No program for type '$type'";
+    if ($ENV{DEBUG}) {
+        $prog =~ s/pc/dpc/
+                or die "Could not munge program name '$prog'";
+    }
+    my %lines;
+    open my $PIPE, "$prog @$args |"
+            or die "Could not open '$prog @$args'";
+    while (<$PIPE>) {
+        chomp;
+        /^(\d+)/ ? push(@{ $lines{$1} }, $_)
+            : $loose ? push(@{ $lines{''} }, $_)
+            : diag($_);
+    }
+    close $PIPE;
+    return \%lines;
+}

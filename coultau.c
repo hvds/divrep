@@ -1101,7 +1101,8 @@ int taum_comparator(const void *va, const void *vb) {
         return -1;
     if (tma->t > tmb->t)
         return 1;
-    return mpz_cmp(tma->n, tmb->n);
+    int cmp = mpz_cmp(tma->n, tmb->n);
+    return cmp ? cmp : (tma->vi > tmb->vi) - (tma->vi < tmb->vi);
 }
 
 mpz_t *tm_factor(t_tm *tm) {

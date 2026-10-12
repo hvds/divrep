@@ -2927,15 +2927,16 @@ bool test_zother(mpz_t qq, mpz_t o, mpz_t ati, uint t) {
     return is_taux(Z(wv_cand), t, 1);
 }
 
-/* Sort need_prime by qq multiplier ascending */
+/* Sort need_prime by qq multiplier ascending, then by index */
 int prime_comparator(const void *va, const void *vb) {
     uint a = *(uint *)va;
     uint b = *(uint *)vb;
-    return mpz_cmp(wv_qq[a], wv_qq[b]);
+    int cmp = mpz_cmp(wv_qq[a], wv_qq[b]);
+    return cmp ? cmp : (a > b) - (a < b);
 }
 
 /* Sort need_other by tau (power of 2 ascending, then size ascending),
- * then by qq multiplier ascending
+ * then by qq multiplier ascending, then by index
  * TODO: if we implement trial division to higher levels to show
  * a given tau is not reachable, we may want tau by size descending.
  */
@@ -2953,14 +2954,17 @@ int other_comparator(const void *va, const void *vb) {
         return -1;
     if (oc_t[a] > oc_t[b])
         return 1;
-    return mpz_cmp(wv_qq[a], wv_qq[b]);
+    int cmp = mpz_cmp(wv_qq[a], wv_qq[b]);
+    return cmp ? cmp : (a > b) - (a < b);
 }
 
-/* Sort inverses by modulus ascending */
+/* Sort inverses by modulus ascending, then by value ascending */
 int inv_comparator(const void *va, const void *vb) {
     t_mod *a = (t_mod *)va;
     t_mod *b = (t_mod *)vb;
-    return (b->m < a->m) - (a->m < b->m);
+    if (a->m != b->m)
+        return (b->m < a->m) - (a->m < b->m);
+    return (b->v < a->v) - (a->v < b->v);
 }
 
 void walk_v(t_level *cur_level, mpz_t start) {
@@ -4143,11 +4147,18 @@ void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
     mintau_restricted_r(0, mint, t, r, ri);
 }
 
-/* order by maxp descending */
+/* Order by maxp descending, then by vi ascending, then x in the order
+ * of divisors[].div (cmp_high), which is the order prep_midp() pushes
+ * them. Midp recovery resumes by position in this list.
+ */
 int midpp_comparator(const void *va, const void *vb) {
     t_midpp *ma = (t_midpp *)va;
     t_midpp *mb = (t_midpp *)vb;
-    return (mb->maxp > ma->maxp) - (mb->maxp < ma->maxp);
+    if (ma->maxp != mb->maxp)
+        return (mb->maxp > ma->maxp) - (mb->maxp < ma->maxp);
+    if (ma->vi != mb->vi)
+        return (ma->vi > mb->vi) - (ma->vi < mb->vi);
+    return cmp_high(&ma->x, &mb->x);
 }
 
 /* Populate midpp[] with the capped min and max p for each possible
