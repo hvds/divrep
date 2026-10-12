@@ -1,0 +1,338 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+use lib 'lib';
+use Math::Prime::Util qw{ prev_prime };
+use POSIX qw{ WNOHANG };
+use H::Diag qw{ diag keep_diag };
+
+=head1 calibrate: choose pcoul options for a full run by sampling batches
+
+  calibrate [-c<pcoul>] [-t<table>] [-P<jobs>] [-s<samples>] [-T<secs>]
+          [-o<cache>] [-B<min>:<max>] [-f<F,...>] [-j<j,...>] [-g<g,...>]
+          [-W<W,...>] -x<min>:<max> n k [settings...]
+
+Predicts the CPU time of a full pcoul run for D(n, k) over the given
+range under each candidate setting of options, and reports the best. It
+uses a pcoul built with C<MOCK=1> (C<-c>, default F<./pcoul>) and the
+machine's cost table from multibench-table (C<-t>, default
+C<$COST_TABLE>), so that each batch runs deterministically and much
+faster than for real; predictions are in this machine's CPU seconds.
+
+For each -f value (default the largest prime <= k and the prime below
+it) the batches are listed with C<-a>, giving each one's size
+X = (max - min) / aq (the list depends only on -f, -x, n and k); C<-B>
+restricts them to that range of batch ids, eg to those a partly complete
+run has yet to do. They are grouped into strata by batch size X (by
+power of 10) and whether a fixed power is present, and I<samples>
+batches (default 3) are taken from each stratum, evenly spread through
+it. Each setting is run on each sampled batch with C<-b>, and the
+prediction for the full run is the sum over strata of the stratum's
+batch count times the mean time of its samples. The report gives the
+standard error of each prediction and, more usefully, of its difference
+from the best setting. Since every setting is timed on the same batches,
+comparisons between settings are much more precise than the absolute
+predictions.
+
+Settings are given as strings of pcoul options (quote each), eg
+C<'-j4 -g24'>. If none are given, a coordinate search is made over the
+lists given by C<-j>, C<-g> and C<-W> (defaults: -j4, gains
+24,32,48,64,96,128, no -W): starting from the first value of each, vary
+one option at a time over its list, keeping the best, until no change
+improves on it. A C<-W> value may include its own C<-Wx> options,
+separated by C<+>, eg C<-W100000+-Wx0^1>; "0" means no -W.
+
+While it runs, a progress line shows the setting being evaluated, how
+many of its batches are done, and the batches running with their elapsed
+times. A run that exceeds C<-T> seconds (default 600) of real time is
+killed, and counts as that many seconds, making the prediction a lower
+bound (shown with "+"). Heavy batches can take a long time even mocked,
+so C<-T> should be generous. Results are appended to the cache file
+(C<-o>, default F<calibrate-n-k.cache>), and runs already recorded there
+are not repeated, so it can be interrupted and restarted.
+
+The prediction is only as good as the mocks: with the fixed-power walks
+and walk_1_set() still partly real, it is weakest for n == 6 mod 12. If
+a candidate is found that significantly lowers the upper limit, the
+chosen options may no longer be optimal.
+
+=cut
+
+my($pcoul, $table, $jobs, $samples, $tlimit, $cache)
+        = ('./pcoul', $ENV{COST_TABLE}, 1, 3, 600, undef);
+my($range, @f, @j, @g, @W);
+my($bmin, $bmax) = (0, undef);
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    $pcoul = $1, next if $arg =~ /^-c(.+)$/;
+    $table = $1, next if $arg =~ /^-t(.+)$/;
+    $jobs = $1, next if $arg =~ /^-P(\d+)$/;
+    $samples = $1, next if $arg =~ /^-s(\d+)$/;
+    $tlimit = $1, next if $arg =~ /^-T(\d+)$/;
+    $cache = $1, next if $arg =~ /^-o(.+)$/;
+    $range = $1, next if $arg =~ /^-x(\S+:\S+)$/;
+    ($bmin, $bmax) = ($1 || 0, $2), next if $arg =~ /^-B(\d*):(\d*)$/;
+    @f = split(/,/, $1), next if $arg =~ /^-f([\d,]+)$/;
+    @j = split(/,/, $1), next if $arg =~ /^-j([\d,]+)$/;
+    @g = split(/,/, $1), next if $arg =~ /^-g([\d.,]+)$/;
+    @W = split(/,/, $1), next if $arg =~ /^-W(\S+)$/;
+    die "Unknown option '$arg'";
+}
+@ARGV >= 2 && defined($range)
+        or die "500 Usage: $0 [-c<pcoul>] [-t<table>] [-P<jobs>]"
+                . " [-s<samples>] [-T<secs>] [-o<cache>] [-B<min>:<max>]"
+                . " [-f<F,...>] [-j<j,...>] [-g<g,...>] [-W<W,...>]"
+                . " -x<min>:<max> n k [settings...]";
+my($n, $k, @settings) = @ARGV;
+my($rmin, $rmax) = split /:/, $range;
+defined($table) or die "No cost table: give -t or set COST_TABLE";
+$ENV{COST_TABLE} = $table;
+$cache //= "calibrate-$n-$k.cache";
+unless (@f) {
+    my $p = prev_prime($k + 1);
+    @f = ($p, prev_prime($p));
+}
+@j = (4) unless @j;
+@g = (24, 32, 48, 64, 96, 128) unless @g;
+@W = (0) unless @W;
+
+my %done = read_cache();
+my %strata;     # f => [ { key, count, ids => [...] } ]
+for my $f (@f) {
+    $strata{$f} = [ stratify($f) ];
+    my $nb = 0;
+    $nb += $_->{count} for @{ $strata{$f} };
+    printf "-f%s: %u batches in %u strata, %u sampled\n", $f, $nb,
+            scalar @{ $strata{$f} },
+            scalar map @{ $_->{ids} }, @{ $strata{$f} };
+}
+
+my(%pred, %late);
+if (@settings) {
+    for my $f (@f) {
+        evaluate("-f$f $_") for @settings;
+    }
+} else {
+    for my $f (@f) {
+        my %cur = (j => $j[0], g => $g[0], W => $W[0]);
+        my %list = (j => \@j, g => \@g, W => \@W);
+        my $best = evaluate(setting($f, \%cur));
+        my $changed = 1;
+        while ($changed) {
+            $changed = 0;
+            for my $opt (qw{ j g W }) {
+                my @try = grep $_ ne $cur{$opt}, @{ $list{$opt} };
+                next unless @try;
+                my %t = map +(
+                    $_ => evaluate(setting($f, { %cur, $opt => $_ }))
+                ), @try;
+                my($v) = sort { $t{$a} <=> $t{$b} } keys %t;
+                if ($t{$v} < $best) {
+                    ($cur{$opt}, $best, $changed) = ($v, $t{$v}, 1);
+                }
+            }
+        }
+    }
+}
+
+my @rank = sort { $pred{$a} <=> $pred{$b} } keys %pred;
+print "\nPredicted CPU seconds for the full run, with standard error; and"
+        . " the\ndifference from the best setting with the same -f, with"
+        . " its standard error:\n";
+my %bestf;
+for my $s (@rank) {
+    my($f) = $s =~ /^-f(\d+)/;
+    my $b = $bestf{$f} //= $s;
+    printf "  %12.0f%s +- %-10.3g", $pred{$s}, $late{$s} ? '+' : ' ',
+            se($s);
+    if ($b eq $s) {
+        printf " %24s", '';
+    } else {
+        printf " %+12.3g +- %-9.3g", $pred{$s} - $pred{$b}, se($s, $b);
+    }
+    print " $s\n";
+}
+print "  (+: some runs timed out, so this is a lower bound)\n" if %late;
+print "  (standard errors omit strata with a single sample)\n"
+        if grep @{ $_->{ids} } == 1, map @$_, values %strata;
+print "\nBy stratum (log10 X, s = fixed power; batches: seconds):\n";
+my @show = @rank[0 .. ($#rank < 2 ? $#rank : 2)];
+for my $s (@show) {
+    my($f) = $s =~ /^-f(\d+)/;
+    print "  $s:\n   ";
+    for my $st (@{ $strata{$f} }) {
+        printf " %s %u: %.3g", $st->{key}, $st->{count},
+                $st->{count} * mean($s, $st);
+    }
+    print "\n";
+}
+exit 0;
+
+sub setting {
+    my($f, $c) = @_;
+    my $s = "-f$f -j$c->{j} -g$c->{g}";
+    $s .= ' ' . join ' ', map "-$_", split /\+-/, "W$c->{W}"
+            if $c->{W} ne '0';
+    return $s;
+}
+
+# results are keyed by range as well as setting and batch
+sub ckey {
+    my($s, $id) = @_;
+    return "-x$range $s|$id";
+}
+
+sub read_cache {
+    my %d;
+    open my $fh, '<', $cache or return %d;
+    while (<$fh>) {
+        chomp;
+        my($id, $t, $s) = split / /, $_, 3;
+        $d{"$s|$id"} = $t;
+    }
+    return %d;
+}
+
+# list the batches for -f<f>, and group them into strata
+sub stratify {
+    my($f) = @_;
+    my %s;
+    open my $fh, '-|', $pcoul, '-X', "-f$f", "-x$range", '-a', $n, $k
+            or die "$pcoul: $!";
+    while (<$fh>) {
+        my($id, $sq, $aq) = /^203 b(\d+): .*?( \[sq=\d+\])? \[aq=(\d+)\]/
+                or next;
+        next if $id < $bmin || (length($bmax // '') && $id > $bmax);
+        my $X = ($rmax - $rmin) / $aq;
+        my $key = ($X < 1 ? 0 : int(log($X) / log(10) + 1e-9))
+                . ($sq ? 's' : '');
+        push @{ $s{$key} }, $id;
+    }
+    close $fh;
+    %s or die "no batches listed for -f$f";
+    my @st;
+    for my $key (sort { ($a =~ /(\d+)/)[0] <=> ($b =~ /(\d+)/)[0]
+            || $a cmp $b } keys %s) {
+        my $all = $s{$key};
+        my $m = @$all < $samples ? @$all : $samples;
+        my @ids = map $all->[int(($_ + 0.5) * @$all / $m)], 0 .. $m - 1;
+        push @st, { key => $key, count => scalar @$all, ids => \@ids };
+    }
+    return @st;
+}
+
+sub time_of {
+    my($s, $id) = @_;
+    my($t) = $done{ckey($s, $id)} =~ /^([\d.]+)/;
+    return $t;
+}
+
+sub mean {
+    my($s, $st) = @_;
+    my $sum = 0;
+    $sum += time_of($s, $_) for @{ $st->{ids} };
+    return $sum / @{ $st->{ids} };
+}
+
+# Standard error of the prediction for setting s, or with base of the
+# difference s - base (the same batches, so usually much smaller): per
+# stratum N^2 var / m (1 - m / N) over m samples of N, summed.
+sub se {
+    my($s, $base) = @_;
+    my($f) = $s =~ /^-f(\d+)/;
+    my $v = 0;
+    for my $st (@{ $strata{$f} }) {
+        my @y = map {
+            time_of($s, $_) - ($base ? time_of($base, $_) : 0)
+        } @{ $st->{ids} };
+        my($m, $N) = (scalar @y, $st->{count});
+        next if $m < 2;
+        my $mean = 0;
+        $mean += $_ / $m for @y;
+        my $var = 0;
+        $var += ($_ - $mean) ** 2 / ($m - 1) for @y;
+        $v += $N * $N * $var / $m * (1 - $m / $N);
+    }
+    return sqrt($v);
+}
+
+# run the setting over every sampled batch; return the prediction
+sub evaluate {
+    my($s) = @_;
+    return $pred{$s} if defined $pred{$s};
+    my($f) = $s =~ /^-f(\d+)/;
+    my @work = grep !defined($done{ckey($s, $_)}),
+            map @{ $_->{ids} }, @{ $strata{$f} };
+    run_all($s, @work);
+    my $total = 0;
+    $total += $_->{count} * mean($s, $_) for @{ $strata{$f} };
+    $late{$s} = 1 if grep /\+$/, map $done{ckey($s, $_)},
+            map @{ $_->{ids} }, @{ $strata{$f} };
+    keep_diag();
+    printf "%12.0f%s %s\n", $total, $late{$s} ? '+' : ' ', $s;
+    return $pred{$s} = $total;
+}
+
+# Run the setting on the given batches, -P at a time, showing progress
+sub run_all {
+    my($s, @ids) = @_;
+    my %running;
+    my($ndone, $ntotal) = (0, scalar @ids);
+    while (@ids || %running) {
+        while (@ids && keys(%running) < $jobs) {
+            my $id = shift @ids;
+            pipe(my $r, my $w) or die "pipe: $!";
+            my $pid = fork() // die "fork: $!";
+            if (!$pid) {
+                close $r;
+                print $w run_one($s, $id), "\n";
+                exit 0;
+            }
+            close $w;
+            $running{$pid} = [ $id, $r, time() ];
+        }
+        my $pid = waitpid(-1, WNOHANG);
+        if ($pid <= 0) {
+            my $now = time();
+            diag(sprintf '%s: %u / %u done, running %s', $s, $ndone, $ntotal,
+                    join ', ', map sprintf('b%u (%s)', $_->[0],
+                        hms($now - $_->[2])),
+                    sort { $a->[0] <=> $b->[0] } values %running);
+            sleep 1;
+            next;
+        }
+        my $e = delete $running{$pid} or next;
+        ++$ndone;
+        my($id, $r) = @$e;
+        my $t = <$r>;
+        chomp $t;
+        $done{ckey($s, $id)} = $t;
+        open my $fh, '>>', $cache or die "$cache: $!";
+        print $fh "$id $t -x$range $s\n";
+        close $fh;
+    }
+}
+
+# the time of one batch: the whole run less the time to reach the batch
+sub run_one {
+    my($s, $id) = @_;
+    my @args = (split(/ /, $s), "-x$range", "-b$id", $n, $k);
+    my $out = `timeout $tlimit '$pcoul' -X @{[ map quote($_), @args ]} 2>&1`;
+    my($t0) = $out =~ /^203 b$id: .*\(([\d.]+)s\)$/m;
+    my($t1) = $out =~ /^367 .*\(([\d.]+)s\)/m;
+    return "$tlimit+" unless defined $t1;
+    return $t1 - ($t0 // 0);
+}
+
+sub hms {
+    my($t) = @_;
+    return sprintf '%u:%02u:%02u', $t / 3600, ($t / 60) % 60, $t % 60;
+}
+
+sub quote {
+    my($s) = @_;
+    $s =~ s/'/'\\''/g;
+    return "'$s'";
+}
