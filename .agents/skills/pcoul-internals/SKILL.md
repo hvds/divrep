@@ -92,8 +92,8 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   own addition on top of the imported forward-iteration code.
 - `coulcost.c` - the cost table (the file `timings`, built in as
   `timings.c`, unless `$COST_TABLE` names another) and the models that
-  price tests and walks from it. See the pcoul-calibration skill for
-  all of the cost work.
+  price tests and walks from it, for `-ja`. See the pcoul-calibration
+  skill for all of the cost work.
 - `mock.c` - calibration-only stubs of the walks and of the innermost
   recursion loops, compiled only with `MOCK=1`. Never for a real
   search: no candidate is tested.
@@ -312,6 +312,10 @@ easy to confuse by mnemonic alone:
 - `-o` (`opt_print`): print candidates instead of fully testing them -
   also unrelated to `-p` despite the mnemonic overlap.
 - `-a`/`-b`: batch selection (see "Batches" above).
+- `-ja1` (`auto_level`, experimental): decide walk or recurse at the
+  gate by estimated cost, from the cost table, in place of the gain.
+  Identical runs make identical choices, since the costs are counted,
+  not timed.
 - `-k<bound>` / `-K<count>`: in a batch that leaves exactly one
   position needing a square, first try each prime up to the bound to
   an odd power at each other position that needs one, by Pell; `-K`
