@@ -659,6 +659,77 @@ the flip also matters more) is not yet known.
 Calibration assumes no candidate lowers zmax during the run; if one does
 substantially, the calibrated options may no longer be optimal.
 
+### Gain experiments: odd-p fold and per-level gain (2026-10-13)
+
+Measured in real runs (2 vCPUs, the two builds compared running side by
+side; unique candidate sets identical throughout), on this branch
+rebased over master 20e21cc.
+
+#### The odd-p fold
+
+The fold (master 20e21cc, p = 2 only) fixes v_0 (mod p^{e+1}) when the
+other positions with the primary's p^e leave one unit for v_primary /
+p^e (mod p). Branch 'overfold' (0b44d8d, WIP) enables it for odd p. In
+every run looked at only p = 3 folds: 3^1 at two positions (D(24,5),
+D(48,6), D(96,8)), or 3^2 at v_0 and v_9 (D(48,10) -f7, all 25791 such
+batches). Folding batches were 31 of 247 in D(24,5) -x1e12, 25k of 1.34M
+in D(48,10) and 16k of 470k in D(96,8), about 14%, 3% and 6% of the
+time; a few hundred more drop out, aq*3 then nearing zmax.
+
+At equal gain the fold is 5-15% slower: a walk has 3x fewer iterations
+but the same values to test, and the gate, seeing it 3x cheaper, walks
+sooner (recursing ~45% less, sending ~50% more values to the tests).
+The optimum gain for folding batches is ~3x higher, and there they are
+1-5% faster than base at its own optimum (D(24,5) ~5%, D(48,10) ~2%,
+D(96,8) ~1.5%; under -ja2 1-5%, -ja1 2.5%). A gate scaling the walk
+estimate back up by the batch's odd fold primes (experiment on top of
+overfold) gets the same at base's gain. The saving is in walk
+iterations, which are cheap beside the tests, so the fold is worth
+~0.1-0.5% of D(48,10) or D(96,8), and 1-2% of D(24,5) -x1e12, within
+run-to-run noise.
+
+The mock got the ratio of optima right (0.95 against a real ~0.95) but
+had the fold winning at equal gain where it really loses ~8%: it
+underprices the extra walking. A gain search on mocks would misjudge
+such a change.
+
+#### Per-batch optimum gain
+
+On the folding batches sampled, the base build's per-batch optimum gain
+saved little over the best single gain: 1.5% on D(24,5) (g16-g1024),
+0.2% on D(96,8) (g24, g48; g48 was 12-20% faster on most heavy
+batches), 3.7% on D(48,10) (g15-g60, within the 10-28% noise of
+repeating its small batches). A misjudged global gain costs more: g24
+against g48 on D(96,8) 10-18%. -ja2 took 13% less than -g30 on the
+D(48,10) sample, and 43% less than -g48 on the D(96,8) one.
+
+#### Gain by level
+
+An effective gain of g.a^L at L levels below the last batch (experiment,
+$PCOUL_ACCEL, squares untouched), full -X runs, g 4-1024 by a 0.5-2:
+
+| run | best overall | best at a = 1 |
+|---|---|---|
+| D(24,5) -x3e10 | 30.4s (g64, a1.4) | 31.5s (g256) |
+| D(40,5) -x1e17 | 6.0s (g1024, a0.5) | 6.1s (g256) |
+| D(56,5) -x1e24 | 16.1s (g1024, a0.7) | 16.6s (g256) |
+
+The optima lie on a ridge, a > 1 paying at low gain and a < 1 at high,
+so a mostly substitutes for g: 2-4% off a = 1 at best, within noise,
+with a decisive level about 2 below the batch for n = 24 and 40. The
+largest prime q of n changes the cost of too low a gain, not the
+optimum: at g4 a=1, 2.1x the best for q = 3 (n = 24), 4.0x for q = 5
+(n = 40), 3.4x for q = 7 (n = 56); with a = 0.5, 3.5x, 9.5x and 9.2x.
+A position needing p^{q-1} has a cap near (Z/aq)^{1/(q-1)}, tiny for
+large q, so recursing there is cheap and walking early dear. D(40,4)
+-x1e15 and D(56,4) -x1e20 were flat over the grid: far above the
+answer, 44k-64k candidates and large walks, the gate barely matters.
+
+What learning in -ja2 found points the same way: its correction to the
+recursion estimate follows the node's size far better than its level
+(see "What -ja learns"), so a fixed a^L can only follow size where
+level stands in for it.
+
 ### To do
 
 1. -ja2 (done, experimental; see above): a real model of x leaving a
@@ -706,6 +777,14 @@ substantially, the calibrated options may no longer be optimal.
    months). A walk chosen then must derecurse; and recovery rebuilds
    levels without asking the gate, so a changed choice would need the
    log to show it.
+10. Toward the runtime optimiser of the aims: a dynamic auto-calibration
+    with a range of weapons at its disposal, each used where its cost
+    says it pays: the odd-p fold (with the gate seeing a folded walk at
+    its unfolded size), gain varying with level or with aq (the size of
+    the node, as -ja2 already learns its corrections), -W, the strategy
+    and -k. The experiments above found no fixed formula that carries
+    far on its own (a^L moved along the ridge, not off it); cost per
+    node does.
 
 ### Why some of this is hard
 
