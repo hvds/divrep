@@ -200,6 +200,7 @@ mpz_t best;         /* best solution seen */
 bool improve_max = 1;   /* reduce zmax when solution found */
 bool any_bound = 0;     /* apply_single() accepts rq > zmax */
 uint seen_best = 0; /* number of times we've improved zmax */
+bool gate_fold_on = 1;
 ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
 ulong gain2 = 0;    /* as gain/antigain for squares */
@@ -7531,6 +7532,26 @@ e_pux limit_unforced_x(
  * into by allocating p^{x-1} at cur_level's v_i for each prime after p up
  * to limp. By the gain heuristics, or under -ja by estimated cost.
  */
+/* Experimental: the product of the odd primes whose batch has folded
+ * them into aq, by which the gate scales a walk back to its unfolded
+ * size: the walk has fewer iterations, but the same values to test.
+ */
+static ulong gate_fold(t_level *prev_level) {
+    ulong f = 1;
+    uint last = (cur_batch_level < prev_level->level)
+            ? cur_batch_level : prev_level->level;
+    for (uint L = 1; L <= last; ++L) {
+        t_level *lp = &levels[L];
+        if (lp->is_forced != 1)
+            continue;
+        t_forcep *fp = &forcep[next_fpi(&levels[L - 1])];
+        t_forcebatch *bp = forcebatch_p(fp, lp->bi);
+        if (bp->fold && fp->p != 2)
+            f *= fp->p;
+    }
+    return f;
+}
+
 bool gate_walk(
     t_level *prev_level, t_level *cur_level, ulong p, ulong limp
 ) {
@@ -7559,6 +7580,8 @@ bool gate_walk(
             mpz_mul_ui(Z(r_walk), Z(r_walk),
                     res_array(prev_level->level)->count);
             mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
+            if (gate_fold_on)
+                mpz_mul_ui(Z(r_walk), Z(r_walk), gate_fold(prev_level));
         } else {
             /* if we fix multiple squares, we'll solve a Pell equation;
              * treat that as effectively free */
@@ -7570,6 +7593,8 @@ bool gate_walk(
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain2);
     } else {
         mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
+        if (gate_fold_on)
+            mpz_mul_ui(Z(r_walk), Z(r_walk), gate_fold(prev_level));
         if (gain > 1)
             mpz_mul_ui(Z(r_walk), Z(r_walk), gain);
         if (antigain > 1)
