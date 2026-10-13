@@ -87,6 +87,10 @@ sub test_init {
             $result124b, '1 2 1 332', $args124);
     expect_log(q{fail if a product repeats a prime},
             518, '. . 3.6 .', $args124);
+    expect_log(q{fail if a prime factor is too large},
+            517, '. . . 18446744073709551629', $args124);
+    expect_log(q{fail if a number is missing},
+            519, '. . 3. .', $args124);
     expect_result(q{constraint on 3 + sub-high for f(12,4)},
             $result124b, '. . 3 83', $args124);
     # the range is min < v_0 <= max, wherever a walk happens to start
@@ -122,6 +126,10 @@ sub test_init {
                 '20602546734719875598683297:20602546734719875598683299',
                 '' ],
         [ 'square walk accepts a root that is pq', 18, '2 3^2.11^2',
+                '34862081214054703057:34862081214054703059',
+                '34862081214054703058' ],
+        [ 'unfactored values above 2^64 are factorized', 18,
+                '34862081214054703058 34862081214054703059',
                 '34862081214054703057:34862081214054703059',
                 '34862081214054703058' ],
     ) {

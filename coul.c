@@ -71,6 +71,7 @@ typedef enum {
     lp_x, lp_mint, lp_mint2,    /* limit_p */
     r_walk,                     /* recurse */
     rec_cand, rec_lead, rec_trail,  /* recover */
+    p3_base,                    /* parse_305 */
 
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
@@ -1417,6 +1418,29 @@ void init_pre(void) {
 static inline uint max_forcep(void);
 uint list_forcep(uint *pi);
 
+/* Add the prime powers of zn^e to f, in ascending order of p.
+ * A prime factor that does not fit a ulong is a fatal error.
+ */
+void add_product(t_fact *f, mpz_t zn, uint e) {
+    factor_state fs;
+    uint start = f->count;
+
+    fs_init(&fs);
+    mpz_set(fs.n, zn);
+    while (factor_one(&fs)) {
+        if (!mpz_fits_ulong_p(fs.f))
+            fail("517 prime factor %Zu of %Zu is too large", fs.f, zn);
+        t_ppow pp = { mpz_get_ui(fs.f), fs.e * e };
+        /* factor_one() finds them in no particular order */
+        uint i = f->count;
+        add_fact(f, pp);
+        for (; i > start && f->ppow[i - 1].p > pp.p; --i)
+            f->ppow[i] = f->ppow[i - 1];
+        f->ppow[i] = pp;
+    }
+    fs_clear(&fs);
+}
+
 /* Move the forced primes at v_i to the start of f, in the order that
  * insert_forced() will look for them, leaving the rest in their order.
  * Needed when an init pattern gives a product at v_i, since its factors
@@ -1488,18 +1512,27 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         }
         bool product = 0;
         while (1) {
-            pp.p = strtoul(s, &s, 10);
+            /* -I allows unfactored entries, so the base may be large */
+            char *end = s + strspn(s, "0123456789");
+            char c = *end;
+            *end = 0;
+            int bad = mpz_set_str(Z(p3_base), s, 10);
+            *end = c;
+            if (bad || mpz_sgn(Z(p3_base)) == 0)
+                fail("519 expected a positive number in init or recovery"
+                        " pattern");
+            s = end;
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
-            if (pp.p == 1 || pp.e == 0)
+            if (mpz_cmp_ui(Z(p3_base), 1) == 0 || pp.e == 0)
                 ;
-            else if (pp.e == 1 && !bpsw_u64(pp.p)) {
-                /* -I allows unfactored entries, but only small ones */
-                if (pp.p > UINT_MAX)
-                    fail("517 unfactored entry %lu is too large", pp.p);
-                simple_fact((uint)pp.p, &stack->f[i]);
-                product = 1;
-            } else
+            else if (mpz_fits_ulong_p(Z(p3_base))
+                    && bpsw_u64(mpz_get_ui(Z(p3_base)))) {
+                pp.p = mpz_get_ui(Z(p3_base));
                 add_fact(&stack->f[i], pp);
+            } else {
+                add_product(&stack->f[i], Z(p3_base), pp.e);
+                product = 1;
+            }
             if (expanded && s[0] == '(') {
                 uint off = strtoul(&s[1], &s, 10);
                 stack->forced[off] = i + 1;
