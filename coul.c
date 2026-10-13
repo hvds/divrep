@@ -2045,17 +2045,24 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
     return TFP_SINGLE;
 }
 
-void prep_forcep(void) {
-    mpz_t pz;
-    uint p;
+/* The size of array that list_forcep() needs. */
+static inline uint max_forcep(void) {
 #if defined(TYPE_o) || defined(TYPE_r)
-    uint pi[k];
+    return k;
 #elif defined(TYPE_a)
     /* we also force each p | n */
-    uint pi[k + nf.count];
+    return k + nf.count;
 #endif
+}
 
-    forcedp = 0;
+/* Set pi[] to the primes to force, in the order they are forced, and
+ * return how many there are. pi[] must have room for max_forcep() entries.
+ * Needs nf, so may be called before prep_forcep().
+ */
+uint list_forcep(uint *pi) {
+    mpz_t pz;
+    uint p, count = 0;
+
     mpz_init_set_ui(pz, 1);
 #if defined(TYPE_o) || defined(TYPE_r)
     while (1) {
@@ -2063,13 +2070,13 @@ void prep_forcep(void) {
         p = mpz_get_ui(pz);
         if (p > k)
             break;
-        pi[forcedp++] = p;
+        pi[count++] = p;
     }
 #elif defined(TYPE_a)
     /* divisors of n must be force_all, so must come before other primes */
     for (uint i = 0; i < nf.count; ++i) {
         p = (uint)nf.ppow[i].p;
-        pi[forcedp++] = p;
+        pi[count++] = p;
     }
     while (1) {
         _GMP_next_prime(pz);
@@ -2077,10 +2084,18 @@ void prep_forcep(void) {
         if (p > k)
             break;
         if (n % p)
-            pi[forcedp++] = p;
+            pi[count++] = p;
     }
 #endif
     mpz_clear(pz);
+    return count;
+}
+
+void prep_forcep(void) {
+    uint p;
+    uint pi[max_forcep()];
+
+    forcedp = list_forcep(pi);
 
     uint maxbatch = 0;
     for (uint i = 0; i < k; ++i)
