@@ -85,6 +85,8 @@ sub test_init {
             $result124b, '. 2 . 2^2.83', $args124);
     expect_result(q{allow products in -I},
             $result124b, '1 2 1 332', $args124);
+    expect_log(q{fail if a product repeats a prime},
+            518, '. . 3.6 .', $args124);
     expect_result(q{constraint on 3 + sub-high for f(12,4)},
             $result124b, '. . 3 83', $args124);
     # the range is min < v_0 <= max, wherever a walk happens to start
@@ -801,6 +803,9 @@ sub test_divisors_of_n {
         3, $args, 'b0: 5^2 . .');
     expect_recover_result(q{recover an ordinary line},
         6413, ['305 b0: 5^2 7^2 . (0.00s)'], $args);
+    # forced order is 2, 5, 3: a product must give 5 before 3
+    expect_result(q{a product is split in forced order},
+        760120585, '5 405 5^4', [qw{ -x1e16 20 3 }]);
 }
 
 sub temp_log {

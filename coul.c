@@ -1414,6 +1414,37 @@ void init_pre(void) {
     flip_recover.valid = 0;
 }
 
+static inline uint max_forcep(void);
+uint list_forcep(uint *pi);
+
+/* Move the forced primes at v_i to the start of f, in the order that
+ * insert_forced() will look for them, leaving the rest in their order.
+ * Needed when an init pattern gives a product at v_i, since its factors
+ * are found in ascending order. A prime given more than once at v_i is
+ * a fatal error.
+ */
+void order_forced(t_fact *f, uint vi) {
+    for (uint i = 1; i < f->count; ++i)
+        for (uint j = 0; j < i; ++j)
+            if (f->ppow[i].p == f->ppow[j].p)
+                fail("518 %lu given twice at v_%u in init or recovery pattern",
+                        f->ppow[i].p, vi);
+
+    uint pi[max_forcep()];
+    uint count = list_forcep(pi), next = 0;
+    for (uint fpi = 0; fpi < count; ++fpi) {
+        for (uint j = next; j < f->count; ++j) {
+            if (f->ppow[j].p != pi[fpi])
+                continue;
+            t_ppow pp = f->ppow[j];
+            memmove(&f->ppow[next + 1], &f->ppow[next],
+                    (j - next) * sizeof(t_ppow));
+            f->ppow[next++] = pp;
+            break;
+        }
+    }
+}
+
 /* Parse a "305" log line for initialization.
  * Input string should point after the initial "305 ".
  * If 'expanded' is true, expects a "315" expanded line instead.
@@ -1455,6 +1486,7 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
             ++s;
             continue;
         }
+        bool product = 0;
         while (1) {
             pp.p = strtoul(s, &s, 10);
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
@@ -1465,6 +1497,7 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
                 if (pp.p > UINT_MAX)
                     fail("517 unfactored entry %lu is too large", pp.p);
                 simple_fact((uint)pp.p, &stack->f[i]);
+                product = 1;
             } else
                 add_fact(&stack->f[i], pp);
             if (expanded && s[0] == '(') {
@@ -1480,6 +1513,8 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
                 break;
             ++s;
         }
+        if (product)
+            order_forced(&stack->f[i], i);
         /* reverse them, so we can pop as we allocate */
         reverse_fact(&stack->f[i]);
     }
