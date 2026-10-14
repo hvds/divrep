@@ -1,4 +1,4 @@
-The code in this directory is aimed at various OEIS sequences having to
+The code in this repository is aimed at various OEIS sequences having to
 do with finding maximum-length arithmetic progressions of numbers that
 share particular properties, such as having the same number of divisors.
 
@@ -6,246 +6,157 @@ The bulk of the C code is aimed specifically at finding values D(n, k)
 for A292580, the least integer v such that tau(v + i) = n for all
 0 <= i < k.
 
-BUILD
-=====
-
-See also the section "WINDOWS BUILD" below if you are running on
-Windows.
-
 The source code is available on GitHub at:
   https://github.com/hvds/divrep
 
-The code requires the GNU multi-precision library "libgmp". It also uses
-the code from Dana Jacobsen's CPAN distribution "Math-Prime-Util-GMP",
-available from:
+Further documentation is on the project wiki:
+  https://github.com/hvds/divrep/wiki
+
+WINDOWS
+=======
+
+Ready-built Windows executables of pcoul are available from the
+releases page:
+  https://github.com/hvds/divrep/releases
+
+Each release has two zip files, one for Windows 10/11 and one that also
+runs on Windows 7, each containing pcoul.exe and the DLLs it needs.
+Extract all the files into the same directory, and run pcoul.exe from
+there.
+
+These are built by GitHub Actions; the steps used are in the files
+under .github/workflows/. To build on Windows yourself, install Cygwin
+with the packages those files list, and follow the same steps.
+
+BUILD
+=====
+
+The code requires gcc, the GNU multi-precision library "libgmp", and
+the code from Dana Jacobsen's "Math-Prime-Util-GMP" (MPUGMP), available
+from:
   https://github.com/danaj/Math-Prime-Util-GMP
-I recommend using the latest version from github where possible, since
-it has a lot of bugfixes since the last release version.
 
-To build, you should edit the first line of the Makefile so that MPUGMP
-points to the directory where the Math-Prime-Util-GMP source can be found.
-If your libgmp header file (gmp.h) is not in the standard include paths,
-you will also need to modify the Makefile to include the appropriate path.
+The Makefile expects a specific commit of MPUGMP, given by the variable
+MPUGMP_VER. The current default is 39982f872b, the v0.54 release. Using
+that, you need only tell the Makefile where to find the MPUGMP source:
+  git clone https://github.com/danaj/Math-Prime-Util-GMP
+  (cd Math-Prime-Util-GMP && git checkout v0.54)
+  make MPUGMP=/path/to/Math-Prime-Util-GMP pcoul
 
-If you are using a compiler other than gcc, you will also need to set
-CC_OPT to an appropriate set of optimization flags for your compiler.
+To build against one of the other MPUGMP commits listed in the
+Makefile, set MPUGMP_VER to match it: it decides which MPUGMP source
+files are needed, and a mismatch typically shows up as link errors.
 
-There is no installation process: it is intended that the code should be
-built and run in place.
+If your libgmp header file (gmp.h) is not in the standard include
+paths, you will also need to modify the Makefile to include the
+appropriate path.
+
+There is no installation process: it is intended that the code should
+be built and run in place.
 
 The 'make' targets are:
-pcoul: optimized parallel search
-dpcoul: debugging parallel search
-pcaul/dpcaul: equivalent to pcoul for A165498/A165499
-pcrul/dpcrul: equivalent to pcoul for A309981
-test_pell: a tool to solve Pell equations
-test_tau: a tool to test whether tau(n^e) = t, two ways
-test_prime: a tool to check our primality test of a single limb
-ftest: test a specific factorization
-test/dtest: run the tests in t/ on the optimized/debugging programs;
+pcoul, dpcoul: search for D(n, k), optimized/unoptimized for debugging
+pcaul, dpcaul: equivalent to pcoul for A165498/A165499
+pcrul, dpcrul: equivalent to pcoul for A309981
+test, dtest: run the tests in t/ on the optimized/debugging programs;
   the soak tests among them run only if asked for, see the Makefile
 
-Build-time options are set with defines, by passing "-D<name>" as a
-parameter to the compile step. This is done by setting them on the
-command line before the invocation of make, like:
-  CHECK_OVERFLOW=1 make pcoul
+Build-time options are set as variables on the make command line, or in
+the environment, like:
+  make PORTABLE=1 pcoul
 
 The current build options are:
 
--DSQONLY: skip any walk_v() call unless at least one value is forced
-to be a square. Temporary facility to allow faster rechecking if bugs
-are found in squares-handling code.
+PORTABLE: build for a generic CPU. By default the code is compiled
+for the CPU it is built on (-march=native), and may not run on other
+machines. The Windows release builds use this option.
 
--DCHECK_OVERFLOW: after finding that v_0 == r_q (mod a_q), check if
-that exceeds our limit. This is not enabled by default because it
-appears to cost more than it saves in almost all cases.
+VERBOSE: print verbose information about factorization timings.
 
--DVERBOSE: print verbose information about factorization timings.
-
--DLARGE_MIN: add extra checks to cope better with runs where the
-minimum value to check is relatively large (as specified with -x<min>:<max>).
-For the majority case where min is 0 or small, we assume these checks
-are an unnecessary expense; hence we do not enable them by default.
-
--DTRY_HARDER: also try slower factorization tests before giving up. This
+TRY_HARDER: also try slower factorization tests before giving up. This
 adds 10 more ECM trials, the first taking about 15 minutes and each
 subsequent one doubling the time. Generally this isn't worthwhile: if we
 didn't find a factor before these tests, ECM probably won't find it.
 
--DDEBUG_ALL: print to the log file every number tested by linear search
+DEBUG_ALL: print to the log file every number tested by linear search
 (without a fixed square). Will fail if run without a log file.
 
-WINDOWS BUILD
-=============
-
-The code is reported to build successfully on 64-bit Windows with
-Cygwin, using the following steps:
-
-1. Install Cygwin following https://www.cygwin.com/install.html with
-the default Cygwin applications.
-2. Search for and install Cygwin packages gcc-core, libgmp-devel,
-libgmpxx4, make and nano (to edit makefile).
-3. Get this codebase and the Math-Prime-Util-GMP code (see "BUILD" above).
-You can download and unzip it to C:\cygwin64\home or install Cygwin git
-and clone code in the Cygwin shell.
-4. Use the Cygwin shell as a regular linux system. Edit the Makefile in
-/home/divrep to set the path to Math-Prime-Util-GMP  (MPUGMP =
-/home/Math-Prime-Util-GMP-master).
-5. Run "make" in the Cygwin shell to compile. As a result there will be
-a compiled pcoul.exe file.
-6. In windows explorer find and copy this file
-(C:\cygwin64\home\home\divrep\pcoul.exe) and two additional
-files (cygwin1.dll and cyggmp-10.dll), pcoul.exe will not work without them.
-7. Use pcoul.exe (cygwin1.dll and cyggmp-10.dll need to be in work folder).
-
-It seems likely that on a 32-bit Windows system the same approach will
-work (except the "C:\cygwin64" directory will be different).
+SQONLY: skip any walk_v() call unless at least one value is forced
+to be a square. Temporary facility to allow faster rechecking if bugs
+are found in squares-handling code.
 
 RUN
 ===
 
-The Makefile will typically build a binary called 'pcoul'. The standard
-way to run it is:
-  pcoul [-r<path to logfile>] [-f<force primes>] -x<min:max>
-      [-g<damp:gain] [-p<minp:maxp>] [-P<cap>] [-s<randseed>] [-o] [-d]
-      [-j<strategy>] <n> <k>
+The standard way to run the program is:
+  pcoul [options] <n> <k>
 
-On a Unix-like system you will usually invoke it as "./pcoul". On Windows
-you will usually invoke it as "pcoul" or as "pcoul.exe".
+This searches for D(n, k) (equivalently T(n/2, k) in the terminology
+of A292580). <n> and <k> come after all the options. On a Unix-like
+system you will usually invoke it as "./pcoul"; on Windows as "pcoul"
+or "pcoul.exe".
 
-Options:
-If "-r/path/to/logfile" is specified, progress is regularly written to the
-specified file (by default at least once every 600s, see 'LOG' in coul.c).
-If the file already exists, it will attempt to determine the last point
-reached according to that log, and continue processing from that point.
-By default there is no logfile, and progress will only be shown on the
-terminal.
+The one required option is "-x", giving the range to search: "-x<max>"
+searches 0 < v <= max, "-x<min>:<max>" searches min < v <= max.
+Numbers can be given in exponential notation without a decimal point,
+so "-x13e6" means "-x13000000".
 
-If "-R" is specified, the file is _not_ read to determine the point to
-recover from: calculation always goes from the beginning. This can be
-useful to combine several separate runs into a single log file.
+Each option takes its value directly after the option letter, with no
+space. The full list of options is on the wiki page:
+  https://github.com/hvds/divrep/wiki/pcoul-options
 
-If "-f7" is specified, it will set force_all = 7 to treat all primes p <= 7
-as fully forced primes (see 'HOW IT WORKS' below). By default, force_all is
-set to k (the maximum) when n == 2 (mod 4), and to 0 otherwise.
+Output lines start with a 3-digit code. The most important are:
+  202 Candidate <v>       a solution v has been found
+  200 f(n, k) = <v>       the best solution found by the whole run
+  305 ...                 progress, in the log file: the batch and
+                          allocations being worked on
+On the terminal, a progress line in the same form (without the code)
+is by default shown every second, overwriting the previous one.
 
-If "-F7" is specified, it will set unforce_all = 7 to treat all primes
-p >= 7 as unforceable. Unforceable primes are treated like partially
-forced primes by suppressing batches where each power of the relevant
-prime is one less than a power of 2. "-F" is equivalent to "-F1", to
-treat all primes as unforceable. Default is 0, in which case no primes
-are unforceable.
+Examples:
 
-If "-x100:1000" is specified, it will look for solutions v_0 with
-100 < v_0 <= 1000. "-x:1000" or "-x1000" are equivalent to "-x0:1000".
-Also supports exponential notation (without decimal), so "-x13e6"
-is equivalent to "-x13000000".
-The default minimum is zero; there is no default maximum: this is a
-required option.
+  ./pcoul -x1e12 12 5
 
-If "-X" is specified, it will search for all solutions up to the
-specified maximum. By default, it will search only for solutions that
-improve on the best found so far.
-Even with -X, it will still track the best solution found to report it
-at the end of the run.
+Searches for D(12, 5) up to 10^12. Each time a solution is found, it
+is reported, and the search continues looking only for smaller ones.
+This takes a fraction of a second, ending with "200 f(12, 5) = 204323":
+since the search covers everything from 0 up to the maximum, this is
+a proof that D(12, 5) = 204323.
 
-If "-g2:3" is specified, it will set gain = 3/2. This is a multiplier
-used to control the transition from recurse() to walk_v() (see 'HOW IT
-WORKS' below). A higher gain means it spends more time in recurse(),
-a lower gain means it spends more time in walk_v().  Also supports
-exponential notation (without decimal), so "-g13e6" is equivalent to
-"-g13000000". Fine-tuning the gain can make a big difference to runtime;
-default gain is 1.
+  ./pcoul -rD12-9.log -x15724736975643 -f5 -W3e3 -g8 12 9
 
-If "-p50:100" is specified, it will allocate (see 'HOW IT WORKS' below)
-only powers of primes p < 100, and will allocate at least one power of
-a prime p > 50. This can be used to search more selectively to improve
-an upper limit.  "-p:100" or "-p100" are equivalent to "-p0:100".
-By default it considers all possible allocations.
+Searches for D(12, 9), writing progress to the log file "D12-9.log"
+(by default at least once every 600 seconds; "-Lf60" would make it
+every 60 seconds). If the run is interrupted, running the same command
+again reads the log and continues from the last point it recorded. The
+options "-f5 -W3e3 -g8" change how the search is done, but not what it
+covers; choosing them well can make a big difference to the run time.
+With these values it takes about 30 seconds on a modern machine. The
+wiki page "D(n,k) calculation" explains what they do, and gives this
+as a worked example of choosing them.
 
-If "-P50" is specified, it denotes a cap on the effective maximum prime
-used to calculate the transition from recurse() to walk_v() (see 'HOW IT
-WORKS' below), independently of the gain. If it is intended to split
-a single "-p300" run into multiple runs with "-p100", "-p100:200",
-"-p200:300" then each should be run with "-P100" (the smallest of the
--p values used) to ensure the transitions happen consistently, and so
-the three runs will test all the same cases as a single "-p300" run
-(*also run with -P100*).
+  ./pcoul -x1e20 -p50 24 7
 
-If "-W100" is specified, it will use a different process to test all
-possible cases involving p^e with p > 100, and then continue with the
-normal process as if "-p100" had been specified. This can give a very
-substantial speed improvement if the -W value is chosen with care.
-Default is not to do this (equivalent to -Winfinity).
+"-p50" restricts the search to allocating primes up to 50, which is
+usually a much faster way to find a first solution when nothing is
+known. This finds 38577578523 in a few seconds. Because the search was
+restricted, the final "200" line here shows only that D(24, 7) is at
+most that value; a full run with "-x38577578523" would be needed to
+show that nothing smaller exists.
 
-"-p" and "-W" may also be specified in the form "100^2" rather than
-as a simple integer, in which case it expresses a limit on the
-allocated power p^e rather than a limit on the prime regardless of
-power.
+  ./pcoul -Ls0 -a -x1e12 12 5 >batches
+  ./pcoul -b3 -x1e12 12 5
 
-The extended forms "-px" and "-Wx" can be used for fine-grained control:
-the minimum, maximum and threshold values in this case should be a
-comma-separated list of "p^e" override values. Thus "-p100 -px1^5,0^11"
-allows p <= 100 for all powers except that no powers of the form p^5
-are allowed, and all powers of the form p^11.
-
-If "-s2" is specified, it will initialize the random number generator
-with seed 2, used at least for ECM factorization. The default seed is 1,
-intended to help make results more reproducible.
-
-If "-o" is specified, once all factorization strategies are exhausted
-the current target and the numbers still to be factorized are logged,
-and execution continues. The default is to stop execution at this point.
-
-If "-a" is specified, it will establish only each valid set of batch
-allocations of forced primes, and output those sets assigning an index
-to each one (for use by '-b' below), along with its modulus aq used as
-a guide to its cost.
-
-If "-b100" is specified, it will find the set of batch allocations of
-forced primes with index 100, and run the normal calculations only
-over that batch, stopping once it is done. You can also specify
-a contiguous range of batches such as "-b100:200".
-
-If "-j1" is specified, it will use "strategy 1" when determining the
-next position to which to allocate another prime power (default
-"strategy 0"). For D(120,2) with pattern "2^7 3^4", for example,
-strategy 0 will pick the second position and start allocating p^2,
-since it has the highest remaining tau to fulfill; strategy 1 will
-pick the first position and start allocating p^4, since it has the
-highest prime dividing the remaining tau to fulfill. "-j2" uses
-"strategy 2", which is the opposite of "strategy 0": it looks for
-the _lowest_ remaining tau to fill. "-j3" uses "strategy 3", which
-is identical to "strategy 0" except that if the last allocation at
-some position was a) unforced, and b) the square root of the remaining
-(even) tau, that position will automatically be picked.
-"-j1" is the default when n is divisible by at least two distinct odd
-primes; "-j0" is the default in all other cases.
-
-If "-I..." is specified, the argument should be a pattern of the same
-form as that generated for progress lines. All prime powers specified
-are then forced into place.
-
-If "-m9=5" is specified, the first element of the sequence v_0 is
-forced to satisfy v_0 == 5 (mod 9). This option may be specified
-multiple times. Note that this means only that allocations will be
-rejected if they are not consistent with the modular constraints:
-we do not preemptively work out what allocations would be required
-for consistency.
-
-Specifying "-d" enables debugging. By default, progress is shown on the
-terminal every 1 seconds (see "DIAG" in coul.c), overwriting the previous
-progress line each time. With "-d", it instead shows progress at every
-step on a new line (but only a single line for walk_v()). If "-d" is
-specified twice, a line is shown for each iteration of walk_v().
-
-<n> and <k> are mandatory arguments, specifying that we want to search
-for D(n, k) (equivalently T(n/2, k) in the terminology of A292580).
-<n> must be a positive even integer; <k> must be a positive integer.
-Note that this code is optimized for relatively small values of <n>,
-targetting 2 <= n <= 100; much higher n may require a lot of memory
-and long start-up times.
-
+The search works through "batches", each a way of placing the powers
+of the small primes (those up to k) across the k values. The first
+command lists the batches without searching them; "-Ls0" stops progress
+lines from getting mixed into the output. A line of the list such as:
+  203 b3: 2^5 . 2 . 2^2 [aq=64] (0.00s)
+shows batch 3: v exactly divisible by 2^5, v + 2 by 2, and v + 4 by
+2^2, with LCM 64. A batch with a larger LCM is usually quicker to
+search. The second command searches only batch 3; since that is only
+part of the search, its result is again only an upper bound. Running
+every batch in this way covers the same ground as a single run.
 
 HOW IT WORKS
 ============
