@@ -40,6 +40,8 @@ sub test_unforce {
                 [ 95048 ], "pcoul $F f(12, 3) finds 95048 (2^3 . 2)");
         is_deeply(found('pcoul', '-x376549:376550', $F, qw{ 24 3 }),
                 [ 376550 ], "pcoul $F f(24, 3) finds 376550 (2 . 2^3)");
+        is_deeply(found('pcoul', '-x41139271:41139272', $F, qw{ 24 4 }),
+                [ 41139272 ], "pcoul $F f(24, 4) finds 41139272 (2^3 . 2 .)");
     }
 }
 

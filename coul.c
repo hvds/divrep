@@ -2169,19 +2169,6 @@ void prep_forcep(void) {
     for (uint i = 0; i < k; ++i)
         maxbatch += divisors[ target_t(i) ].alldiv;
 
-    /* TODO: fix tail handling (see comment in recurse()), then we can
-     * remove this block */
-    if (unforce_all) {
-        uint need = 0;
-        for (uint i = forcedp; i > 0; ) {
-            --i;
-            if (need && pi[i] >= unforce_all)
-                fail("-F%u is minimum supported for now", need);
-            if (!need && pi[i] < k)
-                need = pi[i];
-        }
-    }
-
     forcep = malloc(forcedp * sizeof(t_forcep));
     for (uint fpi = 0; fpi < forcedp; ++fpi) {
         p = pi[fpi];

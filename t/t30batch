@@ -80,6 +80,10 @@ sub test_unforce {
     is_deeply(batches('-F2', @args), $odd,
             '-F2 leaves 2^3 . 2 and 2 . 2^3 to the walk');
     is_deeply(batches('-F3', @args), $all, '-F3 keeps them forced');
+
+    # after the tail for 3, 5 must still be forced
+    my %b = map +($_ => 1), @{ batches(qw{ -F3 -x1e40 160 6 }) };
+    ok($b{'5^4 2 . 2^4 . 2.5'}, '-F3 still forces 5 after the tail for 3');
 }
 
 # returns an arrayref of the batches listed, in order
