@@ -7,7 +7,8 @@ use Test::More;
 
 # Tests that a full search of a small range (under -X) reports exactly
 # the solutions known in that range. Solutions listed here were found
-# independently, by sieving tau over the whole range.
+# independently, by sieving tau over the whole range. Also tests that
+# cases known impossible by exception are reported as such.
 
 my $debug = $ENV{DEBUG} ? 'd' : '';
 
@@ -29,6 +30,13 @@ sub test_pcrul {
     # 1764 = 42^2 makes v_4 square, here with batch "2^3 . 2 . 2^2"
     is_deeply(found('pcrul', qw{ -x100000 1760 5 }), [],
             'pcrul reports no false f(1760, 5): square v_4 takes 2^2 of 2^3');
+
+    # f(49, 3) is known impossible by exception, unless we ignore that
+    my @lines = `./${debug}pcrul -Ls0 -x100000 49 3 2>&1`;
+    ok(!$? && (grep /^403 /, @lines),
+            'pcrul reports f(49, 3) impossible by exception');
+    is_deeply(found('pcrul', qw{ -ix -x100000 49 3 }), [],
+            'pcrul -ix searches f(49, 3) regardless');
 }
 
 sub test_unforce {

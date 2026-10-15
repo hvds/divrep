@@ -341,6 +341,7 @@ char *rpath = NULL; /* path to log file */
 FILE *rfp = NULL;   /* file handle to log file */
 bool start_seen = 0;    /* true if log file has been written to before */
 bool skip_recover = 0;  /* true if we should not attempt recovery */
+bool ignore_exceptions = 0; /* true if we should not check exceptions[] */
 t_recover *rstack = NULL;  /* point reached in recovery log file */
 t_recover *istack = NULL;  /* point requested by -I */
 bool have_pend202 = 0;  /* true when Z(rec_trail) is trailing candidate */
@@ -2437,6 +2438,53 @@ void prep_presquare(void) {
     }
 }
 
+/* Cases proven impossible by hand, but not by the search itself. Like
+ * check_exceptions() in the perl Type:: classes, an entry { type, n, k }
+ * means no solution exists for any (n, k') with k' > k. Each entry has
+ * its proof documented here.
+ *
+ * r(49, 2): we need tau(v + i) = (3, 6, 4) for i = 0 .. 2. Then v = p^2
+ * with p prime, and p = 2 fails, so p is odd. That gives v + 1 == 2 (mod 8),
+ * so v + 1 = 2y^2 and v + 2 = 2(v + 1) - v = (2y - p)(2y + p). p = 3 fails,
+ * so 3 | v + 2; and tau(v + 2) = 4 now requires 2y - p to be in { 1, 3 }.
+ * But 2y - p > (sqrt(2) - 1)p so we need only check p in { 5, 7 }.
+ * 5 fails, so p = 7 giving v = 49 is the only solution.
+ *
+ * r(625, 4): we need tau(v + i) = (5, 4, 8, 6, 4) for i in 0 .. 4. With
+ * v = p^4, p in {2, 3} both fail and p = 5 gives n, so p > 5. However we
+ * have p^4 + 4 = (p^2 - 2p + 2)(p^2 + 2p + 2), and for p > 5 we need
+ * 5 | p^4 + 4 and both those factors > 5, so tau(v + 4) > 4.
+ *
+ * r(729, 4): we need tau(v + i) = (7, 8, 4, 12, 2) for i = 0 .. 4. Then
+ * v = p^6 with p prime; p = 2 fails, and p = 3 is n itself, so p >= 5
+ * and v + 1 == 2 (mod 8). Since p^6 == p^2 (mod 5), v is 0, 1 or 4
+ * (mod 5); v == 0 needs p = 5, which fails, and v == 1 makes v + 4 = 5.
+ * So 5 | v + 1, and tau(v + 1) = 8 needs v + 1 = 250 (fails) or 10q with
+ * q prime. But v + 1 = (p^2 + 1)(p^4 - p^2 + 1), where the second factor
+ * is odd and > 10, so the first is 2 or 10, giving p <= 3.
+ */
+typedef struct s_exception {
+    char type;
+    uint n;
+    uint k;
+} t_exception;
+const t_exception exceptions[] = {
+    { 'r', 49, 2 },
+    { 'r', 625, 4 },
+    { 'r', 729, 4 },
+};
+
+void check_exceptions(void) {
+    for (uint i = 0; i < sizeof(exceptions) / sizeof(t_exception); ++i) {
+        const t_exception *ep = &exceptions[i];
+        if (ep->type == typename() && ep->n == n && ep->k < k) {
+            report("403 Error: f(%u) > %u known impossible by exception"
+                    " (%.2fs)\n", n, ep->k, elapsed());
+            fail_silent();
+        }
+    }
+}
+
 void init_post(void) {
     init_tau(rough, opt_flake);
     init_stats(k);
@@ -2471,6 +2519,9 @@ void init_post(void) {
 #ifdef HAVE_SETPROCTITLE
     setproctitle("-D(%u %u)", n, k);
 #endif
+    if (!ignore_exceptions)
+        check_exceptions();
+
     /* level[0] is special, level[1] is special if any target_t is odd;
      * then we can have forcedp batch allocations and maxodd * k normal
      * allocations; however we don't know forcedp yet, only that it will
@@ -6328,6 +6379,8 @@ int main(int argc, char **argv, char **envp) {
             strcpy(rpath, &arg[2]);
         } else if (arg[1] == 'R')
             skip_recover = 1;
+        else if (strcmp("-ix", arg) == 0)
+            ignore_exceptions = 1;
         else if (arg[1] == 'I')
             init_pattern = &arg[2];
         else if (arg[1] == 'f') {
