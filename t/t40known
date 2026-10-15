@@ -12,6 +12,7 @@ use Test::More;
 my $debug = $ENV{DEBUG} ? 'd' : '';
 
 test_pcrul();
+test_unforce();
 
 done_testing();
 exit 0;
@@ -28,6 +29,18 @@ sub test_pcrul {
     # 1764 = 42^2 makes v_4 square, here with batch "2^3 . 2 . 2^2"
     is_deeply(found('pcrul', qw{ -x100000 1760 5 }), [],
             'pcrul reports no false f(1760, 5): square v_4 takes 2^2 of 2^3');
+}
+
+sub test_unforce {
+    # Under -F with p = 2 unforced, batches with 2 at v_0 and v_2 such
+    # as 2^3 . 2 and 2 . 2^3 are left on the 2^0 tail for the walk to
+    # find, so the tail must not fix v_0 odd.
+    for my $F (qw{ -F -F2 }) {
+        is_deeply(found('pcoul', '-x95047:95048', $F, qw{ 12 3 }),
+                [ 95048 ], "pcoul $F f(12, 3) finds 95048 (2^3 . 2)");
+        is_deeply(found('pcoul', '-x376549:376550', $F, qw{ 24 3 }),
+                [ 376550 ], "pcoul $F f(24, 3) finds 376550 (2 . 2^3)");
+    }
 }
 
 # returns an arrayref of the candidates reported, in the order found,

@@ -3921,10 +3921,16 @@ void apply_null(t_level *prev, t_level *cur, ulong p) {
     uint vi = 0;    /* clarify where we are using this */
     apply_level(prev, cur, vi, p, 1);
     cur->have_min = prev->have_min;
-    if (p == 2 && mpz_odd_p(prev->aq)) {
-        /* A tail value of 2^0 can only occur with k=3, force_all < 2,
-         * and implies v_1 is even so v_0 is odd. We manually calculate
-         * the effective update_chinese(). */
+    if (p == 2 && mpz_odd_p(prev->aq)
+            && !(unforce_all && unforce_all <= 2)) {
+        /* Without -F, a tail value of 2^0 can only occur with k=3,
+         * force_all < 2, and implies v_1 is even so v_0 is odd. We
+         * manually calculate the effective update_chinese().
+         * Under -F with unforce_all <= 2 the tail also stands for
+         * batches with 2 at several positions, including v_0, that
+         * were left for the walk to find, so we cannot fix v_0's
+         * parity.
+         */
         if (mpz_odd_p(prev->rq))
             mpz_set(cur->rq, prev->rq);
         else
