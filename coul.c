@@ -958,6 +958,9 @@ void updated_zmax(void) {
             }
             mark_unsorted();
         }
+    } else if (strategy == STRATEGY_6X && cur_vlevel) {
+        /* best_6x() also depends on zmax */
+        mark_unsorted();
     }
 }
 
@@ -4923,6 +4926,21 @@ void diag_6x(t_level *cur_level, uint vi, uint a) {
     in_b6x = 0;
 }
 
+ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt);
+
+/* The limit of the loop at v_i for its first x, the highest prime of
+ * tau: that dominates the primes recursion there would try, the later x
+ * needing at least a (2h-1)th root. A limit of 2^64 or more (0 from
+ * limit_p(), forcing a walk) is given as ULONG_MAX.
+ */
+ulong loop_limit(t_level *cur_level, uint vi) {
+    t_value *vp = &value[vi];
+    uint t = vp->alloc[cur_vlevel[vi] - 1].t;
+    uint x = divisors[t].div[0];
+    ulong limp = limit_p(cur_level, vi, x, t / x);
+    return limp ? limp : ULONG_MAX;
+}
+
 /* STRATEGY_6X: if we have the pattern "...2^e . 2z^2...", allocating 2^e
  * at v_i and 2 or 2y^2 at v_{i+2} leaving an odd square, v_i must be of
  * the form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
@@ -4931,6 +4949,12 @@ void diag_6x(t_level *cur_level, uint vi, uint a) {
  * We force allocation at v_i until the remaining tau is odd (in which
  * case we can finish with a Pell walk) or 2, in which case we return
  * BV_6X to invoke the fast walk_6x().
+ *
+ * But until tau at v_i is 2, we take instead the position prev_strategy
+ * would choose if its loop has a lower limit: our loop of q^2 at v_i
+ * runs to about (zmax/8)^{1/4} whatever n is, while a high power
+ * elsewhere may have a far lower limit (e.g. p^28 for n = 174). The
+ * choice depends on zmax, see updated_zmax().
  */
 uint best_6x(t_level *cur_level) {
     /* check if conditions for STRATEGY_6X still hold */
@@ -4948,8 +4972,13 @@ uint best_6x(t_level *cur_level) {
      * prep_midp() relies on us not allocating here when t is an odd prime */
     if (t & 1)
         return BV_WALK;
-    if (t != 2)
+    if (t != 2) {
+        uint vj = strategies[prev_strategy](cur_level);
+        if (vj < BV_SPECIAL && vj != vi
+                && loop_limit(cur_level, vj) < loop_limit(cur_level, vi))
+            return vj;
         return vi;          /* allocate some more */
+    }
     cur_level->vi = vi;
     return BV_6X;           /* walk_6x() can now handle this */
 }
@@ -5148,7 +5177,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
          */
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
 #if defined(TYPE_o)
-    } else if (strategy == STRATEGY_6X && nextt == 2) {
+    } else if (strategy == STRATEGY_6X && nextt == 2 && vi + 2 == sq0) {
         /* v_i = q_i p^{x-1} r => q_i p^{x-1} = 8ab such that br = a +/- 1.
          * When p^{x-1} dominates, we minimize v_i by setting a = p^{x-1}
          * giving r >= 8(p^{x-1} - 1)/q_i so v_i >= 8 p^{x-1} (p^{x-1} - 1).
