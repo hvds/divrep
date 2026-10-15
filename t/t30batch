@@ -16,6 +16,7 @@ if ($ENV{DEBUG}) {
 test_restrict();
 test_fixed();
 test_square_init();
+test_unforce();
 
 done_testing();
 exit 0;
@@ -64,6 +65,21 @@ sub test_square_init {
         '7^3 2^5 . 2 .', '7^3 2^8 . 2 .', '7^3 2^17 . 2 .',
         '7^3.2^2 . 2 . 2^5', '7^3.2^2 . 2 . 2^8', '7^3.2^2 . 2 . 2^17',
     ], 'a square from -I keeps batches where 2^2 of 2^5 hits it');
+}
+
+sub test_unforce {
+    # -F2 leaves batches of 2 with no odd x (here 2^3 . 2 and 2 . 2^3)
+    # for the walk to find. -F3 does not unforce 2, so keeps them.
+    my @args = qw{ -x1e30 12 3 };
+    my $all = batches(@args);
+    is_deeply($all, [
+        '2^2 . 2', '2^5 . 2', '2^3 . 2', '2 . 2^2', '2 . 2^5', '2 . 2^3',
+        '. . .',
+    ], 'D(12,3) batches include 2^3 . 2 and 2 . 2^3');
+    my $odd = [ grep !/\b2\^3\b/, @$all ];
+    is_deeply(batches('-F2', @args), $odd,
+            '-F2 leaves 2^3 . 2 and 2 . 2^3 to the walk');
+    is_deeply(batches('-F3', @args), $all, '-F3 keeps them forced');
 }
 
 # returns an arrayref of the batches listed, in order
