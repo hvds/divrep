@@ -816,7 +816,7 @@ void diag_any(t_level *cur_level, bool need_disp) {
         } else
             need_diag = 0;
         if (death_delay)
-            if (seconds(t1 - t0) >= death_delay) {
+            if (seconds(t1) >= death_delay) {
                 keep_diag();
                 report("301 Timeout after %.2fs\n", seconds(t1));
                 fail_silent();
