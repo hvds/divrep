@@ -3807,13 +3807,12 @@ bool update_residues(t_level *old, t_level *new,
     /* on retry, residues to update are already at new */
     uint from = retry ? new->level : old->level;
 
-    /* we may have a modfix */
-    if (have_modfix && mpz_divisible_ui_p(levels[0].aq, p)) {
+    /* p may already divide m, via fold (a p^0 tail) or modfix */
+    if ((fold || have_modfix) && mpz_divisible_ui_p(Z(ur_m), p)) {
         /* zroot_extend() needs coprime moduli to deal with, so we must
          * downgrade the input roots before calling it */
         uint fix = 0;
-        mpz_set(Z(temp), levels[0].aq);
-        while (mpz_fdiv_q_ui(Z(temp), Z(temp), p) == 0) {
+        while (mpz_divisible_ui_p(Z(ur_m), p)) {
             ++fix;
             mpz_divexact_ui(Z(ur_m), Z(ur_m), p);
         }

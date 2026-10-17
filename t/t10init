@@ -22,6 +22,7 @@ test_recover_j4();
 test_recover_failed_apply();
 test_committed_after_candidate();
 test_recover_p0_tail();
+test_recover_2tail_square();
 test_recover_complete_batch();
 test_recover_last_batch();
 test_no_forced_primes();
@@ -644,6 +645,18 @@ sub test_recover_p0_tail {
         [qw{ -x1e14 12 4 }],
         ['315 b3: 2^2(1) . 2.79^2(4) 5^2(3) (0.00s)'],
         'b3: 2^2 3^2 2.79^2 5^2',
+    );
+}
+
+sub test_recover_2tail_square {
+    # b32 of D(600,3) has a 2^0 tail at v_0, so aq = 2; v_0 = 5^9.3^19.z^2
+    # then leaves a square, and 2^4 at v_1 must update its residues
+    # with 2 already dividing aq
+    local $type = q{o};
+    expect_recover(q{recover 2^e hitting a square past a 2^0 tail},
+        [qw{ -g4 -b32 -x79525988269999:130111844186960015289999 600 3 }],
+        [q{315 b32: 5^9.3^19(3) 2^4 . (0.00s)}],
+        q{b32: 5^9.3^19 2^4 7^4},
     );
 }
 
