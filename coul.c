@@ -5068,6 +5068,25 @@ static inline bool gr_isprime(ulong n) {
     return n >= 2 && n < GR_PIMAX && gr_pi[n] != gr_pi[n - 1];
 }
 
+/* The start for costing a loop over the primes after p below the node
+ * at lp: one less than the first prime the loop will try. Primes known
+ * at lp are skipped by the loop at no cost (see known_prime()), so they
+ * are skipped here too, and two loops that try the same primes then
+ * cost the same however their p was found.
+ */
+static ulong cost_start(t_level *lp, ulong p) {
+    while (1) {
+        ulong q = p + 1;
+        while (q < GR_PIMAX && !gr_isprime(q))
+            ++q;
+        if (q >= GR_PIMAX)
+            q = next_prime(p);
+        if (!known_prime(lp, q))
+            return q - 1;
+        p = q;
+    }
+}
+
 /* the range (lo, hi] and exponent of the next allocation at a position */
 static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
     uint e = kp->e[0], same = 1;
@@ -7198,7 +7217,11 @@ static double ja_cost(
             continue;
         ulong p = start_p(vi, x);
         ulong limp = limit_p(cur_level, vi, x, nextt);
-        switch (classify_x(prev_level, vi, x, p, limp)) {
+        e_xr xr = classify_x(prev_level, vi, x, p, limp);
+        /* the range as the loop will try it */
+        if (xr == XR_WALK1 || xr == XR_RANGE)
+            p = cost_start(prev_level, p);
+        switch (xr) {
           case XR_WALK:
             return HUGE_VAL;
           case XR_SKIP:
@@ -7272,12 +7295,13 @@ static inline void ja_swap(void) {
     ja_bp = p;
 }
 
-/* true if positions vi and vj are alike, so cost the same */
-static inline bool ja_alike(uint vi, uint vj) {
+/* true if positions vi and vj are alike below lp, so cost the same */
+static inline bool ja_alike(t_level *lp, uint vi, uint vj) {
     t_allocation *ai = &value[vi].alloc[cur_vlevel[vi] - 1];
     t_allocation *aj = &value[vj].alloc[cur_vlevel[vj] - 1];
     return ai->t == aj->t && ai->p == aj->p && ai->x == aj->x
-            && maxforce[vi] == maxforce[vj] && mpz_cmp(ai->q, aj->q) == 0;
+            && mpz_cmp(ai->q, aj->q) == 0 && prev_x(vi) == prev_x(vj)
+            && cost_start(lp, maxforce[vi]) == cost_start(lp, maxforce[vj]);
 }
 
 /* -ja2: given the strategy's choice sv of position at the node at
@@ -7340,9 +7364,9 @@ uint ja_choose(t_level *prev_level, t_level *cur_level, uint sv) {
         /* A position alike to one before it (or to the strategy's
          * choice) cannot improve on it.
          */
-        bool seen = ja_alike(vi, sv);
+        bool seen = ja_alike(prev_level, vi, sv);
         for (uint vj = 0; !seen && vj < vi; ++vj)
-            if (ja_alike(vi, vj))
+            if (ja_alike(prev_level, vi, vj))
                 seen = 1;
         if (seen)
             continue;
@@ -7717,7 +7741,8 @@ bool gate_walk(
         double rw = (auto_level >= 2) ? ja_ratio(L, JA_WALK) : 1;
         double rr = (auto_level >= 2)
                 ? ja_rsize(sq ? JA_SQUARE : JA_RECURSE, w0) : GR_RSCALE;
-        do_walk = gr_walk(prev_level, p, cap, x, w0, rw, rr);
+        do_walk = gr_walk(prev_level, cost_start(prev_level, p), cap, x,
+                w0, rw, rr);
     } else if (auto_level && prev_level->have_square == 1
             && gq_costable(vi)) {
         /* likewise below one fixed square */
@@ -7725,7 +7750,8 @@ bool gate_walk(
         double w0 = gq_wcost(prev_level);
         double rw = (auto_level >= 2) ? ja_ratio(L, JA_QWALK) : 1;
         double rr = (auto_level >= 2) ? ja_rsize(JA_QREC, w0) : GQ_RSCALE;
-        do_walk = gq_walk(prev_level, p, cap, x, w0, rw, rr);
+        do_walk = gq_walk(prev_level, cost_start(prev_level, p), cap, x,
+                w0, rw, rr);
     }
     return do_walk;
 }
