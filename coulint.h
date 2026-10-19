@@ -156,6 +156,7 @@ extern uint strategy;
 extern t_fact nf;
 extern uint *maxforce;
 extern void done(void);
+extern ulong next_prime(ulong cur);
 extern bool walk_v_price_prep(t_level *cur_level);
 extern double walk_v_price(uint *t);
 extern bool kern_6x(void);
@@ -179,6 +180,21 @@ static inline bool never_unforced(ulong p) {
 #else
     return 0;
 #endif
+}
+
+/* Returns true if p is "known" at the given level, so should not be
+ * permitted as an additional unforced allocation.
+ */
+static inline bool known_prime(t_level *lp, ulong p) {
+    /* all known primes are <= maxp */
+    if (p > lp->maxp)
+        return 0;
+    if (never_unforced(p))
+        return 1;
+    for (uint li = 1; li <= lp->level; ++li)
+        if (p == levels[li].p && levels[li].x > 1)
+            return 1;
+    return 0;
 }
 
 /* true if -k applies to this batch */

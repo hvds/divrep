@@ -258,8 +258,11 @@ is chosen, and recursing over some x then walking is never better, so
 the choice is between walking and recursing over every x of some
 position (ja_choose()): W and the strategy's choice are incumbents, and
 other positions are costed (classify_x() and the -ja1 estimate) until they
-pass the incumbent; positions alike in (t, q, last p, x, maxforce) cost
-the same. An x leaving a square is costed as if it did not (an
+pass the incumbent; positions alike in (t, q, last p, x, first prime
+tried) cost the same. A loop is costed from the first prime it will
+try (cost_start()): known primes, such as a forced prime already
+placed, are skipped by the loop at no cost, so the estimates skip them
+too. An x leaving a square is costed as if it did not (an
 overestimate, corrected by learning, below); where a position has an x
 the model cannot cost (a flip), the strategy's choice stands. On four
 D(96,8) batches at the usual zmax, -ja2 matched the best of -j0..-j2

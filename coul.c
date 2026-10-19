@@ -490,21 +490,6 @@ uint know_target(uint vi) {
 #endif
 }
 
-/* Returns true if p is "known" at the given level, so should not be
- * permitted as an additional unforced allocation.
- */
-static inline bool known_prime(t_level *lp, ulong p) {
-    /* all known primes are <= maxp */
-    if (p > lp->maxp)
-        return 0;
-    if (never_unforced(p))
-        return 1;
-    for (uint li = 1; li <= lp->level; ++li)
-        if (p == levels[li].p && levels[li].x > 1)
-            return 1;
-    return 0;
-}
-
 #ifdef TRACK_STATS
     ulong* count_bad;
     static inline void TRACK_GOOD(uint vk, uint vi) { }
