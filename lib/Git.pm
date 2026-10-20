@@ -22,8 +22,13 @@ fragment may additionally be annotated with '%<n>' to indicate the number
 of distinct states for that fragment, optionally followed by another asterisk
 if any of those additional states was not "pure".
 
-We define a string as "pure" if a) it is not marked dirty, and b) either
-A is in master (for each repository) or it has been whitelisted.
+We define a string as "pure" if a) it is not marked dirty, and b) for
+each repository either A is in master, or it has been whitelisted, or
+(for divrep only) A is an ancestor of, or the same as, a tagged commit
+in the local repository. Tags thus mark builds from outside master
+(such as a branch used for proof reruns) as pure without changing any
+SHAs; such tags are expected to live only in the local repository.
+
 
 For C programs, the component parts of the string are made available
 by use of 'git-data' in the Makefile, which provides the values:
@@ -67,6 +72,11 @@ definition in the C<DESCRIPTION> section. A composite state is pure
 only if all its constituent states are pure.
 
 =cut
+
+use Cwd qw{ abs_path };
+use File::Basename qw{ dirname };
+
+my $gitbin = '/usr/bin/git';    # as in git-data
 
 my %whitelist = (
     divrep => { map +($_ => 1), (
@@ -138,11 +148,37 @@ sub _derive {
     return [ $1 // '', $2 // $1 // '', ($3 ? 1 : 0), $4 // 0, ($5 ? 1 : 0) ];
 }
 
+# Returns TRUE if the divrep commit $sha is an ancestor of (or the same
+# as) any tagged commit, cached per SHA. A SHA not known to the local
+# repository is not tagged.
+my %tagged;
+sub _tagged {
+    my($sha) = @_;
+    return $tagged{$sha} //= do {
+        my $root = abs_path(dirname(__FILE__) . '/..');
+        my @git = ($gitbin, '-C', $root);
+        my $known = _run(@git, qw{ rev-parse -q --verify }, "$sha^{commit}");
+        (length($known) && length(_run(@git, qw{ tag --contains }, $sha)))
+                ? 1 : 0;
+    };
+}
+
+# Run a command without a shell, returning its output (empty on error).
+sub _run {
+    my(@cmd) = @_;
+    open my $fh, '-|', @cmd or return '';
+    local $/;
+    my $out = <$fh> // '';
+    close $fh or return '';
+    return $out;
+}
+
 sub _raw_pure_part {
     my($repo, $data) = @_;
     my($change, $base, $dirty, $count, $dirtier) = @$data;
     return 0 if $dirty || $dirtier;
     return 1 if $whitelist{$repo}{$change} || $change eq $base;
+    return 1 if $repo eq 'divrep' && _tagged($change);
     return 0;
 }
 
