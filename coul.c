@@ -7189,6 +7189,18 @@ static inline bool gq_costable(uint vi) {
     return kern_at(vi);
 }
 
+/* -ja2: the corrected estimate c of recursing over every prime in
+ * [p, cap], but never less than the cost of trying each of them. The
+ * ratio learnt for large nodes can be tiny (below 1e-20 on D(1176,3)),
+ * and scaled by it alone the loop's own cost vanished, so that the
+ * choice between positions rested on noise: a q^2 loop over 1e9 primes
+ * was costed at under 1us and chosen, taking over 1000s.
+ */
+static inline double ja_floored(double c, ulong p, ulong cap) {
+    double fl = (gr_li(cap) - gr_li(p) + 1) * GR_APPLY;
+    return (c < fl) ? fl : c;
+}
+
 #define JA_MIN_WALK 100e-6  /* least cost of walking, to choose by cost */
 #define JA_W1S 0.1e-6       /* walk_1_set(), per prime iterated */
 #define JA_W1T 2e-6         /* walk_1_set(), per prime reaching its tests */
@@ -7274,7 +7286,7 @@ static double ja_cost(
                 double cr = gr_recurse(prev_level, p, cap, x);
                 ja_cx[di] = cr;
                 ja_cp[di] = sq ? JA_SQUARE : JA_RECURSE;
-                total += cr * (sq ? ja_rs : ja_rr);
+                total += ja_floored(cr * (sq ? ja_rs : ja_rr), p, cap);
             }
             break;
           }
