@@ -70,6 +70,8 @@ only if all its constituent states are pure.
 
 my %whitelist = (
     divrep => { map +($_ => 1), (
+        '3c2b1e2',  # calibrate over 116f8d2, tag rerun-cal-1, proof rerun
+        '40c5b21',  # calibrate over 94733f3, tag rerun-cal-2, proof rerun
     ) },
     mpu => { map +($_ => 1), (
         'b363d69',  # hvds fork, simpqs-full branch
