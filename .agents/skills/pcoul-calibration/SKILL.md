@@ -101,10 +101,13 @@ counts and CPU time (an N record).
 
 ### The cost table (bench.c, multibench-table, coulcost.c)
 
-One table per machine, MPUGMP build and n (`-f<flake>` for runs using
--o). Rows: C (per-operation constants fitted from -dv6 runs and
-paired mock runs), S/L (trial division by size and prime), P/R (prime
-tests), test_multi() rows by t, e and size, G (the ladder per rung:
+One table per machine and MPUGMP build, serving every n (`-f<flake>`
+for runs using -o). Rows: C (per-operation constants fitted from -dv6
+runs and paired mock runs), S/L (trial division by size and prime),
+P/R (prime tests), test_multi() rows by size for each class of (t, e)
+(cm_tclass(): after trial division, tau_multi_prep() depends on t and
+e only through t vs e + 1 and their parities; older tables have a row
+per divisor of their n, used where exact, else by class), G (the ladder per rung:
 reach, cost, hit rate, factor size, cofactor primality), Q (QS alone
 by size). Sizes sit either side of the limb boundaries at 64 and 128
 bits. G rows from 100 bits use inputs built from their factors, with

@@ -47,6 +47,33 @@ typedef struct {
 static t_cm cm_tab[CM_MAXT];
 static uint cm_count = 0;
 static bool cm_loaded = 0;
+/* What tau_multi_prep() does with a value that has no factor up to the
+ * trial limit, left to have tau(value^e) = t, depends on t and e only
+ * through their class:
+ *   CMT_NONE   t < e + 1: rejected at once;
+ *   CMT_PRIME  t == e + 1: a prime test decides it;
+ *   CMT_REJ    t > e + 1, t and e of the same parity: rejected after a
+ *              prime test and a power test, since with no power found
+ *              tau(value^e) is odd exactly when e is even;
+ *   CMT_PEND   t > e + 1 otherwise: after the same tests, rejected if
+ *              prime, else left pending for the ladder.
+ * (A perfect power, which changes e, is rare enough among such values
+ * to ignore, as the benches do.) So a test_multi() row of the table
+ * serves every t and e of its class: those the table has no row for
+ * take the row cm_cls[] gives for their class (see cm_lookup()). What
+ * the ladder then does does depend on t, but is derived from the G rows
+ * (see cm_lad_slots()).
+ */
+enum { CMT_NONE, CMT_PRIME, CMT_REJ, CMT_PEND, CMT_COUNT };
+static inline uint cm_tclass(uint t, uint e) {
+    if (t < e + 1)
+        return CMT_NONE;
+    if (t == e + 1)
+        return CMT_PRIME;
+    return ((t ^ e) & 1) ? CMT_PEND : CMT_REJ;
+}
+/* the row standing for each class, or -1 if the table has none */
+static int cm_cls[CMT_COUNT];
 /* Trial division: the table's rows are for inputs with no factor up to
  * the trial limit L for their size, since the model handles the trial
  * primes itself for each walk. The "L bits p" rows give L by size and
@@ -207,7 +234,8 @@ static t_cmscan *cm_scan_find(double lg, bool create) {
 }
 
 /* The table is the output of multibench-table: lines starting with a
- * digit are test_multi() rows "t e bits F rej dec pend pass prep run";
+ * digit are test_multi() rows "t e bits F rej dec pend pass prep run"
+ * (each standing for the class of its t and e: see cm_tclass());
  * others are "C name value", "P bits F pass us", "R bits us us",
  * "S bits p us us" or "L bits p". Times in the file are in microseconds.
  */
@@ -401,6 +429,22 @@ static void cm_load(void) {
         for (uint j = 0; j < cm_ntp && cm_tp[j] <= cm_scan[i].L; ++j)
             cm_scan[i].KL *= (double)cm_tp[j] / (cm_tp[j] - 1);
     }
+    /* The row for each class: the one multibench-table makes for it,
+     * else the first the table has.
+     */
+    static const uint cls_te[CMT_COUNT][2] = {
+        [CMT_PRIME] = { 3, 2 }, [CMT_REJ] = { 3, 1 }, [CMT_PEND] = { 4, 1 }
+    };
+    for (uint c = 0; c < CMT_COUNT; ++c)
+        cm_cls[c] = -1;
+    for (uint i = 0; i < cm_count; ++i) {
+        t_cm *mp = &cm_tab[i];
+        uint c = cm_tclass(mp->t, mp->e);
+        if (c == CMT_NONE)
+            continue;
+        if (cm_cls[c] < 0 || (mp->t == cls_te[c][0] && mp->e == cls_te[c][1]))
+            cm_cls[c] = i;
+    }
 }
 
 /* Interpolate a one-dimensional table for a value of log2 lg (see
@@ -422,8 +466,38 @@ static double cm_interp1(t_cm1 *tp, double lg, uint k) {
     return (a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a);
 }
 
-/* Interpolate the table at (t, e) for a value of log2 lg (see cm_bx());
+/* Interpolate a test_multi() row for a value of bits (see cm_bx());
  * rows are in increasing bits.
+ */
+static void cm_interp_row(t_cm *mp, double bits, double out[6]) {
+    uint j = 1;
+    if (bits <= mp->bits[0]) {
+        memcpy(out, mp->v[0], 6 * sizeof(double));
+        return;
+    }
+    if (bits >= mp->bits[mp->nb - 1]) {
+        memcpy(out, mp->v[mp->nb - 1], 6 * sizeof(double));
+        return;
+    }
+    while (bits > mp->bits[j])
+        ++j;
+    double f = (bits - mp->bits[j - 1]) / (mp->bits[j] - mp->bits[j - 1]);
+    for (uint k = 0; k < 4; ++k)
+        out[k] = mp->v[j - 1][k] + f * (mp->v[j][k] - mp->v[j - 1][k]);
+    for (uint k = 4; k < 6; ++k) {
+        double a = mp->v[j - 1][k], b = mp->v[j][k];
+        out[k] = (a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a);
+    }
+}
+
+/* The test_multi() row for (t, e) for a value of log2 lg: the table's
+ * own row if it has one, else that of the class of (t, e) (see
+ * cm_tclass()). A class row's pass and run columns are for its own t,
+ * so it is used only when the ladder comes from the G rows, which do
+ * not use them. If the table has no row for the class, a CMT_PRIME or
+ * CMT_REJ row is derived from the CMT_PEND row, which makes the same
+ * prime test (and a power test, which CMT_PRIME does not make, so that
+ * one is overcharged slightly). Returns 0 if there is nothing to go on.
  */
 static bool cm_lookup(uint t, uint e, double lg, double out[6]) {
     if (!cm_loaded)
@@ -431,29 +505,32 @@ static bool cm_lookup(uint t, uint e, double lg, double out[6]) {
     double bits = cm_bx(lg);
     for (uint i = 0; i < cm_count; ++i) {
         t_cm *mp = &cm_tab[i];
-        if (mp->t != t || mp->e != e)
-            continue;
-        uint j = 1;
-        if (bits <= mp->bits[0]) {
-            memcpy(out, mp->v[0], 6 * sizeof(double));
+        if (mp->t == t && mp->e == e) {
+            cm_interp_row(mp, bits, out);
             return 1;
         }
-        if (bits >= mp->bits[mp->nb - 1]) {
-            memcpy(out, mp->v[mp->nb - 1], 6 * sizeof(double));
-            return 1;
-        }
-        while (bits > mp->bits[j])
-            ++j;
-        double f = (bits - mp->bits[j - 1]) / (mp->bits[j] - mp->bits[j - 1]);
-        for (uint k = 0; k < 4; ++k)
-            out[k] = mp->v[j - 1][k] + f * (mp->v[j][k] - mp->v[j - 1][k]);
-        for (uint k = 4; k < 6; ++k) {
-            double a = mp->v[j - 1][k], b = mp->v[j][k];
-            out[k] = (a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a);
-        }
+    }
+    uint c = cm_tclass(t, e);
+    if (c == CMT_NONE) {
+        /* rejected before any test */
+        out[0] = 1;
+        out[1] = out[2] = out[3] = out[4] = out[5] = 0;
         return 1;
     }
-    return 0;
+    if (!cm_nlad)
+        return 0;
+    if (cm_cls[c] >= 0) {
+        cm_interp_row(&cm_tab[cm_cls[c]], bits, out);
+        return 1;
+    }
+    if (cm_cls[CMT_PEND] < 0)
+        return 0;
+    cm_interp_row(&cm_tab[cm_cls[CMT_PEND]], bits, out);
+    double pp = out[0];     /* the fraction rejected as prime */
+    out[0] = (c == CMT_PRIME) ? 1 - pp : 1;
+    out[1] = (c == CMT_PRIME) ? pp : 0;
+    out[2] = out[3] = out[5] = 0;
+    return 1;
 }
 
 /* Exact inverse-filter pass rate: per distinct modulus m, the fraction
