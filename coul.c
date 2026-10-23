@@ -17,6 +17,11 @@
 #include <setjmp.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#ifdef __linux__
+#   include <sys/ioctl.h>
+#   include <sys/syscall.h>
+#   include <linux/perf_event.h>
+#endif
 
 #include "coul.h"
 #include "builtins.h"
@@ -180,7 +185,26 @@ uint lastprime;
 /* set to utime at start of run, minus last timestamp of recovery file */
 double t0 = 0;
 struct rusage rusage_buf;
+
+/* Reported times are user-mode CPU cycles divided by a reference clock
+ * rate (-Lc<GHz>) when the cycle counter is available (Linux only, see
+ * init_cycles()), else CPU seconds.
+ * -Ld uses these scaled times; -Ls and -Lf use raw CPU seconds.
+ */
+double cyc_ghz = 3.6;
+int cyc_fd = -1;
+int cyc_errno = 0;      /* wanted cycles, but could not open the counter */
 static inline double utime(void) {
+#ifdef __linux__
+    if (cyc_fd >= 0) {
+        ulong v[3];     /* count, time enabled, time running */
+        if (read(cyc_fd, v, sizeof(v)) != sizeof(v))
+            fail("could not read cycle counter: %s", strerror(errno));
+        /* scale up if the counter was multiplexed */
+        double cyc = v[2] ? (double)v[0] * v[1] / v[2] : 0;
+        return cyc / (cyc_ghz * 1e9);
+    }
+#endif
     getrusage(RUSAGE_SELF, &rusage_buf);
     return (double)rusage_buf.ru_utime.tv_sec
             + (double)rusage_buf.ru_utime.tv_usec / 1000000;
@@ -1345,6 +1369,31 @@ void handle_sig(int sig) {
         need_log = 1;
 }
 
+/* Open the cycle counter for utime(), unless -Lc0 asked for CPU seconds.
+ * Failure is not fatal: we report it with a 000 line after the 001 line,
+ * and times are then CPU seconds; the 001 line marks which we have.
+ */
+void init_cycles(void) {
+#ifdef __linux__
+    if (cyc_ghz > 0) {
+        struct perf_event_attr pe;
+        memset(&pe, 0, sizeof(pe));
+        pe.type = PERF_TYPE_HARDWARE;
+        pe.size = sizeof(pe);
+        pe.config = PERF_COUNT_HW_CPU_CYCLES;
+        pe.exclude_kernel = 1;
+        pe.exclude_hv = 1;
+        pe.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED
+                | PERF_FORMAT_TOTAL_TIME_RUNNING;
+        cyc_fd = syscall(SYS_perf_event_open, &pe, 0, -1, -1, 0);
+        if (cyc_fd < 0)
+            cyc_errno = errno;
+    }
+#endif
+    /* the clock may have changed */
+    t0 = utime();
+}
+
 void init_time(void) {
     struct sigaction sa;
     struct sigevent sev;
@@ -2491,6 +2540,7 @@ void check_exceptions(void) {
 }
 
 void init_post(void) {
+    init_cycles();
     init_tau(rough, opt_flake);
     init_stats(k);
     alloc_taum(k);
@@ -2712,7 +2762,13 @@ void report_init(FILE *fp, char *prog) {
 
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
+    /* times are cycles at the given GHz (see utime()) */
+    if (cyc_fd >= 0)
+        fprintf(fp, " *CY%g*", cyc_ghz);
     fprintf(fp, "\n");
+    if (cyc_errno)
+        fprintf(fp, "000 cycle counter unavailable (%s),"
+                " times are CPU seconds\n", strerror(cyc_errno));
     if (debugt) {
         fprintf(fp, "312 target tau: [");
         for (uint i = 0; i < k; ++i) {
@@ -6404,7 +6460,12 @@ int main(int argc, char **argv, char **envp) {
             log_delay = strtoul(&arg[3], NULL, 10);
         else if (strncmp("-Ld", arg, 3) == 0)
             death_delay = strtoul(&arg[3], NULL, 10);
-        else if (arg[1] == 'r') {
+        else if (strncmp("-Lc", arg, 3) == 0) {
+            char *end;
+            cyc_ghz = strtod(&arg[3], &end);
+            if (end == &arg[3] || *end || !(cyc_ghz >= 0))
+                fail("invalid -Lc clock rate '%s'", &arg[3]);
+        } else if (arg[1] == 'r') {
             rpath = malloc(strlen(&arg[2]) + 1);
             strcpy(rpath, &arg[2]);
         } else if (arg[1] == 'R')

@@ -133,6 +133,7 @@ test: pcoul pcaul pcrul ${SOAK}
 	t/t10init
 	t/t11init-sort
 	t/t20log
+	t/t25time
 	t/t30batch
 	t/t40known
 	t/t50pell
@@ -143,6 +144,7 @@ dtest: dpcoul dpcaul dpcrul ${SOAK}
 	DEBUG=1 t/t10init
 	DEBUG=1 t/t11init-sort
 	DEBUG=1 t/t20log
+	DEBUG=1 t/t25time
 	DEBUG=1 t/t30batch
 	DEBUG=1 t/t40known
 	DEBUG=1 t/t50pell

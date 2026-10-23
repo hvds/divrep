@@ -1,0 +1,45 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+
+use Test::More;
+
+# Reported times are cycles at a reference clock rate (-Lc<GHz>) when
+# the cycle counter can be opened, else CPU seconds. Which of these a
+# run used must be visible: a *CY<GHz>* marker on the 001 line, or (on
+# Linux, where we expected to have cycles) a 000 line saying why not.
+
+my $prog = './pcoul';
+if ($ENV{DEBUG}) {
+    $prog =~ s/pc/dpc/
+            or die "Could not munge program name '$prog'";
+}
+my @args = qw{ -Ls0 -x1e6 12 4 };
+
+{
+    my @out = `$prog @args 2>&1`;
+    my($init) = grep /^001 /, @out;
+    my @why = grep /^000 cycle counter unavailable/, @out;
+    if ($init =~ /\*CY3\.6\*/) {
+        is(scalar(@why), 0, 'cycle marker, so no fallback line');
+    } elsif ($^O eq 'linux') {
+        is(scalar(@why), 1, 'no cycle marker, so a fallback line');
+    } else {
+        is(scalar(@why), 0, 'not linux, so neither marker nor fallback');
+    }
+}
+
+{
+    my @out = `$prog -Lc0 @args 2>&1`;
+    my($init) = grep /^001 /, @out;
+    unlike($init, qr{\*CY}, '-Lc0 gives no cycle marker');
+    is(scalar(grep /^000 cycle/, @out), 0, '-Lc0 gives no fallback line');
+}
+
+for my $bad ('', 'x', '-1', '3.6x') {
+    my $out = `$prog -Lc$bad @args 2>&1`;
+    like($out, qr{^invalid -Lc clock rate}, "-Lc'$bad' is rejected");
+}
+
+done_testing();
