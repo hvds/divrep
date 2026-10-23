@@ -76,6 +76,7 @@ extern t_ct_work ct_w;
 extern double (*ct_prep_price)(uint nbits, const t_ct_work *w);
 extern void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt);
 extern void (*ct_pprep_record)(uint nbits, int res, double dt);
+extern double (*ct_clock)(void);
 extern double (*ct_pprep_price)(uint nbits, int res);
 extern double (*ct_ptest_price)(uint nbits);
 extern double ct_test_charged;

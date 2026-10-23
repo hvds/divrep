@@ -69,7 +69,9 @@
  *       by cost best (-1 to walk) and its cost bT, the positions costed
  *       and those outside the model, and the -ja level: only at -ja2 is
  *       the choice made
- * The stage timing adds two clock_gettime() calls per inverse-filter
+ * Times are in the unit of reported times (see work_clock()), not wall
+ * time as the record descriptions above say.
+ * The stage timing adds two clock reads per inverse-filter
  * pass, inflating test_primes() time slightly; the log for a busy run
  * can reach GB, so use short runs or single -I/-b batches.
  */
@@ -114,10 +116,9 @@ static const ulong gs_thr[] = {
 };
 #define GS_NTHR (sizeof(gs_thr) / sizeof(gs_thr[0]))
 static uint gs_thr_i[GS_MAXLEVEL];
+/* in the unit of reported times (see work_clock()) */
 double gs_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return work_clock();
 }
 static double gs_t_base = -1;
 double gs_rel(void) {
@@ -133,19 +134,17 @@ static void gs_close(void) {
 }
 
 /* What timing each test preparation recorded adds to its time, to take
- * from it: the mean time between two thread clock reads with nothing
- * between them. It is a system call, so comparable with the cheapest
- * preparations; measured once.
+ * from it: the mean time between two reads of its clock (ct_clock, see
+ * coultau.c) with nothing between them. It is a system call, so
+ * comparable with the cheapest preparations; measured once.
  */
 static double gs_clock_gap(void) {
     static double cost = -1;
     if (cost < 0) {
-        struct timespec a, b;
         double sum = 0;
         for (uint i = 0; i < 10000; ++i) {
-            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &a);
-            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &b);
-            sum += (b.tv_sec - a.tv_sec) + (b.tv_nsec - a.tv_nsec) * 1e-9;
+            double a = (*ct_clock)();
+            sum += (*ct_clock)() - a;
         }
         cost = sum / 10000;
     }

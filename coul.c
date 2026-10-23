@@ -210,6 +210,25 @@ static inline double utime(void) {
     return (double)rusage_buf.ru_utime.tv_sec
             + (double)rusage_buf.ru_utime.tv_usec / 1000000;
 }
+
+/* The clock for timing parts of the work, in the same unit as reported
+ * times: the benches and trace records behind the cost table, the mocks'
+ * own overhead and stride samples, and the checks of counted against
+ * real cost. With the cycle counter open it is utime(), so that a cost
+ * table and a run agree whatever the turbo clock was when each was made;
+ * else the thread's CPU time, which unlike getrusage() is precise over
+ * short intervals (see mock.c for why not the process's CPU time).
+ * Either way it is a system call (~0.25us).
+ */
+double work_clock(void) {
+#ifdef __linux__
+    if (cyc_fd >= 0)
+        return utime();
+#endif
+    struct timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
 timer_t diag_timerid, log_timerid;
 volatile bool need_work, need_diag, need_log;
 bool clock_is_realtime = 0;
@@ -2547,6 +2566,8 @@ void check_exceptions(void) {
 
 void init_post(void) {
     init_cycles();
+    /* time the tests in the unit of reported times */
+    ct_clock = &work_clock;
     init_tau(rough, opt_flake);
     init_stats(k);
     alloc_taum(k);

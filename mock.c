@@ -43,22 +43,21 @@ static double mock_li(double x) {
     return x / l * (1 + 1 / l + 2 / (l * l));
 }
 
-/* CPU time, to measure (and discount) the mock's own overhead, and
- * time stride samples; CPU time is unaffected by other load. Not
+/* The clock to measure (and discount) the mock's own overhead, and time
+ * stride samples: work_clock(), in the unit of reported times, since
+ * both are combined with them, and unaffected by other load. Without
+ * the cycle counter it is the thread's CPU time, not
  * CLOCK_PROCESS_CPUTIME_ID: while a CPU-time timer is armed (as the
  * diag and log timers are, see init_time()), Linux samples the process
  * clock from the thread group's cputimer, which advances only at
  * scheduler ticks (4ms here), so almost every interval read as 0 or
  * one tick. The thread clock stays precise, and pcoul has one thread.
- * It is a system call (~0.25us here).
  */
 static inline double mock_clock(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return work_clock();
 }
 
-/* The CPU time of one mock_clock(), which is itself overhead: an interval
+/* The time of one mock_clock(), which is itself overhead: an interval
  * between two reads includes about one read's worth, and about one more
  * falls outside it.
  */

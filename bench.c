@@ -39,10 +39,22 @@
  * from -dv2 runs instead (see multibench-table), since a synthetic loop
  * misses too much of them.
  */
+/* The time in the unit of reported times (see work_clock()), less what
+ * reading it costs, so that an interval between two reads leaves out the
+ * one read's worth it includes. A read is a system call, ~0.25us, which
+ * is as much as the cheapest tests benched (where the old wall clock,
+ * read without one, cost ~0.02us).
+ */
+static double mb_gap = -1;
+static ulong mb_reads = 0;
 static inline double mb_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    if (mb_gap < 0) {
+        double t0 = work_clock(), t1 = t0;
+        for (uint i = 0; i < 10000; ++i)
+            t1 = work_clock();
+        mb_gap = (t1 - t0) / 10000;
+    }
+    return work_clock() - mb_gap * ++mb_reads;
 }
 
 static volatile ulong mb_sink;

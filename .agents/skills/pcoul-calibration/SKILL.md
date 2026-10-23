@@ -102,14 +102,17 @@ counts and CPU time (an N record).
 ### The cost table (bench.c, multibench-table, coulcost.c)
 
 One table per machine and MPUGMP build, serving every n (`-f<flake>`
-for runs using -o). Rows: C (per-operation constants fitted from -dv6
-runs and paired mock runs), S/L (trial division by size and prime),
-P/R (prime tests), test_multi() rows by size for each class of (t, e)
-(cm_tclass(): after trial division, tau_multi_prep() depends on t and
-e only through t vs e + 1 and their parities; older tables have a row
-per divisor of their n, used where exact, else by class), G (the ladder per rung:
-reach, cost, hit rate, factor size, cofactor primality), Q (QS alone
-by size). Sizes sit either side of the limb boundaries at 64 and 128
+for runs using -o), timed by work_clock(): cycles at the -Lc reference
+clock (3.6GHz) where pcoul can open the cycle counter, so independent
+of the turbo clock while it is made, else CPU seconds. Rows: C
+(per-operation constants fitted from -dv6 runs and paired mock runs),
+S/L (trial division by size and prime), P/R (prime tests),
+test_multi() rows by size for each class of (t, e) (cm_tclass(): after
+trial division, tau_multi_prep() depends on t and e only through t vs
+e + 1 and their parities; older tables have a row per divisor of their
+n, used where exact, else by class), G (the ladder per rung: reach,
+cost, hit rate, factor size, cofactor primality), Q (QS alone by
+size). Sizes sit either side of the limb boundaries at 64 and 128
 bits. G rows from 100 bits use inputs built from their factors, with
 the smallest factor oversampled and weighted back (Buchstab). Without
 -f, G rows reach 255 bits, and the rows above 230 bits take over an
@@ -824,9 +827,11 @@ level stands in for it.
   LARGE_MIN, a walk's starting ati beyond 2^64 goes unchecked.
 - Time with nothing else running: two vCPUs slow each other 10-15%.
   Real runs of the same batch vary ~4%.
-- For fine timing inside pcoul use CLOCK_THREAD_CPUTIME_ID: once the
-  diag and log timers are armed, the process CPU clock advances only
-  at scheduler ticks.
+- For fine timing inside pcoul use work_clock() (coul.c; ct_clock in
+  coultau.c): in the unit of reported times, cycles where the counter
+  is open, else CLOCK_THREAD_CPUTIME_ID, since once the diag and log
+  timers are armed, the process CPU clock advances only at scheduler
+  ticks.
 - Progress after a fixed CPU time (-Ld) is noisy on a VM (25-50% run
   to run): compare complete units. A fully specified -I pattern is one
   batch.

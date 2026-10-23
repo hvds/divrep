@@ -56,9 +56,7 @@ double gq_t[GR_MAXL], gq_i[GR_MAXL];
 uint gq_n[GR_MAXL];
 
 static inline double gr_now(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
-    return ts.tv_sec + ts.tv_nsec * 1e-9;
+    return work_clock();
 }
 
 /* The cost of what the run has done, counted rather than timed, so that

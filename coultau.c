@@ -884,6 +884,17 @@ void (*ct_pprep_record)(uint nbits, int res, double dt) = NULL;
 double ct_test_charged = 0;
 ulong ct_preps = 0, ct_ppreps = 0;  /* the calls of each that are priced */
 
+/* The clock for the timings above and in tau_multi_run(): the thread's
+ * CPU time, unless pcoul sets it to its own (work_clock()), so that they
+ * are in the unit of its reported times.
+ */
+static double ct_thread_clock(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+double (*ct_clock)(void) = &ct_thread_clock;
+
 static bool tau_prime_prep_inner(uint i);
 bool tau_prime_prep(uint i) {
     if (!ct_pprep_price)
@@ -891,13 +902,11 @@ bool tau_prime_prep(uint i) {
     ++ct_ppreps;
     uint nbits = mpz_sizeinbase(taum[i].n, 2);
     if (ct_pprep_record) {
-        struct timespec t0, t1;
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
+        double t0 = (*ct_clock)();
         bool r = tau_prime_prep_inner(i);
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t1);
+        double t1 = (*ct_clock)();
         int res = r ? 1 + taum[i].state : 0;
-        (*ct_pprep_record)(nbits, res, (t1.tv_sec - t0.tv_sec)
-                + (t1.tv_nsec - t0.tv_nsec) * 1e-9);
+        (*ct_pprep_record)(nbits, res, t1 - t0);
         ct_test_charged += (*ct_pprep_price)(nbits, res);
         return r;
     }
@@ -915,12 +924,10 @@ bool tau_multi_prep(uint i) {
     memset(&ct_w, 0, sizeof(ct_w));
     ct_w.stop_p = 2;
     if (ct_prep_record) {
-        struct timespec t0, t1;
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
+        double t0 = (*ct_clock)();
         bool r = tau_multi_prep_inner(i);
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t1);
-        (*ct_prep_record)(nbits, &ct_w, (t1.tv_sec - t0.tv_sec)
-                + (t1.tv_nsec - t0.tv_nsec) * 1e-9);
+        double t1 = (*ct_clock)();
+        (*ct_prep_record)(nbits, &ct_w, t1 - t0);
         ct_test_charged += (*ct_prep_price)(nbits, &ct_w);
         return r;
     }
@@ -1432,7 +1439,7 @@ static uint tau_multi_run_inner(uint count, tau_failure_handler tfh) {
 /* If set, the model of the expected cost of a call (see cm_ladder_cost()),
  * so that each call is charged that instead of the time it takes, for the
  * caller's cost learning: ct_ladder_actual and ct_ladder_charged
- * accumulate the actual thread CPU time and the expected cost of the
+ * accumulate the actual time (by ct_clock) and the expected cost of the
  * calls.
  */
 double (*ct_ladder_model)(uint count, t_tm *tm) = NULL;
@@ -1443,12 +1450,9 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
     double E = (*ct_ladder_model)(count, taum);
     if (E < 0)
         return tau_multi_run_inner(count, tfh);
-    struct timespec t0, t1;
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t0);
+    double t0 = (*ct_clock)();
     uint r = tau_multi_run_inner(count, tfh);
-    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t1);
-    ct_ladder_actual += (t1.tv_sec - t0.tv_sec)
-            + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
+    ct_ladder_actual += (*ct_clock)() - t0;
     ct_ladder_charged += E;
     return r;
 }
