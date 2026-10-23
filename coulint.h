@@ -23,8 +23,9 @@
 #   error "No type defined"
 #endif
 
-/* the clock for timing parts of the work (see coul.c) */
+/* the clock for timing parts of the work, and its unit (see coul.c) */
 extern double work_clock(void);
+extern double work_clock_ghz(void);
 
 extern uint maxfact, sq0, *sqg, *cur_vlevel, *oc_t, seen_best;
 extern mpz_t zmin, zmax, *wv_o, *wv_qq;

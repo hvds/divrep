@@ -241,9 +241,15 @@ static t_cmscan *cm_scan_find(double lg, bool create) {
  */
 static void cm_load(void);
 
-/* the build that made each section of the table, from its V lines */
+/* The build that made each section of the table, from its V lines
+ * "V section sha [clock]", and the unit of its times: clock "CY<GHz>"
+ * for cycles at that clock rate, as pcoul reports times with the cycle
+ * counter open (see work_clock()), else "CPU" for CPU seconds; with no
+ * clock (a table from before it was recorded), CPU seconds.
+ */
 static struct {
     char section[16], sha[80];
+    double ghz;
 } cm_ver[16];
 static uint cm_nver = 0;
 
@@ -255,6 +261,18 @@ const char *cm_table_sha(const char *section) {
         if (strcmp(cm_ver[i].section, section) == 0)
             return cm_ver[i].sha;
     return NULL;
+}
+
+/* the unit of a section's times: cycles at this many GHz, 0 for CPU
+ * seconds, or -1 if the section is not known
+ */
+double cm_table_ghz(const char *section) {
+    if (!cm_loaded)
+        cm_load();
+    for (uint i = 0; i < cm_nver; ++i)
+        if (strcmp(cm_ver[i].section, section) == 0)
+            return cm_ver[i].ghz;
+    return -1;
 }
 
 /* The next line of the table, from the file if any, else from the
@@ -291,11 +309,16 @@ static void cm_load(void) {
         fn = "(built-in)";
     char line[256], name[32];
     while (cm_line(line, sizeof(line), fp, &src)) {
-        char sha[sizeof(cm_ver[0].sha)];
-        if (sscanf(line, "V %15s %79s", name, sha) == 2) {
+        char sha[sizeof(cm_ver[0].sha)], clk[16];
+        int nv = sscanf(line, "V %15s %79s %15s", name, sha, clk);
+        if (nv >= 2) {
+            double ghz = 0;
+            if (nv == 3 && strncmp(clk, "CY", 2) == 0)
+                ghz = strtod(clk + 2, NULL);
             if (cm_nver < sizeof(cm_ver) / sizeof(cm_ver[0])) {
                 strcpy(cm_ver[cm_nver].section, name);
-                strcpy(cm_ver[cm_nver++].sha, sha);
+                strcpy(cm_ver[cm_nver].sha, sha);
+                cm_ver[cm_nver++].ghz = ghz;
             }
             continue;
         }

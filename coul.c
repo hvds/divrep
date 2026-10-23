@@ -229,6 +229,11 @@ double work_clock(void) {
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
+
+/* the unit of work_clock(): cycles at this many GHz, or 0 for seconds */
+double work_clock_ghz(void) {
+    return (cyc_fd >= 0) ? cyc_ghz : 0;
+}
 timer_t diag_timerid, log_timerid;
 volatile bool need_work, need_diag, need_log;
 bool clock_is_realtime = 0;
@@ -7106,9 +7111,19 @@ e_is prune_stale(e_is jump) {
     return jump;
 }
 
+/* a unit of times, for cost_table_check() */
+static const char *clock_unit(char *buf, size_t size, double ghz) {
+    if (ghz)
+        snprintf(buf, size, "cycles at %gGHz", ghz);
+    else
+        snprintf(buf, size, "CPU seconds");
+    return buf;
+}
+
 /* With -dT, warn of each section of the cost table made by a different
  * build: those for the factoring tests by a different MPU::GMP, the rest
- * by a different divrep.
+ * by a different divrep; and of each timed in a different unit from this
+ * run's times.
  */
 void cost_table_check(void) {
     static const char *mpu[] = { "scan", "prime", "multi", "ladder", "qs" };
@@ -7131,6 +7146,19 @@ void cost_table_check(void) {
         size_t len = strcspn(s, "(*;");
         if (len != strlen(want) || strncmp(s, want, len) != 0)
             report("000 cost table: %s from build %s\n", sec, sha);
+    }
+    /* and of each whose times are in a different unit from this run's */
+    static const char *all[] = { "scan", "prime", "multi", "ladder", "qs",
+            "walk", "w1s", "leaf", "tail", "situ" };
+    double ghz = work_clock_ghz();
+    for (uint i = 0; i < sizeof(all) / sizeof(all[0]); ++i) {
+        double tg = cm_table_ghz(all[i]);
+        if (tg < 0 || tg == ghz)
+            continue;
+        char tu[32], ru[32];
+        report("000 cost table: %s timed in %s, this run in %s\n", all[i],
+                clock_unit(tu, sizeof(tu), tg),
+                clock_unit(ru, sizeof(ru), ghz));
     }
 }
 
@@ -7367,8 +7395,6 @@ int main(int argc, char **argv, char **envp) {
         cc.on = 1;
     }
 #endif
-    if (debugT)
-        cost_table_check();
 #ifdef VERBOSE
     if (VB(VB_PREP) && cc.on) {
         ct_prep_record = &gs_prep_record;
@@ -7386,6 +7412,9 @@ int main(int argc, char **argv, char **envp) {
         report_init(stdout, argv[0]);
         if (rfp) report_init(rfp, argv[0]);
     }
+    /* after init_post(), which settles the unit of this run's times */
+    if (debugT)
+        cost_table_check();
 
     if (check || modfix) {
         uint *tt = calloc(k, sizeof(uint));

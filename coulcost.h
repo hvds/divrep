@@ -18,6 +18,7 @@ extern double cm_ladder_cost(uint count, t_tm *tm);
 extern bool cm_have_table(void);
 extern const char cm_default_table[];   /* timings.c, from timings */
 extern const char *cm_table_sha(const char *section);
+extern double cm_table_ghz(const char *section);
 extern double cm_price_prime(mpz_t n);
 extern double cm_const(uint which);
 extern double cm_prep_price(uint nbits, const t_ct_work *w);

@@ -104,7 +104,9 @@ counts and CPU time (an N record).
 One table per machine and MPUGMP build, serving every n (`-f<flake>`
 for runs using -o), timed by work_clock(): cycles at the -Lc reference
 clock (3.6GHz) where pcoul can open the cycle counter, so independent
-of the turbo clock while it is made, else CPU seconds. Rows: C
+of the turbo clock while it is made, else CPU seconds; each section's
+V line records which (CY3.6 or CPU, none meaning CPU), and -dT warns
+of a section in a different unit from the run's. Rows: C
 (per-operation constants fitted from -dv6 runs and paired mock runs),
 S/L (trial division by size and prime), P/R (prime tests),
 test_multi() rows by size for each class of (t, e) (cm_tclass(): after

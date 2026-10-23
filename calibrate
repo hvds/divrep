@@ -18,7 +18,9 @@ range under each candidate setting of options, and reports the best. It
 uses a pcoul built with C<MOCK=1> (C<-c>, default F<./pcoul>) and the
 machine's cost table from multibench-table (C<-t>, default
 C<$COST_TABLE>), so that each batch runs deterministically and much
-faster than for real; predictions are in this machine's CPU seconds.
+faster than for real; predictions are in the unit pcoul reports times
+in (seconds at its C<-Lc> reference clock where it can count cycles,
+else this machine's CPU seconds), as is the cost table.
 
 For each -f value (default the largest prime <= k and the prime below
 it) the batches are listed with C<-a>, giving each one's size
@@ -138,7 +140,7 @@ if (@settings) {
 }
 
 my @rank = sort { $pred{$a} <=> $pred{$b} } keys %pred;
-print "\nPredicted CPU seconds for the full run, with standard error; and"
+print "\nPredicted seconds for the full run, with standard error; and"
         . " the\ndifference from the best setting with the same -f, with"
         . " its standard error:\n";
 my %bestf;
