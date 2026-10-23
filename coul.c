@@ -1712,6 +1712,7 @@ void recover(FILE *fp) {
     size_t nlead = 0, ntrail = 0;
 
     while (1) {
+        errno = 0;      /* getline() does not clear errno on eof */
         ssize_t nread = getline(&curbuf, &len, fp);
         if (nread <= 0) {
             if (errno == 0)
