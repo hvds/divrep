@@ -507,6 +507,20 @@ within 1% of the recursions and walk iterations of the run (b4: 4090
 and 23700 against 4114 and 23788; b5: 19900 and 131000 against 19961
 and 130598; b7: 4090 and 508000 against 4119 and 507778).
 
+Two gaps in -ap seen on D(126,3) (-ja2 -ka -j1 -f3, 2026-10-24), where
+no batch had cost-table rows (no `[rootus=]`):
+
+- The "whole" figure is then a fixed guess, and can be wildly high:
+  b4 (`2^6 . 2.3^2`) was put at 1488s and b0 at 992s, and every one of
+  b0-b17 completed in 0.06s in all. -ka compares -k against that
+  figure, so the guess biases it towards -k (harmless there, since -k
+  was estimated at 0.00s anyway).
+- b2, b4, b14 and b16 (`2^6 . 2.3^x`, `2^8 . 2.3^x`: tau 18 or 14 left
+  at v_0, the square at v_2 as 2.z^2) were given neither a -k plan nor
+  a 6x estimate, only "whole", while `2^20 . 2.3^x` got a 6x estimate.
+  They finished at once with or without -ka, presumably taken by
+  STRATEGY_6X; why -ap does not estimate them as such was not traced.
+
 ### Findings under a fixed gain (to 2026-09-25)
 
 These predate -ja. They were measured with the gain set by hand and
@@ -632,6 +646,20 @@ Measured on D(18,4) at reduced `-x` (1e15-1e17):
   far looser than the recursion's first-allocation cap, and midp has no
   gate. Master's skip of odd-prime-tau positions in `prep_midp()` cut
   the first batch's midp work 7.3M -> 3.0M tries but does not fix this.
+  The same seen at full scale (D(126,3), 2026-10-24): the rerun's
+  rule for -W, W = 15 (zmax/aq_min)^0.28, fitted on runs with little
+  single-square work, gave `-W5246639`, and b0 (`2^6.3^2 . 2`) sat in a
+  sweep of p^2 at v_0 (tau 6 left) from p ~ 8e8 downwards, one near-
+  empty walk per prime; under -ka (no -W given) all 18 single-square
+  batches b0-b17 took 0.06s. -k passes such positions over (see
+  kern_sets()); a plain -W has nothing like that. With a square fixed
+  the sweep's walks are over roots, so the best threshold there is
+  likely to differ from the no-square one, possibly by orders of
+  magnitude, while a single -W serves both kinds of batch. So the rule
+  must not be applied where single-square batches carry much of the
+  cost; -ka, or no -W, there, until -W can be set separately for them
+  (or per node by cost, to do 3). (Without highpow `-Wx<P>^1` sweeps
+  nothing, so it is no way to restrict the sweep to p^1.)
 - The square gate estimates the walk from the root of the width
   (zmax - zmin); the walk itself starts at the root of zmin, so narrow
   windows overstate square walks and push the gate towards recursion.
@@ -796,6 +824,35 @@ level stands in for it.
     and -k. The experiments above found no fixed formula that carries
     far on its own (a^L moved along the ridge, not off it); cost per
     node does.
+11. Strategic choices above the fully costed nodes (proposed
+    2026-10-24, not started). -ja2's one-level estimate is sound where
+    every child will be walked; above that it prices a subtree it will
+    not run. There, an allocation serves two ends: (a) cutting the
+    space (zmax/aq), which the estimate sees, and (b) moving positions
+    up the structural ladder (pcoul-internals, "What makes a batch
+    cheap": t_i = 2, one odd t_i, a second odd t_i giving Pell), or
+    making the next allocation able to - which a one-level estimate
+    cannot see. The idea is a heuristic credit for (b), on the same
+    scale as the cost so that it can be calibrated: largest for
+    bringing a second position within reach of odd t once a square is
+    fixed, then for a first odd t_i, least for t_i = 2; each credited
+    per position, not only when the whole batch reaches a shape like
+    -k or 6X. Without highpow an allocation lowers v2(t_i) only if
+    e + 1 is even but not a power of 2, so the room for (b) depends on
+    n: for 3 | n p^5 and p^2; for n = 4q (q > 3 prime) little beyond
+    p^{q-1} leaving a power of 2; shrinking as v2(n) grows, until
+    highpow is viable. For n = 12 every unforced allocation is its
+    position's last, so (b) there is only the order of positions.
+    Cases to test first: n = 4 (mod 8), with and without 3 | n - n = 20,
+    44, 92 (to see p grow), 100, 140 for other shapes; 12, 36, 60 (12 | n
+    allows k > 7, and a gain at n = 12 would help the rerun backlog
+    most) - at k where -ja2 takes minutes, then checking that any gain
+    grows with k. Before building it: from -dv8 records (adding the
+    measured cost there if they lack it), compare
+    -ja2's estimate against the measured subtree cost at nodes that
+    are not fully costed, grouped by what the choice did to t_i; if
+    (b) is real, choices that lowered v2(t_i) or reached odd t should
+    be systematically underpriced.
 
 ### Why some of this is hard
 
