@@ -8,6 +8,15 @@ Orientation for anyone (human or AI) working on this codebase for the
 first time. This is durable reference material - architecture,
 vocabulary, build steps, and hard-won design rules.
 
+Read this before reasoning about strategy, options or the cost of a
+search, not only before changing code: most mistakes in such
+discussions come from missing one of the structural facts below (see
+"What makes a batch cheap" and "-W / midp" in particular). The wiki
+page "D(n,k) calculation" explains the method and its terms, and
+"pcoul options" describes every option. In the calibrate branches the
+pcoul-calibration skill covers the cost model and the options that
+decide by cost.
+
 ### What this program does
 
 The make target 'pcoul' searches for runs of k consecutive integers each
@@ -104,6 +113,32 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   more simultaneously) requires solving a Pell equation (`pell.c`) to
   find candidates satisfying both positions' square constraints and
   their fixed positional offset at once.
+- **What makes a batch cheap (the structural ladder)**: walking values
+  is the fallback; each of these steps cuts the work by far, and each
+  is reached by a single position, not by every position together:
+  1. t_i = 2 at some position: what is left there must be prime, so
+     most candidates are rejected cheaply. A modest win.
+  2. One odd t_i: that position is fixed as a square (or higher
+     power), and the walk is over roots rather than values - roughly
+     a square root of the work.
+  3. A second odd t_i: a Pell equation, whose solutions are so sparse
+     that the batch is effectively free (handled at once, not counted
+     as a batch; see "Batches" below).
+  So an allocation is worth more than the space it cuts (zmax/aq) when
+  it brings a position to t_i = 2 or odd, or makes the next allocation
+  able to; with one square already fixed, steering a second position
+  to odd t is the biggest prize. `-k` and `STRATEGY_6X` are hand-built
+  routes to step 3 and to a special case of step 2.
+- **What a batch costs is set by what is still needed, not only by
+  its aq**: every position must still take some p^e for each part of
+  its remaining tau, and the cheapest available primes for that can
+  dominate.
+  For example in D(126,3) every position needs a p^e with 7 | e + 1;
+  a batch where two positions already have it from 2^6 or 3^6 leaves
+  one position needing at least 5^6, and costs far more than one with
+  a much smaller aq that still needs 5^6.7^6.11^6 across three
+  positions. Rank batches by aq times that remaining minimum (as
+  `mintau()` computes it), never by aq alone.
 - **walk vs recurse**: at each point with remaining primes to
   allocate, the search can either recurse (try allocating another
   prime, branching further) or "walk" (fix everything else and
@@ -188,7 +223,28 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   such large prime can fit in the search bound per position anyway -
   recursion there would be pure combinatorial waste. `walk_midp()` is
   invoked from `process_batch()`, which itself is run when a complete
-  batch has been allocated (ie when `fp_need` reaches 0).
+  batch has been allocated (ie when `fp_need` reaches 0). What it
+  sweeps (`prep_midp()`):
+  - only the powers recursion itself would allocate: p^{x-1} for x not
+    a power of 2, unless under highpow (see "Order of powers" above).
+    So without `-j4`/`-js`, `-Wx<P>^1` sweeps nothing at all, and is
+    the same as no `-W`;
+  - not at a position whose remaining tau is an odd prime (a fixed
+    square, covered by the walks);
+  - a plain `-W<P>` sets the same threshold P for every power, so p^2
+    is swept from sqrt(what is left) all the way down to P, one
+    `apply_single()` and walk per prime. The sweep has no gate.
+  - where a square is already fixed, the walks are over roots, so far
+    smaller per prime, and the best threshold is likely to differ from
+    the no-square case, possibly by orders of magnitude; one `-W`
+    serves both kinds of batch, so a value tuned on one can be ruinous
+    on the other. In D(126,3) b0 (`2^6.3^2 . 2`, one square) a
+    `-W5246639` chosen for the non-square batches swept p^2 at a
+    position with tau 6 left, still far from done after minutes, where
+    the batch walked whole takes milliseconds. In the calibrate
+    branches `-k`/`-ka` pass over such positions; plain `-W` does not.
+    Before recommending a `-W`, check whether single-square batches
+    carry much of the cost.
 - **Forced levels have no gaps**: the forced-prime chain always occupies
   exactly `forcedp` consecutive levels, one per prime, starting
   at `final_level` (which is 1 `prep_presquare()` inserts an initial
@@ -283,7 +339,11 @@ easy to confuse by mnemonic alone:
   above).
 - `-g<n>` (`gain`): tunes the walk-vs-recurse gate; a higher gain
   means more recursion before walking. `-G<n>` sets it separately for
-  walks with a fixed square.
+  walks with a fixed square. Before 50f235e (2026-08-26) the gate
+  miscounted the cost of a walk with one fixed square, which is why
+  old runs often used a `-G` orders of magnitude from `-g` (e.g.
+  `-G1e6:`); since then the best values are expected to be similar,
+  so an old run's `-G` is not evidence about what suits current code.
 - `-f<n>` (`force_all`): forces every prime `<= n` to be tracked as its
   own explorable batch (see "the tail" below) rather than allowing a
   synthetic catch-all tail batch for singleton cases.
@@ -294,8 +354,13 @@ easy to confuse by mnemonic alone:
   (or excludes) a residue class - also a partial search.
 - `-P<n>` (`limp_cap`, capital - unrelated to `-p` despite the similar
   letter): caps the internal `limit_p()` estimate, a performance knob.
-- `-o` (`opt_print`): print candidates instead of fully testing them -
-  also unrelated to `-p` despite the mnemonic overlap.
+- `-o` / `-o<bits>` (`opt_print`, `opt_flake`): when every
+  factorization method has failed for some value, log it and carry on,
+  instead of stopping; with `<bits>`, values of more than that many
+  bits are logged without trying the slowest methods (QS and beyond),
+  so they can be factorized separately and the log edited. Unrelated
+  to `-p` despite the mnemonic overlap. (The comment on `opt_print` in
+  `coul.c` does not describe this.)
 - `-a`/`-b`: batch selection (see "Batches" above).
 - `-I`: recovery/injection pattern (see "recovery patterns" above).
 - `-dw<n>` / `-dW<n>` / `-dL<n>` (debug): show every progress line
