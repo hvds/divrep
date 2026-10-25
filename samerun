@@ -1,0 +1,271 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use File::Temp qw{ tempdir };
+use File::Path qw{ make_path };
+use Text::ParseWords qw{ shellwords };
+
+# No maths content, so no lib/reexec.
+
+=head1 samerun - check that two builds behave identically
+
+Runs a battery of cases under two builds of pc?ul and compares what
+each writes, to check that a change meant to leave behaviour alone
+does so. Every progress line is written to the log (C<-dL>), and both
+stdout and the log are compared, after removing what may differ
+between builds or runs: times, the build sha on the 001 line, and the
+note of which clock times are in.
+
+Cases marked for recovery are also stopped partway (C<-dL<count>>) at
+several points and recovered to completion, and what the recovered
+runs write is compared too.
+
+Usage: samerun [options] <old dir> <new dir>
+
+where each dir holds the builds (pcoul, pcaul, pcrul) to compare.
+
+  -c<file>   take the cases from <file> instead of the built-in list
+  -o<re>     run only the cases matching <re>
+  -p<count>  run <count> at a time (default 2)
+  -t<s>      time limit for each run in seconds (default 60)
+  -s<count>  points to stop at for recovery (default 4)
+  -k         keep the work directory, and say where it is
+  -v         show each case as it is checked
+
+Each case is a line: an optional C<R> (check recovery too), then the
+program (C<o>, C<a> or C<r> for pcoul, pcaul or pcrul), then its
+arguments as for a shell, without C<-r>, C<-L> or C<-dL>. A C<#>
+starts a comment.
+
+Output: a line for each case that differs or fails, then a summary.
+The exit status is 0 only if every case behaved identically.
+
+=cut
+
+my($casefile, $only, $par, $tlimit, $stops, $keep, $verbose)
+        = (undef, undef, 2, 60, 4, 0, 0);
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    $casefile = $1, next if $arg =~ /^-c(.+)/;
+    $only = $1, next if $arg =~ /^-o(.+)/;
+    $par = $1, next if $arg =~ /^-p(\d+)$/;
+    $tlimit = $1, next if $arg =~ /^-t(\d+)$/;
+    $stops = $1, next if $arg =~ /^-s(\d+)$/;
+    $keep = 1, next if $arg eq '-k';
+    $verbose = 1, next if $arg eq '-v';
+    die "Unknown option '$arg'\n";
+}
+my($old, $new) = @ARGV;
+die "Usage: $0 [options] <old dir> <new dir>\n"
+        unless defined($new) && @ARGV == 2;
+my %prog = (o => 'pcoul', a => 'pcaul', r => 'pcrul');
+
+my @cases = read_cases($casefile);
+@cases = grep $_->{text} =~ /$only/, @cases if defined $only;
+my $work = tempdir(CLEANUP => !$keep);
+print "work directory $work\n" if $keep;
+
+# Each job is one run (or one stop-and-recover) under both builds.
+my(@jobs, %result);
+for my $i (0 .. $#cases) {
+    push @jobs, { case => $i, stop => 0 };
+}
+my($ndiff, $nfail) = (0, 0);
+run_jobs(\@jobs);
+# Then the recovery checks, for which the full run says where to stop.
+my @rjobs;
+for my $i (grep $cases[$_]{recover}, 0 .. $#cases) {
+    my $n = $result{$i}{progress} // 0;
+    next if $n < 2;
+    my %seen;
+    for my $j (1 .. $stops) {
+        my $at = int($n * $j / ($stops + 1));
+        next if $at < 1 || $seen{$at}++;
+        push @rjobs, { case => $i, stop => $at };
+    }
+}
+my $nrec = @rjobs;
+run_jobs(\@rjobs);
+printf "%d cases, %d recovery checks: %s\n", scalar(@cases), $nrec,
+        ($ndiff || $nfail) ? "$ndiff differ, $nfail failed" : 'all the same';
+exit(($ndiff || $nfail) ? 1 : 0);
+
+sub read_cases {
+    my($file) = @_;
+    my @lines;
+    if (defined $file) {
+        open my $fh, '<', $file or die "$file: $!\n";
+        @lines = <$fh>;
+    } else {
+        @lines = <DATA>;
+    }
+    my @c;
+    for (@lines) {
+        s/#.*//;
+        s/^\s+|\s+$//g;
+        next unless length;
+        my @w = shellwords($_);
+        my $recover = ($w[0] eq 'R') ? shift(@w) : 0;
+        my $p = shift @w;
+        die "Unknown program '$p' in case '$_'\n" unless $prog{$p};
+        push @c, { text => $_, recover => !!$recover, prog => $prog{$p},
+                args => \@w };
+    }
+    return @c;
+}
+
+sub run_jobs {
+    my($jobs) = @_;
+    my %run;
+    my $id = 0;
+    while (@$jobs || %run) {
+        while (@$jobs && keys(%run) < $par) {
+            my $job = shift @$jobs;
+            my $dir = sprintf '%s/%d', $work, ++$id;
+            my $pid = fork // die "fork: $!\n";
+            if (!$pid) {
+                exit(do_job($job, $dir));
+            }
+            $run{$pid} = [ $job, $dir ];
+        }
+        my $pid = wait;
+        last if $pid < 0;
+        my($job, $dir) = @{ delete $run{$pid} };
+        report_job($job, $dir);
+    }
+}
+
+# Run the job under both builds, each in a directory of its own.
+sub do_job {
+    my($job, $dir) = @_;
+    my $c = $cases[$job->{case}];
+    for my $side ([ old => $old ], [ new => $new ]) {
+        my($name, $bdir) = @$side;
+        my $d = "$dir/$name";
+        make_path($d);
+        my $bin = "$bdir/$c->{prog}";
+        if ($job->{stop}) {
+            run_one($d, 'stop', $bin, "-dL$job->{stop}", @{ $c->{args} });
+            # recovery takes a log ended by a stop as cut off there
+            strip_301("$d/run.log");
+            run_one($d, 'out', $bin, '-dL', @{ $c->{args} });
+        } else {
+            run_one($d, 'out', $bin, '-dL', @{ $c->{args} });
+        }
+    }
+    return 0;
+}
+
+sub run_one {
+    my($d, $out, $bin, @args) = @_;
+    my $pid = fork // die "fork: $!\n";
+    if (!$pid) {
+        chdir $d or die "$d: $!\n";
+        open STDOUT, '>', "$out.txt" or die "$out.txt: $!\n";
+        open STDERR, '>&', \*STDOUT or die "dup: $!\n";
+        exec('timeout', $tlimit, $bin, '-Ls0', '-rrun.log', @args)
+                or die "exec $bin: $!\n";
+    }
+    waitpid($pid, 0);
+    my $status = $? >> 8;
+    open my $fh, '>', "$d/$out.status" or die;
+    print $fh "$status\n";
+}
+
+sub strip_301 {
+    my($log) = @_;
+    open my $fh, '<', $log or return;
+    my @l = grep !/^301 /, <$fh>;
+    close $fh;
+    open $fh, '>', $log or die "$log: $!\n";
+    print $fh @l;
+}
+
+# What may differ between builds or runs, removed.
+sub normal {
+    my($file) = @_;
+    open my $fh, '<', $file or return [];
+    my @l;
+    while (<$fh>) {
+        next if /^000 cycle counter /;
+        s/\(\d+(?:\.\d+)?s\)/(T)/g;
+        s/ sha=\S+//;
+        push @l, $_;
+    }
+    return \@l;
+}
+
+sub report_job {
+    my($job, $dir) = @_;
+    my $c = $cases[$job->{case}];
+    my $what = $job->{stop}
+            ? "$c->{text} (recovered from $job->{stop})" : $c->{text};
+    my @fail;
+    for my $name (qw{ old new }) {
+        open my $fh, '<', "$dir/$name/out.status" or die;
+        chomp(my $s = <$fh>);
+        push @fail, "$name timed out" if $s == 124;
+    }
+    my $diff;
+    for my $file (qw{ out.txt run.log }) {
+        my $a = normal("$dir/old/$file");
+        my $b = normal("$dir/new/$file");
+        my $i = 0;
+        ++$i while $i < @$a && $i < @$b && $a->[$i] eq $b->[$i];
+        next if $i == @$a && $i == @$b;
+        $diff = sprintf "%s line %d:\n  old: %s  new: %s", $file, $i + 1,
+                $a->[$i] // "(end)\n", $b->[$i] // "(end)\n";
+        last;
+    }
+    unless ($job->{stop}) {
+        my $log = normal("$dir/new/run.log");
+        $result{$job->{case}}{progress} = grep /^3[01]5 /, @$log;
+    }
+    if (@fail) {
+        ++$nfail;
+        print "FAIL $what: @fail\n";
+    } elsif ($diff) {
+        ++$ndiff;
+        print "DIFF $what: $diff";
+    } elsif ($verbose) {
+        print "same $what\n";
+    }
+    system('rm', '-rf', $dir) unless $keep;
+}
+
+__DATA__
+# plain runs, forced batches and tails
+R o -x1e9 12 4
+o -x1e11 20 4
+o -x1e11 36 3
+R o -f5 -x1e9 24 5
+o -f4 -x1e10 24 4
+# strategies: highpow (315 lines), fixed order
+R o -j4 -x1e15 64 3
+o -js0,1,2 -x1e10 12 3
+# flips, STRATEGY_6X and Pell
+R o -x1e12 18 3
+R o -j2 -x1e8 36 4
+o -x1e13 18 4
+R o -x1e13 30 4
+o -x1e12 90 3
+o -jp -b0 -x1e6 30 4
+o -jp -x1e8 30 4
+# -W
+R o -W1000 -x1e9 48 4
+o -W100 -x1e9 24 5
+# odd n, nothing valid
+o -x1e14 9 3
+# restricted and partial searches
+o -X -x1e6 12 3
+o -F2 -x1e8 12 3
+o -p100:1000 -x1e14 24 4
+o -m7=1 -x1e12 24 4
+o -I"7^3 2^3 ." -x1e100 12 3
+o -a -x1e12 24 4
+o -b3 -x1e12 24 4
+# the other types
+a -x1e10 12 3
+a -x1e12 24 3
+r -x1e10 24 3
