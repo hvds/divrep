@@ -195,13 +195,23 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   cleared) and get back a fully valid, cacheable/cache-reusable answer
   for that modified view, not just for whatever the "live" state
   happens to be.
-- **`is_forced` distinguishes forced-batch from unforced levels.**
-  `cur_level->is_forced` is `1` only for a level populated via
-  `apply_batch()` (a forced-prime batch, tail or not - it's set
-  unconditionally near the top of that function) and `0` for one from
-  `apply_single()` (a genuine unforced candidate) or a freshly-reset
-  level. Useful for telling "still dispatching forced primes" from
-  "already in unforced territory" when inspecting state.
+- **A level's `action` says what it does** (`e_action`):
+  `A_FORCED` for a level populated via `apply_batch()` (a forced-prime
+  batch, tail or not), `A_UNFORCED` for one from `apply_single()`,
+  `A_BASE` for level 0 (a starting point, so there is always a
+  `prev_level` for running values such as `rq`/`aq`), `A_PRESQ` for
+  the dummy level `prep_presquare()` inserts, and `A_FIXED` for the
+  levels an `-I` pattern fixes. Only the first two are iterated over;
+  wherever unforced levels are told apart, the others count as forced.
+  `recurse()` does not set `A_UNFORCED` at `unforced:`: it relies on
+  `A_UNFORCED` being 0, so the level is either still as `calloc()`
+  left it or was reset on the tail of a batch.
+  Vocabulary: an action is the sort of thing done at a level, from a
+  fixed set; an act is one doing of it, with its own state (today the
+  `t_level` entry, after the planned node/act split a `t_act`, pointed
+  to by `actp` so as not to be confused with an allocation's `ap`).
+  `A_NONE` ends the list: it is the count of actions, and the
+  placeholder where there is none.
 - **`apply_level()` is the one shared level-transition function** that
   `apply_null()`, `apply_single()`, and `apply_primary()` all route
   through. `apply_secondary()` is the exception: it adds *further*

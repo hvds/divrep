@@ -569,8 +569,8 @@ void update_window(t_level *cur_level) {
         slong this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
         printf("\x1b]0;b%ld:", this_batch);
         uint pc = 0;
-        for (uint i = 1; i <= cur_level->level && pc < 3; ++i) {
-            if (levels[i].is_forced)
+        for (uint i = final_level + 1; i <= cur_level->level && pc < 3; ++i) {
+            if (levels[i].action != A_UNFORCED)
                 continue;
             printf(" %lu", levels[i].p);
             ++pc;
@@ -933,7 +933,7 @@ void mark_unsorted(void) {
     /* the current level too, if its position has been chosen */
     for (uint li = final_level + 1; li <= level; ++li) {
         t_level *lp = &levels[li];
-        if (lp->is_forced || lp->p == 0 || li > top) {
+        if (lp->action != A_UNFORCED || lp->p == 0 || li > top) {
             lp->unsorted = 0;
             continue;
         }
@@ -1056,7 +1056,7 @@ void init_levels(void) {
 #else
     levels[0].maxp = 0;
 #endif
-    levels[0].is_forced = 2;    /* special value for dummy entry */
+    levels[0].action = A_BASE;
     levels[0].vi_depth = 1;
     if (forcedp + 1 > 8 * sizeof(levels[0].fp_need))
         fail("FIXME: too many forced primes");
@@ -2481,7 +2481,7 @@ void prep_presquare(void) {
         memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
         mpz_set(cur->rq, prev->rq);
-        cur->is_forced = 2;     /* special value for dummy entry */
+        cur->action = A_PRESQ;
         cur->p = 0;
         cur->have_square = 0;
         for (uint vi = 0; vi < k; ++vi)
@@ -4459,7 +4459,7 @@ void walk_midp(t_level *prev_level, bool recover) {
     bool used;
 
     in_midp = 1;
-    cur_level->is_forced = 0;
+    cur_level->action = A_UNFORCED;
     midppc = 0;
     prep_midp(cur_level);
     if (midppc == 0)
@@ -4580,7 +4580,7 @@ bool apply_batch(
     t_forcep *fp = &forcep[fpi];
     assert(fp->count > bi);
     t_value *vp;
-    cur_level->is_forced = 1;
+    cur_level->action = A_FORCED;
     cur_level->bi = bi;
     t_forcebatch *bp = forcebatch_p(fp, bi);
     uint terminal = k;
@@ -4886,9 +4886,9 @@ uint best_v3(t_level *cur_level) {
             /* shortcircuit if last allocation was of sqrt(t) */
             /* but only if it was unforced */
             ulong p = apj->p;
-            for (uint li = 1; li < cur_level->level; ++li) {
+            for (uint li = final_level + 1; li < cur_level->level; ++li) {
                 t_level *lp = &levels[li];
-                if (lp->is_forced == 0)
+                if (lp->action == A_UNFORCED)
                     break;
                 if (lp->p == p)
                     goto best_v3_unforced;
@@ -4978,7 +4978,7 @@ uint best_v4(t_level *cur_level) {
 void diag_6x(t_level *cur_level, uint vi, uint a) {
     in_b6x = 1;
     b6x_vi = vi;
-    cur_level->bi = a;     /* spare while cur_level->is_forced == 0 here */
+    cur_level->bi = a;     /* spare at an unforced level */
     diag_plain(cur_level);
     in_b6x = 0;
 }
@@ -5599,7 +5599,7 @@ e_pux prep_unforced_x(t_level *prev_level, t_level *cur_level) {
 #ifdef SQONLY
         if (prev_level->have_square)
             walk_v(prev_level, Z(zero));
-        else if (!prev_level->is_forced)
+        else if (prev_level->action == A_UNFORCED)
             level_setp(prev_level, prev_level->limp);
 #else
         walk_v(prev_level, Z(zero));
@@ -5994,7 +5994,7 @@ e_is insert_stack(void) {
         }
 
         for (uint l = final_level + 1; l < level; ++l)
-            levels[l].is_forced = 1;
+            levels[l].action = A_FIXED;
         /* do not recurse back into elements set by init_pattern */
         final_level = level - 1;
     }
@@ -6059,7 +6059,7 @@ e_is insert_stack(void) {
             jump = IS_BATCH;    /* Note: may also have_rwalk */
         else if (have_rwalk)
             jump = IS_RWALK;
-        else if (prev->is_forced && !prev->fp_need)
+        else if (prev->action != A_UNFORCED && !prev->fp_need)
             /* need process_batch() without midp_recover */
             jump = IS_BATCH;
     } else if (midp_recover.valid)
@@ -6211,7 +6211,7 @@ void recurse(e_is jump_continue) {
         cur_level = &levels[level];
 
         /* recurse deeper */
-        if (prev_level->fp_need && prev_level->is_forced) {
+        if (prev_level->fp_need && prev_level->action != A_UNFORCED) {
             fp = &forcep[next_fpi(prev_level)];
             if (fp->count == 0)
                 goto unforced;
@@ -6220,9 +6220,10 @@ void recurse(e_is jump_continue) {
         }
       unforced:
         {
-            /* note: cur_level->is_forced is either always 0 by calloc(),
-             * or gets set to 0 on the tail of a batch */
-            /* cur_level->is_forced = 0; */
+            /* Note: cur_level->action is either always A_UNFORCED by
+             * calloc(), or gets set to it on the tail of a batch.
+             */
+            assert(A_UNFORCED == 0);
 
             if (cur_level->next_best)
                 goto walk_now;
@@ -6242,13 +6243,13 @@ void recurse(e_is jump_continue) {
                     goto derecurse;
                   case BV_WALK - BV_SPECIAL:
                     /* failure result is stable if last allocation unforced */
-                    if (!prev_level->is_forced)
+                    if (prev_level->action == A_UNFORCED)
                         cur_level->next_best = 1;
                   walk_now:
 #ifdef SQONLY
                     if (prev_level->have_square)
                         walk_v(prev_level, Z(zero));
-                    else if (!prev_level->is_forced)
+                    else if (prev_level->action == A_UNFORCED)
                         level_setp(prev_level, prev_level->limp);
 #else
                     walk_v(prev_level, Z(zero));
@@ -6295,13 +6296,21 @@ void recurse(e_is jump_continue) {
             break;
         prev_level = &levels[level - 1];
         cur_level = &levels[level];
-        if (cur_level->is_forced)
+        switch (cur_level->action) {
+          case A_FORCED:
             unapply_batch(next_fpi(prev_level), cur_level->bi, k);
-        else
+            break;
+          case A_UNFORCED:
             --cur_vlevel[cur_level->vi];
+            break;
+          default:
+            fail("panic: derecurse to level %u of action %u",
+                    level, cur_level->action);
+        }
         /* goto continue_recurse; */
       continue_recurse:
-        if (cur_level->is_forced) {
+        switch (cur_level->action) {
+          case A_FORCED:
             fp = &forcep[next_fpi(prev_level)];
             bi = cur_level->bi + 1;
           continue_forced:
@@ -6321,6 +6330,11 @@ void recurse(e_is jump_continue) {
                 unapply_batch(next_fpi(prev_level), bi, k);
             }
             goto continue_recurse;
+          case A_UNFORCED:
+            break;
+          default:
+            fail("panic: continue_recurse at level %u of action %u",
+                    level, cur_level->action);
         }
       continue_unforced:
         {
@@ -6389,7 +6403,7 @@ e_is prune_stale(e_is jump) {
     uint top = (jump == IS_FLIP) ? level - 1 : level;
     for (uint li = final_level + 1; li < top; ++li) {
         t_level *lp = &levels[li];
-        if (lp->is_forced || lp->x < 2)
+        if (lp->action != A_UNFORCED || lp->x < 2)
             continue;
         if (mpz_cmp(lp->rq, zmax) <= 0) {
             /* find the limit with v_i as it was when this level was set */
@@ -6411,7 +6425,7 @@ e_is prune_stale(e_is jump) {
             levels[level + 1].next_best = 0;
             --level;
             t_level *up = &levels[level];
-            if (up->is_forced)
+            if (up->action != A_UNFORCED)
                 unapply_batch(next_fpi(&levels[level - 1]), up->bi, k);
             else
                 --cur_vlevel[up->vi];

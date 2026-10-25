@@ -39,11 +39,24 @@ extern t_divisors *divisors;
  * group of simultaneous allocations of the same p to different i (and
  * in which case derecursion should unwind the whole group), or "unforced",
  * in which case no other v_j will be divisible by p.
+ * A level's action says which, or that it is never iterated over: the
+ * dummy level at 0 and before any initial squares (see prep_presquare()),
+ * and the levels an -I pattern fixes. Those count as forced wherever
+ * unforced levels are told apart.
  */
+typedef enum {
+    A_UNFORCED = 0,
+    A_FORCED,
+    A_BASE,         /* level 0, so there is always a prev_level */
+    A_PRESQ,        /* the dummy level before initial squares */
+    A_FIXED,        /* fixed by an -I pattern */
+
+    A_NONE          /* none of the above; also the number of actions */
+} e_action;
+
 typedef struct s_level {
     uint level;     /* index of this entry */
-    uint is_forced; /* this is a forced-prime entry if 1 */
-                    /* this is a dummy entry for initial squares if 2 */
+    e_action action;
     bool have_min;  /* we have passed any minp requirement */
     bool next_best; /* vi is known stable result of best_v() */
     bool unsorted;  /* this level is not where best_v() would put it */
