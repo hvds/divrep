@@ -5387,8 +5387,11 @@ static inline void reject_mod(
  *   mult == -(rq + i) / aq (mod p^{x-1}).
  * Taken mod p, that gives mult0 = mult % p from an inverse mod p alone;
  * mult >= mult0, so mult0 > rj_mult is enough to reject. Otherwise
- * we need all of mult: for p^2 its other digit base p comes from the
- * same inverse, and for higher powers we invert mod p^{x-1}.
+ * we need more of mult: for p^2 its other digit base p comes from the
+ * same inverse, and for higher powers we invert mod m = p^e, the
+ * largest power of p up to p^{x-1} below 2^61: mult >= mult % m, so
+ * that too is enough to reject if above rj_mult, and it is mult itself
+ * if m = p^{x-1}.
  */
 static inline bool reject_single(
     t_level *prev, t_level *cur, uint vi, ulong p, uint x
@@ -5423,14 +5426,14 @@ static inline bool reject_single(
             return mult0 + p * (d / p * inv % p) > cur->rj_mult;
         }
     }
-    /* as update_chinese(): m = p^{x-1} < 2^61, not dividing aq */
+    /* as update_chinese(): m = p^e < 2^61 for e < x, not dividing aq */
     ulong m = p;
     for (uint e = 2; e < x; ++e) {
         if (m >= (1UL << 61) / p)
-            return 0;
+            break;
         m *= p;
     }
-    if (m >= (1UL << 61))
+    if (m >= (1UL << 61) || m <= cur->rj_mult)
         return 0;
     reject_mod(prev, cur->rj_limb, m, &am, &rm);
     if (am % p == 0)
