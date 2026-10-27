@@ -310,6 +310,28 @@ uint *fixed_v = NULL;   /* values specified for -js */
 #define BV_NEXTX (BV_SPECIAL + 1)
 #define BV_6X (BV_SPECIAL + 2)
 
+/* What prep_unforced_x() and limit_unforced_x() find for allocating
+ * p^{x-1} at the current level's v_i.
+ */
+typedef enum {
+    PUX_NOTHING_TO_DO = 0,  /* nothing more to do at this level for any x */
+    PUX_FLIP_PQSQ,          /* the flip is available now: run_flip_pqsq() */
+    PUX_SKIP_THIS_X,        /* nothing more to do for this x */
+    PUX_DO_THIS_X           /* there are p to allocate for this x */
+} e_pux;
+
+/* e_is indicates where we should pick up when we enter recurse() */
+typedef enum {
+    IS_DEEPER = 0,  /* Current level is good, try to recurse deeper */
+    IS_FINISH,  /* Everything is done */
+    IS_NEXTX,   /* Current power is done, try the next power */
+    IS_NEXT,    /* Current prime is done, try the next prime */
+    IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
+    IS_BATCH,   /* Start in process_batch(), possibly with partial progress */
+    IS_6X,      /* Resume best_6x(), possibly with partial progress */
+    IS_FLIP     /* Resume run_flip_pqsq(), possibly with partial progress */
+} e_is;
+
 typedef uint (*t_strategy)(t_level *cur_level);
 uint best_v0(t_level *cur_level);
 uint best_v1(t_level *cur_level);
@@ -5334,13 +5356,6 @@ static inline uint flip_xs_tau(uint t) {
     return (x && can_flip(x)) ? x : 0;
 }
 
-typedef enum {
-    PUX_NOTHING_TO_DO = 0,
-    PUX_FLIP_PQSQ,
-    PUX_SKIP_THIS_X,
-    PUX_DO_THIS_X
-} e_pux;
-
 /* Most primes tried by a loop of allocations are rejected for giving a
  * least v_0 = rq + mult.aq > zmax, with mult the multiple the CRT finds:
  * that is, for mult > floor((zmax - rq) / aq), which is the same for
@@ -5637,18 +5652,6 @@ void stack_remove(t_fact *s, t_fact *s2, uint vi, ulong p, uint e) {
         fail("Expected %lu^%u at %u in recovery, but none found", p, e, vi);
     }
 }
-
-/* e_is indicates where we should pick up when we enter recurse() */
-typedef enum {
-    IS_DEEPER = 0,  /* Current level is good, try to recurse deeper */
-    IS_FINISH,  /* Everything is done */
-    IS_NEXTX,   /* Current power is done, try the next power */
-    IS_NEXT,    /* Current prime is done, try the next prime */
-    IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
-    IS_BATCH,   /* Start in process_batch(), possibly with partial progress */
-    IS_6X,      /* Resume best_6x(), possibly with partial progress */
-    IS_FLIP     /* Resume run_flip_pqsq(), possibly with partial progress */
-} e_is;
 
 /* Discard whatever a recovery line shows beyond the point reached. */
 void stack_drop(t_fact *s) {
