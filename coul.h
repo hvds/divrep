@@ -43,6 +43,9 @@ extern t_divisors *divisors;
  * dummy level at 0 and before any initial squares (see prep_presquare()),
  * and the levels an -I pattern fixes. Those count as forced wherever
  * unforced levels are told apart.
+ * Some searches instead take over from a level while they run, and
+ * progress lines show them by a suffix rather than by the allocation at
+ * that level: any levels above it are part of the search.
  */
 typedef enum {
     A_UNFORCED = 0,
@@ -50,6 +53,9 @@ typedef enum {
     A_BASE,         /* level 0, so there is always a prev_level */
     A_PRESQ,        /* the dummy level before initial squares */
     A_FIXED,        /* fixed by an -I pattern */
+    A_MIDP,         /* -W's sweep, walk_midp() */
+    A_6X,           /* the STRATEGY_6X walk, walk_6x() */
+    A_FLIP,         /* run_flip_pqsq(), its allocation withdrawn */
 
     A_NONE          /* none of the above; also the number of actions */
 } e_action;

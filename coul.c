@@ -233,13 +233,7 @@ char *sminp = NULL, *smaxp = NULL, *smidp = NULL;
 char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
 bool highpow = 0;   /* allocate even p^{2^x-1} (based on roughness) */
 ulong limp_cap = 0;
-bool midp_only = 0, in_midp = 0, need_maxp = 0, need_midp = 0;
-bool in_b6x = 0;        /* true while a STRATEGY_6X candidate is on trial */
-uint b6x_vi;            /* the v_i it is on trial for */
-bool in_flip = 0;       /* true while run_flip_pqsq() is proceeding */
-uint flip_vi;           /* the v_i it is proceeding for */
-ulong flip_oldp;        /* prev_level->p, before run_flip_pqsq() overwrites
-                          * that slot - see flip_recover's comment */
+bool midp_only = 0, need_maxp = 0, need_midp = 0;
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
@@ -349,6 +343,26 @@ t_strategy strategies[NUM_STRATEGIES] = {
     &best_v0, &best_v1, &best_v2, &best_v3, &best_v4,
     &best_6x, &best_fixed
 };
+
+/* What each action does, where it differs from others. An action with a
+ * suffix_op is shown in progress lines by the suffix it writes (returning
+ * its length) in place of the allocation at its level.
+ */
+typedef uint (*t_suffix_op)(t_level *lp, char *buf);
+uint suffix_midp(t_level *lp, char *buf);
+uint suffix_6x(t_level *lp, char *buf);
+uint suffix_flip(t_level *lp, char *buf);
+typedef struct s_action_ops {
+    t_suffix_op suffix;
+} t_action_ops;
+const t_action_ops action_ops[A_NONE] = {
+    [A_MIDP] = { &suffix_midp },
+    [A_6X] = { &suffix_6x },
+    [A_FLIP] = { &suffix_flip },
+};
+static inline bool has_suffix(e_action a) {
+    return action_ops[a].suffix != NULL;
+}
 
 uint check = 0;         /* modulus to check up to */
 uint check_prime = 0;   /* skip moduli divisible by prime greater than this */
@@ -556,8 +570,10 @@ static inline bool known_prime(t_level *lp, ulong p) {
         return 0;
     if (never_unforced(p))
         return 1;
+    /* a flip withdraws its level's allocation */
     for (uint li = 1; li <= lp->level; ++li)
-        if (p == levels[li].p && levels[li].x > 1)
+        if (p == levels[li].p && levels[li].x > 1
+                && levels[li].action != A_FLIP)
             return 1;
     return 0;
 }
@@ -592,7 +608,8 @@ void update_window(t_level *cur_level) {
         printf("\x1b]0;b%ld:", this_batch);
         uint pc = 0;
         for (uint i = final_level + 1; i <= cur_level->level && pc < 3; ++i) {
-            if (levels[i].action != A_UNFORCED)
+            if (levels[i].action != A_UNFORCED
+                    && !has_suffix(levels[i].action))
                 continue;
             printf(" %lu", levels[i].p);
             ++pc;
@@ -602,37 +619,36 @@ void update_window(t_level *cur_level) {
     fflush(stdout);
 }
 
-/* The highest level whose position is shown in progress lines as its
- * own: the levels of a flip, walk_midp() or walk_6x() are shown instead
- * by their suffix (F, W or 6X), and recovered from that.
- */
-static inline uint shown_top(void) {
-    return in_flip ? level - 2 : (in_midp || in_b6x) ? level - 1 : level;
-}
-
 /* Show the allocations into diag_buf. If expanded, mark each allocation
  * with its level when not at the position best_v() would have chosen,
  * so recovery can reproduce the order. Returns TRUE if any is marked.
+ * An action with a suffix at or below cur_level is shown by that suffix,
+ * and recovered from it, in place of the allocation at its own level;
+ * from its level up, no allocation is marked.
  */
 bool prep_show_v(t_level *cur_level, bool expanded) {
     bool marked = 0;
     uint offset = 0;
-    uint mid_vi;
-    if (in_midp)
-        mid_vi = cur_level->vi;
+    t_level *sfx = NULL;
+    for (uint li = final_level + 1; li <= cur_level->level; ++li)
+        if (has_suffix(levels[li].action)) {
+            sfx = &levels[li];
+            break;
+        }
+    uint top = sfx ? sfx->level - 1 : level;
     offset += (batch_alloc)
         ? sprintf(&diag_buf[offset], "b%ld: ", batch_alloc - 1)
         : sprintf(&diag_buf[offset], "b*: ");
     for (uint vi = 0; vi < k; ++vi) {
-        uint vlevel = cur_vlevel[vi]
-                - ((in_midp && vi == mid_vi) ? 1 : 0)
-                - ((in_b6x && vi == b6x_vi) ? 1 : 0);
+        t_value *vp = &value[vi];
+        uint vlevel = cur_vlevel[vi];
+        if (sfx && vlevel > 1 && vp->alloc[vlevel - 1].level == sfx->level)
+            --vlevel;
         if (vi)
             diag_buf[offset++] = ' ';
         if (vlevel == 1)
             diag_buf[offset++] = '.';
         else {
-            t_value *vp = &value[vi];
             for (uint ai = 1; ai < vlevel; ++ai) {
                 t_allocation *ap = &vp->alloc[ai];
                 if (ai > 1)
@@ -640,7 +656,7 @@ bool prep_show_v(t_level *cur_level, bool expanded) {
                 offset += sprintf(&diag_buf[offset], "%lu", ap->p);
                 if (ap->x > 2)
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
-                if (expanded && ap->level <= shown_top()
+                if (expanded && ap->level <= top
                         && levels[ap->level].unsorted) {
                     offset += sprintf(&diag_buf[offset], "(%u)", ap->level);
                     marked = 1;
@@ -648,16 +664,8 @@ bool prep_show_v(t_level *cur_level, bool expanded) {
             }
         }
     }
-    if (in_midp) {
-        ulong p = cur_level->p;
-        uint x = cur_level->x;
-        offset += sprintf(&diag_buf[offset], " W(%lu,%u,%u)", p, x, mid_vi);
-    }
-    if (in_b6x)
-        offset += gmp_sprintf(&diag_buf[offset], " 6X(%Zu,%u,%u)",
-                Z(j4p), b6x_vi, cur_level->bi);
-    if (in_flip)
-        offset += sprintf(&diag_buf[offset], " F(%u,%lu)", flip_vi, flip_oldp);
+    if (sfx)
+        offset += action_ops[sfx->action].suffix(sfx, &diag_buf[offset]);
     diag_buf[offset] = 0;
     return marked;
 }
@@ -830,8 +838,6 @@ void disp_batch(void) {
                 ++d;
             cur_vlevel[vi] = d;
         }
-    bool save_midp = in_midp, save_b6x = in_b6x, save_flip = in_flip;
-    in_midp = in_b6x = in_flip = 0;
     if (opt_alloc & 2) {
         diag_csv(lp);
     } else {
@@ -847,9 +853,6 @@ void disp_batch(void) {
         else
             report("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
     }
-    in_midp = save_midp;
-    in_b6x = save_b6x;
-    in_flip = save_flip;
     memcpy(cur_vlevel, save, k * sizeof(uint));
 }
 
@@ -967,14 +970,17 @@ void mark_unsorted(void) {
     /* nothing to do while reading a recovery log, before any levels */
     if (level <= final_level + 1)
         return;
-    uint top = shown_top();
+    bool suffixed = 0;
     uint save[k];
     memcpy(save, cur_vlevel, k * sizeof(uint));
     uint save_strategy = strategy;
     /* the current level too, if its position has been chosen */
     for (uint li = final_level + 1; li <= level; ++li) {
         t_level *lp = &levels[li];
-        if (lp->action != A_UNFORCED || lp->p == 0 || li > top) {
+        /* from an action with a suffix up, recovery rebuilds from that */
+        if (has_suffix(lp->action))
+            suffixed = 1;
+        if (lp->action != A_UNFORCED || lp->p == 0 || suffixed) {
             lp->unsorted = 0;
             continue;
         }
@@ -4476,6 +4482,10 @@ void prep_midp(t_level *cur_level) {
     return;
 }
 
+uint suffix_midp(t_level *lp, char *buf) {
+    return sprintf(buf, " W(%lu,%u,%u)", lp->p, lp->x, lp->vi);
+}
+
 /* Try all ways of allocating p^{x-1} at v_i for any p above the selected
  * -W limit.
  * If 'recover' is true, we initialize the state from midp_recover, and
@@ -4489,8 +4499,7 @@ void walk_midp(t_level *prev_level, bool recover) {
     t_midpp *mp;
     bool used;
 
-    in_midp = 1;
-    cur_level->action = A_UNFORCED;
+    cur_level->action = A_MIDP;
     midppc = 0;
     prep_midp(cur_level);
     if (midppc == 0)
@@ -4580,7 +4589,7 @@ void walk_midp(t_level *prev_level, bool recover) {
         }
     }
   walk_midp_done:
-    in_midp = 0;
+    cur_level->action = A_UNFORCED;
 }
 
 uint relative_valuation(uint i, ulong p, uint e) {
@@ -5002,16 +5011,16 @@ uint best_v4(t_level *cur_level) {
     return ti ? vi : BV_WALK;
 }
 
-/* temporarily make the candidate prime visible to diag code (mirroring
- * walk_1_set()'s own trick for a similar "about to test this" moment) -
- * called just before each speculative walk_1() call in best_6x() below.
+/* Show the candidate walk_6x() is about to try: the prime Z(j4p), from
+ * the subset a of the allocations at its position.
  */
-void diag_6x(t_level *cur_level, uint vi, uint a) {
-    in_b6x = 1;
-    b6x_vi = vi;
+void diag_6x(t_level *cur_level, uint a) {
     cur_level->bi = a;     /* spare at an unforced level */
     diag_plain(cur_level);
-    in_b6x = 0;
+}
+
+uint suffix_6x(t_level *lp, char *buf) {
+    return gmp_sprintf(buf, " 6X(%Zu,%u,%u)", Z(j4p), lp->vi, lp->bi);
 }
 
 ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt);
@@ -5093,6 +5102,8 @@ void walk_6x(uint vi) {
     ap_next->level = level;
     cur_vlevel[vi] = vlevel + 1;
     cur_level->have_min = 1;
+    assert(cur_level->vi == vi);
+    cur_level->action = A_6X;
     /* We will fully fix v_i, so we don't need to roll the prime we
      * allocate into rq/aq by calling update_chinese each time: the
      * previous values tell us everything we need to know.
@@ -5170,7 +5181,7 @@ void walk_6x(uint vi) {
                 /* p = Z(j4p) is prime and yields v_{i+2} = 2z^2 */
                 mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                 if (need_work)
-                    diag_6x(cur_level, vi, a);
+                    diag_6x(cur_level, a);
                 walk_1(cur_level, vi);
             }
             if (mpz_cmp_ui(Z(j4b), 2) <= 0) {
@@ -5178,13 +5189,14 @@ void walk_6x(uint vi) {
                 if (_GMP_is_prob_prime(Z(j4p))) {
                     mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                     if (need_work)
-                        diag_6x(cur_level, vi, a);
+                        diag_6x(cur_level, a);
                     walk_1(cur_level, vi);
                 }
             }
         }
     }
     cur_vlevel[vi] = vlevel;    /* restore */
+    cur_level->action = A_UNFORCED;
 }
 
 void set_fixed_strategy(char *s) {
@@ -6087,12 +6099,18 @@ e_is insert_stack(void) {
     return jump;
 }
 
+/* lp->p is the prime of the p^{z-1} the flip replaces */
+uint suffix_flip(t_level *lp, char *buf) {
+    return sprintf(buf, " F(%u,%lu)", lp->vi, lp->p);
+}
+
 /* We have an allocation of eg p^z leaving t = 2z for some z that can_flip(),
  * and p is high enough that there are no partitions (z, z, 2) left to try
  * so all remaining candidates for that power represent a (z, 2z) partition.
  *
- * We leave the entry for p^z in the level stack but deallocate it, and
- * instead manually run partitions (2z, z) - this should be more efficient
+ * We leave the entry for p^z in the level stack, but make it an A_FLIP
+ * level with its allocation withdrawn, and instead manually run
+ * partitions (2z, z) - this should be more efficient
  * than running a much higher number of (z, 2z) partitions, especially
  * since if z is odd each p^{2z} allocation fixes a square.
  * On completion, we restore the p^z allocation but with p as its limit, to
@@ -6117,10 +6135,8 @@ void run_flip_pqsq(uint vi) {
             resume_plow = oldp;
         flip_recover.valid = 0;    /* consumed */
     }
-    in_flip = 1;
-    flip_vi = vi;
-    flip_oldp = oldp;
-    prev_level->x = 0;      /* hide entry from level[] walkers */
+    assert(prev_level->vi == vi);
+    prev_level->action = A_FLIP;
     prev_level->limp = oldp;    /* prev will see this x is complete on return */
     --cur_vlevel[vi];       /* temp deallocate */
 
@@ -6173,9 +6189,8 @@ void run_flip_pqsq(uint vi) {
     }
     /* a candidate found meanwhile is no reason to recalculate limp */
     prev_level->max_at = seen_best;
-    prev_level->x = xs;
+    prev_level->action = A_UNFORCED;
     ++cur_vlevel[vi];
-    in_flip = 0;
 }
 
 /* we emulate recursive calls via the levels[] array */

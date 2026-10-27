@@ -212,6 +212,16 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   to by `actp` so as not to be confused with an allocation's `ap`).
   `A_NONE` ends the list: it is the count of actions, and the
   placeholder where there is none.
+  While -W's sweep, the STRATEGY_6X walk or a flip runs, its level's
+  action is `A_MIDP` (`walk_midp()`), `A_6X` (`walk_6x()`) or `A_FLIP`
+  (the level whose p^{z-1} `run_flip_pqsq()` replaces, with that
+  allocation withdrawn from `cur_vlevel[]`; `known_prime()` passes
+  over it), reset to `A_UNFORCED` when it ends. The const
+  `action_ops[]` table, beside `strategies[]`, gives each action what
+  differs: an action with a `suffix` op is shown in progress lines by
+  that suffix (`W(...)`, `6X(...)`, `F(...)`) in place of the
+  allocation at its level. Levels from there up belong to it, and are
+  never marked in a 315 line.
 - **`apply_level()` is the one shared level-transition function** that
   `apply_null()`, `apply_single()`, and `apply_primary()` all route
   through. `apply_secondary()` is the exception: it adds *further*
