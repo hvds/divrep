@@ -39,10 +39,13 @@ extern t_divisors *divisors;
  * group of simultaneous allocations of the same p to different i (and
  * in which case derecursion should unwind the whole group), or "unforced",
  * in which case no other v_j will be divisible by p.
- * A level's action says which, or that it is never iterated over: the
- * dummy level at 0 and before any initial squares (see prep_presquare()),
- * and the levels an -I pattern fixes. Those count as forced wherever
- * unforced levels are told apart.
+ * Each level has a node, the state once the allocations up to and
+ * including that level are made, and an act, the loop at that level
+ * that makes them: nodes[l] is reached from nodes[l - 1] by acts[l].
+ * An act's action says which kind of allocation it makes, or that it is
+ * never iterated over: the dummy level at 0 and before any initial
+ * squares (see prep_presquare()), and the levels an -I pattern fixes.
+ * Those count as forced wherever unforced levels are told apart.
  * Some searches instead take over from a level while they run, and
  * progress lines show them by a suffix rather than by the allocation at
  * that level: any levels above it are part of the search.
@@ -50,7 +53,7 @@ extern t_divisors *divisors;
 typedef enum {
     A_UNFORCED = 0,
     A_FORCED,
-    A_BASE,         /* level 0, so there is always a prev_level */
+    A_BASE,         /* level 0, so there is always a prev_node */
     A_PRESQ,        /* the dummy level before initial squares */
     A_FIXED,        /* fixed by an -I pattern */
     A_MIDP,         /* -W's sweep, walk_midp() */
@@ -60,10 +63,23 @@ typedef enum {
     A_NONE          /* none of the above; also the number of actions */
 } e_action;
 
-typedef struct s_level {
+typedef struct s_node {
+    uint level;     /* index of this entry */
+    bool have_min;  /* we have passed any minp requirement */
+    uint have_square;   /* number of v_i residues forced square so far */
+    uint nextpi;    /* index of least prime not yet allocated */
+    ulong maxp;     /* highest prime allocated so far, or never_unforced() */
+    uint vi_depth;  /* depth of this allocation */
+    uint *pfreev;   /* bit vector of available primes */
+    uint fp_need;   /* bitvector of forcedp still to apply */
+    mpz_t aq;       /* running LCM of allocated p^x */
+    mpz_t rq;       /* running CRT of (-i) % p^x */
+} t_node;
+extern t_node *nodes;
+
+typedef struct s_act {
     uint level;     /* index of this entry */
     e_action action;
-    bool have_min;  /* we have passed any minp requirement */
     bool next_best; /* vi is known stable result of best_v() */
     bool unsorted;  /* this level is not where best_v() would put it */
     uint choice_strategy;   /* the strategy in force when vi was chosen */
@@ -77,24 +93,16 @@ typedef struct s_level {
     prime_iterator piter;
     ulong p;
     uint x;
-    uint have_square;   /* number of v_i residues forced square so far */
-    uint nextpi;    /* index of least prime not yet allocated */
-    ulong maxp;     /* highest prime allocated so far, or never_unforced() */
-    uint vi_depth;  /* depth of this allocation */
-    uint *pfreev;   /* bit vector of available primes */
     /* (optional) union */
         uint bi;    /* batch index, if forced */
-        uint fp_need;   /* bitvector of forcedp still to apply */
     /* .. with */
         uint di;    /* divisor index, if unforced */
         uint ti;    /* target tau for v_i */
         ulong limp; /* limit for p */
         uint max_at;/* which max value used for limp calculation */
     /* end union */
-    mpz_t aq;       /* running LCM of allocated p^x */
-    mpz_t rq;       /* running CRT of (-i) % p^x */
-} t_level;
-extern t_level *levels;
+} t_act;
+extern t_act *acts;
 
 /* Each value v_0 to v_{k-1} has had 'level' allocations of prime powers
  * p_i^{x_i-1}; q tracks the product of those prime powers, and t tracks

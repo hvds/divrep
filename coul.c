@@ -162,16 +162,17 @@ bool restrict_forced = 0;
 uint sq0 = 0;
 uint *sqg = NULL;   /* size maxfact */
 
-uint maxlevel;              /* avvailable entries in levels[] */
-t_level *levels = NULL;     /* one level per allocated prime */
+uint maxlevel;              /* avvailable entries in nodes[], acts[] */
+t_node *nodes = NULL;       /* one per level: the state reached */
+t_act *acts = NULL;         /* one per level: the loop reaching it */
 uint level = 0;             /* current recursion level */
 uint final_level = 0;       /* level at which to terminate */
 t_value *value = NULL;      /* v_0 .. v_{k-1} */
 uint *cur_vlevel = NULL;    /* Number of allocations (+1) at each value */
 
-static inline void level_setp(t_level *lp, ulong p) {
-    lp->p = p;
-    prime_iterator_setprime(&lp->piter, p);
+static inline void level_setp(t_act *cur_act, ulong p) {
+    cur_act->p = p;
+    prime_iterator_setprime(&cur_act->piter, p);
 }
 
 /* list of some small primes, at least enough for one per allocation,
@@ -319,16 +320,16 @@ typedef enum {
     IS_FLIP     /* Resume run_flip_pqsq(), possibly with partial progress */
 } e_is;
 
-typedef uint (*t_strategy)(t_level *cur_level);
-uint best_v0(t_level *cur_level);
-uint best_v1(t_level *cur_level);
-uint best_v2(t_level *cur_level);
-uint best_v3(t_level *cur_level);
-uint best_v4(t_level *cur_level);
+typedef uint (*t_strategy)(t_act *cur_act);
+uint best_v0(t_act *cur_act);
+uint best_v1(t_act *cur_act);
+uint best_v2(t_act *cur_act);
+uint best_v3(t_act *cur_act);
+uint best_v4(t_act *cur_act);
 /* best_6x() special-case strategy (TYPE_o only) */
-uint best_6x(t_level *cur_level);
+uint best_6x(t_act *cur_act);
 /* best_fixed() special-case strategy (-js) */
-uint best_fixed(t_level *cur_level);
+uint best_fixed(t_act *cur_act);
 #define STRATEGY_6X 5
 #define STRATEGY_FIXED 6
 #define NUM_STRATEGIES 7
@@ -343,10 +344,10 @@ t_strategy strategies[NUM_STRATEGIES] = {
  * parse_op reads the suffix into act_recover, given the text after the
  * tag that starts it, and returns the text after the suffix.
  */
-typedef uint (*t_suffix_op)(t_level *lp, char *buf);
-uint suffix_midp(t_level *lp, char *buf);
-uint suffix_6x(t_level *lp, char *buf);
-uint suffix_flip(t_level *lp, char *buf);
+typedef uint (*t_suffix_op)(t_act *cur_act, char *buf);
+uint suffix_midp(t_act *cur_act, char *buf);
+uint suffix_6x(t_act *cur_act, char *buf);
+uint suffix_flip(t_act *cur_act, char *buf);
 typedef char *(*t_parse_op)(char *s);
 char *parse_midp(char *s);
 char *parse_6x(char *s);
@@ -472,7 +473,7 @@ typedef struct s_modfix {
 t_modfix *modfix = NULL;
 uint modfix_count = 0;
 /* have_modfix = 1 means that a global modular constraint on v_0 has been
- * stored in levels[0].rq/aq.
+ * stored in nodes[0].rq/aq.
  */
 bool have_modfix = 0;
 
@@ -565,16 +566,16 @@ static inline bool never_unforced(ulong p) {
 /* Returns true if p is "known" at the given level, so should not be
  * permitted as an additional unforced allocation.
  */
-static inline bool known_prime(t_level *lp, ulong p) {
+static inline bool known_prime(t_node *np, ulong p) {
     /* all known primes are <= maxp */
-    if (p > lp->maxp)
+    if (p > np->maxp)
         return 0;
     if (never_unforced(p))
         return 1;
-    /* a flip withdraws its level's allocation */
-    for (uint li = 1; li <= lp->level; ++li)
-        if (p == levels[li].p && levels[li].x > 1
-                && levels[li].action != A_FLIP)
+    /* a flip withdraws its allocation */
+    for (uint li = 1; li <= np->level; ++li)
+        if (p == acts[li].p && acts[li].x > 1
+                && acts[li].action != A_FLIP)
             return 1;
     return 0;
 }
@@ -602,17 +603,17 @@ static inline bool known_prime(t_level *lp, ulong p) {
     void done_stats(void) { }
 #endif
 
-void update_window(t_level *cur_level) {
+void update_window(t_node *cur_node) {
     if (vt100) {
         /* update window title and icon with <ESC> ] 0 ; "string" <BEL> */
         slong this_batch = (opt_batch_min < 0) ? batch_alloc : batch_alloc - 1;
         printf("\x1b]0;b%ld:", this_batch);
         uint pc = 0;
-        for (uint i = final_level + 1; i <= cur_level->level && pc < 3; ++i) {
-            if (levels[i].action != A_UNFORCED
-                    && !has_suffix(levels[i].action))
+        for (uint i = final_level + 1; i <= cur_node->level && pc < 3; ++i) {
+            if (acts[i].action != A_UNFORCED
+                    && !has_suffix(acts[i].action))
                 continue;
-            printf(" %lu", levels[i].p);
+            printf(" %lu", acts[i].p);
             ++pc;
         }
         printf("\a");
@@ -623,17 +624,17 @@ void update_window(t_level *cur_level) {
 /* Show the allocations into diag_buf. If expanded, mark each allocation
  * with its level when not at the position best_v() would have chosen,
  * so recovery can reproduce the order. Returns TRUE if any is marked.
- * An action with a suffix at or below cur_level is shown by that suffix,
- * and recovered from it, in place of the allocation at its own level;
- * from its level up, no allocation is marked.
+ * An act with a suffix at or below cur_node's level is shown by that
+ * suffix, and recovered from it, in place of the allocation at its own
+ * level; from its level up, no allocation is marked.
  */
-bool prep_show_v(t_level *cur_level, bool expanded) {
+bool prep_show_v(t_node *cur_node, bool expanded) {
     bool marked = 0;
     uint offset = 0;
-    t_level *sfx = NULL;
-    for (uint li = final_level + 1; li <= cur_level->level; ++li)
-        if (has_suffix(levels[li].action)) {
-            sfx = &levels[li];
+    t_act *sfx = NULL;
+    for (uint li = final_level + 1; li <= cur_node->level; ++li)
+        if (has_suffix(acts[li].action)) {
+            sfx = &acts[li];
             break;
         }
     uint top = sfx ? sfx->level - 1 : level;
@@ -658,7 +659,7 @@ bool prep_show_v(t_level *cur_level, bool expanded) {
                 if (ap->x > 2)
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
                 if (expanded && ap->level <= top
-                        && levels[ap->level].unsorted) {
+                        && acts[ap->level].unsorted) {
                     offset += sprintf(&diag_buf[offset], "(%u)", ap->level);
                     marked = 1;
                 }
@@ -682,7 +683,7 @@ void diag_csv_head(void) {
     printf("\n");
 }
 
-void diag_csv(t_level *cur_level) {
+void diag_csv(t_node *cur_node) {
     t_divisors *dp = &divisors[target_lcm];
     uint tc[dp->alldiv];
     memset(&tc[0], 0, dp->alldiv * sizeof(uint));
@@ -825,7 +826,7 @@ void aux_sprintf(char *fmt, ...) {
 void disp_batch(void) {
     assert(level >= cur_batch_level);
 
-    t_level *lp = &levels[cur_batch_level];
+    t_node *np = &nodes[cur_batch_level];
     /* Show the batch alone, without what is allocated above it. Before
      * the first batch (b*) there is none, so show what there is.
      */
@@ -840,26 +841,26 @@ void disp_batch(void) {
             cur_vlevel[vi] = d;
         }
     if (opt_alloc & 2) {
-        diag_csv(lp);
+        diag_csv(np);
     } else {
-        prep_show_v(lp, 0);        /* into diag_buf */
-        if (lp->have_square) {
+        prep_show_v(np, 0);        /* into diag_buf */
+        if (np->have_square) {
             uint l = strlen(diag_buf);
-            sprintf(&diag_buf[l], " [sq=%u]", lp->have_square);
+            sprintf(&diag_buf[l], " [sq=%u]", np->have_square);
         }
         if (opt_alloc)
             /* with the batch's modulus, as a guide to its size */
             report("203 %s [aq=%Zu] (%.2fs)\n",
-                    diag_buf, lp->aq, seconds(utime()));
+                    diag_buf, np->aq, seconds(utime()));
         else
             report("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
     }
     memcpy(cur_vlevel, save, k * sizeof(uint));
 }
 
-void diag_any(t_level *cur_level, bool need_disp) {
+void diag_any(t_node *cur_node, bool need_disp) {
     double t1 = utime();
-    update_window(cur_level);
+    update_window(cur_node);
 
     if ((debugb && !debugB)
         && batch_alloc != last_batch_seen
@@ -869,7 +870,7 @@ void diag_any(t_level *cur_level, bool need_disp) {
         disp_batch();
     }
 
-    prep_show_v(cur_level, 0);     /* into diag_buf */
+    prep_show_v(cur_node, 0);     /* into diag_buf */
     if (need_diag) {
         if (need_disp)
             diag("%s%s", diag_buf, aux_buf);
@@ -898,7 +899,7 @@ void diag_any(t_level *cur_level, bool need_disp) {
          * there are any with active allocations, but we don't want to
          * clutter on-screen display with that.
          */
-        char *code = prep_show_v(cur_level, 1) ? "315" : "305";
+        char *code = prep_show_v(cur_node, 1) ? "315" : "305";
 #ifdef TRACK_STATS
         fprintf(rfp, "%s %s%s (%.2fs) [", code, diag_buf, aux_buf, seconds(t1));
         for (uint i = 0; i < k; ++i) {
@@ -924,39 +925,39 @@ void diag_any(t_level *cur_level, bool need_disp) {
         need_work = 0;
 }
 
-void diag_plain(t_level *cur_level) {
+void diag_plain(t_node *cur_node) {
     aux_sprintf("");
-    diag_any(cur_level, 1);
+    diag_any(cur_node, 1);
 }
 
 /* Show progress with p^{x-1} at v_i, not (or no longer) applied: an
  * allocation about to be tried, or one that failed. On recovery it is
  * tried again, and may legitimately fail again.
  */
-void diag_attempt(t_level *cur_level, uint vi, ulong p, uint x) {
+void diag_attempt(t_node *cur_node, uint vi, ulong p, uint x) {
     uint vil = cur_vlevel[vi];
     t_allocation *ap = &value[vi].alloc[vil];
     ap->p = p;
     ap->x = x;
-    ap->level = cur_level->level;   /* for expanded diagnostics */
+    ap->level = cur_node->level;   /* for expanded diagnostics */
     ++cur_vlevel[vi];
-    diag_plain(cur_level);
+    diag_plain(cur_node);
     --cur_vlevel[vi];
 }
 
-void diag_walk_v(t_level *cur_level, ulong ati, ulong end) {
+void diag_walk_v(t_node *cur_node, ulong ati, ulong end) {
     aux_sprintf(": %lu / %lu", ati, end);
-    diag_any(cur_level, !(debugw && !debugW && ati));
+    diag_any(cur_node, !(debugw && !debugW && ati));
 }
 
-void diag_walk_zv(t_level *cur_level, mpz_t ati, mpz_t end) {
+void diag_walk_zv(t_node *cur_node, mpz_t ati, mpz_t end) {
     aux_sprintf(": %Zu / %Zu", ati, end);
-    diag_any(cur_level, !(debugw && !debugW && mpz_sgn(ati)));
+    diag_any(cur_node, !(debugw && !debugW && mpz_sgn(ati)));
 }
 
-void diag_walk_pell(t_level *cur_level, uint pc) {
+void diag_walk_pell(t_node *cur_node, uint pc) {
     aux_sprintf(": P%u", pc);
-    diag_any(cur_level, !(debugw && !debugW && pc));
+    diag_any(cur_node, !(debugw && !debugW && pc));
 }
 
 /* Mark each unforced level on the current path at which best_v() would
@@ -966,7 +967,7 @@ void diag_walk_pell(t_level *cur_level, uint pc) {
  * when the choice was made. The depth of each position then
  * was 1 more than the number of its allocations made at earlier levels.
  */
-uint best_v(t_level *cur_level);
+uint best_v(t_act *cur_act);
 void mark_unsorted(void) {
     /* nothing to do while reading a recovery log, before any levels */
     if (level <= final_level + 1)
@@ -977,12 +978,12 @@ void mark_unsorted(void) {
     uint save_strategy = strategy;
     /* the current level too, if its position has been chosen */
     for (uint li = final_level + 1; li <= level; ++li) {
-        t_level *lp = &levels[li];
+        t_act *actp = &acts[li];
         /* from an action with a suffix up, recovery rebuilds from that */
-        if (has_suffix(lp->action))
+        if (has_suffix(actp->action))
             suffixed = 1;
-        if (lp->action != A_UNFORCED || lp->p == 0 || suffixed) {
-            lp->unsorted = 0;
+        if (actp->action != A_UNFORCED || actp->p == 0 || suffixed) {
+            actp->unsorted = 0;
             continue;
         }
         /* set cur_vlevel[] as it would have been at this level */
@@ -993,15 +994,15 @@ void mark_unsorted(void) {
                 ++d;
             cur_vlevel[vj] = d;
         }
-        strategy = lp->choice_strategy;
-        /* best_6x() sets the level's vi (so we must preserve it),
+        strategy = actp->choice_strategy;
+        /* best_6x() sets the act's vi (so we must preserve it),
          * and we don't need it's unsorted flag (so can set to 0).
-         * CHECKME: can we avoid the need for best_6x() to set lp->vi?
+         * CHECKME: can we avoid the need for best_6x() to set actp->vi?
          */
-        uint vi = lp->vi;
-        uint bvi = best_v(lp);
-        lp->unsorted = (bvi == BV_6X) ? 0 : (bvi != vi);
-        lp->vi = vi;
+        uint vi = actp->vi;
+        uint bvi = best_v(actp);
+        actp->unsorted = (bvi == BV_6X) ? 0 : (bvi != vi);
+        actp->vi = vi;
     }
     strategy = save_strategy;
     memcpy(cur_vlevel, save, k * sizeof(uint));
@@ -1069,47 +1070,51 @@ bool candidate(mpz_t c) {
 
 void free_levels(void) {
     for (uint i = 0; i < maxlevel; ++i) {
-        t_level *l = &levels[i];
-        free(l->pfreev);
-        mpz_clear(l->aq);
-        mpz_clear(l->rq);
-        prime_iterator_destroy(&l->piter);
+        t_node *np = &nodes[i];
+        free(np->pfreev);
+        mpz_clear(np->aq);
+        mpz_clear(np->rq);
+        prime_iterator_destroy(&acts[i].piter);
     }
-    free(levels);
+    free(nodes);
+    free(acts);
     free(cur_vlevel);
 }
 
 void init_levels(void) {
-    levels = calloc(maxlevel + 1, sizeof(t_level));
+    nodes = calloc(maxlevel + 1, sizeof(t_node));
+    acts = calloc(maxlevel + 1, sizeof(t_act));
     cur_vlevel = calloc(k, sizeof(uint));
     for (uint i = 0; i < maxlevel; ++i) {
-        t_level *l = &levels[i];
-        l->level = i;
-        l->pfreev = malloc(pfree_vecsize * sizeof(uint));
-        mpz_init(l->aq);
-        mpz_init(l->rq);
+        t_node *np = &nodes[i];
+        np->level = i;
+        np->pfreev = malloc(pfree_vecsize * sizeof(uint));
+        mpz_init(np->aq);
+        mpz_init(np->rq);
+        acts[i].level = i;
 #if 0
         /* not needed, prime_iterator_setprime() later will initialize */
-        prime_iterator_init(&l->piter);
+        prime_iterator_init(&acts[i].piter);
 #endif
     }
-    mpz_set_ui(levels[0].aq, 1);
-    mpz_set_ui(levels[0].rq, 0);
-    levels[0].have_square = 0;
-    levels[0].have_min = (sminp || sminpx) ? 0 : 1;
-    levels[0].next_best = 0;
-    levels[0].nextpi = 0;
+    t_node *np = &nodes[0];
+    np->have_min = (sminp || sminpx) ? 0 : 1;
+    np->have_square = 0;
+    np->nextpi = 0;
 #if defined(TYPE_a)
-    levels[0].maxp = divisors[n].high;  /* covers never_unforced() */
+    np->maxp = divisors[n].high;  /* covers never_unforced() */
 #else
-    levels[0].maxp = 0;
+    np->maxp = 0;
 #endif
-    levels[0].action = A_BASE;
-    levels[0].vi_depth = 1;
-    if (forcedp + 1 > 8 * sizeof(levels[0].fp_need))
+    np->vi_depth = 1;
+    memset(np->pfreev, 0xff, pfree_vecsize * sizeof(uint));
+    if (forcedp + 1 > 8 * sizeof(np->fp_need))
         fail("FIXME: too many forced primes");
-    levels[0].fp_need = (1U << forcedp) - 1;
-    memset(levels[0].pfreev, 0xff, pfree_vecsize * sizeof(uint));
+    np->fp_need = (1U << forcedp) - 1;
+    mpz_set_ui(np->aq, 1);
+    mpz_set_ui(np->rq, 0);
+    acts[0].action = A_BASE;
+    acts[0].next_best = 0;
     for (uint j = 0; j < k; ++j)
         cur_vlevel[j] = 1;
     level = 1;
@@ -2427,7 +2432,7 @@ void prep_mp(void) {
  * Finds the quadratic (or higher-order) residues; stash them for later
  * propagation if this is the first square; fail if there are none.
  */
-bool alloc_square(t_level *cur, uint vi) {
+bool alloc_square(t_node *cur, uint vi) {
     t_value *v = &value[vi];
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap = &v->alloc[vlevel - 1];
@@ -2468,8 +2473,9 @@ void prep_presquare(void) {
         /* we rely on resarray(0) being available for other uses, so we
          * must use a dummy level here before allocating the square(s)
          */
-        t_level *prev = &levels[level - 1];
-        t_level *cur = &levels[level];
+        t_node *prev = &nodes[level - 1];
+        t_node *cur = &nodes[level];
+        t_act *cur_act = &acts[level];
         cur->have_min = prev->have_min;
         cur->nextpi = prev->nextpi;
         cur->maxp = prev->maxp;
@@ -2477,8 +2483,8 @@ void prep_presquare(void) {
         memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
         mpz_set(cur->rq, prev->rq);
-        cur->action = A_PRESQ;
-        cur->p = 0;
+        cur_act->action = A_PRESQ;
+        cur_act->p = 0;
         cur->have_square = 0;
         for (uint vi = 0; vi < k; ++vi)
             if (target_t(vi) & 1)
@@ -2889,7 +2895,7 @@ bool divmod(mpz_t result, mpz_t a, mpz_t b, mpz_t m) {
 /* This allocation uses what was the next unused prime, to find the
  * index of the new next unused prime.
  */
-uint find_nextpi(t_level *cur, uint pi) {
+uint find_nextpi(t_node *cur, uint pi) {
     uint *pv = cur->pfreev;
     uint off = pi >> 5;
     uint bit = pi & 0x1f;
@@ -2905,7 +2911,7 @@ uint find_nextpi(t_level *cur, uint pi) {
 }
 
 /* Find index of next unused forced prime */
-static inline uint next_fpi(t_level *prev) {
+static inline uint next_fpi(t_node *prev) {
     return ffs_u32(prev->fp_need) - 1;
 }
 
@@ -3159,22 +3165,23 @@ int inv_comparator(const void *va, const void *vb) {
     return (b->v < a->v) - (a->v < b->v);
 }
 
-void walk_v(t_level *cur_level, mpz_t start) {
+void walk_v(t_node *cur_node, mpz_t start) {
 #ifdef SQONLY
-    if (!cur_level->have_square)
+    if (!cur_node->have_square)
         return;
 #endif
-    if (!cur_level->have_min) {
-        ulong min = minp[cur_level->x - 1];
+    if (!cur_node->have_min) {
+        t_act *cur_act = &acts[cur_node->level];
+        ulong min = minp[cur_act->x - 1];
         if (min)
-            level_setp(cur_level, min);
+            level_setp(cur_act, min);
         return;
     }
 
     mpz_t *q[k];
-    mpz_t *m = &cur_level->rq;
+    mpz_t *m = &cur_node->rq;
     uint t[k];
-    mpz_t *aq = &cur_level->aq;
+    mpz_t *aq = &cur_node->aq;
     t_mod inv[maxfact * k];
     uint inv_count = 0;
     uint need_prime[k];
@@ -3299,7 +3306,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
                 ++countwi;
                 ++pc;
                 if (need_work)
-                    diag_walk_pell(cur_level, pc);
+                    diag_walk_pell(cur_node, pc);
 
                 /* verify mod, coprime and tau */
                 mpz_fdiv_r(Z(wv_temp), Z(wv_x2), *qqi);
@@ -3374,7 +3381,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
         uint xi = divisors[ti].gcddm;
         bool prime_power = (divisors[ti].alldiv == 2);
 
-        t_results *xr = res_array(cur_level->level);
+        t_results *xr = res_array(cur_node->level);
         qsort(xr->r, xr->count, sizeof(mpz_t), &_mpz_comparator);
         uint rindex = 0;
         if (mpz_sgn(Z(wv_ati)) > 0) {
@@ -3438,7 +3445,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
              * or we could verify validity here */
             mpz_fdiv_q(Z(wv_ati), Z(wv_ati), *qqi);
             if (need_work)
-                diag_walk_zv(cur_level, Z(wv_ati), Z(wv_end));
+                diag_walk_zv(cur_node, Z(wv_ati), Z(wv_end));
             if (check && !cvec_test_prepped(cx0, ZP(wv_ati)))
                 goto next_sqati;
             for (uint ii = 0; ii < inv_count; ++ii) {
@@ -3499,7 +3506,7 @@ void walk_v(t_level *cur_level, mpz_t start) {
     for (ulong ati = mpz_get_ui(Z(wv_ati)); ati <= end; ++ati) {
         ++countwi;
         if (need_work)
-            diag_walk_v(cur_level, ati, end);
+            diag_walk_v(cur_node, ati, end);
         if (check && !cvec_test_ui_prepped(cx0, ati))
             goto next_ati;
         for (uint ii = 0; ii < inv_count; ++ii) {
@@ -3535,15 +3542,16 @@ void walk_v(t_level *cur_level, mpz_t start) {
 }
 
 /* test the case where v_i has all divisors accounted for */
-void walk_1(t_level *cur_level, uint vi) {
+void walk_1(t_node *cur_node, uint vi) {
 #ifdef SQONLY
-    if (!cur_level->have_square)
+    if (!cur_node->have_square)
         return;
 #endif
-    if (!cur_level->have_min) {
-        ulong min = minp[cur_level->x - 1];
+    if (!cur_node->have_min) {
+        t_act *cur_act = &acts[cur_node->level];
+        ulong min = minp[cur_act->x - 1];
         if (min)
-            level_setp(cur_level, min);
+            level_setp(cur_act, min);
         return;
     }
 
@@ -3563,8 +3571,8 @@ void walk_1(t_level *cur_level, uint vi) {
 
     /* Verify v_0 == rq (mod aq) to guarantee all allocations will
      * divide exactly. */
-    mpz_fdiv_r(Z(w1_r), Z(w1_v), cur_level->aq);
-    if (mpz_cmp(Z(w1_r), cur_level->rq) != 0)
+    mpz_fdiv_r(Z(w1_r), Z(w1_v), cur_node->aq);
+    if (mpz_cmp(Z(w1_r), cur_node->rq) != 0)
         return;
 
     uint t[k];
@@ -3612,15 +3620,16 @@ void walk_1(t_level *cur_level, uint vi) {
  * v_i = q_i . p^{x-1} for primes p with plow < p <= phigh.
  */
 void walk_1_set(
-    t_level *prev_level, t_level *cur_level,
+    t_node *prev_node, t_act *cur_act,
     uint vi, ulong plow, ulong phigh, uint x
 ) {
+    t_node *cur_node = &nodes[cur_act->level];
 #ifdef SQONLY
-    if (!cur_level->have_square)
+    if (!cur_node->have_square)
         return;
 #endif
     /* p must exceed minp[x - 1] */
-    if (!cur_level->have_min && plow < minp[x - 1])
+    if (!cur_node->have_min && plow < minp[x - 1])
         plow = minp[x - 1];
 
     t_value *vip = &value[vi];
@@ -3638,11 +3647,11 @@ void walk_1_set(
             plow = pmin;
     }
 
-    mpz_divexact(Z(w1_m), prev_level->aq, aip->q);
+    mpz_divexact(Z(w1_m), prev_node->aq, aip->q);
     bool need_mod = (mpz_cmp_ui(Z(w1_m), 1) == 0) ? 0 : 1;
     if (need_mod) {
         /* we need p == (rq + TYPE_OFFSET(vi)) / aip->q (mod aq / aip->q) */
-        mpz_add_ui(Z(w1_mr), prev_level->rq, TYPE_OFFSET(vi));
+        mpz_add_ui(Z(w1_mr), prev_node->rq, TYPE_OFFSET(vi));
         mpz_divexact(Z(w1_mr), Z(w1_mr), aip->q);
         mpz_fdiv_r(Z(w1_mr), Z(w1_mr), Z(w1_m));
     }
@@ -3666,18 +3675,18 @@ void walk_1_set(
             need_other[noc++] = vj;
     }
 
-    level_setp(cur_level, plow);
+    level_setp(cur_act, plow);
     while (1) {
-        ulong p = prime_iterator_next(&cur_level->piter);
+        ulong p = prime_iterator_next(&cur_act->piter);
         if (p > phigh)
             break;
-        if (known_prime(prev_level, p))
+        if (known_prime(prev_node, p))
             continue;
         /* Must diag before need_mod checks, which can reject a high
          * proportion of primes.
          */
         if (need_work)
-            diag_attempt(cur_level, vi, p, x);
+            diag_attempt(cur_node, vi, p, x);
         mpz_ui_pow_ui(Z(w1_v), p, x - 1);
         if (need_mod) {
             /* TODO: think about a more efficient approach when the modulus
@@ -3739,7 +3748,7 @@ void walk_1_set(
  * seen; however modular fixes via -m or -c change that, requiring a
  * rethink of the logic as a whole.
  */
-bool update_residues(t_level *old, t_level *new,
+bool update_residues(t_node *old, t_node *new,
         uint vi, ulong p, uint x, mpz_t px, uint retry, uint fold) {
     uint vj = sq0;
     t_value *vjp = &value[vj];
@@ -3910,7 +3919,7 @@ bool update_residues(t_level *old, t_level *new,
  * instead v_0 == fold.px - i (mod p.px): see t_forcebatch.
  */
 bool update_chinese(
-    t_level *old, t_level *new, uint vi, ulong p, mpz_t px, uint fold
+    t_node *old, t_node *new, uint vi, ulong p, mpz_t px, uint fold
 ) {
     ulong off = TYPE_OFFSET(vi);
     /* chinese_ppow() needs m < 2^62 for invert_u64() */
@@ -3946,7 +3955,7 @@ static inline uint single_fold(ulong p) {
  * creates a new square.
  * Does not update existing square residues, see update_residues() for that.
  */
-bool apply_allocv(t_level *prev_level, t_level *cur_level,
+bool apply_allocv(t_node *prev_node, t_node *cur_node,
         uint vi, ulong p, uint x, mpz_t px) {
     t_value *v = &value[vi];
     uint vlevel = cur_vlevel[vi];
@@ -3961,7 +3970,7 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
     cur->p = p;
     cur->x = x;
     cur->t = prev->t / x;
-    cur->level = cur_level->level;
+    cur->level = cur_node->level;
     mpz_mul(cur->q, prev->q, px);
 
     if (highpow && ispow2_u64(cur->t)) {
@@ -3974,7 +3983,7 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
 
     /* is this newly a square? */
     if ((cur->t > 1) && (cur->t & 1) && !(prev->t & 1))
-        if (!alloc_square(cur_level, vi)) {
+        if (!alloc_square(cur_node, vi)) {
             --cur_vlevel[vi];
             return 0;
         }
@@ -3982,22 +3991,23 @@ bool apply_allocv(t_level *prev_level, t_level *cur_level,
     return 1;
 }
 
-void apply_pfreev(t_level *prev_level, t_level *cur_level, ulong p) {
-    uint *pfreev = cur_level->pfreev;
-    memcpy(pfreev, prev_level->pfreev, pfree_vecsize * sizeof(uint));
+void apply_pfreev(t_node *prev_node, t_node *cur_node, ulong p) {
+    uint *pfreev = cur_node->pfreev;
+    memcpy(pfreev, prev_node->pfreev, pfree_vecsize * sizeof(uint));
     if (p == 0 || p > lastprime)
         return;
     uint pi = ptoi[p];
     pfreev[pi >> 5] &= ~(1U << (pi & 0x1f));
 }
 
-/* Update level structure for the allocation of p^{x-1} to v_{vi}.
- * Does not update level.rq, level.aq: see update_chinese() for that.
+/* Update the level for the allocation of p^{x-1} to v_{vi}.
+ * Does not update node.rq, node.aq: see update_chinese() for that.
  */
-void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
-    cur->vi = vi;
-    cur->p = p;
-    cur->x = x;
+void apply_level(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
+    t_act *cur_act = &acts[cur->level];
+    cur_act->vi = vi;
+    cur_act->p = p;
+    cur_act->x = x;
     cur->have_square = prev->have_square;
     cur->nextpi = prev->nextpi;
     cur->fp_need = prev->fp_need;
@@ -4009,9 +4019,9 @@ void apply_level(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
 }
 
 /* Apply a notional level of p^0 at v_0.
- * Also sets level.rq, level.aq and residues.
+ * Also sets node.rq, node.aq and residues.
  */
-void apply_null(t_level *prev, t_level *cur, ulong p) {
+void apply_null(t_node *prev, t_node *cur, ulong p) {
     uint vi = 0;    /* clarify where we are using this */
     apply_level(prev, cur, vi, p, 1);
     cur->have_min = prev->have_min;
@@ -4043,7 +4053,7 @@ void apply_null(t_level *prev, t_level *cur, ulong p) {
  * if it is invalid, or if no work to do.
  * Updates level and value, updates or propagates square residues.
  */
-bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
+bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
     cur->have_min = prev->have_min || (minp[x - 1] && p > minp[x - 1]);
     mpz_ui_pow_ui(px, p, x - 1);
@@ -4080,7 +4090,7 @@ bool apply_single(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
-bool apply_secondary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
+bool apply_secondary(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     mpz_ui_pow_ui(px, p, x - 1);
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
@@ -4099,7 +4109,7 @@ bool apply_secondary(t_level *prev, t_level *cur, uint vi, ulong p, uint x) {
 }
 
 bool apply_primary(
-    t_level *prev, t_level *cur, uint vi, ulong p, uint x, uint fold
+    t_node *prev, t_node *cur, uint vi, ulong p, uint x, uint fold
 ) {
     apply_level(prev, cur, vi, p, x);
     mpz_ui_pow_ui(px, p, x - 1);
@@ -4120,9 +4130,9 @@ bool apply_primary(
     return 1;
 }
 
-static inline void mint_init_state(t_level *cur_level) {
+static inline void mint_init_state(t_node *cur_node) {
     t_mint_state *s = &mint_state;
-    s->pfreev = cur_level->pfreev;
+    s->pfreev = cur_node->pfreev;
     s->pfreenext = 0;
     s->pfreedepth = 0;
 }
@@ -4269,12 +4279,12 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
  * We only initialize the state structure once, any recursive calls
  * share it via the depth0 parameter.
  */
-void mintau(t_level *cur_level, mpz_t mint, uint t) {
+void mintau(t_node *cur_node, mpz_t mint, uint t) {
     if (t == 1) {
         mpz_set_ui(mint, 1);
         return;
     }
-    mint_init_state(cur_level);
+    mint_init_state(cur_node);
     mintau_r(0, mint, t);
 }
 
@@ -4349,7 +4359,7 @@ void mintau_restricted_r(ushort depth0, mpz_t mint, uint t, uint r, uint ri) {
  * We only initialize the state structure once, any recursive calls
  * share it via the depth0 parameter.
  */
-void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
+void mintau_restricted(t_node *cur_node, mpz_t mint, uint t, uint r) {
     if (t == 1) {
         mpz_set_ui(mint, 1);
         return;
@@ -4362,7 +4372,7 @@ void mintau_restricted(t_level *cur_level, mpz_t mint, uint t, uint r) {
         break;
     }
     assert(ri < restricted_count);
-    mint_init_state(cur_level);
+    mint_init_state(cur_node);
     mintau_restricted_r(0, mint, t, r, ri);
 }
 
@@ -4383,8 +4393,7 @@ int midpp_comparator(const void *va, const void *vb) {
 /* Populate midpp[] with the capped min and max p for each possible
  * allocation of p^{x-1} at each v_i.
  */
-void prep_midp(t_level *cur_level) {
-    t_level *prev_level = &levels[cur_level->level - 1];
+void prep_midp(t_node *prev_node) {
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
         uint vil = cur_vlevel[vi];
@@ -4410,7 +4419,7 @@ void prep_midp(t_level *cur_level) {
                 continue;
             /* find range of p for allocating p^e at v_i */
             mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
-            mintau(prev_level, Z(wv_cand), t / x);
+            mintau(prev_node, Z(wv_cand), t / x);
             mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
@@ -4441,8 +4450,8 @@ void prep_midp(t_level *cur_level) {
     return;
 }
 
-uint suffix_midp(t_level *lp, char *buf) {
-    return sprintf(buf, " W(%lu,%u,%u)", lp->p, lp->x, lp->vi);
+uint suffix_midp(t_act *cur_act, char *buf) {
+    return sprintf(buf, " W(%lu,%u,%u)", cur_act->p, cur_act->x, cur_act->vi);
 }
 
 char *parse_midp(char *s) {
@@ -4465,23 +4474,24 @@ char *parse_midp(char *s) {
  * If 'recover' is true, we initialize the state from act_recover, and
  * resume any partial walk_v() if have_rwalk.
  */
-void walk_midp(t_level *prev_level, bool recover) {
-    t_level *cur_level = &levels[prev_level->level + 1];
+void walk_midp(t_node *prev_node, bool recover) {
+    t_node *cur_node = &nodes[prev_node->level + 1];
+    t_act *cur_act = &acts[prev_node->level + 1];
 
     uint vi, x, mi;
     ulong p;
     t_midpp *mp;
     bool used;
 
-    cur_level->action = A_MIDP;
+    cur_act->action = A_MIDP;
     midppc = 0;
-    prep_midp(cur_level);
+    prep_midp(prev_node);
     if (midppc == 0)
         goto walk_midp_done;
 
-    level_setp(cur_level, midpp[0].maxp);
+    level_setp(cur_act, midpp[0].maxp);
     /* setp has set to a prime <= target */
-    prime_iterator_next(&cur_level->piter);
+    prime_iterator_next(&cur_act->piter);
 
     if (recover && act_recover.action == A_MIDP) {
         p = act_recover.p;
@@ -4489,7 +4499,7 @@ void walk_midp(t_level *prev_level, bool recover) {
         vi = act_recover.vi;
         act_recover.action = A_NONE;
 
-        level_setp(cur_level, p);
+        level_setp(cur_act, p);
         for (mi = 0 ; mi < midppc; ++mi) {
             mp = &midpp[mi];
             if (mp->vi != vi || mp->x != x)
@@ -4500,11 +4510,11 @@ void walk_midp(t_level *prev_level, bool recover) {
              * but not below a partial walk; the next diag point should
              * be what we recover to, so must not diag here if have_rwalk.
              */
-            bool ok = apply_single(prev_level, cur_level, vi, p, x);
+            bool ok = apply_single(prev_node, cur_node, vi, p, x);
             /* the stack is now rebuilt */
             if (have_pend202) {
                 apply_pend202();
-                if (ok && mpz_cmp(cur_level->rq, zmax) > 0) {
+                if (ok && mpz_cmp(cur_node->rq, zmax) > 0) {
                     /* it no longer fits, so there is nothing to walk */
                     --cur_vlevel[vi];
                     have_rwalk = 0;
@@ -4513,8 +4523,8 @@ void walk_midp(t_level *prev_level, bool recover) {
             }
             if (ok) {
                 if (need_work && !have_rwalk)
-                    diag_plain(cur_level);
-                walk_v(cur_level, have_rwalk ? rwalk_from : Z(zero));
+                    diag_plain(cur_node);
+                walk_v(cur_node, have_rwalk ? rwalk_from : Z(zero));
                 --cur_vlevel[vi];   /* unallocate */
             } else if (have_rwalk)
                 fail("midp recovery: could not reapply %lu^%u at v_%u",
@@ -4527,12 +4537,12 @@ void walk_midp(t_level *prev_level, bool recover) {
     }
 
     while (midppc) {
-        p = prime_iterator_prev(&cur_level->piter);
+        p = prime_iterator_prev(&cur_act->piter);
 
         /* If p is already allocated must still prune any completed powers,
          * skipping only the apply.
          */
-        used = known_prime(prev_level, p);
+        used = known_prime(prev_node, p);
         for (mi = 0; mi < midppc; ++mi) {
           redo_mi:
             mp = &midpp[mi];
@@ -4552,19 +4562,19 @@ void walk_midp(t_level *prev_level, bool recover) {
                 continue;
             vi = mp->vi;
             x = mp->x;
-            if (apply_single(prev_level, cur_level, vi, p, x)) {
+            if (apply_single(prev_node, cur_node, vi, p, x)) {
                 if (need_work)
-                    diag_plain(cur_level);
-                walk_v(cur_level, Z(zero));
+                    diag_plain(cur_node);
+                walk_v(cur_node, Z(zero));
                 --cur_vlevel[vi];   /* unallocate */
             } else if (need_work)
-                diag_attempt(cur_level, vi, p, x);
+                diag_attempt(cur_node, vi, p, x);
           next_mi:
             ;
         }
     }
   walk_midp_done:
-    cur_level->action = A_UNFORCED;
+    cur_act->action = A_UNFORCED;
 }
 
 uint relative_valuation(uint i, ulong p, uint e) {
@@ -4590,26 +4600,27 @@ static inline void unapply_batch(uint fpi, uint bi, uint count) {
  * change nothing and return FALSE.
  */
 bool apply_batch(
-    t_level *prev_level, t_level *cur_level, uint fpi, uint bi
+    t_node *prev_node, t_node *cur_node, uint fpi, uint bi
 ) {
     t_forcep *fp = &forcep[fpi];
     assert(fp->count > bi);
     t_value *vp;
-    cur_level->action = A_FORCED;
-    cur_level->bi = bi;
+    t_act *cur_act = &acts[cur_node->level];
+    cur_act->action = A_FORCED;
+    cur_act->bi = bi;
     t_forcebatch *bp = forcebatch_p(fp, bi);
     uint terminal = k;
     uint vi = bp->primary;
 
     if (bp->x[vi] == 0) {
-        apply_null(prev_level, cur_level, fp->p);
-        cur_level->fp_need &= ~(1U << fpi);
+        apply_null(prev_node, cur_node, fp->p);
+        cur_node->fp_need &= ~(1U << fpi);
         return 1;
     }
-    cur_level->have_min = prev_level->have_min;
+    cur_node->have_min = prev_node->have_min;
 
     uint ep = bp->x[vi] - 1;
-    if (!apply_primary(prev_level, cur_level, vi, fp->p, ep + 1, bp->fold))
+    if (!apply_primary(prev_node, cur_node, vi, fp->p, ep + 1, bp->fold))
         return 0;
     vp = &value[vi];
     if (vp->alloc[ cur_vlevel[vi] - 1 ].t == 1)
@@ -4618,7 +4629,7 @@ bool apply_batch(
     for (uint vj = 0; vj < k; ++vj) {
         if (vi == vj || bp->x[vj] == 0)
             continue;
-        if (!apply_secondary(prev_level, cur_level, vj, fp->p, bp->x[vj])) {
+        if (!apply_secondary(prev_node, cur_node, vj, fp->p, bp->x[vj])) {
             unapply_batch(fpi, bi, vj);
             if (vi > vj)
                 --cur_vlevel[vi];
@@ -4628,7 +4639,7 @@ bool apply_batch(
         if (vp->alloc[ cur_vlevel[vj] - 1 ].t == 1)
             terminal = vj;
     }
-    cur_level->fp_need &= ~(1U << fpi);
+    cur_node->fp_need &= ~(1U << fpi);
 
     if (terminal < k && !(opt_alloc & 4)) {
         /* we have a value fully allocated, so test it unless we are
@@ -4643,7 +4654,7 @@ bool apply_batch(
                 valid = 0;
         }
         if (valid) {
-            walk_1(cur_level, terminal);
+            walk_1(cur_node, terminal);
             if (seen_best)
                 seen_valid = 1;
         }
@@ -4653,14 +4664,14 @@ bool apply_batch(
     }
 
     /* did we already have a square? */
-    if (prev_level->have_square) {
+    if (prev_node->have_square) {
         /* Need extra care only when a secondary hits the square,
          * so not if a) the primary hits it, or b) nothing hits it.
          */
         if (vi == sq0 || bp->x[sq0] == 0) {
             mpz_ui_pow_ui(px, fp->p, ep);
             if (!update_residues(
-                prev_level, cur_level, vi, fp->p, ep + 1, px, 0, bp->fold
+                prev_node, cur_node, vi, fp->p, ep + 1, px, 0, bp->fold
             )) {
                 unapply_batch(fpi, bi, k);
                 return 0;
@@ -4679,7 +4690,7 @@ bool apply_batch(
             }
             mpz_ui_pow_ui(px, fp->p, eq);
             if (!update_residues(
-                prev_level, cur_level, sq0, fp->p, eq + 1, px, 0, fold
+                prev_node, cur_node, sq0, fp->p, eq + 1, px, 0, fold
             )) {
                 unapply_batch(fpi, bi, k);
                 return 0;
@@ -4687,7 +4698,7 @@ bool apply_batch(
             if (e2 > 0) {
                 mpz_ui_pow_ui(px, fp->p, e2);
                 if (!update_residues(
-                    prev_level, cur_level, vi, fp->p, e2 + 1, px, eq,
+                    prev_node, cur_node, vi, fp->p, e2 + 1, px, eq,
                     bp->fold
                 )) {
                     unapply_batch(fpi, bi, k);
@@ -4696,15 +4707,15 @@ bool apply_batch(
             }
         }
     }
-    if (!defer_pell && !(opt_alloc & 4) && cur_level->have_square > 1) {
+    if (!defer_pell && !(opt_alloc & 4) && cur_node->have_square > 1) {
         seen_valid = 1;
-        walk_v(cur_level, Z(zero));
+        walk_v(cur_node, Z(zero));
         unapply_batch(fpi, bi, k);
         return 0;
     }
     /* under -a4, a value fully allocated ends the batch: list it now */
     if (terminal < k)
-        cur_level->fp_need = 0;
+        cur_node->fp_need = 0;
     return 1;
 }
 
@@ -4721,10 +4732,10 @@ bool apply_batch(
  * preceding work. If there is no midp recovery structure, we're just
  * starting at the point of a completed batch.
  */
-bool process_batch(t_level *cur_level, bool recover) {
+bool process_batch(t_node *cur_node, bool recover) {
     if (!recover) {
         slong batch_id = batch_alloc++;
-        cur_batch_level = cur_level->level;
+        cur_batch_level = cur_node->level;
         seen_valid = 1;
         if (debugB)
             disp_batch();
@@ -4749,25 +4760,25 @@ bool process_batch(t_level *cur_level, bool recover) {
     }
   do_process:
     if (need_midp) {
-        walk_midp(cur_level, recover);
+        walk_midp(cur_node, recover);
         if (midp_only)
             return 0;
     }
-    if (cur_level->have_square > 1) {
+    if (cur_node->have_square > 1) {
         seen_valid = 1;
-        walk_v(cur_level, Z(zero));
+        walk_v(cur_node, Z(zero));
         return 0;
     }
     return 1;
 }
 
-uint best_v(t_level *cur_level);
+uint best_v(t_act *cur_act);
 
 /* Choose that v_i with the highest t_i still to fulfil, or (on equality)
  * with the highest q_i, but having at least one factor to allocate.
  * If there is no best entry, returns BV_WALK.
  */
-uint best_v0(t_level *cur_level) {
+uint best_v0(t_act *cur_act) {
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4804,7 +4815,7 @@ uint best_v0(t_level *cur_level) {
  * q_i.
  * If there is no best entry, returns BV_WALK.
  */
-uint best_v1(t_level *cur_level) {
+uint best_v1(t_act *cur_act) {
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4843,7 +4854,7 @@ uint best_v1(t_level *cur_level) {
  * with the highest q_i, but having at least one factor to allocate.
  * If there is no best entry, returns BV_WALK.
  */
-uint best_v2(t_level *cur_level) {
+uint best_v2(t_act *cur_act) {
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4878,7 +4889,7 @@ uint best_v2(t_level *cur_level) {
 /* Same as best_v0, except that if the last power allocated on some v_i
  * was the square root of the remaining tau (and unforced), always take it.
  */
-uint best_v3(t_level *cur_level) {
+uint best_v3(t_act *cur_act) {
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4901,11 +4912,11 @@ uint best_v3(t_level *cur_level) {
             /* shortcircuit if last allocation was of sqrt(t) */
             /* but only if it was unforced */
             ulong p = apj->p;
-            for (uint li = final_level + 1; li < cur_level->level; ++li) {
-                t_level *lp = &levels[li];
-                if (lp->action == A_UNFORCED)
+            for (uint li = final_level + 1; li < cur_act->level; ++li) {
+                t_act *actp = &acts[li];
+                if (actp->action == A_UNFORCED)
                     break;
-                if (lp->p == p)
+                if (actp->p == p)
                     goto best_v3_unforced;
             }
             return vj;
@@ -4932,7 +4943,7 @@ uint best_v3(t_level *cur_level) {
  * with the smallest range.
  * If there is no best entry, returns BV_WALK.
  */
-uint best_v4(t_level *cur_level) {
+uint best_v4(t_act *cur_act) {
     uint vi, ti = 0, hi;
     ulong mini;
     mpz_t *qi, *limi;
@@ -4989,13 +5000,13 @@ uint best_v4(t_level *cur_level) {
 /* Show the candidate walk_6x() is about to try: the prime Z(j4p), from
  * the subset a of the allocations at its position.
  */
-void diag_6x(t_level *cur_level, uint a) {
-    cur_level->bi = a;     /* spare at an unforced level */
-    diag_plain(cur_level);
+void diag_6x(t_act *cur_act, uint a) {
+    cur_act->bi = a;   /* spare at an unforced level */
+    diag_plain(&nodes[cur_act->level]);
 }
 
-uint suffix_6x(t_level *lp, char *buf) {
-    return gmp_sprintf(buf, " 6X(%Zu,%u,%u)", Z(j4p), lp->vi, lp->bi);
+uint suffix_6x(t_act *cur_act, char *buf) {
+    return gmp_sprintf(buf, " 6X(%Zu,%u,%u)", Z(j4p), cur_act->vi, cur_act->bi);
 }
 
 char *parse_6x(char *s) {
@@ -5018,18 +5029,18 @@ char *parse_6x(char *s) {
     return s + 1;
 }
 
-ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt);
+ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt);
 
 /* The limit of the loop at v_i for its first x, the highest prime of
  * tau: that dominates the primes recursion there would try, the later x
  * needing at least a (2h-1)th root. A limit of 2^64 or more (0 from
  * limit_p(), forcing a walk) is given as ULONG_MAX.
  */
-ulong loop_limit(t_level *cur_level, uint vi) {
+ulong loop_limit(t_act *cur_act, uint vi) {
     t_value *vp = &value[vi];
     uint t = vp->alloc[cur_vlevel[vi] - 1].t;
     uint x = divisors[t].div[0];
-    ulong limp = limit_p(cur_level, vi, x, t / x);
+    ulong limp = limit_p(cur_act, vi, x, t / x);
     return limp ? limp : ULONG_MAX;
 }
 
@@ -5048,12 +5059,12 @@ ulong loop_limit(t_level *cur_level, uint vi) {
  * elsewhere may have a far lower limit (e.g. p^28 for n = 174). The
  * choice depends on zmax, see updated_zmax().
  */
-uint best_6x(t_level *cur_level) {
+uint best_6x(t_act *cur_act) {
     /* check if conditions for STRATEGY_6X still hold */
-    t_level *prev_level = &levels[ cur_level->level - 1 ];
-    if (!prev_level->have_square || sq0 < 2) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    if (!prev_node->have_square || sq0 < 2) {
         strategy = prev_strategy;
-        return best_v(cur_level);
+        return best_v(cur_act);
     }
 
     uint vi = sq0 - 2;
@@ -5065,13 +5076,13 @@ uint best_6x(t_level *cur_level) {
     if (t & 1)
         return BV_WALK;
     if (t != 2) {
-        uint vj = strategies[prev_strategy](cur_level);
+        uint vj = strategies[prev_strategy](cur_act);
         if (vj < BV_SPECIAL && vj != vi
-                && loop_limit(cur_level, vj) < loop_limit(cur_level, vi))
+                && loop_limit(cur_act, vj) < loop_limit(cur_act, vi))
             return vj;
         return vi;          /* allocate some more */
     }
-    cur_level->vi = vi;
+    cur_act->vi = vi;
     return BV_6X;           /* walk_6x() can now handle this */
 }
 
@@ -5084,8 +5095,9 @@ uint best_6x(t_level *cur_level) {
  * resulting p that is prime.
  */
 void walk_6x(uint vi) {
-    t_level *cur_level = &levels[level];
-    t_level *prev_level = &levels[level - 1];
+    t_node *cur_node = &nodes[level];
+    t_node *prev_node = &nodes[level - 1];
+    t_act *cur_act = &acts[level];
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap;
@@ -5096,15 +5108,15 @@ void walk_6x(uint vi) {
     ap_next->x = 2;
     ap_next->level = level;
     cur_vlevel[vi] = vlevel + 1;
-    cur_level->have_min = 1;
-    assert(cur_level->vi == vi);
-    cur_level->action = A_6X;
+    cur_node->have_min = 1;
+    assert(cur_act->vi == vi);
+    cur_act->action = A_6X;
     /* We will fully fix v_i, so we don't need to roll the prime we
      * allocate into rq/aq by calling update_chinese each time: the
      * previous values tell us everything we need to know.
      */
-    mpz_set(cur_level->aq, prev_level->aq);
-    mpz_set(cur_level->rq, prev_level->rq);
+    mpz_set(cur_node->aq, prev_node->aq);
+    mpz_set(cur_node->rq, prev_node->rq);
 
     /* We need prime p: v_i = 8abp with a = bp +/- 1.
      * We find that by iterating 'a' over all combinations of the prime power
@@ -5176,22 +5188,22 @@ void walk_6x(uint vi) {
                 /* p = Z(j4p) is prime and yields v_{i+2} = 2z^2 */
                 mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                 if (need_work)
-                    diag_6x(cur_level, a);
-                walk_1(cur_level, vi);
+                    diag_6x(cur_act, a);
+                walk_1(cur_node, vi);
             }
             if (mpz_cmp_ui(Z(j4b), 2) <= 0) {
                 mpz_add_ui(Z(j4p), Z(j4p), 2 / mpz_get_ui(Z(j4b)));
                 if (_GMP_is_prob_prime(Z(j4p))) {
                     mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                     if (need_work)
-                        diag_6x(cur_level, a);
-                    walk_1(cur_level, vi);
+                        diag_6x(cur_act, a);
+                    walk_1(cur_node, vi);
                 }
             }
         }
     }
     cur_vlevel[vi] = vlevel;    /* restore */
-    cur_level->action = A_UNFORCED;
+    cur_act->action = A_UNFORCED;
 }
 
 void set_fixed_strategy(char *s) {
@@ -5215,8 +5227,8 @@ void set_fixed_strategy(char *s) {
 
 /* STRATEGY_FIXED: user-specified order, with minor sanity checks
  */
-uint best_fixed(t_level *cur_level) {
-    uint effective_level = cur_level->level - (cur_batch_level + 1);
+uint best_fixed(t_act *cur_act) {
+    uint effective_level = cur_act->level - (cur_batch_level + 1);
     if (effective_level >= fixed_level)
         return BV_WALK;
     uint vi = fixed_v[effective_level];
@@ -5236,8 +5248,8 @@ uint best_fixed(t_level *cur_level) {
  * If there is no such entry, returns BV_WALK; if there is no work to
  * do for this x, returns BV_NEXTX.
  */
-uint best_v(t_level *cur_level) {
-    return strategies[strategy](cur_level);
+uint best_v(t_act *cur_act) {
+    return strategies[strategy](cur_act);
 }
 
 /* Returns the greatest p for which p^{x-1} needs to be tried at v_i
@@ -5247,7 +5259,7 @@ uint best_v(t_level *cur_level) {
  * counted as greater than any other: recurse() relies on this when it
  * recalculates a limit.
  */
-ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
+ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
@@ -5288,9 +5300,9 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
          * be ha (in which case it must use a higher prime than this one),
          * or hb: b > a.
          */
-        t_level *prev_level = &levels[cur_level->level - 1];
+        t_node *prev_node = &nodes[cur_act->level - 1];
         /* this is mintau using hb: b > a */
-        mintau_restricted(prev_level, Z(lp_mint), nextt, x);
+        mintau_restricted(prev_node, Z(lp_mint), nextt, x);
         bool have_value = 0;
         if (mpz_sgn(Z(lp_mint))) {
             have_value = 1;
@@ -5300,7 +5312,7 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
         while ((itert % x) == 0) {
             ++iter;
             itert /= x;
-            mintau_restricted(prev_level, Z(lp_mint2), itert, x);
+            mintau_restricted(prev_node, Z(lp_mint2), itert, x);
             if (mpz_sgn(Z(lp_mint2))) {
                 mpz_div(Z(lp_mint2), Z(lp_x), Z(lp_mint2));
                 mpz_root(Z(lp_mint2), Z(lp_mint2), iter);
@@ -5318,8 +5330,8 @@ ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt) {
         /* divide through by the minimum contribution that could supply the
          * remaining tau */
         if (nextt > 1) {
-            t_level *prev_level = &levels[cur_level->level - 1];
-            mintau(prev_level, Z(lp_mint), nextt);
+            t_node *prev_node = &nodes[cur_act->level - 1];
+            mintau(prev_node, Z(lp_mint), nextt);
             mpz_div(Z(lp_x), Z(lp_x), Z(lp_mint));
         }
         mpz_root(Z(lp_x), Z(lp_x), x - 1);
@@ -5382,13 +5394,13 @@ static inline uint flip_xs_tau(uint t) {
     return (x && can_flip(x)) ? x : 0;
 }
 
-/* Make lp, holding p^{z-1} at its v_i, the level of a flip that replaces
+/* Make cur_act, holding p^{z-1} at its v_i, the act of a flip that replaces
  * that allocation, so with it withdrawn (see run_flip_pqsq()).
  */
-static inline void flip_withdraw(t_level *lp) {
-    lp->action = A_FLIP;
-    lp->limp = lp->p;   /* lp will see this x is complete on return */
-    --cur_vlevel[lp->vi];
+static inline void flip_withdraw(t_act *cur_act) {
+    cur_act->action = A_FLIP;
+    cur_act->limp = cur_act->p;   /* it will see this x is complete on return */
+    --cur_vlevel[cur_act->vi];
 }
 
 /* Most primes tried by a loop of allocations are rejected for giving a
@@ -5399,8 +5411,8 @@ static inline void flip_withdraw(t_level *lp) {
  * without the cost of apply_single(). As zmax can only fall, the bound
  * found when the loop is prepared stays valid, if no longer the least.
  */
-static inline void reject_prep(t_level *prev, t_level *cur) {
-    cur->rj_ok = 0;
+static inline void reject_prep(t_node *prev, t_act *cur_act) {
+    cur_act->rj_ok = 0;
 #ifdef CHECK_OVERFLOW
     if (mpz_cmp(prev->rq, zmax) > 0)
         return;
@@ -5408,16 +5420,16 @@ static inline void reject_prep(t_level *prev, t_level *cur) {
     mpz_fdiv_q(Z(temp), Z(temp), prev->aq);
     if (!mpz_fits_ulong_p(Z(temp)))
         return;
-    cur->rj_mult = mpz_get_ui(Z(temp));
+    cur_act->rj_mult = mpz_get_ui(Z(temp));
     /* rq < aq, so rq fits in a limb if aq does */
-    cur->rj_limb = (mpz_size(prev->aq) == 1);
-    cur->rj_ok = 1;
+    cur_act->rj_limb = (mpz_size(prev->aq) == 1);
+    cur_act->rj_ok = 1;
 #endif
 }
 
 /* aq and rq of prev, mod m */
 static inline void reject_mod(
-    t_level *prev, bool limb, ulong m, ulong *am, ulong *rm
+    t_node *prev, bool limb, ulong m, ulong *am, ulong *rm
 ) {
     if (limb) {
         *am = mpz_getlimbn(prev->aq, 0) % m;
@@ -5430,7 +5442,7 @@ static inline void reject_mod(
 
 /* Returns true if allocating p^{x-1} at v_i over prev is sure to be
  * rejected for v_0 > zmax, or false if uncertain. The caller checks
- * that p is odd, and that reject_prep() set cur->rj_ok.
+ * that p is odd, and that reject_prep() set cur_act->rj_ok.
  * The CRT gives v_0 = rq + mult.aq, where 0 <= mult < p^{x-1} and
  *   mult == -(rq + i) / aq (mod p^{x-1}).
  * Taken mod p, that gives mult0 = mult % p from an inverse mod p alone;
@@ -5442,11 +5454,11 @@ static inline void reject_mod(
  * if m = p^{x-1}.
  */
 static inline bool reject_single(
-    t_level *prev, t_level *cur, uint vi, ulong p, uint x
+    t_node *prev, t_act *cur_act, uint vi, ulong p, uint x
 ) {
     ulong off = TYPE_OFFSET(vi), am, rm;
     if (p < (1UL << 31)) {
-        reject_mod(prev, cur->rj_limb, p, &am, &rm);
+        reject_mod(prev, cur_act->rj_limb, p, &am, &rm);
         if (am == 0)
             return 0;
         ulong inv = invert_u32(am, p);
@@ -5455,7 +5467,7 @@ static inline bool reject_single(
         if (c)
             c = p - c;
         ulong mult0 = c * inv % p;
-        if (mult0 > cur->rj_mult)
+        if (mult0 > cur_act->rj_mult)
             return 1;
         if (x == 2)
             return 0;
@@ -5464,14 +5476,14 @@ static inline bool reject_single(
              * mult1 == ((c - aq.mult0) / p) / aq (mod p).
              */
             ulong m = p * p;
-            reject_mod(prev, cur->rj_limb, m, &am, &rm);
+            reject_mod(prev, cur_act->rj_limb, m, &am, &rm);
             c = (off % m + rm) % m;
             if (c)
                 c = m - c;
             ulong d = c + m - mulmod_u64(am, mult0, m);
             if (d >= m)
                 d -= m;
-            return mult0 + p * (d / p * inv % p) > cur->rj_mult;
+            return mult0 + p * (d / p * inv % p) > cur_act->rj_mult;
         }
     }
     /* as update_chinese(): m = p^e < 2^61 for e < x, not dividing aq */
@@ -5481,18 +5493,18 @@ static inline bool reject_single(
             break;
         m *= p;
     }
-    if (m >= (1UL << 61) || m <= cur->rj_mult)
+    if (m >= (1UL << 61) || m <= cur_act->rj_mult)
         return 0;
-    reject_mod(prev, cur->rj_limb, m, &am, &rm);
+    reject_mod(prev, cur_act->rj_limb, m, &am, &rm);
     if (am % p == 0)
         return 0;
     ulong c = (off % m + rm) % m;
     if (c)
         c = m - c;
-    return mulmod_u64(c, ppow_invert(am, p, m), m) > cur->rj_mult;
+    return mulmod_u64(c, ppow_invert(am, p, m), m) > cur_act->rj_mult;
 }
 
-/* Act on the limit limp for p^{x-1} at cur_level, given the last prime
+/* Act on the limit limp for p^{x-1} at cur_act, given the last prime
  * done p (the prime before the first to try, if fresh).
  *
  * Returns:
@@ -5502,20 +5514,20 @@ static inline bool reject_single(
  *   PUX_DO_THIS_X if there are p to allocate.
  */
 e_pux limit_unforced_x(
-    t_level *prev_level, t_level *cur_level, ulong p, ulong limp, bool fresh
+    t_node *prev_node, t_act *cur_act, ulong p, ulong limp, bool fresh
 ) {
-    uint ti = cur_level->ti;
-    uint x = divisors[ti].div[cur_level->di];
-    uint vi = cur_level->vi;
+    uint ti = cur_act->ti;
+    uint x = divisors[ti].div[cur_act->di];
+    uint vi = cur_act->vi;
     uint nextt = ti / x;
 
     if (limp == 0) {
         /* force walk */
 #ifdef SQONLY
-        if (prev_level->have_square)
-            walk_v(prev_level, Z(zero));
+        if (prev_node->have_square)
+            walk_v(prev_node, Z(zero));
 #else
-        walk_v(prev_level, Z(zero));
+        walk_v(prev_node, Z(zero));
 #endif
         return PUX_NOTHING_TO_DO;
     }
@@ -5526,7 +5538,7 @@ e_pux limit_unforced_x(
          * remainder, splitting as (2z, z) rather than (z, 2z). That holds
          * for any z that can_flip(), prime or not.
          */
-        if (nextt == 2 && prev_level->vi == vi && x == prev_x(vi)
+        if (nextt == 2 && acts[prev_node->level].vi == vi && x == prev_x(vi)
                 && can_flip(x))
             return PUX_FLIP_PQSQ;
         return PUX_SKIP_THIS_X; /* nothing to do here */
@@ -5549,25 +5561,25 @@ e_pux limit_unforced_x(
      * This probably needs more progress on calibration before we consider it.
      */
     if (nextt == 1) {
-        cur_level->have_min = prev_level->have_min;
+        nodes[cur_act->level].have_min = prev_node->have_min;
         /* a recovered p is the one in progress, so still to try */
-        walk_1_set(prev_level, cur_level, vi, fresh ? p : p - 1, limp, x);
+        walk_1_set(prev_node, cur_act, vi, fresh ? p : p - 1, limp, x);
         return PUX_SKIP_THIS_X;
     }
     return PUX_DO_THIS_X;
 }
 
-/* The gate: true if the gain heuristics say to walk prev_level, rather
+/* The gate: true if the gain heuristics say to walk prev_node, rather
  * than recurse by allocating at v_i each prime after p up to limp.
  */
-bool gate_walk(t_level *prev_level, uint vi, ulong p, ulong limp) {
+bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
     mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
 #ifdef LARGE_MIN
     /* needs zmin <= zmax */
     mpz_sub(Z(r_walk), Z(r_walk), zmin);
 #endif
-    if (prev_level->have_square) {
-        if (prev_level->have_square == 1) {
+    if (prev_node->have_square) {
+        if (prev_node->have_square == 1) {
             /* Let rc be the number of residues. If we fix a square, we will
              * test rc of each a_q / q_i window up to (zmax / q_i)^{1/g};
              * that's a lot of operations, but it does not obviously simplify.
@@ -5580,8 +5592,8 @@ bool gate_walk(t_level *prev_level, uint vi, ulong p, ulong limp) {
             mpz_root(Z(r_walk), Z(r_walk), g);
             mpz_mul(Z(r_walk), Z(r_walk), ap->q);
             mpz_mul_ui(Z(r_walk), Z(r_walk),
-                    res_array(prev_level->level)->count);
-            mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
+                    res_array(prev_node->level)->count);
+            mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_node->aq);
         } else {
             /* if we fix multiple squares, we'll solve a Pell equation;
              * treat that as effectively free */
@@ -5592,7 +5604,7 @@ bool gate_walk(t_level *prev_level, uint vi, ulong p, ulong limp) {
         if (antigain2 > 1)
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain2);
     } else {
-        mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_level->aq);
+        mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_node->aq);
         if (gain > 1)
             mpz_mul_ui(Z(r_walk), Z(r_walk), gain);
         if (antigain > 1)
@@ -5603,17 +5615,15 @@ bool gate_walk(t_level *prev_level, uint vi, ulong p, ulong limp) {
             && mpz_get_ui(Z(r_walk)) < ((cap < p) ? 0 : cap - p);
 }
 
-/* Set cur_level to allocate its current x for the primes after p up to
- * limp.
- */
+/* Set cur_act to allocate its current x for the primes after p up to limp. */
 static inline void set_unforced_x(
-    t_level *prev_level, t_level *cur_level, ulong p, ulong limp
+    t_node *prev_node, t_act *cur_act, ulong p, ulong limp
 ) {
-    level_setp(cur_level, p);
-    cur_level->x = divisors[cur_level->ti].div[cur_level->di];
-    cur_level->limp = limp;
-    cur_level->max_at = seen_best;
-    reject_prep(prev_level, cur_level);
+    level_setp(cur_act, p);
+    cur_act->x = divisors[cur_act->ti].div[cur_act->di];
+    cur_act->limp = limp;
+    cur_act->max_at = seen_best;
+    reject_prep(prev_node, cur_act);
     /* TODO: do some constant alloc stuff in advance */
 }
 
@@ -5627,10 +5637,10 @@ static inline void set_unforced_x(
  *   PUX_SKIP_THIS_X if nothing more to do for this x;
  *   PUX_DO_THIS_X if prepped for this x with work to do.
  */
-e_pux prep_unforced_x(t_level *prev_level, t_level *cur_level) {
-    uint ti = cur_level->ti;
-    uint x = divisors[ti].div[cur_level->di];
-    uint vi = cur_level->vi;
+e_pux prep_unforced_x(t_node *prev_node, t_act *cur_act) {
+    uint ti = cur_act->ti;
+    uint x = divisors[ti].div[cur_act->di];
+    uint vi = cur_act->vi;
     uint nextt = ti / x;
 
     if (done_in_reverse(vi, x, nextt))
@@ -5638,23 +5648,24 @@ e_pux prep_unforced_x(t_level *prev_level, t_level *cur_level) {
     ulong p = start_p(vi, x);
 
     /* try p^{x-1} for all p until q_i . p^{x-1} . minrest > zmax + i */
-    ulong limp = limit_p(cur_level, vi, x, nextt);
-    e_pux pux = limit_unforced_x(prev_level, cur_level, p, limp, 1);
+    ulong limp = limit_p(cur_act, vi, x, nextt);
+    e_pux pux = limit_unforced_x(prev_node, cur_act, p, limp, 1);
     if (pux != PUX_DO_THIS_X)
         return pux;
 
-    if (gate_walk(prev_level, vi, p, limp)) {
+    if (gate_walk(prev_node, vi, p, limp)) {
 #ifdef SQONLY
-        if (prev_level->have_square)
-            walk_v(prev_level, Z(zero));
-        else if (prev_level->action == A_UNFORCED)
-            level_setp(prev_level, prev_level->limp);
+        t_act *prev_act = &acts[prev_node->level];
+        if (prev_node->have_square)
+            walk_v(prev_node, Z(zero));
+        else if (prev_act->action == A_UNFORCED)
+            level_setp(prev_act, prev_act->limp);
 #else
-        walk_v(prev_level, Z(zero));
+        walk_v(prev_node, Z(zero));
 #endif
         return PUX_NOTHING_TO_DO;
     }
-    set_unforced_x(prev_level, cur_level, p, limp);
+    set_unforced_x(prev_node, cur_act, p, limp);
     return PUX_DO_THIS_X;
 }
 
@@ -5707,7 +5718,7 @@ void stack_drop(t_fact *s) {
  * limit_was_best() recognise the two ways that can happen.
  */
 bool least_is_best(
-    t_level *prev, t_level *cur, uint vi, ulong p, uint x, uint fold
+    t_node *prev, t_node *cur, uint vi, ulong p, uint x, uint fold
 ) {
     if (!improve_max || !seen_best)
         return 0;
@@ -5720,12 +5731,12 @@ bool least_is_best(
  * nextt only because the best candidate is no longer in range: see
  * least_is_best().
  */
-bool limit_was_best(t_level *cur, uint vi, ulong p, uint x, uint nextt) {
+bool limit_was_best(t_act *cur_act, uint vi, ulong p, uint x, uint nextt) {
     if (!improve_max || !seen_best)
         return 0;
     /* the limit as it was with the best candidate still in range */
     mpz_add_ui(zmax, zmax, 1);
-    ulong limp = limit_p(cur, vi, x, nextt);
+    ulong limp = limit_p(cur_act, vi, x, nextt);
     mpz_sub_ui(zmax, zmax, 1);
     return limp == 0 || p <= limp;
 }
@@ -5802,18 +5813,18 @@ bool insert_forced(
   have_batch: ;
     bool applied = 1, ruled_out = 0;
     if (!init || !is_tail(bp)) {
-        t_level *prev_level = &levels[level - 1];
-        t_level *cur_level = &levels[level];
+        t_node *prev_node = &nodes[level - 1];
+        t_node *cur_node = &nodes[level];
         cur_batch_level = level;
         /* progress is shown just before we apply, so on recovery it is
          * legitimate for the last one to fail */
-        if (apply_batch(prev_level, cur_level, fpi, bi))
+        if (apply_batch(prev_node, cur_node, fpi, bi))
             ++level;
         else {
             *jump = IS_NEXT;
             applied = 0;
             ruled_out = (!init && maxx && least_is_best(
-                prev_level, cur_level, mini, p, maxx, bp->fold
+                prev_node, cur_node, mini, p, maxx, bp->fold
             ));
         }
     }
@@ -5859,8 +5870,9 @@ static inline bool insert_float(
     uint x = rsp->e + 1;
     stack_remove(stack, stack2, vi, p, x - 1);
 
-    t_level *prev_level = &levels[level - 1];
-    t_level *cur_level = &levels[level];
+    t_node *prev_node = &nodes[level - 1];
+    t_node *cur_node = &nodes[level];
+    t_act *cur_act = &acts[level];
 
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
@@ -5878,21 +5890,21 @@ static inline bool insert_float(
         if (dp->div[di] == x)
             break;
     }
-    cur_level->vi = vi;
-    cur_level->ti = ti;
-    cur_level->di = di;
+    cur_act->vi = vi;
+    cur_act->ti = ti;
+    cur_act->di = di;
 
     e_pux pux;
     if (init) {
         /* we never continue from an init pattern, so need no checks */
-        set_unforced_x(prev_level, cur_level, p, 0);
+        set_unforced_x(prev_node, cur_act, p, 0);
         pux = PUX_DO_THIS_X;
     } else {
         /* the log shows that we recursed here, so the gate is not asked */
-        ulong limp = limit_p(cur_level, vi, x, ti / x);
-        pux = limit_unforced_x(prev_level, cur_level, p, limp, 0);
+        ulong limp = limit_p(cur_act, vi, x, ti / x);
+        pux = limit_unforced_x(prev_node, cur_act, p, limp, 0);
         if (pux == PUX_DO_THIS_X)
-            set_unforced_x(prev_level, cur_level, p, limp);
+            set_unforced_x(prev_node, cur_act, p, limp);
     }
     switch (pux) {
       case PUX_FLIP_PQSQ:
@@ -5902,7 +5914,7 @@ static inline bool insert_float(
             *jump = IS_NEXTX;
             return 0;
         }
-        if (limit_was_best(cur_level, vi, p, x, ti / x)) {
+        if (limit_was_best(cur_act, vi, p, x, ti / x)) {
             /* as recurse() will find on returning here */
             stack_drop(stack);
             *jump = IS_NEXTX;
@@ -5915,12 +5927,12 @@ static inline bool insert_float(
         return 0;
     }
 
-    level_setp(cur_level, p);
+    level_setp(cur_act, p);
     /* progress is shown just before we apply, so on recovery it is
      * legitimate for the last one to fail */
-    if (!apply_single(prev_level, cur_level, vi, p, x)) {
+    if (!apply_single(prev_node, cur_node, vi, p, x)) {
         if (!init && least_is_best(
-            prev_level, cur_level, vi, p, x, single_fold(p)
+            prev_node, cur_node, vi, p, x, single_fold(p)
         ))
             stack_drop(stack);
         *jump = IS_NEXT;
@@ -5964,30 +5976,30 @@ bool restore_flip(uint vi, t_fact *rs) {
     }
 
     /* set up the stack ready for a call to run_flip_pqsq */
-    t_level *prev_level = &levels[level - 1];
-    t_level *cur_level = &levels[level];
-    t_level *next_level = &levels[level + 1];
+    t_node *prev_node = &nodes[level - 1];
+    t_node *cur_node = &nodes[level];
+    t_act *cur_act = &acts[level];
     t_divisors *dp = &divisors[ti];
     uint di;
     for (di = 0; di < dp->highdiv; ++di)
         if (dp->div[di] == xs)
             break;
-    cur_level->ti = ti;
-    cur_level->di = di;
+    cur_act->ti = ti;
+    cur_act->di = di;
     /* the flip will end this level by its limit, which needs the iterator */
-    level_setp(cur_level, act_recover.p);
+    level_setp(cur_act, act_recover.p);
     /* The flip does not search below this level, so it need not fit: a
      * candidate found during the flip can put it out of range.
      */
     any_bound = 1;
-    bool ok = apply_single(prev_level, cur_level, vi, act_recover.p, xs);
+    bool ok = apply_single(prev_node, cur_node, vi, act_recover.p, xs);
     any_bound = 0;
     if (!ok)
         fail("panic: could not reapply %u^%u at %u for flip recovery",
                 act_recover.p, xs, vi);
-    flip_withdraw(cur_level);
+    flip_withdraw(cur_act);
     ++level;
-    next_level->vi = vi;
+    acts[level].vi = vi;
     return 1;
 }
 
@@ -6028,7 +6040,7 @@ e_is insert_stack(void) {
         }
 
         for (uint l = final_level + 1; l < level; ++l)
-            levels[l].action = A_FIXED;
+            acts[l].action = A_FIXED;
         /* do not recurse back into elements set by init_pattern */
         final_level = level - 1;
     }
@@ -6037,7 +6049,7 @@ e_is insert_stack(void) {
         /* insert recovery forced primes */
         for (uint fpi = 0; fpi < forcedp; ++fpi) {
             /* skip if already inserted via init pattern */
-            if ((levels[level - 1].fp_need & (1U << fpi)) == 0)
+            if ((nodes[level - 1].fp_need & (1U << fpi)) == 0)
                 continue;
             if (!insert_forced(rstack->f, NULL, fpi, &jump, 0))
                 goto insert_check;
@@ -6048,14 +6060,15 @@ e_is insert_stack(void) {
          */
         while (1) {
             uint vi;
+            t_act *cur_act = &acts[level];
             if (level < rstack->force && rstack->forced[level]) {
                 vi = rstack->forced[level] - 1;
-                levels[level].choice_strategy = strategy;
-                levels[level].unsorted = 1;
+                cur_act->choice_strategy = strategy;
+                cur_act->unsorted = 1;
             } else {
-                vi = best_v(&levels[level]);
-                levels[level].choice_strategy = strategy;
-                levels[level].unsorted = 0;
+                vi = best_v(cur_act);
+                cur_act->choice_strategy = strategy;
+                cur_act->unsorted = 0;
                 if (vi >= BV_SPECIAL) {
                     if (vi == BV_6X)
                         jump = IS_6X;
@@ -6089,12 +6102,12 @@ e_is insert_stack(void) {
     }
 
     if (jump == IS_DEEPER) {
-        t_level *prev = &levels[level - 1];
         if (act_recover.action == A_MIDP)
             jump = IS_BATCH;    /* Note: may also have_rwalk */
         else if (have_rwalk)
             jump = IS_RWALK;
-        else if (prev->action != A_UNFORCED && !prev->fp_need)
+        else if (acts[level - 1].action != A_UNFORCED
+                && !nodes[level - 1].fp_need)
             /* need process_batch() with no midp to resume */
             jump = IS_BATCH;
     } else if (act_recover.action == A_MIDP)
@@ -6103,9 +6116,9 @@ e_is insert_stack(void) {
     return jump;
 }
 
-/* lp->p is the prime of the p^{z-1} the flip replaces */
-uint suffix_flip(t_level *lp, char *buf) {
-    return sprintf(buf, " F(%u,%lu)", lp->vi, lp->p);
+/* cur_act->p is the prime of the p^{z-1} the flip replaces */
+uint suffix_flip(t_act *cur_act, char *buf) {
+    return sprintf(buf, " F(%u,%lu)", cur_act->vi, cur_act->p);
 }
 
 char *parse_flip(char *s) {
@@ -6132,17 +6145,19 @@ char *parse_flip(char *s) {
  * mark that power as fully handled.
  */
 void run_flip_pqsq(uint vi) {
-    t_level *anc_level = &levels[level - 2];
-    t_level *prev_level = &levels[level - 1];
-    t_level *cur_level = &levels[level];
-    t_level *next_level = &levels[level + 1];
-    ulong oldp = prev_level->p;
-    uint xs = prev_level->x;
+    t_node *anc_node = &nodes[level - 2];
+    t_node *cur_node = &nodes[level];
+    t_node *next_node = &nodes[level + 1];
+    t_act *prev_act = &acts[level - 1];
+    t_act *cur_act = &acts[level];
+    t_act *next_act = &acts[level + 1];
+    ulong oldp = prev_act->p;
+    uint xs = prev_act->x;
     uint xl = xs << 1;
     ulong resume_plow = 0;     /* only meaningful if resuming */
     bool recover = (act_recover.action == A_FLIP);
     if (recover) {
-        /* restore_flip() has already withdrawn prev_level */
+        /* restore_flip() has already withdrawn prev_act */
         if (vi != act_recover.vi)
             fail("panic: flip wants to recover at %u, not %u",
                     act_recover.vi, vi);
@@ -6151,87 +6166,90 @@ void run_flip_pqsq(uint vi) {
             resume_plow = oldp;
         act_recover.action = A_NONE;    /* consumed */
     } else {
-        assert(prev_level->vi == vi);
-        flip_withdraw(prev_level);
+        assert(prev_act->vi == vi);
+        flip_withdraw(prev_act);
     }
 
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
 
-    cur_level->x = xl;
+    cur_act->x = xl;
     mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
     mpz_fdiv_q(Z(r_walk), Z(r_walk), ap->q);
     mpz_root(Z(r_walk), Z(r_walk), xl - 1);
     if (!mpz_fits_ulong_p(Z(r_walk)))
         fail("Tried to flip with target > max_ulong^%u", xl - 1);
-    cur_level->limp = mpz_get_ui(Z(r_walk));
+    cur_act->limp = mpz_get_ui(Z(r_walk));
 
-    level_setp(cur_level, recover ? act_recover.p_outer - 1 : maxforce[vi]);
+    level_setp(cur_act, recover ? act_recover.p_outer - 1 : maxforce[vi]);
     while (1) {
       redo_flip: ;
-        ulong p = prime_iterator_next(&cur_level->piter);
-        if (p > cur_level->limp)
+        ulong p = prime_iterator_next(&cur_act->piter);
+        if (p > cur_act->limp)
             break;
-        if (known_prime(anc_level, p))
+        if (known_prime(anc_node, p))
             goto redo_flip;
 
         /* Failure most likely means it does not leave a valid square;
-         * we pass the grandparent as prev_level to reflect our notional
-         * deallocation of prev_level. */
-        if (!apply_single(anc_level, cur_level, vi, p, xl)) {
+         * we pass the grandparent as prev_node to reflect our notional
+         * deallocation of prev_act's allocation. */
+        if (!apply_single(anc_node, cur_node, vi, p, xl)) {
             /* only the recovered p resumes at the recovered inner prime */
             recover = 0;
             continue;
         }
         ap = &vp->alloc[cur_vlevel[vi] - 1];
         if (need_work)
-            diag_plain(cur_level);
+            diag_plain(cur_node);
         mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
         mpz_fdiv_q(Z(temp), Z(temp), ap->q);
         mpz_root(Z(temp), Z(temp), xs - 1);
         if (!mpz_fits_ulong_p(Z(temp)))
             fail("Tried to flip with target > max_ulong^%u", xs - 1);
         ulong phigh = mpz_get_ui(Z(temp));
-        next_level->have_min = cur_level->have_min;
+        next_node->have_min = cur_node->have_min;
         /* the flip has taken over oldp's own subtree, so oldp (like a
          * recovered p) is still to try
          */
-        walk_1_set(cur_level, next_level, vi,
+        walk_1_set(cur_node, next_act, vi,
                 (recover ? resume_plow : oldp) - 1, phigh, xs);
         recover = 0;
         --cur_vlevel[vi];
     }
     /* a candidate found meanwhile is no reason to recalculate limp */
-    prev_level->max_at = seen_best;
-    prev_level->action = A_UNFORCED;
+    prev_act->max_at = seen_best;
+    prev_act->action = A_UNFORCED;
     ++cur_vlevel[vi];
 }
 
-/* Undo what level lp applied, as unwinding passes it. */
-static inline void unapply_level(t_level *lp) {
-    switch (lp->action) {
+/* Undo what cur_act applied, as unwinding passes it. */
+static inline void unapply_level(t_act *cur_act) {
+    switch (cur_act->action) {
       case A_FORCED:
-        unapply_batch(next_fpi(&levels[lp->level - 1]), lp->bi, k);
+        unapply_batch(next_fpi(&nodes[cur_act->level - 1]), cur_act->bi, k);
         break;
       case A_UNFORCED:
-        --cur_vlevel[lp->vi];
+        --cur_vlevel[cur_act->vi];
         break;
       case A_FLIP:
         /* its allocation is already withdrawn */
-        lp->action = A_UNFORCED;
+        cur_act->action = A_UNFORCED;
         break;
       default:
-        fail("panic: unwinding level %u of action %u", lp->level, lp->action);
+        fail("panic: unwinding level %u of action %u",
+                cur_act->level, cur_act->action);
     }
 }
 
-/* we emulate recursive calls via the levels[] array */
+/* we emulate recursive calls via the nodes[] and acts[] arrays */
 void recurse(e_is jump_continue) {
     ulong p;
     uint x, bi;
-    t_level *prev_level = &levels[level - 1];
-    t_level *cur_level = &levels[level];
+    t_node *prev_node = &nodes[level - 1];
+    t_act *prev_act = &acts[level - 1];
+    t_node *cur_node = &nodes[level];
+    t_act *cur_act = &acts[level];
     t_forcep *fp;
 
     /* Find a suitable entry point when not starting from scratch due to
@@ -6242,36 +6260,38 @@ void recurse(e_is jump_continue) {
     else if (jump_continue == IS_NEXTX)
         goto continue_unforced_x;
     else if (jump_continue == IS_RWALK) {
-        walk_v(prev_level, rwalk_from);
+        walk_v(prev_node, rwalk_from);
         goto derecurse;
     } else if (jump_continue == IS_BATCH) {
         /* with no midp to resume, still honour any specified batch id */
         bool true_recover = (act_recover.action == A_MIDP || batch_alloc > 0);
-        if (!process_batch(prev_level, true_recover))
+        if (!process_batch(prev_node, true_recover))
             goto derecurse;
         /* else go deeper */
     } else if (jump_continue == IS_6X) {
-        uint vi = best_6x(cur_level);   /* re-verify */
+        uint vi = best_6x(cur_act);   /* re-verify */
         if (vi != BV_6X)
             fail("panic: best_6x() call on recovery returned %u, not %u",
                     vi, BV_6X);
-        walk_6x(cur_level->vi);
+        walk_6x(cur_act->vi);
         goto derecurse;
     } else if (jump_continue == IS_FLIP) {
         /* run_flip_pqsq() finishes with everything below it explored */
-        run_flip_pqsq(cur_level->vi);
+        run_flip_pqsq(cur_act->vi);
         goto derecurse;
     }
     /* else jump_continue == IS_DEEPER */
 
     while (1) {
         ++countr;
-        prev_level = &levels[level - 1];
-        cur_level = &levels[level];
+        prev_node = &nodes[level - 1];
+        prev_act = &acts[level - 1];
+        cur_node = &nodes[level];
+        cur_act = &acts[level];
 
         /* recurse deeper */
-        if (prev_level->fp_need && prev_level->action != A_UNFORCED) {
-            fp = &forcep[next_fpi(prev_level)];
+        if (prev_node->fp_need && prev_act->action != A_UNFORCED) {
+            fp = &forcep[next_fpi(prev_node)];
             if (fp->count == 0)
                 goto unforced;
             bi = 0;
@@ -6279,39 +6299,39 @@ void recurse(e_is jump_continue) {
         }
       unforced:
         {
-            /* Note: cur_level->action is either always A_UNFORCED by
+            /* Note: cur_act->action is either always A_UNFORCED by
              * calloc(), or gets set to it on the tail of a batch.
              */
             assert(A_UNFORCED == 0);
 
-            if (cur_level->next_best)
+            if (cur_act->next_best)
                 goto walk_now;
-            uint vi = best_v(cur_level);
-            cur_level->choice_strategy = strategy;
-            cur_level->unsorted = 0;
+            uint vi = best_v(cur_act);
+            cur_act->choice_strategy = strategy;
+            cur_act->unsorted = 0;
             if (vi >= BV_SPECIAL) {
                 switch (vi - BV_SPECIAL) {
                   default:
                     fail("panic: unknown best_v() result %u (k=%u)", vi, k);
                   case BV_6X - BV_SPECIAL:
                     /* ready for a walk */
-                    walk_6x(cur_level->vi);
+                    walk_6x(cur_act->vi);
                     goto derecurse;
                   case BV_NEXTX - BV_SPECIAL:
                     /* nothing left to do for this x */
                     goto derecurse;
                   case BV_WALK - BV_SPECIAL:
                     /* failure result is stable if last allocation unforced */
-                    if (prev_level->action == A_UNFORCED)
-                        cur_level->next_best = 1;
+                    if (prev_act->action == A_UNFORCED)
+                        cur_act->next_best = 1;
                   walk_now:
 #ifdef SQONLY
-                    if (prev_level->have_square)
-                        walk_v(prev_level, Z(zero));
-                    else if (prev_level->action == A_UNFORCED)
-                        level_setp(prev_level, prev_level->limp);
+                    if (prev_node->have_square)
+                        walk_v(prev_node, Z(zero));
+                    else if (prev_act->action == A_UNFORCED)
+                        level_setp(prev_act, prev_act->limp);
 #else
-                    walk_v(prev_level, Z(zero));
+                    walk_v(prev_node, Z(zero));
 #endif
                     goto derecurse;
                 }
@@ -6322,22 +6342,22 @@ void recurse(e_is jump_continue) {
             t_divisors *dp = &divisors[ti];
             if (dp->high <= (highpow ? 1 : 2))
                 fail("best_v() returned %u, but nothing to do there", vi);
-            cur_level->vi = vi;
-            cur_level->ti = ti;
-            cur_level->di = 0;
+            cur_act->vi = vi;
+            cur_act->ti = ti;
+            cur_act->di = 0;
             goto have_unforced_x;
         }
       continue_unforced_x:
-        ++cur_level->di;
+        ++cur_act->di;
       have_unforced_x:
         {
-            if (cur_level->di >= divisors[cur_level->ti].highdiv)
+            if (cur_act->di >= divisors[cur_act->ti].highdiv)
                 goto derecurse;
-            switch (prep_unforced_x(prev_level, cur_level)) {
+            switch (prep_unforced_x(prev_node, cur_act)) {
               case PUX_NOTHING_TO_DO:
                 goto derecurse;
               case PUX_FLIP_PQSQ:
-                run_flip_pqsq(cur_level->vi);
+                run_flip_pqsq(cur_act->vi);
                 goto derecurse;
               case PUX_SKIP_THIS_X:
                 goto continue_unforced_x;
@@ -6347,21 +6367,23 @@ void recurse(e_is jump_continue) {
             goto continue_unforced;
         }
         break;
-      /* entry point, must set prev_level/cur_level before using */
+      /* entry point, must set the node and act pointers before using */
       derecurse:
-        levels[level + 1].next_best = 0;
+        acts[level + 1].next_best = 0;
         --level;
         if (level <= final_level)
             break;
-        prev_level = &levels[level - 1];
-        cur_level = &levels[level];
-        unapply_level(cur_level);
+        prev_node = &nodes[level - 1];
+        prev_act = &acts[level - 1];
+        cur_node = &nodes[level];
+        cur_act = &acts[level];
+        unapply_level(cur_act);
         /* goto continue_recurse; */
       continue_recurse:
-        switch (cur_level->action) {
+        switch (cur_act->action) {
           case A_FORCED:
-            fp = &forcep[next_fpi(prev_level)];
-            bi = cur_level->bi + 1;
+            fp = &forcep[next_fpi(prev_node)];
+            bi = cur_act->bi + 1;
           continue_forced:
             if (bi >= fp->count)
                 goto derecurse;
@@ -6369,65 +6391,65 @@ void recurse(e_is jump_continue) {
              * or if it is complete and we are ok to process it. Note that
              * process_batch directly invokes walk_midp() under -W.
              */
-            if (apply_batch(prev_level, cur_level, next_fpi(prev_level), bi)) {
-                if (cur_level->fp_need || process_batch(cur_level, 0)) {
+            if (apply_batch(prev_node, cur_node, next_fpi(prev_node), bi)) {
+                if (cur_node->fp_need || process_batch(cur_node, 0)) {
                     if (need_work)
-                        diag_plain(cur_level);
+                        diag_plain(cur_node);
                     ++level;
                     continue;
                 }
-                unapply_batch(next_fpi(prev_level), bi, k);
+                unapply_batch(next_fpi(prev_node), bi, k);
             }
             goto continue_recurse;
           case A_UNFORCED:
             break;
           default:
             fail("panic: continue_recurse at level %u of action %u",
-                    level, cur_level->action);
+                    level, cur_act->action);
         }
       continue_unforced:
         {
             /* recalculate limit if we have an improved maximum */
-            if (improve_max && seen_best > cur_level->max_at) {
-                ulong limp = limit_p(cur_level, cur_level->vi, cur_level->x,
-                        cur_level->ti / cur_level->x);
+            if (improve_max && seen_best > cur_act->max_at) {
+                ulong limp = limit_p(cur_act, cur_act->vi, cur_act->x,
+                        cur_act->ti / cur_act->x);
                 /* see limit_p(): it was not 0, so cannot be now */
-                if (limp == 0 || limp > cur_level->limp)
+                if (limp == 0 || limp > cur_act->limp)
                     fail("panic: limit for p^%u at v_%u rose from %lu to %lu",
-                            cur_level->x - 1, cur_level->vi, cur_level->limp,
+                            cur_act->x - 1, cur_act->vi, cur_act->limp,
                             limp);
-                cur_level->limp = limp;
-                cur_level->max_at = seen_best;
-                reject_prep(prev_level, cur_level);
+                cur_act->limp = limp;
+                cur_act->max_at = seen_best;
+                reject_prep(prev_node, cur_act);
             }
             /* note: only valid to use from just below here */
           redo_unforced: ;
-            ulong p = prime_iterator_next(&cur_level->piter);
-            if (p > cur_level->limp)
+            ulong p = prime_iterator_next(&cur_act->piter);
+            if (p > cur_act->limp)
                 goto continue_unforced_x;
-            if (known_prime(prev_level, p))
+            if (known_prime(prev_node, p))
                 goto redo_unforced;
             /* p stays the cursor, as when apply_single() fails */
-            if (cur_level->rj_ok && (p & 1) && reject_single(
-                prev_level, cur_level, cur_level->vi, p, cur_level->x
+            if (cur_act->rj_ok && (p & 1) && reject_single(
+                prev_node, cur_act, cur_act->vi, p, cur_act->x
             )) {
-                cur_level->p = p;
+                cur_act->p = p;
                 if (need_work)
-                    diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
+                    diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
                 goto redo_unforced;
             }
 
             /* note: this returns 0 if t=1 */
             if (!apply_single(
-                prev_level, cur_level, cur_level->vi, p, cur_level->x
+                prev_node, cur_node, cur_act->vi, p, cur_act->x
             )) {
                 if (need_work)
-                    diag_attempt(cur_level, cur_level->vi, p, cur_level->x);
+                    diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
                 /* not redo_unforced, we may have improved zmax */
                 goto continue_unforced;
             }
             if (need_work)
-                diag_plain(cur_level);
+                diag_plain(cur_node);
             ++level;
             continue;   /* deeper */
         }
@@ -6447,13 +6469,13 @@ e_is prune_stale(e_is jump) {
     if (jump == IS_FINISH || jump == IS_BATCH)
         return jump;
     for (uint li = final_level + 1; li < level; ++li) {
-        t_level *lp = &levels[li];
+        t_act *actp = &acts[li];
         /* unforced levels only: a flip's does not search below it */
-        if (lp->action != A_UNFORCED || lp->x < 2)
+        if (actp->action != A_UNFORCED || actp->x < 2)
             continue;
-        if (mpz_cmp(lp->rq, zmax) <= 0) {
+        if (mpz_cmp(nodes[li].rq, zmax) <= 0) {
             /* find the limit with v_i as it was when this level was set */
-            uint vi = lp->vi;
+            uint vi = actp->vi;
             t_allocation *alloc = value[vi].alloc;
             uint save = cur_vlevel[vi];
             uint d = 1;
@@ -6462,15 +6484,15 @@ e_is prune_stale(e_is jump) {
             if (d == save)
                 continue;
             cur_vlevel[vi] = d;
-            ulong limp = limit_p(lp, vi, lp->x, lp->ti / lp->x);
+            ulong limp = limit_p(actp, vi, actp->x, actp->ti / actp->x);
             cur_vlevel[vi] = save;
-            if (limp == 0 || lp->p <= limp)
+            if (limp == 0 || actp->p <= limp)
                 continue;
         }
         while (level > li) {
-            levels[level + 1].next_best = 0;
+            acts[level + 1].next_best = 0;
             --level;
-            unapply_level(&levels[level]);
+            unapply_level(&acts[level]);
         }
         have_rwalk = 0;
         act_recover.action = A_NONE;
@@ -6692,8 +6714,8 @@ int main(int argc, char **argv, char **envp) {
         cvec_pack(cx0, check_chunk ? check_chunk : check, check_ratio);
         free(tt);
 
-        cvec_mult(cx0, &levels[0].rq, &levels[0].aq);
-        if (mpz_cmp_ui(levels[0].aq, 1) > 0)
+        cvec_mult(cx0, &nodes[0].rq, &nodes[0].aq);
+        if (mpz_cmp_ui(nodes[0].aq, 1) > 0)
             have_modfix = 1;
         done_modfix();
         if (!check)

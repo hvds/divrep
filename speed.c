@@ -17,7 +17,7 @@ mpz_t sum;
 #define Z(x) (x)
 #define ZP(x) &(x)
 
-t_level l_old, l_new;
+t_node l_old, l_new;
 
 void fail(char *format, ...) {
     va_list ap;
@@ -53,7 +53,7 @@ ulong next_prime(ulong cur) {
 static inline mpz_t *PARAM_TO_PTR(__mpz_struct *z) {
     return (mpz_t *)z;
 }
-void update_chinese(t_level *old, t_level *new, uint vi, mpz_t px) {
+void update_chinese(t_node *old, t_node *new, uint vi, mpz_t px) {
     mpz_t zarray[4];
     mpz_t *pxp = PARAM_TO_PTR(px);
     mpz_set_si(Z(uc_minusvi), -(long)vi);

@@ -195,11 +195,23 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   cleared) and get back a fully valid, cacheable/cache-reusable answer
   for that modified view, not just for whatever the "live" state
   happens to be.
-- **A level's `action` says what it does** (`e_action`):
+- **Each level has a node and an act**, in the parallel arrays
+  `nodes[]` and `acts[]`: `nodes[l]` (`t_node`) is the state once the
+  allocations up to and including level l are made (`aq`, `rq`,
+  `have_square`, `pfreev`, `maxp`, ...), and `acts[l]` (`t_act`) is the
+  loop at level l that makes them (`vi`, `x`, `p`, `piter`, `limp`,
+  ...). Both hold their `level`, so a function given one finds the
+  other (`&acts[np->level]`, `&nodes[cur_act->level - 1]`): walks,
+  residues, `mintau()` and progress lines take a node; strategies,
+  `limit_p()` and the loop helpers take an act. The act being worked
+  on is `cur_act` (and `prev_act` and so on), parallel to `cur_node`
+  and `prev_node`; `actp` is the variable of a loop over acts. Neither
+  is `ap`, which is an allocation.
+- **A level's act says what it does** by its `action` (`e_action`):
   `A_FORCED` for a level populated via `apply_batch()` (a forced-prime
   batch, tail or not), `A_UNFORCED` for one from `apply_single()`,
   `A_BASE` for level 0 (a starting point, so there is always a
-  `prev_level` for running values such as `rq`/`aq`), `A_PRESQ` for
+  `prev_node` for running values such as `rq`/`aq`), `A_PRESQ` for
   the dummy level `prep_presquare()` inserts, and `A_FIXED` for the
   levels an `-I` pattern fixes. Only the first two are iterated over;
   wherever unforced levels are told apart, the others count as forced.
@@ -207,9 +219,7 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   `A_UNFORCED` being 0, so the level is either still as `calloc()`
   left it or was reset on the tail of a batch.
   Vocabulary: an action is the sort of thing done at a level, from a
-  fixed set; an act is one doing of it, with its own state (today the
-  `t_level` entry, after the planned node/act split a `t_act`, pointed
-  to by `actp` so as not to be confused with an allocation's `ap`).
+  fixed set; an act is one doing of it, with its own state.
   `A_NONE` ends the list: it is the count of actions, and the
   placeholder where there is none.
   While -W's sweep, the STRATEGY_6X walk or a flip runs, its level's
@@ -231,7 +241,7 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   `apply_null()`, `apply_single()`, and `apply_primary()` all route
   through. `apply_secondary()` is the exception: it adds *further*
   constraints (for non-primary positions in the same forced batch) to
-  a `cur_level` a preceding `apply_primary()` call already established
+  a `cur_node` a preceding `apply_primary()` call already established
   in the same `apply_batch()` invocation, rather than creating a new
   level transition itself.
 - **`prime_iterator_setprime(iter, n)`/`prime_iterator_next(iter)`**:
@@ -241,7 +251,7 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   unforced:` label in the main loop): `level_setp()` seeds the
   iterator once per `(vi,x)` decision, then `prime_iterator_next()` is
   called repeatedly (via `goto`/`continue`, not a literal `for` loop)
-  until the returned prime exceeds `cur_level->limp`.
+  until the returned prime exceeds `cur_act->limp`.
 - **-W / midp**: above a user-set prime threshold, allocations of a
   single large prime are handled via one flat descending sweep
   (`walk_midp()`) rather than normal recursion, since at most one
