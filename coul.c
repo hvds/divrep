@@ -244,26 +244,19 @@ typedef struct s_midpp {
 uint midppc;
 t_midpp *midpp = NULL;
 
-/* Temporary recovery structures: typically set up via parse_305(),
- * then marked no longer valid once used. */
+/* The act a recovery line shows in progress by its suffix, if any: set
+ * up by its action's parse via parse_305(), and cleared (to A_NONE)
+ * once resumed. Which fields are used depends on the action.
+ */
 struct {
-    uint valid;
-    ulong p;
-    uint x;
+    e_action action;
     uint vi;
-} midp_recover;
-struct {
-    uint valid;
-    uint vi;
-    uint a;     /* bit-vector over allocated prime powers */
-} b6x_recover;
-struct {
-    uint valid;
-    uint vi;            /* remaining tau at v_i is of form 2r^2 (r prime) */
-    ulong oldp;         /* have previously checked all p^r up to oldp */
-    ulong p_outer;      /* have checked all p^{2r} up to p_outer */
-    ulong p_inner;      /* have checked all p^{2r}.q^r up to p_inner */
-} flip_recover;
+    ulong p;            /* W: p in progress; F: have checked p^r up to p */
+    uint x;             /* W: x in progress */
+    uint a;             /* 6X: bit-vector over allocated prime powers */
+    ulong p_outer;      /* F: have checked all p^{2r} up to p_outer */
+    ulong p_inner;      /* F: have checked all p^{2r}.q^r up to p_inner */
+} act_recover;
 
 uint rough = 0;     /* test roughness if tau >= rough */
 bool opt_print = 0; /* print candidates instead of fully testing them */
@@ -346,19 +339,27 @@ t_strategy strategies[NUM_STRATEGIES] = {
 
 /* What each action does, where it differs from others. An action with a
  * suffix_op is shown in progress lines by the suffix it writes (returning
- * its length) in place of the allocation at its level.
+ * its length) in place of the allocation at its level. For recovery its
+ * parse_op reads the suffix into act_recover, given the text after the
+ * tag that starts it, and returns the text after the suffix.
  */
 typedef uint (*t_suffix_op)(t_level *lp, char *buf);
 uint suffix_midp(t_level *lp, char *buf);
 uint suffix_6x(t_level *lp, char *buf);
 uint suffix_flip(t_level *lp, char *buf);
+typedef char *(*t_parse_op)(char *s);
+char *parse_midp(char *s);
+char *parse_6x(char *s);
+char *parse_flip(char *s);
 typedef struct s_action_ops {
     t_suffix_op suffix;
+    char *tag;
+    t_parse_op parse;
 } t_action_ops;
 const t_action_ops action_ops[A_NONE] = {
-    [A_MIDP] = { &suffix_midp },
-    [A_6X] = { &suffix_6x },
-    [A_FLIP] = { &suffix_flip },
+    [A_MIDP] = { &suffix_midp, " W(", &parse_midp },
+    [A_6X] = { &suffix_6x, " 6X(", &parse_6x },
+    [A_FLIP] = { &suffix_flip, " F(", &parse_flip },
 };
 static inline bool has_suffix(e_action a) {
     return action_ops[a].suffix != NULL;
@@ -1511,9 +1512,7 @@ void init_pre(void) {
     mpz_set_ui(Z(zero), 0);
     mpz_set_ui(Z(zone), 1);
     mpz_init(best);
-    midp_recover.valid = 0;
-    b6x_recover.valid = 0;
-    flip_recover.valid = 0;
+    act_recover.action = A_NONE;
 }
 
 static inline uint max_forcep(void);
@@ -1577,7 +1576,7 @@ void order_forced(t_fact *f, uint vi) {
 void parse_305(char *s, t_recover **stackp, bool expanded) {
     double dtime;
     t_ppow pp;
-    bool is_W = 0;
+    e_action shown = A_NONE;   /* the action of the suffix seen, if any */
 
     t_recover *stack = new_stack();
     *stackp = stack;
@@ -1652,55 +1651,15 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         /* reverse them, so we can pop as we allocate */
         reverse_fact(&stack->f[i]);
     }
-    if (strncmp(s, " W(", 3) == 0) {
-        s += 3;
-        is_W = 1;
-        midp_recover.p = strtoul(s, &s, 10);
-        if (s[0] != ',')
-            fail("505 unexpected character in W(...) recovery");
-        ++s;
-        midp_recover.x = strtoul(s, &s, 10);
-        if (s[0] != ',')
-            fail("505 unexpected character in W(...) recovery");
-        ++s;
-        midp_recover.vi = strtoul(s, &s, 10);
-        if (s[0] != ')')
-            fail("505 unexpected character in W(...) recovery");
-        ++s;
-        midp_recover.valid = 1;
-    }
-    if (strncmp(s, " 6X(", 4) == 0) {
-        s += 4;
-        int pend = 0;
-        sscanf(s, "%*[0-9]%n", &pend);
-        if (pend == 0)
-            fail("514 could not parse 6X(...) recovery prime: '%s'", s);
-        /* skip the prime, it is not needed for recovery */
-        s += pend;
-        if (s[0] != ',')
-            fail("515 unexpected character in 6X(...) recovery");
-        ++s;
-        b6x_recover.vi = strtoul(s, &s, 10);
-        if (s[0] != ',')
-            fail("515 unexpected character in 6X(...) recovery");
-        ++s;
-        b6x_recover.a = strtoul(s, &s, 10);
-        if (s[0] != ')')
-            fail("515 unexpected character in 6X(...) recovery");
-        ++s;
-        b6x_recover.valid = 1;
-    }
-    if (strncmp(s, " F(", 3) == 0) {
-        s += 3;
-        flip_recover.vi = strtoul(s, &s, 10);
-        if (s[0] != ',')
-            fail("516 unexpected character in F(...) recovery");
-        ++s;
-        flip_recover.oldp = strtoul(s, &s, 10);
-        if (s[0] != ')')
-            fail("516 unexpected character in F(...) recovery");
-        ++s;
-        flip_recover.valid = 1;
+    for (e_action a = 0; a < A_NONE; ++a) {
+        char *tag = action_ops[a].tag;
+        if (tag == NULL || strncmp(s, tag, strlen(tag)) != 0)
+            continue;
+        if (shown != A_NONE)
+            fail("520 more than one suffix in recovery pattern");
+        shown = a;
+        act_recover.action = a;
+        s = action_ops[a].parse(s + strlen(tag));
     }
     if (s[0] == ':') {
         if (s[1] != ' ')
@@ -1764,7 +1723,7 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         ++s;
     if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
         fail("511 unexpected text at end of init/recovery pattern: %s", s);
-    if (is_W && !need_midp)
+    if (shown == A_MIDP && !need_midp)
         fail("512 recovery expected -W option");
     t0 -= dtime;
 }
@@ -4486,9 +4445,24 @@ uint suffix_midp(t_level *lp, char *buf) {
     return sprintf(buf, " W(%lu,%u,%u)", lp->p, lp->x, lp->vi);
 }
 
+char *parse_midp(char *s) {
+    act_recover.p = strtoul(s, &s, 10);
+    if (s[0] != ',')
+        fail("505 unexpected character in W(...) recovery");
+    ++s;
+    act_recover.x = strtoul(s, &s, 10);
+    if (s[0] != ',')
+        fail("505 unexpected character in W(...) recovery");
+    ++s;
+    act_recover.vi = strtoul(s, &s, 10);
+    if (s[0] != ')')
+        fail("505 unexpected character in W(...) recovery");
+    return s + 1;
+}
+
 /* Try all ways of allocating p^{x-1} at v_i for any p above the selected
  * -W limit.
- * If 'recover' is true, we initialize the state from midp_recover, and
+ * If 'recover' is true, we initialize the state from act_recover, and
  * resume any partial walk_v() if have_rwalk.
  */
 void walk_midp(t_level *prev_level, bool recover) {
@@ -4509,10 +4483,11 @@ void walk_midp(t_level *prev_level, bool recover) {
     /* setp has set to a prime <= target */
     prime_iterator_next(&cur_level->piter);
 
-    if (recover && midp_recover.valid) {
-        p = midp_recover.p;
-        x = midp_recover.x;
-        vi = midp_recover.vi;
+    if (recover && act_recover.action == A_MIDP) {
+        p = act_recover.p;
+        x = act_recover.x;
+        vi = act_recover.vi;
+        act_recover.action = A_NONE;
 
         level_setp(cur_level, p);
         for (mi = 0 ; mi < midppc; ++mi) {
@@ -5023,6 +4998,26 @@ uint suffix_6x(t_level *lp, char *buf) {
     return gmp_sprintf(buf, " 6X(%Zu,%u,%u)", Z(j4p), lp->vi, lp->bi);
 }
 
+char *parse_6x(char *s) {
+    int pend = 0;
+    sscanf(s, "%*[0-9]%n", &pend);
+    if (pend == 0)
+        fail("514 could not parse 6X(...) recovery prime: '%s'", s);
+    /* skip the prime, it is not needed for recovery */
+    s += pend;
+    if (s[0] != ',')
+        fail("515 unexpected character in 6X(...) recovery");
+    ++s;
+    act_recover.vi = strtoul(s, &s, 10);
+    if (s[0] != ',')
+        fail("515 unexpected character in 6X(...) recovery");
+    ++s;
+    act_recover.a = strtoul(s, &s, 10);
+    if (s[0] != ')')
+        fail("515 unexpected character in 6X(...) recovery");
+    return s + 1;
+}
+
 ulong limit_p(t_level *cur_level, uint vi, uint x, uint nextt);
 
 /* The limit of the loop at v_i for its first x, the highest prime of
@@ -5142,16 +5137,16 @@ void walk_6x(uint vi) {
     if (vlevel > sizeof(uint) * 8 - 1)
         fail("FIXME: too many factors for STRATEGY_6X");
     uint a_start = (1U << vlevel) - 2;
-    if (b6x_recover.valid) {
+    if (act_recover.action == A_6X) {
         /* on recover, skip to the bit-vector value that was in progress */
-        if (b6x_recover.vi != vi)
+        if (act_recover.vi != vi)
             fail("panic: STRATEGY_6X recovery wants vi=%u, but we have vi=%u",
-                    b6x_recover.vi, vi);
-        if (b6x_recover.a & 1)
+                    act_recover.vi, vi);
+        if (act_recover.a & 1)
             fail("panic: STRATEGY_6X recovery has invalid bit-vector %u",
-                    b6x_recover.a);
-        a_start = b6x_recover.a;
-        b6x_recover.valid = 0;      /* consumed */
+                    act_recover.a);
+        a_start = act_recover.a;
+        act_recover.action = A_NONE;        /* consumed */
     }
     for (uint a = a_start; a; a -= 2) {
         mpz_set_ui(Z(j4a), 1);
@@ -5385,6 +5380,15 @@ static inline bool can_flip(uint x) {
 static inline uint flip_xs_tau(uint t) {
     uint x = (t & 1) ? 0 : divisors[t / 2].sqrt;
     return (x && can_flip(x)) ? x : 0;
+}
+
+/* Make lp, holding p^{z-1} at its v_i, the level of a flip that replaces
+ * that allocation, so with it withdrawn (see run_flip_pqsq()).
+ */
+static inline void flip_withdraw(t_level *lp) {
+    lp->action = A_FLIP;
+    lp->limp = lp->p;   /* lp will see this x is complete on return */
+    --cur_vlevel[lp->vi];
 }
 
 /* Most primes tried by a loop of allocations are rejected for giving a
@@ -5689,9 +5693,7 @@ void stack_drop(t_fact *s) {
     for (uint vi = 0; vi < k; ++vi)
         s[vi].count = 0;
     have_rwalk = 0;
-    midp_recover.valid = 0;
-    b6x_recover.valid = 0;
-    flip_recover.valid = 0;
+    act_recover.action = A_NONE;
 }
 
 /* On recovery, true if p^{x-1} at v_i is out of range below prev only
@@ -5930,11 +5932,11 @@ static inline bool insert_float(
 
 /* If conditions are met, absorb the remaining 1 or 2 unapplied allocations
  * ready for run_flip_pqsq recovery and return TRUE, else return FALSE.
+ * The flip's level is then left as run_flip_pqsq() leaves it while it
+ * runs, and act_recover says where to resume.
  */
-bool absorb_flip(uint vi, t_fact *rs) {
-    if (!flip_recover.valid)
-        return 0;   /* Why are you calling me? */
-    if (flip_recover.vi != vi)
+bool restore_flip(uint vi, t_fact *rs) {
+    if (act_recover.vi != vi)
         return 0;   /* Current vi is not valid for us to kick in */
     uint ti = value[vi].alloc[ cur_vlevel[vi] - 1 ].t;
     uint xs = flip_xs_tau(ti);
@@ -5952,12 +5954,12 @@ bool absorb_flip(uint vi, t_fact *rs) {
         return 0;
 
     t_ppow *outerp = &rs->ppow[c - 1];
-    flip_recover.p_outer = outerp->p;
+    act_recover.p_outer = outerp->p;
     stack_remove(rstack->f, NULL, vi, outerp->p, outerp->e);
 
     if (rs->count) {
         t_ppow *innerp = &rs->ppow[rs->count - 1];
-        flip_recover.p_inner = innerp->p;
+        act_recover.p_inner = innerp->p;
         stack_remove(rstack->f, NULL, vi, innerp->p, innerp->e);
     }
 
@@ -5973,16 +5975,17 @@ bool absorb_flip(uint vi, t_fact *rs) {
     cur_level->ti = ti;
     cur_level->di = di;
     /* the flip will end this level by its limit, which needs the iterator */
-    level_setp(cur_level, flip_recover.oldp);
+    level_setp(cur_level, act_recover.p);
     /* The flip does not search below this level, so it need not fit: a
      * candidate found during the flip can put it out of range.
      */
     any_bound = 1;
-    bool ok = apply_single(prev_level, cur_level, vi, flip_recover.oldp, xs);
+    bool ok = apply_single(prev_level, cur_level, vi, act_recover.p, xs);
     any_bound = 0;
     if (!ok)
         fail("panic: could not reapply %u^%u at %u for flip recovery",
-                flip_recover.oldp, xs, vi);
+                act_recover.p, xs, vi);
+    flip_withdraw(cur_level);
     ++level;
     next_level->vi = vi;
     return 1;
@@ -6061,8 +6064,9 @@ e_is insert_stack(void) {
                     break;
                 }
             }
-            if (flip_recover.valid && absorb_flip(vi, &rstack->f[vi])) {
-                /* absorb_flip has handled all remaining allocations */
+            if (act_recover.action == A_FLIP
+                    && restore_flip(vi, &rstack->f[vi])) {
+                /* restore_flip() has handled all remaining allocations */
                 jump = IS_FLIP;
                 break;
             }
@@ -6080,20 +6084,20 @@ e_is insert_stack(void) {
                 fail("failed to inject %lu^%u at v_%u", pp.p, pp.e, vi);
             }
         }
-        if (flip_recover.valid && jump != IS_FLIP)
-            fail("failed to inject flip at v_%u", flip_recover.vi);
+        if (act_recover.action == A_FLIP && jump != IS_FLIP)
+            fail("failed to inject flip at v_%u", act_recover.vi);
     }
 
     if (jump == IS_DEEPER) {
         t_level *prev = &levels[level - 1];
-        if (midp_recover.valid)
+        if (act_recover.action == A_MIDP)
             jump = IS_BATCH;    /* Note: may also have_rwalk */
         else if (have_rwalk)
             jump = IS_RWALK;
         else if (prev->action != A_UNFORCED && !prev->fp_need)
-            /* need process_batch() without midp_recover */
+            /* need process_batch() with no midp to resume */
             jump = IS_BATCH;
-    } else if (midp_recover.valid)
+    } else if (act_recover.action == A_MIDP)
         fail("data mismatch");
 
     return jump;
@@ -6102,6 +6106,17 @@ e_is insert_stack(void) {
 /* lp->p is the prime of the p^{z-1} the flip replaces */
 uint suffix_flip(t_level *lp, char *buf) {
     return sprintf(buf, " F(%u,%lu)", lp->vi, lp->p);
+}
+
+char *parse_flip(char *s) {
+    act_recover.vi = strtoul(s, &s, 10);
+    if (s[0] != ',')
+        fail("516 unexpected character in F(...) recovery");
+    ++s;
+    act_recover.p = strtoul(s, &s, 10);
+    if (s[0] != ')')
+        fail("516 unexpected character in F(...) recovery");
+    return s + 1;
 }
 
 /* We have an allocation of eg p^z leaving t = 2z for some z that can_flip(),
@@ -6125,20 +6140,20 @@ void run_flip_pqsq(uint vi) {
     uint xs = prev_level->x;
     uint xl = xs << 1;
     ulong resume_plow = 0;     /* only meaningful if resuming */
-    bool recover = flip_recover.valid;
+    bool recover = (act_recover.action == A_FLIP);
     if (recover) {
-        if (vi != flip_recover.vi)
+        /* restore_flip() has already withdrawn prev_level */
+        if (vi != act_recover.vi)
             fail("panic: flip wants to recover at %u, not %u",
-                    flip_recover.vi, vi);
-        resume_plow = flip_recover.p_inner;
+                    act_recover.vi, vi);
+        resume_plow = act_recover.p_inner;
         if (resume_plow == 0)
             resume_plow = oldp;
-        flip_recover.valid = 0;    /* consumed */
+        act_recover.action = A_NONE;    /* consumed */
+    } else {
+        assert(prev_level->vi == vi);
+        flip_withdraw(prev_level);
     }
-    assert(prev_level->vi == vi);
-    prev_level->action = A_FLIP;
-    prev_level->limp = oldp;    /* prev will see this x is complete on return */
-    --cur_vlevel[vi];       /* temp deallocate */
 
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
@@ -6152,7 +6167,7 @@ void run_flip_pqsq(uint vi) {
         fail("Tried to flip with target > max_ulong^%u", xl - 1);
     cur_level->limp = mpz_get_ui(Z(r_walk));
 
-    level_setp(cur_level, recover ? flip_recover.p_outer - 1 : maxforce[vi]);
+    level_setp(cur_level, recover ? act_recover.p_outer - 1 : maxforce[vi]);
     while (1) {
       redo_flip: ;
         ulong p = prime_iterator_next(&cur_level->piter);
@@ -6193,6 +6208,24 @@ void run_flip_pqsq(uint vi) {
     ++cur_vlevel[vi];
 }
 
+/* Undo what level lp applied, as unwinding passes it. */
+static inline void unapply_level(t_level *lp) {
+    switch (lp->action) {
+      case A_FORCED:
+        unapply_batch(next_fpi(&levels[lp->level - 1]), lp->bi, k);
+        break;
+      case A_UNFORCED:
+        --cur_vlevel[lp->vi];
+        break;
+      case A_FLIP:
+        /* its allocation is already withdrawn */
+        lp->action = A_UNFORCED;
+        break;
+      default:
+        fail("panic: unwinding level %u of action %u", lp->level, lp->action);
+    }
+}
+
 /* we emulate recursive calls via the levels[] array */
 void recurse(e_is jump_continue) {
     ulong p;
@@ -6212,8 +6245,8 @@ void recurse(e_is jump_continue) {
         walk_v(prev_level, rwalk_from);
         goto derecurse;
     } else if (jump_continue == IS_BATCH) {
-        /* if no midp_recover, should still honour any specified batch id */
-        bool true_recover = (midp_recover.valid || batch_alloc > 0) ? 1 : 0;
+        /* with no midp to resume, still honour any specified batch id */
+        bool true_recover = (act_recover.action == A_MIDP || batch_alloc > 0);
         if (!process_batch(prev_level, true_recover))
             goto derecurse;
         /* else go deeper */
@@ -6322,17 +6355,7 @@ void recurse(e_is jump_continue) {
             break;
         prev_level = &levels[level - 1];
         cur_level = &levels[level];
-        switch (cur_level->action) {
-          case A_FORCED:
-            unapply_batch(next_fpi(prev_level), cur_level->bi, k);
-            break;
-          case A_UNFORCED:
-            --cur_vlevel[cur_level->vi];
-            break;
-          default:
-            fail("panic: derecurse to level %u of action %u",
-                    level, cur_level->action);
-        }
+        unapply_level(cur_level);
         /* goto continue_recurse; */
       continue_recurse:
         switch (cur_level->action) {
@@ -6423,12 +6446,9 @@ void recurse(e_is jump_continue) {
 e_is prune_stale(e_is jump) {
     if (jump == IS_FINISH || jump == IS_BATCH)
         return jump;
-    /* a flip does not search below its hidden level, so that is not one
-     * to judge
-     */
-    uint top = (jump == IS_FLIP) ? level - 1 : level;
-    for (uint li = final_level + 1; li < top; ++li) {
+    for (uint li = final_level + 1; li < level; ++li) {
         t_level *lp = &levels[li];
+        /* unforced levels only: a flip's does not search below it */
         if (lp->action != A_UNFORCED || lp->x < 2)
             continue;
         if (mpz_cmp(lp->rq, zmax) <= 0) {
@@ -6450,15 +6470,10 @@ e_is prune_stale(e_is jump) {
         while (level > li) {
             levels[level + 1].next_best = 0;
             --level;
-            t_level *up = &levels[level];
-            if (up->action != A_UNFORCED)
-                unapply_batch(next_fpi(&levels[level - 1]), up->bi, k);
-            else
-                --cur_vlevel[up->vi];
+            unapply_level(&levels[level]);
         }
         have_rwalk = 0;
-        flip_recover.valid = 0;
-        b6x_recover.valid = 0;
+        act_recover.action = A_NONE;
         return IS_NEXT;
     }
     return jump;
@@ -6701,7 +6716,7 @@ int main(int argc, char **argv, char **envp) {
     else if (forcedp == 0)
         jump = IS_BATCH;    /* the whole search is one batch */
     /* midp recovery reapplies its allocation inside walk_midp() */
-    if (have_pend202 && !midp_recover.valid) {
+    if (have_pend202 && act_recover.action != A_MIDP) {
         apply_pend202();
         jump = prune_stale(jump);
     }

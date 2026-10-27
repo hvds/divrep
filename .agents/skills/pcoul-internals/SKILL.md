@@ -221,7 +221,12 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   differs: an action with a `suffix` op is shown in progress lines by
   that suffix (`W(...)`, `6X(...)`, `F(...)`) in place of the
   allocation at its level. Levels from there up belong to it, and are
-  never marked in a 315 line.
+  never marked in a 315 line. Its `parse` op reads the suffix back into
+  the one record `act_recover`, which the search takes up and clears
+  (to `A_NONE`) when recovery resumes it. A flip is the one rebuilt as
+  part of the stack: `restore_flip()` leaves its level as
+  `run_flip_pqsq()` does while running, so `prune_stale()` and
+  `unapply_level()` see an `A_FLIP` level like any other.
 - **`apply_level()` is the one shared level-transition function** that
   `apply_null()`, `apply_single()`, and `apply_primary()` all route
   through. `apply_secondary()` is the exception: it adds *further*
