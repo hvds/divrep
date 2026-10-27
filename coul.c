@@ -1609,24 +1609,14 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         s += 3;
         is_W = 1;
         midp_recover.p = strtoul(s, &s, 10);
-        assert(s[0] == ',');
+        if (s[0] != ',')
+            fail("505 unexpected character in W(...) recovery");
         ++s;
         midp_recover.x = strtoul(s, &s, 10);
-        if (s[0] == ')') {
-#if 1
-            /* new version uses different order, cannot reliably recover */
-            fail("504 cannot recover from old-style 'W(...)' entry");
-#else
-            /* old version had x fixed to 3 */
-            midp_recover.vi = midp_recover.x;
-            midp_recover.x = 3;
-#endif
-        } else {
-            if (s[0] != ',')
-                fail("505 unexpected character in W(...) recovery");
-            ++s;
-            midp_recover.vi = strtoul(s, &s, 10);
-        }
+        if (s[0] != ',')
+            fail("505 unexpected character in W(...) recovery");
+        ++s;
+        midp_recover.vi = strtoul(s, &s, 10);
         if (s[0] != ')')
             fail("505 unexpected character in W(...) recovery");
         ++s;
