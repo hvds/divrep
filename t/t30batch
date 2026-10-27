@@ -17,6 +17,7 @@ test_restrict();
 test_fixed();
 test_square_init();
 test_unforce();
+test_show();
 
 done_testing();
 exit 0;
@@ -84,6 +85,14 @@ sub test_unforce {
     # after the tail for 3, 5 must still be forced
     my %b = map +($_ => 1), @{ batches(qw{ -F3 -x1e40 160 6 }) };
     ok($b{'5^4 2 . 2^4 . 2.5'}, '-F3 still forces 5 after the tail for 3');
+}
+
+sub test_show {
+    # -db shows a batch at its first progress line, here one of -W's
+    # sweep, which is no part of the batch
+    my @lines = `$prog -Ls0 -db -dw20 -W1000 -x1e9 48 4 2>&1`;
+    my @b0 = map /^203 b0: (.*?) \(/ ? $1 : (), @lines;
+    is_deeply(\@b0, [ '2^2.3 . 2 3' ], '-db -W shows the batch alone');
 }
 
 # returns an arrayref of the batches listed, in order

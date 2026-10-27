@@ -817,6 +817,21 @@ void disp_batch(void) {
     assert(level >= cur_batch_level);
 
     t_level *lp = &levels[cur_batch_level];
+    /* Show the batch alone, without what is allocated above it. Before
+     * the first batch (b*) there is none, so show what there is.
+     */
+    uint save[k];
+    memcpy(save, cur_vlevel, k * sizeof(uint));
+    if (batch_alloc)
+        for (uint vi = 0; vi < k; ++vi) {
+            t_allocation *alloc = value[vi].alloc;
+            uint d = 1;
+            while (d < save[vi] && alloc[d].level <= cur_batch_level)
+                ++d;
+            cur_vlevel[vi] = d;
+        }
+    bool save_midp = in_midp, save_b6x = in_b6x, save_flip = in_flip;
+    in_midp = in_b6x = in_flip = 0;
     if (opt_alloc & 2) {
         diag_csv(lp);
     } else {
@@ -832,6 +847,10 @@ void disp_batch(void) {
         else
             report("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
     }
+    in_midp = save_midp;
+    in_b6x = save_b6x;
+    in_flip = save_flip;
+    memcpy(cur_vlevel, save, k * sizeof(uint));
 }
 
 void diag_any(t_level *cur_level, bool need_disp) {
