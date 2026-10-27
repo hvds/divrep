@@ -5326,6 +5326,14 @@ static inline bool can_flip(uint x) {
     return !ispow2_u64(x);
 }
 
+/* If t is of the form 2x^2 for an x that can_flip(), returns x, else
+ * returns 0.
+ */
+static inline uint flip_xs_tau(uint t) {
+    uint x = (t & 1) ? 0 : divisors[t / 2].sqrt;
+    return (x && can_flip(x)) ? x : 0;
+}
+
 typedef enum {
     PUX_NOTHING_TO_DO = 0,
     PUX_FLIP_PQSQ,
@@ -5889,7 +5897,6 @@ static inline bool insert_float(
 /* If conditions are met, absorb the remaining 1 or 2 unapplied allocations
  * ready for run_flip_pqsq recovery and return TRUE, else return FALSE.
  */
-static inline uint flip_xs_tau(uint t);
 bool absorb_flip(uint vi, t_fact *rs) {
     if (!flip_recover.valid)
         return 0;   /* Why are you calling me? */
@@ -6056,14 +6063,6 @@ e_is insert_stack(void) {
         fail("data mismatch");
 
     return jump;
-}
-
-/* If t is of the form 2x^2 for an x that can_flip(), returns x, else
- * returns 0.
- */
-static inline uint flip_xs_tau(uint t) {
-    uint x = (t & 1) ? 0 : divisors[t / 2].sqrt;
-    return (x && can_flip(x)) ? x : 0;
 }
 
 /* We have an allocation of eg p^z leaving t = 2z for some z that can_flip(),
