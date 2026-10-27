@@ -18,7 +18,8 @@ note of which clock times are in.
 
 Cases marked for recovery are also stopped partway (C<-dL<count>>) at
 several points and recovered to completion, and what the recovered
-runs write is compared too.
+runs write is compared too. They are also stopped at several points
+within each search shown by a suffix (C<W(...)>, C<6X(...)>, C<F(...)>).
 
 Usage: samerun [options] <old dir> <new dir>
 
@@ -28,7 +29,8 @@ where each dir holds the builds (pcoul, pcaul, pcrul) to compare.
   -o<re>     run only the cases matching <re>
   -p<count>  run <count> at a time (default 2)
   -t<s>      time limit for each run in seconds (default 60)
-  -s<count>  points to stop at for recovery (default 4)
+  -s<count>  points to stop at for recovery, and in each suffixed search
+             (default 4)
   -k         keep the work directory, and say where it is
   -v         show each case as it is checked
 
@@ -83,6 +85,15 @@ for my $i (grep $cases[$_]{recover}, 0 .. $#cases) {
         my $at = int($n * $j / ($stops + 1));
         next if $at < 1 || $seen{$at}++;
         push @rjobs, { case => $i, stop => $at };
+    }
+    # and within each suffixed search, from its first line to its last
+    for my $list (values %{ $result{$i}{suffix} // {} }) {
+        my $m = @$list;
+        for my $j (0 .. $stops - 1) {
+            my $at = $list->[int(($m - 1) * $j / ($stops - 1 || 1))];
+            next if $seen{$at}++;
+            push @rjobs, { case => $i, stop => $at };
+        }
     }
 }
 my $nrec = @rjobs;
@@ -220,7 +231,13 @@ sub report_job {
     }
     unless ($job->{stop}) {
         my $log = normal("$dir/new/run.log");
-        $result{$job->{case}}{progress} = grep /^3[01]5 /, @$log;
+        my @p = grep /^3[01]5 /, @$log;
+        $result{$job->{case}}{progress} = @p;
+        # where each suffixed search is shown
+        for my $i (0 .. $#p) {
+            push @{ $result{$job->{case}}{suffix}{$1} }, $i + 1
+                if $p[$i] =~ / (W|6X|F)\(/;
+        }
     }
     if (@fail) {
         ++$nfail;
@@ -247,9 +264,9 @@ o -js0,1,2 -x1e10 12 3
 # flips, STRATEGY_6X and Pell
 R o -x1e12 18 3
 R o -j2 -x1e8 36 4
-o -x1e13 18 4
+R o -x1e13 18 4
 R o -x1e13 30 4
-o -x1e12 90 3
+R o -x1e12 90 3
 o -jp -b0 -x1e6 30 4
 o -jp -x1e8 30 4
 # -W
