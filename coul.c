@@ -4617,6 +4617,14 @@ static inline void unapply_batch(uint fpi, uint bi, uint count) {
             --cur_vlevel[vj];
 }
 
+/* Whether to walk np now as a Pell case, two or more squares being fixed:
+ * as soon as they are, except that under -jp a batch waits until it is
+ * counted (see process_batch()).
+ */
+static inline bool pell_now(t_node *np, bool counted) {
+    return np->have_square > 1 && (counted || !defer_pell);
+}
+
 /* Apply this batch and return TRUE if there is work to do for it, else
  * change nothing and return FALSE.
  */
@@ -4728,7 +4736,7 @@ bool apply_batch(
             }
         }
     }
-    if (!defer_pell && !(opt_alloc & 4) && cur_node->have_square > 1) {
+    if (!(opt_alloc & 4) && pell_now(cur_node, 0)) {
         seen_valid = 1;
         walk_v(cur_node, Z(zero));
         unapply_batch(fpi, bi, k);
@@ -4785,7 +4793,7 @@ bool process_batch(t_node *cur_node, bool recover) {
         if (midp_only)
             return 0;
     }
-    if (cur_node->have_square > 1) {
+    if (pell_now(cur_node, 1)) {
         seen_valid = 1;
         walk_v(cur_node, Z(zero));
         return 0;
