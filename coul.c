@@ -308,6 +308,15 @@ typedef enum {
     PUX_DO_THIS_X           /* there are p to allocate for this x */
 } e_pux;
 
+/* What choose_action() decides the act at a new level is to do. */
+typedef enum {
+    CH_NOTHING = 0, /* nothing to do below this point */
+    CH_FORCED,      /* the batches of the next forced prime */
+    CH_UNFORCED,    /* a loop of p^x at the act's v_i */
+    CH_WALK,        /* walk_v() covers everything below */
+    CH_6X           /* walk_6x() at the act's v_i covers everything below */
+} e_choice;
+
 /* e_is indicates where we should pick up when we enter recurse() */
 typedef enum {
     IS_DEEPER = 0,  /* Current level is good, try to recurse deeper */
@@ -5269,6 +5278,43 @@ uint best_v(t_act *cur_act) {
     return strategies[strategy](cur_act);
 }
 
+/* Decide what the act at a new level is to do: the batches of the next
+ * forced prime if there are any, else an unforced loop at the position
+ * best_v() chooses, unless a walk or other search covers all below this
+ * point instead. Sets cur_act->vi for CH_UNFORCED and CH_6X.
+ * The gate and the flip are decided per x as the unforced loop runs,
+ * see prep_unforced_x().
+ */
+static inline e_choice choose_action(t_act *cur_act) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    t_act *prev_act = &acts[cur_act->level - 1];
+    if (prev_node->fp_need && prev_act->action != A_UNFORCED
+            && forcep[next_fpi(prev_node)].count)
+        return CH_FORCED;
+    if (cur_act->next_best)
+        return CH_WALK;
+    uint vi = best_v(cur_act);
+    cur_act->choice_strategy = strategy;
+    cur_act->unsorted = 0;
+    if (vi < BV_SPECIAL) {
+        cur_act->vi = vi;
+        return CH_UNFORCED;
+    }
+    switch (vi - BV_SPECIAL) {
+      case BV_6X - BV_SPECIAL:
+        /* best_6x() has set cur_act->vi */
+        return CH_6X;
+      case BV_NEXTX - BV_SPECIAL:
+        return CH_NOTHING;
+      case BV_WALK - BV_SPECIAL:
+        /* failure result is stable if last allocation unforced */
+        if (prev_act->action == A_UNFORCED)
+            cur_act->next_best = 1;
+        return CH_WALK;
+    }
+    fail("panic: unknown best_v() result %u (k=%u)", vi, k);
+}
+
 /* Returns the greatest p for which p^{x-1} needs to be tried at v_i
  * leaving remaining tau nextt: 1 signifies no primes, 0 that the answer
  * is 2^64 or more.
@@ -6360,73 +6406,56 @@ bool next_unforced(t_act *cur_act) {
     }
 }
 
-/* Start an unforced loop at the position best_v() chooses, unless a walk
- * or other search covers all below this point instead. Returns TRUE if
- * it has made its first child.
+/* Start an unforced loop at cur_act's v_i. Returns TRUE if it has made
+ * its first child.
  */
 static inline bool start_unforced(t_act *cur_act) {
-    t_node *prev_node = &nodes[cur_act->level - 1];
-    t_act *prev_act = &acts[cur_act->level - 1];
     /* Note: cur_act->action is always either A_UNFORCED by calloc(), or
      * gets set to it on the tail of a batch.
      */
     assert(A_UNFORCED == 0);
-
-    if (cur_act->next_best)
-        goto walk_now;
-    uint vi = best_v(cur_act);
-    cur_act->choice_strategy = strategy;
-    cur_act->unsorted = 0;
-    if (vi >= BV_SPECIAL) {
-        switch (vi - BV_SPECIAL) {
-          default:
-            fail("panic: unknown best_v() result %u (k=%u)", vi, k);
-          case BV_6X - BV_SPECIAL:
-            /* ready for a walk */
-            walk_6x(cur_act->vi);
-            return 0;
-          case BV_NEXTX - BV_SPECIAL:
-            /* nothing left to do for this x */
-            return 0;
-          case BV_WALK - BV_SPECIAL:
-            /* failure result is stable if last allocation unforced */
-            if (prev_act->action == A_UNFORCED)
-                cur_act->next_best = 1;
-          walk_now:
-#ifdef SQONLY
-            if (prev_node->have_square)
-                walk_v(prev_node, Z(zero));
-            else if (prev_act->action == A_UNFORCED)
-                level_setp(prev_act, prev_act->limp);
-#else
-            walk_v(prev_node, Z(zero));
-#endif
-            return 0;
-        }
-    }
-    t_value *vp = &value[vi];
-    uint vil = cur_vlevel[vi];
-    uint ti = vp->alloc[vil - 1].t;
-    t_divisors *dp = &divisors[ti];
-    if (dp->high <= (highpow ? 1 : 2))
+    uint vi = cur_act->vi;
+    uint ti = value[vi].alloc[cur_vlevel[vi] - 1].t;
+    if (divisors[ti].high <= (highpow ? 1 : 2))
         fail("best_v() returned %u, but nothing to do there", vi);
-    cur_act->vi = vi;
     cur_act->ti = ti;
     cur_act->di = 0;
     return find_unforced_x(cur_act) && next_unforced(cur_act);
 }
 
-/* Start the act at a new level: the batches of the next forced prime if
- * there are any, else an unforced loop. Returns TRUE if it has made its
- * first child.
+/* Walk everything below cur_act's level, in place of an act there. */
+static inline void start_walk(t_act *cur_act) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+#ifdef SQONLY
+    t_act *prev_act = &acts[cur_act->level - 1];
+    if (prev_node->have_square)
+        walk_v(prev_node, Z(zero));
+    else if (prev_act->action == A_UNFORCED)
+        level_setp(prev_act, prev_act->limp);
+#else
+    walk_v(prev_node, Z(zero));
+#endif
+}
+
+/* Start the act at a new level as choose_action() decides. Returns TRUE
+ * if it has made its first child.
  */
 static inline bool start_act(t_act *cur_act) {
-    t_node *prev_node = &nodes[cur_act->level - 1];
-    if (prev_node->fp_need && acts[cur_act->level - 1].action != A_UNFORCED) {
-        if (forcep[next_fpi(prev_node)].count)
-            return try_batches(cur_act, 0);
+    switch (choose_action(cur_act)) {
+      case CH_FORCED:
+        return try_batches(cur_act, 0);
+      case CH_UNFORCED:
+        return start_unforced(cur_act);
+      case CH_WALK:
+        start_walk(cur_act);
+        return 0;
+      case CH_6X:
+        walk_6x(cur_act->vi);
+        return 0;
+      case CH_NOTHING:
+        return 0;
     }
-    return start_unforced(cur_act);
+    fail("panic: unknown choice at level %u", cur_act->level);
 }
 
 /* We emulate recursive calls via the nodes[] and acts[] arrays: starting
