@@ -243,6 +243,12 @@ sub test_recover {
         $args124W, ['305 b0: 2^2.3 . 2 3 W(31607,3,2)'],
         'b0: 2^2.3 . 2 3 W(31601,3,2)',
     );
+    # b6 has 2 and 3 both at their tails: v_0 odd, so 1577 windows, not 3154
+    expect_recover(q{recover midp in a batch of tails only},
+        [qw{ -j4 -W100 -x318680 32 3 }],
+        ['305 b6: . . . W(101,2,2)'],
+        'b6: . . . W(101,2,2): 0 / 1577', 2,
+    );
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
         $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],

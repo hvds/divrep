@@ -5853,7 +5853,8 @@ bool insert_forced(
             return more ? 1 : 0;
         bi = fp->count - 1;
         bp = forcebatch_p(fp, bi);
-        if (more && has_tail(fp))
+        /* a W(...) line shows a sweep, so its batch is complete */
+        if ((more || act_recover.action == A_MIDP) && has_tail(fp))
             goto have_batch;
 #if defined(TYPE_a)
         if (bp->primary == 0) {
@@ -6172,9 +6173,11 @@ e_is insert_stack(void) {
     }
 
     if (jump == IS_DEEPER) {
-        if (act_recover.action == A_MIDP)
+        if (act_recover.action == A_MIDP) {
+            if (nodes[level - 1].fp_need)
+                fail("W(...) recovery found an incomplete batch");
             jump = IS_BATCH;    /* Note: may also have_rwalk */
-        else if (have_rwalk)
+        } else if (have_rwalk)
             jump = IS_RWALK;
         else if (acts[level - 1].action != A_UNFORCED
                 && !nodes[level - 1].fp_need)
