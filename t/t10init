@@ -263,6 +263,12 @@ sub test_recover {
         ok(scalar(grep /^202 Candidate 1477626075 /, @{ $lines->{202} // [] }),
                 q{-W: recovery mid-sweep tries the same p at later positions});
     }
+    # the sweep covered 101^2 at v_2, so after 97^2 recursion moves on
+    expect_recover(q{-W: recovery below a swept batch keeps to the -W cap},
+        [qw{ -W100 -f5 -x1e9 24 5 }],
+        ['305 b0: 2^5.3 5^2 2.97^2 3.7^2 2^2'],
+        'b0: 2^5.3 5^2 2.11^5 3.7^2 2^2',
+    );
 }
 
 sub test_recover_trailing {
