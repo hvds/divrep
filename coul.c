@@ -314,7 +314,7 @@ typedef enum {
     CH_FORCED,      /* the batches of the next forced prime */
     CH_UNFORCED,    /* a loop of p^x at the act's v_i */
     CH_WALK,        /* walk_v() covers everything below */
-    CH_6X           /* walk_6x() at the act's v_i covers everything below */
+    CH_6X           /* walk_6x() covers everything below */
 } e_choice;
 
 /* e_is indicates where we should pick up when we enter recurse() */
@@ -1021,14 +1021,9 @@ void mark_unsorted(void) {
             cur_vlevel[vj] = d;
         }
         strategy = actp->choice_strategy;
-        /* best_6x() sets the act's vi (so we must preserve it),
-         * and we don't need it's unsorted flag (so can set to 0).
-         * CHECKME: can we avoid the need for best_6x() to set actp->vi?
-         */
-        uint vi = actp->vi;
+        /* if best_v() would now choose the 6X walk, no mark is needed */
         uint bvi = best_v(actp);
-        actp->unsorted = (bvi == BV_6X) ? 0 : (bvi != vi);
-        actp->vi = vi;
+        actp->unsorted = (bvi == BV_6X) ? 0 : (bvi != actp->vi);
     }
     strategy = save_strategy;
     memcpy(cur_vlevel, save, k * sizeof(uint));
@@ -5108,7 +5103,6 @@ uint best_6x(t_act *cur_act) {
             return vj;
         return vi;          /* allocate some more */
     }
-    cur_act->vi = vi;
     return BV_6X;           /* walk_6x() can now handle this */
 }
 
@@ -5120,10 +5114,12 @@ uint best_6x(t_act *cur_act) {
  * all such coprime pairs for testing, and invoke walk_1() for each
  * resulting p that is prime.
  */
-void walk_6x(uint vi) {
+void walk_6x(void) {
     t_node *cur_node = &nodes[level];
     t_node *prev_node = &nodes[level - 1];
     t_act *cur_act = &acts[level];
+    assert(sq0 >= 2);
+    uint vi = sq0 - 2;
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap;
@@ -5135,7 +5131,7 @@ void walk_6x(uint vi) {
     ap_next->level = level;
     cur_vlevel[vi] = vlevel + 1;
     cur_node->have_min = 1;
-    assert(cur_act->vi == vi);
+    cur_act->vi = vi;
     cur_act->action = A_6X;
     /* We will fully fix v_i, so we don't need to roll the prime we
      * allocate into rq/aq by calling update_chinese each time: the
@@ -5281,7 +5277,7 @@ uint best_v(t_act *cur_act) {
 /* Decide what the act at a new level is to do: the batches of the next
  * forced prime if there are any, else an unforced loop at the position
  * best_v() chooses, unless a walk or other search covers all below this
- * point instead. Sets cur_act->vi for CH_UNFORCED and CH_6X.
+ * point instead. Sets cur_act->vi for CH_UNFORCED.
  * The gate and the flip are decided per x as the unforced loop runs,
  * see prep_unforced_x().
  */
@@ -5302,7 +5298,6 @@ static inline e_choice choose_action(t_act *cur_act) {
     }
     switch (vi - BV_SPECIAL) {
       case BV_6X - BV_SPECIAL:
-        /* best_6x() has set cur_act->vi */
         return CH_6X;
       case BV_NEXTX - BV_SPECIAL:
         return CH_NOTHING;
@@ -6449,7 +6444,7 @@ static inline bool start_act(t_act *cur_act) {
         start_walk(cur_act);
         return 0;
       case CH_6X:
-        walk_6x(cur_act->vi);
+        walk_6x();
         return 0;
       case CH_NOTHING:
         return 0;
@@ -6492,7 +6487,7 @@ void recurse(e_is jump_continue) {
         if (ch != CH_6X)
             fail("panic: choose_action() on recovery chose %u, not %u",
                     ch, CH_6X);
-        walk_6x(actp->vi);
+        walk_6x();
         goto unwind;
       }
       case IS_FLIP:
