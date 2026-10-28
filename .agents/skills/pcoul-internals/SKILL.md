@@ -297,8 +297,10 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   to follow - a higher prime that would have no real batches becomes
   genuinely unforced instead. `forcedp` can end up 0 (k = 1, or k = 2
   with 4 | n and no `-f`): the whole search is then one batch, `b0`,
-  and it still goes through `process_batch()`, since `-W`, `-a` and
-  the batch count all depend on that call. `prep_presquare()` (run
+  and it still goes through `process_batch()`, since `-a` and the
+  batch count depend on that call. Unless `prep_presquare()` adds a
+  level, that batch is at level 0, so `-W` is refused there: a sweep
+  needs a level above its own. `prep_presquare()` (run
   once, before any of this) inserts that extra level - shifting where
   the chain starts by one - whenever some position needs an odd number
   of divisors (`target_t(vi) & 1`); for `TYPE_o` that's the same for

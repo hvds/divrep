@@ -690,9 +690,8 @@ sub test_no_forced_primes {
         1, '', [qw{ -x1e6 72 2 }]);
     expect_log(q{it reports a search when it finds nothing},
         500, '', [qw{ -dl -x1000 72 2 }]);
-    # 735 = 3.5.7^2 and 736 = 2^5.23 need primes that only -W can supply
-    expect_result(q{it makes the -W walk},
-        735, '', [qw{ -W3 -x1e4 12 2 }]);
+    expect_fail(q{-W is refused},
+            [qw{ -W3 -x1e4 12 2 }], qr{^523 });
 }
 
 sub test_recover_init {

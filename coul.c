@@ -2490,6 +2490,11 @@ void prep_presquare(void) {
     for (uint vi = 0; vi < k; ++vi)
         if (target_t(vi) & 1)
             saw_square = 1;
+    /* The one batch of a search with no forced primes is otherwise at
+     * level 0, and a -W sweep needs a level above its own.
+     */
+    if (!saw_square && forcedp == 0 && need_midp)
+        fail("523 -W is not supported with no forced primes");
     if (saw_square) {
         /* we rely on resarray(0) being available for other uses, so we
          * must use a dummy level here before allocating the square(s)
