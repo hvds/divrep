@@ -324,7 +324,8 @@ typedef enum {
     IS_NEXTX,   /* Current power is done, try the next power */
     IS_NEXT,    /* Current prime is done, try the next prime */
     IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
-    IS_BATCH,   /* Start in process_batch(), possibly with partial progress */
+    IS_BATCH,   /* Start in process_batch() */
+    IS_MIDP,    /* Resume walk_midp(), possibly with partial progress */
     IS_6X,      /* Resume best_6x(), possibly with partial progress */
     IS_FLIP     /* Resume run_flip_pqsq(), possibly with partial progress */
 } e_is;
@@ -4775,6 +4776,21 @@ static inline bool sweep_batch(t_node *np) {
     return 1;
 }
 
+/* What follows any sweep of the batch complete at np: returns TRUE if
+ * the allocation of unforced primes goes on below np, else FALSE, under
+ * -WW or once a Pell walk has covered everything below np.
+ */
+static inline bool after_sweep(t_node *np) {
+    if (midp_only)
+        return 0;
+    if (pell_now(np, 1)) {
+        seen_valid = 1;
+        walk_v(np, Z(zero));
+        return 0;
+    }
+    return 1;
+}
+
 /* A complete set of forced primes has been allocated, or under -a4 a
  * set cut short by a value fully allocated. We may process
  * this batch or skip it, according to batch options; we also handle
@@ -4783,10 +4799,8 @@ static inline bool sweep_batch(t_node *np) {
  * do for this batch, TRUE if the program should continue with standard
  * allocation of unforced primes, and terminates via longjmp() if we've
  * completed a requested subset of batches.
- * 'recover' is set at first entry when recovering to midway through
- * a walk_midp() call, so should jump back into that without duplicating
- * preceding work. If there is no midp recovery structure, we're just
- * starting at the point of a completed batch.
+ * 'recover' is set when recovery resumes at a batch that the log has
+ * already counted: it is processed afresh, but not counted again.
  */
 bool process_batch(t_node *cur_node, bool recover) {
     if (!recover) {
@@ -4815,17 +4829,9 @@ bool process_batch(t_node *cur_node, bool recover) {
         }
     }
   do_process:
-    if (sweep_batch(cur_node)) {
-        walk_midp(cur_node, recover);
-        if (midp_only)
-            return 0;
-    }
-    if (pell_now(cur_node, 1)) {
-        seen_valid = 1;
-        walk_v(cur_node, Z(zero));
-        return 0;
-    }
-    return 1;
+    if (sweep_batch(cur_node))
+        walk_midp(cur_node, 0);
+    return after_sweep(cur_node);
 }
 
 /* Whether allocations at cur_act's level are capped (see t_node.cap). */
@@ -6113,8 +6119,9 @@ bool restore_flip(uint vi, t_fact *rs) {
  * point; returns IS_NEXTX if we should continue by advancing the power
  * applied at the current position; returns IS_NEXT if we should continue
  * by advancing the current level; returns IS_RWALK if we should continue
- * by completing a partial walk_v() call; and returns IS_BATCH if we should
- * first call process_batch(), possibly with a partial walk_midp() to complete.
+ * by completing a partial walk_v() call; returns IS_MIDP if we should
+ * complete a partial walk_midp(); and returns IS_BATCH if we should first
+ * call process_batch().
  * If the entire run is already complete, returns IS_FINISH.
  */
 e_is insert_stack(void) {
@@ -6213,12 +6220,12 @@ e_is insert_stack(void) {
         if (act_recover.action == A_MIDP) {
             if (nodes[level - 1].fp_need)
                 fail("W(...) recovery found an incomplete batch");
-            jump = IS_BATCH;    /* Note: may also have_rwalk */
+            jump = IS_MIDP;     /* Note: may also have_rwalk */
         } else if (have_rwalk)
             jump = IS_RWALK;
         else if (acts[level - 1].action != A_UNFORCED
                 && !nodes[level - 1].fp_need)
-            /* need process_batch() with no midp to resume */
+            /* need process_batch() */
             jump = IS_BATCH;
     } else if (act_recover.action == A_MIDP)
         fail("data mismatch");
@@ -6528,13 +6535,16 @@ void recurse(e_is jump_continue) {
       case IS_RWALK:
         walk_v(&nodes[level - 1], rwalk_from);
         goto unwind;
-      case IS_BATCH: {
-        /* with no midp to resume, still honour any specified batch id */
-        bool true_recover = (act_recover.action == A_MIDP || batch_alloc > 0);
-        if (process_batch(&nodes[level - 1], true_recover))
+      case IS_BATCH:
+        /* count a batch the log has not, to honour any specified batch id */
+        if (process_batch(&nodes[level - 1], batch_alloc > 0))
             goto deeper;
         goto unwind;
-      }
+      case IS_MIDP:
+        walk_midp(&nodes[level - 1], 1);
+        if (after_sweep(&nodes[level - 1]))
+            goto deeper;
+        goto unwind;
       case IS_6X: {
         e_choice ch = choose_action(actp);  /* re-verify */
         if (ch != CH_6X)

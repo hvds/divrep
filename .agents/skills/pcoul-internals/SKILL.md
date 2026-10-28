@@ -323,9 +323,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   *not* through the normal `recurse()` loop - so it deliberately skips
   the loop's own call to `process_batch()`, and the `e_is` value that
   `insert_stack()` returns tells `recurse()` where to pick up:
-  `IS_BATCH` when that call still has to be made (fresh, or to resume
-  a partial `walk_midp()`); `IS_RWALK`, `IS_6X` or `IS_FLIP` to resume
-  a walk, a 6X search or a flip; `IS_NEXT` or `IS_NEXTX` to move on
+  `IS_BATCH` when that call still has to be made; `IS_MIDP`,
+  `IS_RWALK`, `IS_6X` or `IS_FLIP` to resume a sweep, a walk, a 6X
+  search or a flip; `IS_NEXT` or `IS_NEXTX` to move on
   from the last allocation shown.
 - **Recovery and candidates**: the levels are rebuilt under the
   maximum that held when the last progress line was written, because
