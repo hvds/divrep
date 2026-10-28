@@ -215,8 +215,8 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   the dummy level `prep_presquare()` inserts, and `A_FIXED` for the
   levels an `-I` pattern fixes. Only the first two are iterated over;
   wherever unforced levels are told apart, the others count as forced.
-  `recurse()` does not set `A_UNFORCED` at `unforced:`: it relies on
-  `A_UNFORCED` being 0, so the level is either still as `calloc()`
+  `start_unforced()` does not set `A_UNFORCED`: it relies on
+  `A_UNFORCED` being 0, so the act is either still as `calloc()`
   left it or was reset on the tail of a batch.
   Vocabulary: an action is the sort of thing done at a level, from a
   fixed set; an act is one doing of it, with its own state.
@@ -228,15 +228,23 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   allocation withdrawn from `cur_vlevel[]`; `known_prime()` passes
   over it), reset to `A_UNFORCED` when it ends. The const
   `action_ops[]` table, beside `strategies[]`, gives each action what
-  differs: an action with a `suffix` op is shown in progress lines by
-  that suffix (`W(...)`, `6X(...)`, `F(...)`) in place of the
-  allocation at its level. Levels from there up belong to it, and are
-  never marked in a 315 line. Its `parse` op reads the suffix back into
-  the one record `act_recover`, which the search takes up and clears
-  (to `A_NONE`) when recovery resumes it. A flip is the one rebuilt as
-  part of the stack: `restore_flip()` leaves its level as
-  `run_flip_pqsq()` does while running, so `prune_stale()` and
-  `unapply_level()` see an `A_FLIP` level like any other.
+  differs. `recurse()` is a small driver over it: `start_act()` starts
+  the act at a new level (the next forced prime's batches, or an
+  unforced loop, unless a walk or other search there covers all
+  below) and makes its first child node; the act's `next` op makes
+  each further child, and its `undo` op unapplies one as unwinding
+  passes it. Only `A_FORCED` and `A_UNFORCED` iterate; the others run
+  to completion inside a level (a withdrawn flip level has an `undo`
+  op only, for unwinding through it). An action with a `suffix` op is
+  shown in progress lines by that suffix (`W(...)`, `6X(...)`,
+  `F(...)`) in place of the allocation at its level. Levels from there
+  up belong to it, and are never marked in a 315 line. Its `parse` op
+  reads the suffix back into the one record `act_recover`, which the
+  search takes up and clears (to `A_NONE`) when recovery resumes it. A
+  flip is the one rebuilt as part of the stack: `restore_flip()`
+  leaves its level as `run_flip_pqsq()` does while running, so
+  `prune_stale()` and `unapply_level()` see an `A_FLIP` level like any
+  other.
 - **`apply_level()` is the one shared level-transition function** that
   `apply_null()`, `apply_single()`, and `apply_primary()` all route
   through. `apply_secondary()` is the exception: it adds *further*
@@ -247,11 +255,10 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 - **`prime_iterator_setprime(iter, n)`/`prime_iterator_next(iter)`**:
   seeding with `n` does NOT test `n` itself - `next()` always returns
   the first prime *strictly greater* than whatever was last seeded or
-  returned. This drives the main per-prime enumeration (`continue_
-  unforced:` label in the main loop): `level_setp()` seeds the
-  iterator once per `(vi,x)` decision, then `prime_iterator_next()` is
-  called repeatedly (via `goto`/`continue`, not a literal `for` loop)
-  until the returned prime exceeds `cur_act->limp`.
+  returned. This drives the main per-prime enumeration
+  (`next_unforced()`): `level_setp()` seeds the iterator once per
+  `(vi,x)` decision, then `prime_iterator_next()` is called
+  repeatedly until the returned prime exceeds `cur_act->limp`.
 - **-W / midp**: above a user-set prime threshold, allocations of a
   single large prime are handled via one flat descending sweep
   (`walk_midp()`) rather than normal recursion, since at most one

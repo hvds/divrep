@@ -338,12 +338,22 @@ t_strategy strategies[NUM_STRATEGIES] = {
     &best_6x, &best_fixed
 };
 
-/* What each action does, where it differs from others. An action with a
+/* What each action does, where it differs from others. An action that
+ * iterates has a next_op, which makes the act's next child node (returning
+ * FALSE when there is none left), and an undo_op, which unapplies the last
+ * one as unwinding passes it; recurse() drives them. An action with a
  * suffix_op is shown in progress lines by the suffix it writes (returning
  * its length) in place of the allocation at its level. For recovery its
  * parse_op reads the suffix into act_recover, given the text after the
  * tag that starts it, and returns the text after the suffix.
  */
+typedef bool (*t_next_op)(t_act *cur_act);
+bool next_forced(t_act *cur_act);
+bool next_unforced(t_act *cur_act);
+typedef void (*t_undo_op)(t_act *cur_act);
+void undo_forced(t_act *cur_act);
+void undo_unforced(t_act *cur_act);
+void undo_flip(t_act *cur_act);
 typedef uint (*t_suffix_op)(t_act *cur_act, char *buf);
 uint suffix_midp(t_act *cur_act, char *buf);
 uint suffix_6x(t_act *cur_act, char *buf);
@@ -353,14 +363,21 @@ char *parse_midp(char *s);
 char *parse_6x(char *s);
 char *parse_flip(char *s);
 typedef struct s_action_ops {
+    t_next_op next;
+    t_undo_op undo;
     t_suffix_op suffix;
     char *tag;
     t_parse_op parse;
 } t_action_ops;
 const t_action_ops action_ops[A_NONE] = {
-    [A_MIDP] = { &suffix_midp, " W(", &parse_midp },
-    [A_6X] = { &suffix_6x, " 6X(", &parse_6x },
-    [A_FLIP] = { &suffix_flip, " F(", &parse_flip },
+    [A_UNFORCED] = { .next = &next_unforced, .undo = &undo_unforced },
+    [A_FORCED] = { .next = &next_forced, .undo = &undo_forced },
+    [A_MIDP] = { .suffix = &suffix_midp, .tag = " W(", .parse = &parse_midp },
+    [A_6X] = { .suffix = &suffix_6x, .tag = " 6X(", .parse = &parse_6x },
+    [A_FLIP] = {
+        .undo = &undo_flip,
+        .suffix = &suffix_flip, .tag = " F(", .parse = &parse_flip
+    },
 };
 static inline bool has_suffix(e_action a) {
     return action_ops[a].suffix != NULL;
@@ -6225,235 +6242,262 @@ void run_flip_pqsq(uint vi) {
 
 /* Undo what cur_act applied, as unwinding passes it. */
 static inline void unapply_level(t_act *cur_act) {
-    switch (cur_act->action) {
-      case A_FORCED:
-        unapply_batch(next_fpi(&nodes[cur_act->level - 1]), cur_act->bi, k);
-        break;
-      case A_UNFORCED:
-        --cur_vlevel[cur_act->vi];
-        break;
-      case A_FLIP:
-        /* its allocation is already withdrawn */
-        cur_act->action = A_UNFORCED;
-        break;
-      default:
+    t_undo_op undo = action_ops[cur_act->action].undo;
+    if (undo == NULL)
         fail("panic: unwinding level %u of action %u",
                 cur_act->level, cur_act->action);
+    undo(cur_act);
+}
+
+void undo_forced(t_act *cur_act) {
+    unapply_batch(next_fpi(&nodes[cur_act->level - 1]), cur_act->bi, k);
+}
+
+void undo_unforced(t_act *cur_act) {
+    --cur_vlevel[cur_act->vi];
+}
+
+void undo_flip(t_act *cur_act) {
+    /* its allocation is already withdrawn */
+    cur_act->action = A_UNFORCED;
+}
+
+/* Apply the batches of cur_act's forced prime from bi on, until one leaves
+ * work to do below it. Returns FALSE if none does.
+ */
+static inline bool try_batches(t_act *cur_act, uint bi) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    t_node *cur_node = &nodes[cur_act->level];
+    uint fpi = next_fpi(prev_node);
+    t_forcep *fp = &forcep[fpi];
+    for (; bi < fp->count; ++bi) {
+        if (!apply_batch(prev_node, cur_node, fpi, bi))
+            continue;
+        /* the batch is still partial */
+        if (cur_node->fp_need)
+            return 1;
+        /* complete: process it, if wanted (under -W, runs walk_midp()) */
+        if (process_batch(cur_node, 0))
+            return 1;
+        unapply_batch(fpi, bi, k);
+    }
+    return 0;
+}
+
+bool next_forced(t_act *cur_act) {
+    return try_batches(cur_act, cur_act->bi + 1);
+}
+
+/* Prepare cur_act's loop for the first x from its di on that has primes to
+ * try. Returns FALSE if there is none, any walk or flip it made having
+ * covered the rest.
+ */
+static inline bool find_unforced_x(t_act *cur_act) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    for (; cur_act->di < divisors[cur_act->ti].highdiv; ++cur_act->di) {
+        switch (prep_unforced_x(prev_node, cur_act)) {
+          case PUX_NOTHING_TO_DO:
+            return 0;
+          case PUX_FLIP_PQSQ:
+            run_flip_pqsq(cur_act->vi);
+            return 0;
+          case PUX_SKIP_THIS_X:
+            continue;
+          case PUX_DO_THIS_X:
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Allocate the next prime that applies at cur_act's v_i, moving on to each
+ * further x as one is done. Returns FALSE when none is left.
+ */
+bool next_unforced(t_act *cur_act) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    t_node *cur_node = &nodes[cur_act->level];
+    while (1) {
+        /* recalculate limit if we have an improved maximum */
+        if (improve_max && seen_best > cur_act->max_at) {
+            ulong limp = limit_p(cur_act, cur_act->vi, cur_act->x,
+                    cur_act->ti / cur_act->x);
+            /* see limit_p(): it was not 0, so cannot be now */
+            if (limp == 0 || limp > cur_act->limp)
+                fail("panic: limit for p^%u at v_%u rose from %lu to %lu",
+                        cur_act->x - 1, cur_act->vi, cur_act->limp, limp);
+            cur_act->limp = limp;
+            cur_act->max_at = seen_best;
+            reject_prep(prev_node, cur_act);
+        }
+        /* note: only valid to use from just below here */
+      redo_unforced: ;
+        ulong p = prime_iterator_next(&cur_act->piter);
+        if (p > cur_act->limp) {
+            ++cur_act->di;
+            if (!find_unforced_x(cur_act))
+                return 0;
+            continue;
+        }
+        if (known_prime(prev_node, p))
+            goto redo_unforced;
+        /* p stays the cursor, as when apply_single() fails */
+        if (cur_act->rj_ok && (p & 1) && reject_single(
+            prev_node, cur_act, cur_act->vi, p, cur_act->x
+        )) {
+            cur_act->p = p;
+            if (need_work)
+                diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
+            goto redo_unforced;
+        }
+        /* note: this returns 0 if t=1 */
+        if (!apply_single(prev_node, cur_node, cur_act->vi, p, cur_act->x)) {
+            if (need_work)
+                diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
+            /* not redo_unforced, we may have improved zmax */
+            continue;
+        }
+        return 1;
     }
 }
 
-/* we emulate recursive calls via the nodes[] and acts[] arrays */
+/* Start an unforced loop at the position best_v() chooses, unless a walk
+ * or other search covers all below this point instead. Returns TRUE if
+ * it has made its first child.
+ */
+static inline bool start_unforced(t_act *cur_act) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    t_act *prev_act = &acts[cur_act->level - 1];
+    /* Note: cur_act->action is always either A_UNFORCED by calloc(), or
+     * gets set to it on the tail of a batch.
+     */
+    assert(A_UNFORCED == 0);
+
+    if (cur_act->next_best)
+        goto walk_now;
+    uint vi = best_v(cur_act);
+    cur_act->choice_strategy = strategy;
+    cur_act->unsorted = 0;
+    if (vi >= BV_SPECIAL) {
+        switch (vi - BV_SPECIAL) {
+          default:
+            fail("panic: unknown best_v() result %u (k=%u)", vi, k);
+          case BV_6X - BV_SPECIAL:
+            /* ready for a walk */
+            walk_6x(cur_act->vi);
+            return 0;
+          case BV_NEXTX - BV_SPECIAL:
+            /* nothing left to do for this x */
+            return 0;
+          case BV_WALK - BV_SPECIAL:
+            /* failure result is stable if last allocation unforced */
+            if (prev_act->action == A_UNFORCED)
+                cur_act->next_best = 1;
+          walk_now:
+#ifdef SQONLY
+            if (prev_node->have_square)
+                walk_v(prev_node, Z(zero));
+            else if (prev_act->action == A_UNFORCED)
+                level_setp(prev_act, prev_act->limp);
+#else
+            walk_v(prev_node, Z(zero));
+#endif
+            return 0;
+        }
+    }
+    t_value *vp = &value[vi];
+    uint vil = cur_vlevel[vi];
+    uint ti = vp->alloc[vil - 1].t;
+    t_divisors *dp = &divisors[ti];
+    if (dp->high <= (highpow ? 1 : 2))
+        fail("best_v() returned %u, but nothing to do there", vi);
+    cur_act->vi = vi;
+    cur_act->ti = ti;
+    cur_act->di = 0;
+    return find_unforced_x(cur_act) && next_unforced(cur_act);
+}
+
+/* Start the act at a new level: the batches of the next forced prime if
+ * there are any, else an unforced loop. Returns TRUE if it has made its
+ * first child.
+ */
+static inline bool start_act(t_act *cur_act) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    if (prev_node->fp_need && acts[cur_act->level - 1].action != A_UNFORCED) {
+        if (forcep[next_fpi(prev_node)].count)
+            return try_batches(cur_act, 0);
+    }
+    return start_unforced(cur_act);
+}
+
+/* We emulate recursive calls via the nodes[] and acts[] arrays: starting
+ * the act at a new level makes its first child node, its next op makes
+ * each further child, and its undo op unapplies one as we unwind.
+ */
 void recurse(e_is jump_continue) {
-    ulong p;
-    uint x, bi;
-    t_node *prev_node = &nodes[level - 1];
-    t_act *prev_act = &acts[level - 1];
-    t_node *cur_node = &nodes[level];
-    t_act *cur_act = &acts[level];
-    t_forcep *fp;
+    t_act *actp = &acts[level];
 
     /* Find a suitable entry point when not starting from scratch due to
      * init_pattern or recovery.
      */
-    if (jump_continue == IS_NEXT)
-        goto continue_recurse;
-    else if (jump_continue == IS_NEXTX)
-        goto continue_unforced_x;
-    else if (jump_continue == IS_RWALK) {
-        walk_v(prev_node, rwalk_from);
-        goto derecurse;
-    } else if (jump_continue == IS_BATCH) {
+    switch (jump_continue) {
+      case IS_DEEPER:
+        goto deeper;
+      case IS_NEXT:
+        goto next;
+      case IS_NEXTX:
+        ++actp->di;
+        if (find_unforced_x(actp) && next_unforced(actp))
+            goto made;
+        goto unwind;
+      case IS_RWALK:
+        walk_v(&nodes[level - 1], rwalk_from);
+        goto unwind;
+      case IS_BATCH: {
         /* with no midp to resume, still honour any specified batch id */
         bool true_recover = (act_recover.action == A_MIDP || batch_alloc > 0);
-        if (!process_batch(prev_node, true_recover))
-            goto derecurse;
-        /* else go deeper */
-    } else if (jump_continue == IS_6X) {
-        uint vi = best_6x(cur_act);   /* re-verify */
+        if (process_batch(&nodes[level - 1], true_recover))
+            goto deeper;
+        goto unwind;
+      }
+      case IS_6X: {
+        uint vi = best_6x(actp);   /* re-verify */
         if (vi != BV_6X)
             fail("panic: best_6x() call on recovery returned %u, not %u",
                     vi, BV_6X);
-        walk_6x(cur_act->vi);
-        goto derecurse;
-    } else if (jump_continue == IS_FLIP) {
+        walk_6x(actp->vi);
+        goto unwind;
+      }
+      case IS_FLIP:
         /* run_flip_pqsq() finishes with everything below it explored */
-        run_flip_pqsq(cur_act->vi);
-        goto derecurse;
+        run_flip_pqsq(actp->vi);
+        goto unwind;
+      default:
+        fail("panic: recurse() entered at %u", jump_continue);
     }
-    /* else jump_continue == IS_DEEPER */
 
-    while (1) {
-        ++countr;
-        prev_node = &nodes[level - 1];
-        prev_act = &acts[level - 1];
-        cur_node = &nodes[level];
-        cur_act = &acts[level];
-
-        /* recurse deeper */
-        if (prev_node->fp_need && prev_act->action != A_UNFORCED) {
-            fp = &forcep[next_fpi(prev_node)];
-            if (fp->count == 0)
-                goto unforced;
-            bi = 0;
-            goto continue_forced;
-        }
-      unforced:
-        {
-            /* Note: cur_act->action is either always A_UNFORCED by
-             * calloc(), or gets set to it on the tail of a batch.
-             */
-            assert(A_UNFORCED == 0);
-
-            if (cur_act->next_best)
-                goto walk_now;
-            uint vi = best_v(cur_act);
-            cur_act->choice_strategy = strategy;
-            cur_act->unsorted = 0;
-            if (vi >= BV_SPECIAL) {
-                switch (vi - BV_SPECIAL) {
-                  default:
-                    fail("panic: unknown best_v() result %u (k=%u)", vi, k);
-                  case BV_6X - BV_SPECIAL:
-                    /* ready for a walk */
-                    walk_6x(cur_act->vi);
-                    goto derecurse;
-                  case BV_NEXTX - BV_SPECIAL:
-                    /* nothing left to do for this x */
-                    goto derecurse;
-                  case BV_WALK - BV_SPECIAL:
-                    /* failure result is stable if last allocation unforced */
-                    if (prev_act->action == A_UNFORCED)
-                        cur_act->next_best = 1;
-                  walk_now:
-#ifdef SQONLY
-                    if (prev_node->have_square)
-                        walk_v(prev_node, Z(zero));
-                    else if (prev_act->action == A_UNFORCED)
-                        level_setp(prev_act, prev_act->limp);
-#else
-                    walk_v(prev_node, Z(zero));
-#endif
-                    goto derecurse;
-                }
-            }
-            t_value *vp = &value[vi];
-            uint vil = cur_vlevel[vi];
-            uint ti = vp->alloc[vil - 1].t;
-            t_divisors *dp = &divisors[ti];
-            if (dp->high <= (highpow ? 1 : 2))
-                fail("best_v() returned %u, but nothing to do there", vi);
-            cur_act->vi = vi;
-            cur_act->ti = ti;
-            cur_act->di = 0;
-            goto have_unforced_x;
-        }
-      continue_unforced_x:
-        ++cur_act->di;
-      have_unforced_x:
-        {
-            if (cur_act->di >= divisors[cur_act->ti].highdiv)
-                goto derecurse;
-            switch (prep_unforced_x(prev_node, cur_act)) {
-              case PUX_NOTHING_TO_DO:
-                goto derecurse;
-              case PUX_FLIP_PQSQ:
-                run_flip_pqsq(cur_act->vi);
-                goto derecurse;
-              case PUX_SKIP_THIS_X:
-                goto continue_unforced_x;
-              case PUX_DO_THIS_X:
-                ;
-            }
-            goto continue_unforced;
-        }
-        break;
-      /* entry point, must set the node and act pointers before using */
-      derecurse:
-        acts[level + 1].next_best = 0;
-        --level;
-        if (level <= final_level)
-            break;
-        prev_node = &nodes[level - 1];
-        prev_act = &acts[level - 1];
-        cur_node = &nodes[level];
-        cur_act = &acts[level];
-        unapply_level(cur_act);
-        /* goto continue_recurse; */
-      continue_recurse:
-        switch (cur_act->action) {
-          case A_FORCED:
-            fp = &forcep[next_fpi(prev_node)];
-            bi = cur_act->bi + 1;
-          continue_forced:
-            if (bi >= fp->count)
-                goto derecurse;
-            /* If apply succeeds, continue if the batch is still partial,
-             * or if it is complete and we are ok to process it. Note that
-             * process_batch directly invokes walk_midp() under -W.
-             */
-            if (apply_batch(prev_node, cur_node, next_fpi(prev_node), bi)) {
-                if (cur_node->fp_need || process_batch(cur_node, 0)) {
-                    if (need_work)
-                        diag_plain(cur_node);
-                    ++level;
-                    continue;
-                }
-                unapply_batch(next_fpi(prev_node), bi, k);
-            }
-            goto continue_recurse;
-          case A_UNFORCED:
-            break;
-          default:
-            fail("panic: continue_recurse at level %u of action %u",
-                    level, cur_act->action);
-        }
-      continue_unforced:
-        {
-            /* recalculate limit if we have an improved maximum */
-            if (improve_max && seen_best > cur_act->max_at) {
-                ulong limp = limit_p(cur_act, cur_act->vi, cur_act->x,
-                        cur_act->ti / cur_act->x);
-                /* see limit_p(): it was not 0, so cannot be now */
-                if (limp == 0 || limp > cur_act->limp)
-                    fail("panic: limit for p^%u at v_%u rose from %lu to %lu",
-                            cur_act->x - 1, cur_act->vi, cur_act->limp,
-                            limp);
-                cur_act->limp = limp;
-                cur_act->max_at = seen_best;
-                reject_prep(prev_node, cur_act);
-            }
-            /* note: only valid to use from just below here */
-          redo_unforced: ;
-            ulong p = prime_iterator_next(&cur_act->piter);
-            if (p > cur_act->limp)
-                goto continue_unforced_x;
-            if (known_prime(prev_node, p))
-                goto redo_unforced;
-            /* p stays the cursor, as when apply_single() fails */
-            if (cur_act->rj_ok && (p & 1) && reject_single(
-                prev_node, cur_act, cur_act->vi, p, cur_act->x
-            )) {
-                cur_act->p = p;
-                if (need_work)
-                    diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
-                goto redo_unforced;
-            }
-
-            /* note: this returns 0 if t=1 */
-            if (!apply_single(
-                prev_node, cur_node, cur_act->vi, p, cur_act->x
-            )) {
-                if (need_work)
-                    diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
-                /* not redo_unforced, we may have improved zmax */
-                goto continue_unforced;
-            }
-            if (need_work)
-                diag_plain(cur_node);
-            ++level;
-            continue;   /* deeper */
-        }
-    }
+  made:
+    if (need_work)
+        diag_plain(&nodes[level]);
+    ++level;
+  deeper:
+    ++countr;
+    if (start_act(&acts[level]))
+        goto made;
+  unwind:
+    acts[level + 1].next_best = 0;
+    --level;
+    if (level <= final_level)
+        return;
+    actp = &acts[level];
+    unapply_level(actp);
+  next: ;
+    t_next_op next = action_ops[actp->action].next;
+    if (next == NULL)
+        fail("panic: continue_recurse at level %u of action %u",
+                level, actp->action);
+    if (next(actp))
+        goto made;
+    goto unwind;
 }
 
 /* A trailing candidate has just lowered zmax below the bound under which
