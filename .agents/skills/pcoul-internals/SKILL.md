@@ -265,7 +265,12 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   such large prime can fit in the search bound per position anyway -
   recursion there would be pure combinatorial waste. `walk_midp()` is
   invoked from `process_batch()`, which itself is run when a complete
-  batch has been allocated (ie when `fp_need` reaches 0). What it
+  batch has been allocated (ie when `fp_need` reaches 0). The caps
+  are state of each node (`t_node.cap`, inherited from the node
+  above): the `-p` cap from the start, and the `-W` threshold below a
+  node that is swept. So recursion below a swept node allocates only
+  primes up to the threshold, and the sweep covers each p^{x-1} from
+  there up to the cap that node itself inherited. What it
   sweeps (`prep_midp()`):
   - only the powers recursion itself would allocate: p^{x-1} for x not
     a power of 2, unless under highpow (see "Order of powers" above).

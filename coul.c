@@ -234,7 +234,7 @@ char *sminp = NULL, *smaxp = NULL, *smidp = NULL;
 char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
 bool highpow = 0;   /* allocate even p^{2^x-1} (based on roughness) */
 ulong limp_cap = 0;
-bool midp_only = 0, need_maxp = 0, need_midp = 0;
+bool midp_only = 0, need_midp = 0;
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
@@ -1127,6 +1127,8 @@ void init_levels(void) {
 #else
     np->maxp = 0;
 #endif
+    /* the -p cap, if any: under -W that is midp[], see prep_mp() */
+    np->cap = (smaxp || smaxpx) ? (need_midp ? midp : maxp) : NULL;
     np->vi_depth = 1;
     memset(np->pfreev, 0xff, pfree_vecsize * sizeof(uint));
     if (forcedp + 1 > 8 * sizeof(np->fp_need))
@@ -2437,7 +2439,6 @@ void prep_mp(void) {
         do_prep_mp(&midp, smaxp, smaxpx);
     } else
         do_prep_mp(&maxp, smaxp, smaxpx);
-    need_maxp = (smaxp || smaxpx || need_midp) ? 1 : 0;
 
     if (debugx) {
         disp_px("minp", minp);
@@ -2505,6 +2506,7 @@ void prep_presquare(void) {
         cur->have_min = prev->have_min;
         cur->nextpi = prev->nextpi;
         cur->maxp = prev->maxp;
+        cur->cap = prev->cap;
         cur->fp_need = prev->fp_need;
         memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
@@ -4042,6 +4044,7 @@ void apply_level(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     if (p == sprimes[cur->nextpi])
         cur->nextpi = find_nextpi(cur, cur->nextpi);
     cur->maxp = (x > 1 && p > prev->maxp) ? p : prev->maxp;
+    cur->cap = prev->cap;
 }
 
 /* Apply a notional level of p^0 at v_0.
@@ -4416,10 +4419,16 @@ int midpp_comparator(const void *va, const void *vb) {
     return cmp_high(&ma->x, &mb->x);
 }
 
+/* The caps that np's own allocation kept to, before any sweep at np. */
+static inline ulong *cap_above(t_node *np) {
+    return nodes[np->level - 1].cap;
+}
+
 /* Populate midpp[] with the capped min and max p for each possible
  * allocation of p^{x-1} at each v_i.
  */
 void prep_midp(t_node *prev_node) {
+    ulong *upper = cap_above(prev_node);
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
         uint vil = cur_vlevel[vi];
@@ -4427,12 +4436,14 @@ void prep_midp(t_node *prev_node) {
         uint t = ap->t;
         if (highpow ? t == 1 : ispow2_u64(t))
             continue;
-        /* Under need_maxp no strategy allocates at a position whose
-         * remaining tau is an odd prime: best_v0() .. best_v4() skip it
-         * ("skip prime powers when capped"), and best_fixed() and
-         * best_6x() walk instead. Such a position is a fixed square (or
-         * higher power), covered by the walks for every size of root,
-         * so a p^{x-1} allocation here would only duplicate that. */
+        /* Below a sweep allocations are capped, and then no strategy
+         * allocates at a position whose remaining tau is an odd prime:
+         * best_v0() .. best_v4() skip it ("skip prime powers when
+         * capped"), and best_fixed() and best_6x() walk instead. Such a
+         * position is a fixed square (or higher power), covered by the
+         * walks for every size of root, so a p^{x-1} allocation here
+         * would only duplicate that.
+         */
         if ((t & 1) && divisors[t].alldiv == 2)
             continue;
         t_divisors *dp = &divisors[t];
@@ -4450,8 +4461,8 @@ void prep_midp(t_node *prev_node) {
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
 
-            /* our range of interest is p: maxp[e] < p <= midp[e] */
-            ulong target_maxp = midp[x - 1];
+            /* our range of interest is p: maxp[e] < p <= upper[e] */
+            ulong target_maxp = upper ? upper[x - 1] : 0;
             ulong target_minp = maxp[x - 1];
             if (mpz_fits_ulong_p(Z(temp))) {
                 ulong target_limit = mpz_get_ui(Z(temp));
@@ -4753,6 +4764,17 @@ bool apply_batch(
     return 1;
 }
 
+/* A batch is complete at np: under -W it is to be swept above the -W
+ * threshold, which then caps the allocations below it. Returns TRUE if
+ * it is to be swept.
+ */
+static inline bool sweep_batch(t_node *np) {
+    if (!need_midp)
+        return 0;
+    np->cap = maxp;
+    return 1;
+}
+
 /* A complete set of forced primes has been allocated, or under -a4 a
  * set cut short by a value fully allocated. We may process
  * this batch or skip it, according to batch options; we also handle
@@ -4793,7 +4815,7 @@ bool process_batch(t_node *cur_node, bool recover) {
         }
     }
   do_process:
-    if (need_midp) {
+    if (sweep_batch(cur_node)) {
         walk_midp(cur_node, recover);
         if (midp_only)
             return 0;
@@ -4806,6 +4828,11 @@ bool process_batch(t_node *cur_node, bool recover) {
     return 1;
 }
 
+/* Whether allocations at cur_act's level are capped (see t_node.cap). */
+static inline bool is_capped(t_act *cur_act) {
+    return nodes[cur_act->level - 1].cap != NULL;
+}
+
 uint best_v(t_act *cur_act);
 
 /* Choose that v_i with the highest t_i still to fulfil, or (on equality)
@@ -4813,6 +4840,7 @@ uint best_v(t_act *cur_act);
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v0(t_act *cur_act) {
+    bool capped = is_capped(cur_act);
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4828,7 +4856,7 @@ uint best_v0(t_act *cur_act) {
         if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         if (ti) {
             /* skip if not higher tau, or same tau with higher q */
@@ -4850,6 +4878,7 @@ uint best_v0(t_act *cur_act) {
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v1(t_act *cur_act) {
+    bool capped = is_capped(cur_act);
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4865,7 +4894,7 @@ uint best_v1(t_act *cur_act) {
         if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         if (ti) {
             uint hi = divisors[ti].high;
@@ -4889,6 +4918,7 @@ uint best_v1(t_act *cur_act) {
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v2(t_act *cur_act) {
+    bool capped = is_capped(cur_act);
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4904,7 +4934,7 @@ uint best_v2(t_act *cur_act) {
         if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         if (ti) {
             /* skip if not lower tau, or same tau with higher q */
@@ -4924,6 +4954,7 @@ uint best_v2(t_act *cur_act) {
  * was the square root of the remaining tau (and unforced), always take it.
  */
 uint best_v3(t_act *cur_act) {
+    bool capped = is_capped(cur_act);
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4939,7 +4970,7 @@ uint best_v3(t_act *cur_act) {
         if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         /* shortcircuit if single allocation of (even) sqrt(n) */
         if ((tj & 1) == 0 && apj->x == apj->t) {
@@ -4978,6 +5009,7 @@ uint best_v3(t_act *cur_act) {
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v4(t_act *cur_act) {
+    bool capped = is_capped(cur_act);
     uint vi, ti = 0, hi;
     ulong mini;
     mpz_t *qi, *limi;
@@ -4996,7 +5028,7 @@ uint best_v4(t_act *cur_act) {
         if (divisors[tj].high <= (highpow ? 1 : 2))
             continue;
         /* skip prime powers when capped */
-        if (need_maxp && (tj & 1) && divisors[tj].alldiv == 2)
+        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
             continue;
         uint hj = divisors[tj].high;
         if (ti) {
@@ -5274,7 +5306,7 @@ uint best_fixed(t_act *cur_act) {
     if (t == 1)
         return BV_WALK;
     /* skip prime powers when capped (invariant) */
-    if (need_maxp && (t & 1) && divisors[t].alldiv == 2)
+    if (is_capped(cur_act) && (t & 1) && divisors[t].alldiv == 2)
         return BV_WALK;
     return vi;
 }
@@ -5408,8 +5440,9 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
         mpz_root(Z(lp_x), Z(lp_x), x - 1);
     }
 
-    if (maxp[x - 1] && mpz_cmp_ui(Z(lp_x), maxp[x - 1]) > 0)
-        return maxp[x - 1];
+    ulong *cap = nodes[cur_act->level - 1].cap;
+    if (cap && cap[x - 1] && mpz_cmp_ui(Z(lp_x), cap[x - 1]) > 0)
+        return cap[x - 1];
     if (!mpz_fits_ulong_p(Z(lp_x)))
         return 0;
     if (mpz_sgn(Z(lp_x)) <= 0)
@@ -5614,9 +5647,9 @@ e_pux limit_unforced_x(
             return PUX_FLIP_PQSQ;
         return PUX_SKIP_THIS_X; /* nothing to do here */
     }
-    /* TODO: rather than diverting odd-prime-tau positions to a walk under
-     * need_maxp, consider handling them always via walk_1_set(), as the
-     * uncapped search does. That would mean not applying the maxp cap in
+    /* TODO: rather than diverting odd-prime-tau positions to a walk where
+     * capped, consider handling them always via walk_1_set(), as the
+     * uncapped search does. That would mean not applying the cap in
      * limit_p() when nextt == 1 with t prime (so walk_1_set() covers every p
      * itself, even under -W/-p), and removing the "skip prime powers when
      * capped" checks from best_v0() .. best_v4() and best_fixed();
@@ -6126,6 +6159,10 @@ e_is insert_stack(void) {
             if (!insert_forced(rstack->f, NULL, fpi, &jump, 0))
                 goto insert_check;
         }
+
+        /* the batch is complete: cap below it as process_batch() does */
+        if (!nodes[level - 1].fp_need)
+            sweep_batch(&nodes[level - 1]);
 
         /* Insert the rest in strategy-allocated order except as
          * overridden by explicit levels marked in a 315 recovery line.
