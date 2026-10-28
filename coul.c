@@ -6129,16 +6129,15 @@ e_is insert_stack(void) {
                 cur_act->choice_strategy = strategy;
                 cur_act->unsorted = 1;
             } else {
-                vi = best_v(cur_act);
-                cur_act->choice_strategy = strategy;
-                cur_act->unsorted = 0;
-                if (vi >= BV_SPECIAL) {
-                    if (vi == BV_6X)
+                e_choice ch = choose_action(cur_act);
+                if (ch != CH_UNFORCED) {
+                    if (ch == CH_6X)
                         jump = IS_6X;
                     /* CHECKME: should we be handling the other cases here?
-                     * BV_WALK -> IS_RWALK, BV_NEXTX -> IS_NEXTX */
+                     * CH_WALK -> IS_RWALK, CH_NOTHING -> IS_NEXTX */
                     break;
                 }
+                vi = cur_act->vi;
             }
             if (act_recover.action == A_FLIP
                     && restore_flip(vi, &rstack->f[vi])) {
@@ -6489,10 +6488,10 @@ void recurse(e_is jump_continue) {
         goto unwind;
       }
       case IS_6X: {
-        uint vi = best_6x(actp);   /* re-verify */
-        if (vi != BV_6X)
-            fail("panic: best_6x() call on recovery returned %u, not %u",
-                    vi, BV_6X);
+        e_choice ch = choose_action(actp);  /* re-verify */
+        if (ch != CH_6X)
+            fail("panic: choose_action() on recovery chose %u, not %u",
+                    ch, CH_6X);
         walk_6x(actp->vi);
         goto unwind;
       }
