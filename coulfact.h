@@ -1,6 +1,7 @@
 #ifndef COULFACT_H
 #define COULFACT_H 1
 #include "types.h"
+#include "builtins.h"
 #include <gmp.h>
 
 typedef struct s_ppow {
@@ -72,6 +73,35 @@ static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
     return result;
 }
 #endif
+
+/* a^e mod m */
+static inline ulong powmod_u64(ulong a, ulong e, ulong m) {
+    ulong r = 1;
+    for (a %= m; e; e >>= 1) {
+        if (e & 1)
+            r = mulmod_u64(r, a, m);
+        a = mulmod_u64(a, a, m);
+    }
+    return r;
+}
+
+/* the Jacobi symbol (a / n) for odd n */
+static inline int jacobi_u64(ulong a, ulong n) {
+    int t = 1;
+    a %= n;
+    while (a) {
+        uint z = trailing_zeroes_u64(a);
+        a >>= z;
+        if ((z & 1) && ((n & 7) == 3 || (n & 7) == 5))
+            t = -t;
+        if ((a & 3) == 3 && (n & 3) == 3)
+            t = -t;
+        ulong r = n % a;
+        n = a;
+        a = r;
+    }
+    return (n == 1) ? t : 0;
+}
 
 /* CRT for a prime power: as chinese_ppow() but with known inverse ai */
 static inline void chinese_ppow_ai(

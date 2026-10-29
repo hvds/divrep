@@ -4507,6 +4507,9 @@ char *parse_midp(char *s) {
     return s + 1;
 }
 
+static ulong square_endr(t_node *np);
+static inline bool reject_square(ulong p, long d, ulong endr);
+
 /* Try all ways of allocating p^{x-1} at v_i for any p above the selected
  * -W limit.
  * If 'recover' is true, we initialize the state from act_recover, and
@@ -4526,6 +4529,8 @@ void walk_midp(t_node *prev_node, bool recover) {
     prep_midp(prev_node);
     if (midppc == 0)
         goto walk_midp_done;
+    /* for reject_square() */
+    ulong endr = square_endr(prev_node);
 
     level_setp(cur_act, midpp[0].maxp);
     /* setp has set to a prime <= target */
@@ -4600,6 +4605,16 @@ void walk_midp(t_node *prev_node, bool recover) {
                 continue;
             vi = mp->vi;
             x = mp->x;
+            if (endr && x == 3 && vi != sq0 && reject_square(p,
+                    (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi), endr)) {
+                /* as apply_single() would leave it, for the progress line */
+                cur_act->vi = vi;
+                cur_act->p = p;
+                cur_act->x = x;
+                if (need_work)
+                    diag_attempt(cur_node, vi, p, x);
+                continue;
+            }
             if (apply_single(prev_node, cur_node, vi, p, x)) {
                 if (need_work)
                     diag_plain(cur_node);
@@ -5537,6 +5552,109 @@ static inline void reject_prep(t_node *prev, t_act *cur_act) {
 #endif
 }
 
+/* The greatest root z of a fixed square v_j = q.z^2 within zmax, given
+ * exactly one fixed and that a square; else 0, or if it would not fit.
+ */
+static ulong square_endr(t_node *np) {
+    if (np->have_square != 1)
+        return 0;
+    uint sql = cur_vlevel[sq0];
+    if (sqg[sql - 1] != 2)
+        return 0;
+    mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(sq0));
+    mpz_fdiv_q(Z(temp), Z(temp), value[sq0].alloc[sql - 1].q);
+    mpz_sqrt(Z(temp), Z(temp));
+    return mpz_fits_ulong_p(Z(temp)) ? mpz_get_ui(Z(temp)) : 0;
+}
+
+/* prepare for reject_square() on a loop of p^{x-1} at v_i below prev */
+static inline void reject_prep_square(
+    t_node *prev, t_act *cur, uint vi, uint x
+) {
+    cur->rs_ok = 0;
+    if (x != 3 || vi == sq0)
+        return;
+    cur->rs_endr = square_endr(prev);
+    if (!cur->rs_endr)
+        return;
+    cur->rs_d = (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi);
+    cur->rs_ok = 1;
+}
+
+/* a square root of the quadratic residue a mod an odd prime p */
+static inline ulong sqrtmod_u64(ulong a, ulong p) {
+    if ((p & 3) == 3)
+        return powmod_u64(a, (p + 1) >> 2, p);
+    /* Tonelli-Shanks */
+    ulong q = p - 1, n = 2;
+    uint s = trailing_zeroes_u64(q);
+    q >>= s;
+    while (jacobi_u64(n, p) != -1)
+        ++n;
+    ulong c = powmod_u64(n, q, p);
+    ulong r = powmod_u64(a, (q + 1) >> 1, p);
+    ulong t = powmod_u64(a, q, p);
+    while (t != 1) {
+        uint i = 0;
+        for (ulong u = t; u != 1; u = mulmod_u64(u, u, p))
+            ++i;
+        ulong b = c;
+        for (uint j = i + 1; j < s; ++j)
+            b = mulmod_u64(b, b, p);
+        r = mulmod_u64(r, b, p);
+        c = mulmod_u64(b, b, p);
+        t = mulmod_u64(t, c, p);
+        s = i;
+    }
+    return r;
+}
+
+/* True if allocating p^2 at a position d places before the fixed square
+ * v_j = q.z^2 is sure to be rejected for having no root z up to endr; if
+ * false, it may still be. We need q.z^2 == d (mod p^2). Half the primes
+ * fail that mod p, which the Jacobi symbol shows without extending the
+ * residues of z to p. Of the rest, once p^2 > endr at most the two roots
+ * +-z mod p^2 can be in range, and usually neither is: one root mod p,
+ * lifted to p^2, shows that. Only what is left need have the residues
+ * extended.
+ */
+static inline bool reject_square(ulong p, long d, ulong endr) {
+    if (!(p & 1))
+        return 0;
+    mpz_t *q = &value[sq0].alloc[cur_vlevel[sq0] - 1].q;
+    ulong qm = mpz_fdiv_ui(*q, p);
+    ulong dm = (d < 0) ? (ulong)(-d) % p : (ulong)d % p;
+    if (qm == 0 || dm == 0)
+        return 0;
+    if (d < 0)
+        dm = p - dm;
+    if (jacobi_u64(mulmod_u64(dm, qm, p), p) != 1)
+        return 1;
+    if (p <= endr / p)
+        return 0;
+#ifdef HAVE_UINT128
+    /* z == s (mod p) */
+    ulong s = sqrtmod_u64(mulmod_u64(dm, invert_u64(qm, p), p), p);
+    /* z == s + p.t (mod p^2), with 2.q.s.t == (d - q.s^2) / p (mod p) */
+    mpz_mul_ui(Z(temp), *q, s);
+    mpz_mul_ui(Z(temp), Z(temp), s);
+    if (d < 0)
+        mpz_add_ui(Z(temp), Z(temp), (ulong)(-d));
+    else
+        mpz_sub_ui(Z(temp), Z(temp), (ulong)d);
+    mpz_neg(Z(temp), Z(temp));
+    mpz_divexact_ui(Z(temp), Z(temp), p);
+    ulong u = mpz_fdiv_ui(Z(temp), p);
+    ulong den = mulmod_u64(mulmod_u64(2, qm, p), s, p);
+    ulong t = mulmod_u64(u, invert_u64(den, p), p);
+    uint128 z = (uint128)p * t + s;
+    return z > endr && (uint128)p * p - z > endr;
+#else
+    /* that needs 128 bits: without them, p is not rejected here */
+    return 0;
+#endif
+}
+
 /* aq and rq of prev, mod m */
 static inline void reject_mod(
     t_node *prev, bool limb, ulong m, ulong *am, ulong *rm
@@ -5729,11 +5847,13 @@ bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
 static inline void set_unforced_x(
     t_node *prev_node, t_act *cur_act, ulong p, ulong limp
 ) {
+    uint x = divisors[cur_act->ti].div[cur_act->di];
     level_setp(cur_act, p);
-    cur_act->x = divisors[cur_act->ti].div[cur_act->di];
+    cur_act->x = x;
     cur_act->limp = limp;
     cur_act->max_at = seen_best;
     reject_prep(prev_node, cur_act);
+    reject_prep_square(prev_node, cur_act, cur_act->vi, x);
     /* TODO: do some constant alloc stuff in advance */
 }
 
@@ -6428,6 +6548,7 @@ bool next_unforced(t_act *cur_act) {
             cur_act->limp = limp;
             cur_act->max_at = seen_best;
             reject_prep(prev_node, cur_act);
+            reject_prep_square(prev_node, cur_act, cur_act->vi, cur_act->x);
         }
         /* note: only valid to use from just below here */
       redo_unforced: ;
@@ -6441,8 +6562,10 @@ bool next_unforced(t_act *cur_act) {
         if (known_prime(prev_node, p))
             goto redo_unforced;
         /* p stays the cursor, as when apply_single() fails */
-        if (cur_act->rj_ok && (p & 1) && reject_single(
+        if ((cur_act->rj_ok && (p & 1) && reject_single(
             prev_node, cur_act, cur_act->vi, p, cur_act->x
+        )) || (cur_act->rs_ok
+            && reject_square(p, cur_act->rs_d, cur_act->rs_endr)
         )) {
             cur_act->p = p;
             if (need_work)
