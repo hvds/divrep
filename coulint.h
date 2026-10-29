@@ -1,8 +1,8 @@
 #ifndef COULINT_H
 #define COULINT_H
 
-/* Internals of coul.c shared with its helpers (trace.c, bench.c), not
- * needed by the other modules.
+/* Internals of coul.c shared with its helpers (coulcost.c, trace.c,
+ * bench.c), not needed by the other modules.
  */
 
 #include "coul.h"
@@ -21,8 +21,9 @@
 #   error "No type defined"
 #endif
 
-/* the clock for timing parts of the work (see coul.c) */
+/* the clock for timing parts of the work, and its unit (see coul.c) */
 extern double work_clock(void);
+extern double work_clock_ghz(void);
 
 extern uint maxfact, sq0, *sqg, *cur_vlevel, *oc_t, seen_best;
 extern mpz_t zmin, zmax, *wv_o, *wv_qq;
