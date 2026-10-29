@@ -14,7 +14,9 @@
 #include "coulcost.h"
 
 /* The cost table and the models built on it are compiled into every
- * build: the mocks (mock.c) charge them in place of the work.
+ * build: -ja learning charges the factoring ladder its expected cost
+ * from them (cm_ladder_cost()), -ja prices tests and walks from them,
+ * and the mocks (mock.c) charge them in place of the work.
  *
  * A walk costs, per iteration: loop + P_inv * (C_p + P_prime * C_m) for
  * a linear walk, loop_sq + P_inv * (C_sq + P_sq * (C_p + P_prime * C_m))
@@ -131,6 +133,8 @@ typedef struct {
     bool seen;
     bool is_time;
     double dflt;    /* if not 0, the value for a table without it */
+    double bad;     /* if not 0, the negative value taken as 0 */
+    bool opt;       /* 0 for a table without it */
 } t_cmc;
 static t_cmc cm_C[] = {
     { "loop0", 0, 0, 1 },       /* linear walk per ati */
@@ -149,8 +153,65 @@ static t_cmc cm_C[] = {
      * multibench-table does not fit it yet, so this value stands.
      */
     { "capply", 0, 0, 1, 0.5e-6 },
+    /* Linear walk per inverse-filter entry set up, and fixed-power walk
+     * per root residue (0 for a table from before they were fitted
+     * apart from the setup).
+     */
+    { .name = "linsetupinv", .is_time = 1, .opt = 1 },
+    { .name = "sqsetupres", .is_time = 1, .opt = 1 },
+    /* walk_1_set() per call (0 for a table from before it was fitted) */
+    { .name = "w1scall", .is_time = 1, .opt = 1 },
+    /* Recurse loop, the further cost of each prime that reaches
+     * apply_single() and is rejected there, not in single limbs (see
+     * reject_single()): about 10 times that of one rejected in single
+     * limbs, measured in situ on D(44,7) -x1e42 (2550 cycles against
+     * 200-350). multibench-table does not fit it yet, so this value
+     * stands.
+     */
+    { "cfail", 0, 0, 1, 1.1e-6 },
 };
 #define CMC(i) (cm_C[i].v)
+
+/* The "K" rows: costs per step of the test preparation, fitted in situ
+ * to T records, and of a prime test's preparation by its result, to U
+ * records (see multibench-table, section situ). Without them, each is
+ * priced from the S, R and P rows.
+ * A prime test's preparation (pprep<res>...) costs about the same for
+ * any value of up to CM_PP_SMALL bits, then about linearly in the bits,
+ * with a step for a value of more than one limb, as MPU::GMP's pretest
+ * goes: so the rows give its cost up to CM_PP_SMALL bits (small), and
+ * above that its cost at CM_PP_SMALL bits (at16) and per bit beyond
+ * (bit), and what a second limb adds (limb). A table from before that
+ * has instead a line through 0 bits (pprep<res> and the same bit).
+ */
+#define CM_PP_SMALL 16  /* as multibench-table's fit_prep() */
+enum { CMK_CALL, CMK_STEP1, CMK_STEP2, CMK_STEP3, CMK_GCD0, CMK_GCD1,
+        CMK_GCD2, CMK_GCD3, CMK_GCD4, CMK_PBIT, CMK_POWER, CMK_PP0,
+        CMK_PP0BIT, CMK_PP1, CMK_PP1BIT, CMK_PP2, CMK_PP2BIT, CMK_ZBIT,
+        CMK_PP0SMALL, CMK_PP1SMALL, CMK_PP2SMALL, CMK_PP0AT16, CMK_PP1AT16,
+        CMK_PP2AT16, CMK_PP0LIMB, CMK_PP1LIMB, CMK_PP2LIMB, CMK_COUNT };
+static const char *cm_kname[CMK_COUNT] = {
+    "prepcall", "prepstep1", "prepstep2", "prepstep3", "prepgcd0",
+    "prepgcd1", "prepgcd2", "prepgcd3", "prepgcd4", "preppbit",
+    "preppower", "pprep0", "pprep0bit", "pprep1", "pprep1bit", "pprep2",
+    "pprep2bit", "prepzbit", "pprep0small", "pprep1small", "pprep2small",
+    "pprep0at16", "pprep1at16", "pprep2at16", "pprep0limb", "pprep1limb",
+    "pprep2limb"
+};
+#define CMK_ISPP(i) (((i) >= CMK_PP0 && (i) <= CMK_PP2BIT) || (i) > CMK_ZBIT)
+static struct {
+    bool seen, pseen;   /* the rows for test_multi(), and prime tests */
+    double v[CMK_COUNT];
+    bool vseen[CMK_COUNT];
+    double bad[CMK_COUNT];  /* as t_cmc.bad */
+} cm_K;
+/* The prices of a prime test's preparation by result and bits up to
+ * CM_PP_MAXB, made from the K rows on loading (see cm_pp_model()).
+ */
+#define CM_PP_MAXB 1024
+static double cm_pp[3][CM_PP_MAXB + 1];
+static bool cm_sq_raised = 0;   /* cprimesq was below cprime */
+static double cm_sq_bad;        /* if so, what it was */
 
 static void cm_add1(t_cm1 *tp, double bits, double v0, double v1) {
     if (tp->nb == CM_MAXB)
@@ -272,6 +333,51 @@ static char *cm_line(char *buf, size_t size, FILE *fp, const char **src) {
     return buf;
 }
 
+/* The price of a prime test's preparation with result res for a value
+ * of nbits bits, from the K rows: where those have nothing for its size
+ * (as for result 2, which needs a value too large for the pretest to
+ * decide), the line for the larger values, extended to it but not below
+ * 0.
+ */
+static double cm_pp_model(uint nbits, int res) {
+    const double *v = cm_K.v;
+    const bool *seen = cm_K.vseen;
+    double bit = v[CMK_PP0BIT + 2 * res];
+    if (!seen[CMK_PP0AT16 + res])
+        return v[CMK_PP0 + 2 * res] + nbits * bit;
+    if (nbits <= CM_PP_SMALL && seen[CMK_PP0SMALL + res])
+        return v[CMK_PP0SMALL + res];
+    double c = v[CMK_PP0AT16 + res] + ((double)nbits - CM_PP_SMALL) * bit;
+    if (nbits > 64)
+        c += v[CMK_PP0LIMB + res];
+    return (c < 0) ? 0 : c;
+}
+
+/* Report what cm_load() found wrong with the table and put right. */
+static void cm_report_bad(void) {
+    for (uint i = 0; i < CM_COUNT; ++i)
+        if (cm_C[i].bad)
+            report("000 cost table: C %s %g negative, taken as 0\n",
+                    cm_C[i].name, cm_C[i].bad * 1e6);
+    for (uint i = 0; i < CMK_COUNT; ++i)
+        if (cm_K.bad[i])
+            report("000 cost table: K %s %g negative, taken as 0\n",
+                    cm_kname[i], cm_K.bad[i] * 1e6);
+    if (cm_sq_raised)
+        report("000 cost table: C cprimesq %g below cprime, raised to it\n",
+                cm_sq_bad * 1e6);
+}
+
+/* Once the log is open: report what was wrong with the table, now if it
+ * is loaded, else when it is.
+ */
+static bool cm_report_due = 0;
+void cm_table_report(void) {
+    cm_report_due = 1;
+    if (cm_loaded)
+        cm_report_bad();
+}
+
 static void cm_load(void) {
     cm_loaded = 1;
     mpz_init(cm_tmp);
@@ -302,6 +408,18 @@ static void cm_load(void) {
         }
         uint t, e, b, F;
         double v[6];
+        if (sscanf(line, "K %31s %lf", name, &v[0]) == 2) {
+            for (uint i = 0; i < CMK_COUNT; ++i)
+                if (strcmp(name, cm_kname[i]) == 0) {
+                    cm_K.v[i] = v[0] * 1e-6;
+                    cm_K.vseen[i] = 1;
+                    if (CMK_ISPP(i))
+                        cm_K.pseen = 1;
+                    else
+                        cm_K.seen = 1;
+                }
+            continue;
+        }
         if (sscanf(line, "C %31s %lf", name, &v[0]) == 2) {
             for (uint i = 0; i < CM_COUNT; ++i)
                 if (strcmp(name, cm_C[i].name) == 0) {
@@ -387,10 +505,36 @@ static void cm_load(void) {
         fclose(fp);
     for (uint i = 0; i < CM_COUNT; ++i)
         if (!cm_C[i].seen) {
-            if (!cm_C[i].dflt)
+            if (!cm_C[i].dflt && !cm_C[i].opt)
                 fail("cost table: %s: no value for C %s", fn, cm_C[i].name);
             cm_C[i].v = cm_C[i].dflt;
         }
+    /* No cost is negative, and multibench-table fits none so: one that
+     * is shows a bug in making the table, so is taken as 0 and reported
+     * (see cm_table_report()). Likewise cprimesq is at least cprime,
+     * since a fixed power's roots are costed at the difference.
+     */
+    for (uint i = 0; i < CM_COUNT; ++i)
+        if (cm_C[i].is_time && cm_C[i].v < 0) {
+            cm_C[i].bad = cm_C[i].v;
+            cm_C[i].v = 0;
+        }
+    for (uint i = 0; i < CMK_COUNT; ++i)
+        if (cm_K.v[i] < 0) {
+            cm_K.bad[i] = cm_K.v[i];
+            cm_K.v[i] = 0;
+        }
+    if (CMC(CM_CPRIMESQ) < CMC(CM_CPRIME)) {
+        cm_sq_raised = 1;
+        cm_sq_bad = CMC(CM_CPRIMESQ);
+        CMC(CM_CPRIMESQ) = CMC(CM_CPRIME);
+    }
+    if (cm_report_due)
+        cm_report_bad();
+    if (cm_K.pseen)
+        for (int res = 0; res < 3; ++res)
+            for (uint b = 0; b <= CM_PP_MAXB; ++b)
+                cm_pp[res][b] = cm_pp_model(b, res);
     if (!cm_P.nb || !cm_R.nb)
         fail("cost table: %s: need P and R rows", fn);
     if (!cm_nscan)
@@ -1169,11 +1313,161 @@ static int cm_lad_cmp(const void *va, const void *vb) {
     return (a->lb > b->lb) - (a->lb < b->lb);
 }
 
+/* The expected cost of the trial division a test makes on a value of
+ * log2 lg with no known structure, and the chance that it finds no
+ * factor: which is 0 for test_multi_append(), 1 for test_prime_append().
+ * A value is taken to be divisible by each trial prime p independently
+ * with probability 1/p, and the test to stop at the first, at the cost
+ * the S rows give for stopping there. Cached by size.
+ */
+#define CM_TRMAX 1024
+static double cm_tr_cost[2][CM_TRMAX], cm_tr_surv[2][CM_TRMAX];
+static double cm_trial_random(double lg, uint which, double *surv) {
+    uint nb = cm_nbits(lg);
+    if (nb < CM_TRMAX && cm_tr_cost[which][nb] > 0) {
+        *surv = cm_tr_surv[which][nb];
+        return cm_tr_cost[which][nb];
+    }
+    t_cmscan *sc = cm_scan_find(lg, 0);
+    double reach = 1, cost = 0;
+    for (uint i = 0; i < cm_ntp && cm_tp[i] <= sc->L; ++i) {
+        uint p = cm_tp[i];
+        cost += reach / p * cm_scan_cost(sc, p, which);
+        reach *= 1 - 1.0 / p;
+    }
+    cost += reach * cm_scan_cost(sc, sc->L, which);
+    if (nb < CM_TRMAX) {
+        cm_tr_cost[which][nb] = cost;
+        cm_tr_surv[which][nb] = reach;
+    }
+    *surv = reach;
+    return cost;
+}
+
+static inline double cm_lg(mpz_t n) {
+    long ex;
+    double d = mpz_get_d_2exp(&ex, n);
+    return log2(d) + ex;
+}
+
+/* The expected cost of test_prime_append() and the prime test that
+ * follows if trial division finds no factor, for the value n.
+ */
+double cm_price_prime(mpz_t n) {
+    double lg = cm_lg(n), surv;
+    double c = cm_trial_random(lg, 1, &surv);
+    return c + surv * cm_interp1(&cm_P, lg, 1);
+}
+
+/* The price of tau_multi_prep() for a value of nbits bits, by what it
+ * did (*w): with K rows, its steps at their costs found in situ; else
+ * the S rows' cost of trial division stopping at the prime w->stop_p
+ * (where it found a factor ruling the value out, or reached its limit
+ * or the square root), and if it ran to the end, the primality test
+ * that follows, from the R rows.
+ */
+double cm_prep_price(uint nbits, const t_ct_work *w) {
+    if (cm_K.seen) {
+        /* by the work it did, at the costs found in situ */
+        uint limbs = (nbits + 63) / 64;
+        if (limbs > 3)
+            limbs = 3;
+        double c = cm_K.v[CMK_CALL] + w->steps * cm_K.v[CMK_STEP1 + limbs - 1]
+                + w->pbits * cm_K.v[CMK_PBIT] + w->zbits * cm_K.v[CMK_ZBIT]
+                + w->npower * cm_K.v[CMK_POWER];
+        for (uint b = 0; b < 5; ++b)
+            c += w->gcd[b] * cm_K.v[CMK_GCD0 + b];
+        return c;
+    }
+    double lg = nbits - 0.5;
+    t_cmscan *sc = cm_scan_find(lg, 0);
+    double c = cm_scan_cost(sc, w->stop_p, 0);
+    if (w->full)
+        c += cm_interp1(&cm_R, lg, 1);
+    return c;
+}
+
+/* The price of tau_prime_prep() for a value of nbits bits, by its
+ * result res: 0 if trial division found a factor, 1 if it found the
+ * value prime, 2 if a prime test must follow. With K rows, as
+ * cm_pp_model() has it for each; else for 0 the mean cost of stopping at
+ * a trial prime, for a value without special structure, and for 2 the
+ * cost the P rows give with that of the trial division.
+ */
+double cm_pprep_price(uint nbits, int res) {
+    if (cm_K.pseen)
+        return (nbits <= CM_PP_MAXB) ? cm_pp[res][nbits]
+                : cm_pp_model(nbits, res);
+    double lg = nbits - 0.5, surv;
+    if (res == 2)
+        return cm_interp1(&cm_P, lg, 1);
+    t_cmscan *sc = cm_scan_find(lg, 0);
+    if (res == 1)
+        return cm_scan_cost(sc, sc->L, 1);
+    double c = cm_trial_random(lg, 1, &surv);
+    double full = surv * cm_scan_cost(sc, sc->L, 1);
+    return (surv < 1) ? (c - full) / (1 - surv) : c;
+}
+
+/* The price of a prime test made by tau_prime_run() on a value of nbits
+ * bits: with K rows, as for those tau_multi_prep() makes; else nothing,
+ * cm_pprep_price() having charged it.
+ */
+double cm_ptest_price(uint nbits) {
+    if (!cm_K.seen || !cm_K.pseen)
+        return 0;
+    return nbits * cm_K.v[(nbits <= 64) ? CMK_PBIT : CMK_ZBIT];
+}
+
 /* the table's scalar costs (see cm_C[]), in seconds */
 double cm_const(uint which) {
     if (!cm_loaded)
         cm_load();
     return cm_C[which].v;
+}
+
+/* Whether a cost table is available: always, since there is a built-in
+ * default, unless that is empty and none is named.
+ */
+bool cm_have_table(void) {
+    static int have = -1;
+    if (have < 0) {
+        have = (getenv("COST_TABLE") || cm_default_table[0]) ? 1 : 0;
+        if (have && !cm_loaded)
+            cm_load();
+    }
+    return have;
+}
+
+/* The expected cost of tau_multi_run() on the values pending in tm[0]
+ * .. tm[count - 1] (those with state 0 are already done): what -ja
+ * learning charges in place of the time it actually takes, which is
+ * heavy-tailed. Returns -1 without a cost table.
+ */
+double cm_ladder_cost(uint count, t_tm *tm) {
+    if (!cm_have_table() || !cm_nlad)
+        return -1;
+    /* nor may the arrays be empty */
+    if (count == 0)
+        return 0;
+    t_cmtest test[count], *m[count];
+    uint n = 0;
+    for (uint j = 0; j < count; ++j) {
+        if (tm[j].state == 0)
+            continue;
+        t_cmtest *tp = &test[n];
+        memset(tp, 0, sizeof(*tp));
+        long ex;
+        double d = mpz_get_d_2exp(&ex, tm[j].n);
+        tp->lb = log2(d) + ex;
+        tp->lt = tm[j].t;
+        cm_lad_slots(tm[j].t, tm[j].e, tp->lb, tp->lc, tp->la, 1);
+        m[n++] = tp;
+    }
+    if (n == 0)
+        return 0;
+    qsort(m, n, sizeof(t_cmtest *), &cm_lad_cmp);
+    return cm_lad_interleave(n, m);
 }
 
 /* count of the times cm_other() has found no row in the table for a test */
