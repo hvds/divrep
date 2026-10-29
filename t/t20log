@@ -29,7 +29,9 @@ if ($ENV{DEBUG}) {
 # of them long: a line is written for every prime tried and every walk
 # iteration.
 my $cap = 100000;
-for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }]) {
+for my $args ([qw{ -x1e14 12 4 }], [qw{ -j2 -x1e7 36 4 }],
+        [qw{ -ja2 -x1e14 12 4 }], [qw{ -ja2 -j2 -x1e7 36 4 }],
+        [qw{ -ja2 -j4 -x1e7 12 4 }]) {
     my $fh = File::Temp->new;
     my $path = $fh->filename;
     $fh->close;
