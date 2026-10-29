@@ -9,6 +9,7 @@
  *                 file named by $GATE_STATS (see trace.c)
  *   VB_STAGE   4: with VB_GATE, the time inside each test stage of the
  *                 walks (two clock reads per candidate tested)
+ * The same build also runs the benches ($MULTIBENCH, see bench.c).
  */
 
 #include <stdio.h>
