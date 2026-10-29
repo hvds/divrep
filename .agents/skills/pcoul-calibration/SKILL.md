@@ -1,6 +1,6 @@
 ---
 name: pcoul-calibration
-description: How pcoul costs its own work - the cost table, the mocks, and the option that decides by cost (-ja) - with what was measured and what was tried and dropped
+description: How pcoul costs its own work - the cost table, the mocks, and the options that decide by cost (-ja, -ka) - with what was measured, what was tried and dropped, and what is left to do
 ---
 ## Calibration and cost models for pcoul
 
@@ -485,6 +485,30 @@ made exactly the tests the uninterrupted run made in all, and 2 differed
 measured as the line was written, a walk and each choice on the path to
 it, is not recorded, so the recovered run learns nothing from those.
 
+### -ka (pricing a batch's plan)
+
+Walks of one fixed power alone, model/real per root over 1e6 to 2e6
+roots (2026-10-04, a table with rows for n=18): the eight such batches
+of D(18,5) at its bound 0.88-1.03; four batches each of D(18,5) at 1e27,
+D(18,4) at 1e24 and D(18,3) at 1e20, 0.84-1.13; four of D(18,2) at 1e22,
+1.12-1.18 and one at 1.61, where the cost is nearly all in the ladder
+for the other value. -ka takes its cost per root from this model (see
+cm_root_price()), where the table has the rows for it: for each walk
+it estimates, with the tau left at each position by then. Priced as the
+batch stands throughout, D(18,5) b3 (three positions with tau 6 left,
+at 2.9us a root against 1.3-1.5us with two) was given a plan that took
+1517s against 1120s.
+
+-ap lists the batches as -a does, and shows for each what its estimate
+is made of: the pass, the sweep and the rest, with the nodes and roots
+expected, beside what STRATEGY_6X or walking the batch whole would
+cost. With -ka that is the plan chosen; with -k, -W and -K given it is
+those, which is how to ask what a setting of one's own would cost. On
+three batches of D(18,5) at 1e24 the nodes and roots it expected were
+within 1% of the recursions and walk iterations of the run (b4: 4090
+and 23700 against 4114 and 23788; b5: 19900 and 131000 against 19961
+and 130598; b7: 4090 and 508000 against 4119 and 507778).
+
 ### Findings under a fixed gain (to 2026-09-25)
 
 These predate -ja. They were measured with the gain set by hand and
@@ -648,6 +672,53 @@ the flip also matters more) is not yet known.
 Calibration assumes no candidate lowers zmax during the run; if one does
 substantially, the calibrated options may no longer be optimal.
 
+### To do
+
+1. -ja2 (done, experimental; see above): a real model of x leaving a
+   square, rather than the overestimate corrected by learning; and of
+   recursing near the root, where learning starts blind and single
+   choices are dearest (for now the ratio for recursing is learnt by
+   the size of the node, see ja_rsize()). Measure run-to-run variation
+   as a matter of course where choices depend on timings: one slow run
+   in several is easily missed. Known weakness: when zmax is far above
+   the answer, -ja2 can be slow to find the first candidate, since it
+   optimises the cost of the whole search at the current zmax, not how
+   soon zmax falls. D(24,5) -j4 -x1e13 took 0.57s to the first against
+   0.00s under -ja1 (0.75s against 0.16s in all); with the prior of 1/4
+   it finds the first at once, but takes 0.25s in all. At a zmax near
+   the answer the two are within 0.03s there, so this matters little
+   for runs proving a bound minimal.
+2. Fixed squares under the cost gate: a child that completes a second
+   square (Pell, nearly free) or flips must be costed as such; the
+   per-iteration cost of square walks varies too much between levels
+   to borrow.
+3. Deeper lookahead (a further -ja level), and -W decided per node by
+   cost.
+4. -W per power (-Wx) chosen by cost: -ka so far chooses one bound
+   for every power.
+5. Mock accuracy: the leaf-stub shape in loops of mostly rejected
+   primes; ctail varies by batch (0.187-0.229us per prime, no predictor
+   yet); walks ~6% high on D(48,10); D(90,4) 0.88; fixed-power walks
+   lack the inverse filter's exclusions; the loop0/looptest (and
+   sqsetup/sqloop0) fits are nearly collinear.
+6. The ladder above 299 bits: price the single ECM rung from timed
+   failing attempts and hit rates by smallest-factor size measured at
+   smaller n; end-to-end validation above 159 bits.
+7. The batch harness.
+8. Counted costs: price test preparation from its own work (trial
+   primes tested, gcd bands skipped, prime tests by size) at per-step
+   costs calibrated in situ from instrumented runs, as the walk loops
+   are; likewise apply_single() and the ladder. Then t rows by class
+   of t rather than per t, so that one table serves every n (the
+   largest n with known values is 8000).
+9. After a candidate: a choice to recurse stands until unwinding
+   removes the level, and only its limit falls (as on master). Weigh
+   the remaining cost of staying against that of changing, where a
+   candidate lowers zmax by much (say from 10^120 to 10^118 after
+   months). A walk chosen then must unwind; and recovery rebuilds
+   levels without asking the gate, so a changed choice would need the
+   log to show it.
+
 ### Methodology lessons
 
 - LARGE_MIN (on by default in the Makefile) makes the gate use
@@ -701,3 +772,6 @@ substantially, the calibrated options may no longer be optimal.
 - rungbench, a standalone bench of single rungs of the ladder: its pq
   mode built n = p*q, so multiplicity was 1 by construction and said
   nothing of real inputs. The ladder bench in bench.c replaced it.
+- kplan, a script that chose -k, -W and -K per batch before -ka did: a
+  second implementation of pcoul's estimate, which had drifted from
+  it within two days. pcoul now shows its own, with -ap.
