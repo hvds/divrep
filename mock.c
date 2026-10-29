@@ -80,9 +80,14 @@ static void mock_clock_init(void) {
  * If instead the first child walks a fixed power (nqc == 1), whose cost
  * varies too irregularly with p to integrate, the loop is sampled: above
  * ML_SQ_PMIN (so that the cost changes little across a stride) every
- * ML_STRIDE-th prime runs normally, and each prime in between is only
- * iterated, and charged c_prime_sq plus the walk cost of the last prime
- * run. If a sampled child recurses, the loop reverts to running normally.
+ * ML_STRIDE-th prime that passes the early rejections (known_prime(),
+ * reject_single(), reject_square()) runs normally, and each of the others
+ * passing them is charged c_prime_sq less c_prime plus the walk cost of
+ * the last prime run; those rejected run for real, as do the iteration
+ * and the rejection tests of every prime. That matches what pcoul
+ * counts, cprime for each prime and the difference for those reaching
+ * apply_single() (rec_sq). If a sampled child recurses, the loop reverts
+ * to running normally.
  * Loops above the leaves (ML_NOT) are strided likewise above ML_SQ_PMIN:
  * of each ML_STRIDE * ML_BLOCK primes the first ML_BLOCK run normally,
  * timed together (real time, and mock cost charged within them), and
@@ -90,8 +95,8 @@ static void mock_clock_init(void) {
  * single child spreads the cost of the clock reads over ML_BLOCK
  * children.
  * With $MOCK_LEAF_OFF set, leaf loops are identified but not stubbed,
- * so that comparing the two gives c_prime and c_prime_sq (the counts of
- * primes stubbed are reported at the end of the run).
+ * so that comparing the two gives c_prime, and c_prime_sq less c_prime
+ * (the counts of primes stubbed are reported at the end of the run).
  */
 #define ML_MAX 256
 #define ML_PENDING 1
@@ -104,7 +109,7 @@ static void mock_clock_init(void) {
 static uint ml_state[ML_MAX];
 static double ml_iter_cost[ML_MAX], ml_r0[ML_MAX];
 static ulong ml_p0[ML_MAX];
-static ulong ml_count[ML_MAX];      /* ML_SQ: primes seen */
+static ulong ml_count[ML_MAX];      /* ML_SQ: primes passing the rejections */
 static double ml_walk[ML_MAX];      /* ML_SQ: walk cost of last prime run */
 /* Striding other loops: whether a sample block is running and how many
  * of its children have finished, when it started (clock, mock overhead
@@ -367,6 +372,23 @@ bool mock_loop_leaf(t_act *cur_act) {
     return 1;
 }
 
+/* next_unforced() has a prime p for the loop at this level that passed
+ * the early rejections: go on with it, or skip it (charged), if the loop
+ * walks a fixed power.
+ */
+e_mock_loop mock_loop_sq(t_act *cur_act, ulong p) {
+    uint level = cur_act->level;
+    if (level >= ML_MAX || g_ml_off || ml_state[level] != ML_SQ)
+        return MOCK_LOOP_GO;
+    if (p > ML_SQ_PMIN && ml_count[level]++ % ML_STRIDE) {
+        g_mock_spent_s += MC(CM_CPRIMESQ) - MC(CM_CPRIME) + ml_walk[level];
+        ++g_ml_primes_sq;
+        return MOCK_LOOP_SKIP;
+    }
+    ml_walk[level] = 0;
+    return MOCK_LOOP_GO;
+}
+
 /* next_unforced() has the next prime p for the loop at this level: go on
  * with it, skip it (charged), or end the loop (its tail charged).
  */
@@ -380,14 +402,9 @@ e_mock_loop mock_loop_prime(t_node *prev_node, t_act *cur_act, ulong p) {
 #endif
     if (g_ml_off)
         return MOCK_LOOP_GO;
-    if (ml_state[level] == ML_SQ) {
-        if (p > ML_SQ_PMIN && ml_count[level]++ % ML_STRIDE) {
-            g_mock_spent_s += MC(CM_CPRIMESQ) + ml_walk[level];
-            ++g_ml_primes_sq;
-            return MOCK_LOOP_SKIP;
-        }
-        ml_walk[level] = 0;
-    }
+    /* sampled after the early rejections, see mock_loop_sq() */
+    if (ml_state[level] == ML_SQ)
+        return MOCK_LOOP_GO;
     if (ml_state[level] == ML_NOT) {
         /* The child just finished was in a sample block: when the block
          * is complete, take its mean cost, real and mocked, less the
