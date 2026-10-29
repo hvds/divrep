@@ -113,10 +113,14 @@ against the calls, the primes, and those passing the check mod aq/q_i.
 C<cprime> and C<cprimesq> are each found by timing a calibration batch
 with the mock pcoul, once with leaf loops stubbed and once with them run
 for real: the difference in real (unmocked) time over the number of
-primes stubbed. C<ctail> likewise, from a batch of D(162, 3) deep
-enough that almost every prime its recursion tries is rejected on
-rq > zmax, timed with the ends of such loops stubbed and run (and leaf
-loops run for real in both, so that none of those primes is strided).
+primes stubbed. In loops walking a fixed power only the primes that pass
+the early rejections (reject_square() and the like) are stubbed, so that
+difference is the extra each costs over C<cprime>, as pcoul counts it,
+and C<cprimesq> is C<cprime> plus it. C<ctail> likewise, from a batch
+of D(162, 3) deep enough that almost every prime its recursion tries is
+rejected on rq > zmax, timed with the ends of such loops stubbed and run
+(and leaf loops run for real in both, so that none of those primes is
+strided).
 
 The K rows (section situ) price each test's preparation by what it
 did, for the costs -ja counts: for tau_multi_prep(), per call
@@ -271,8 +275,13 @@ my @cal_lin2 = ('-j4', '-Ld30', '-x1e30', 512, 4);
 my @cal_lin3 = ('-j4', '-Ld20', '-x5e29:6e29', 512, 4);
 my @cal_sq2 = ('-j4', '-Ld2', '-x1e30', 13122, 4);
 my @cal_leaf = @cal_lin;
-# and one rich in leaf loops walking a fixed power
-my @cal_leafsq = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b1', 18, 4);
+# and one rich in leaf loops walking a fixed power whose primes pass the
+# early rejections (see cprime()): -js and -I pin the route that -ja1 -ka
+# takes in D(36,7) to a loop of p^2 at v_2 below the square at v_6, with
+# -p keeping p^2 under its greatest root, so that about half pass
+my @cal_leafsq = ('-js2', '-g1e6', '-p8000000',
+        '-x999000000000000000000000000000:1000000000000000000000000000000',
+        '-I2^5.3^2 5.7^2 2 3 2^2 43^2 2.3.5^2', 36, 7);
 # walk_1_set() with every prime reaching the tests
 my @cal_w1s = ('-f3', '-j2', '-g16', '-x1e16:1e17', '-b3', 18, 4);
 # and many walk_1_set() calls of a size typical of real runs (those of
@@ -434,13 +443,8 @@ if ($want{w1s}) {
 }
 if ($want{leaf}) {
     my $c = cprime('leaf', @cal_leaf);
-    my $csq = cprime('sq', @cal_leafsq);
-    # pcoul costs the extension of a fixed power's roots at the difference
-    if ($csq < $c) {
-        warn sprintf "multibench-table: cprimesq %.4f below cprime %.4f,"
-                . " raised to it\n", $csq, $c;
-        $csq = $c;
-    }
+    # what a prime passing the early rejections costs over that
+    my $csq = $c + cprime('sq', @cal_leafsq);
     $new{leaf} = [ sprintf('C cprime %.4f', $c),
             sprintf('C cprimesq %.4f', $csq) ];
 }
