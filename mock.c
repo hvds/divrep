@@ -69,10 +69,139 @@ static void mock_clock_init(void) {
     g_mock_read = (t1 - t0) / 1000;
 }
 
+/* The leaf mock: also stub innermost recurse loops - those whose
+ * children all walk. A loop is pending from when it starts; if the
+ * first child to survive apply_single() walks (a linear walk), that
+ * walk's per-iteration cost and expected size are recorded, and when the
+ * loop resumes, the remaining primes up to its cap are replaced by
+ * c_prime each plus their walks, whose size scales as (p0/p)^(x-1). If
+ * the first child recurses, or does anything not yet modelled, the loop
+ * runs normally.
+ * If instead the first child walks a fixed power (nqc == 1), whose cost
+ * varies too irregularly with p to integrate, the loop is sampled: above
+ * ML_SQ_PMIN (so that the cost changes little across a stride) every
+ * ML_STRIDE-th prime runs normally, and each prime in between is only
+ * iterated, and charged c_prime_sq plus the walk cost of the last prime
+ * run. If a sampled child recurses, the loop reverts to running normally.
+ * Loops above the leaves (ML_NOT) are strided likewise above ML_SQ_PMIN:
+ * of each ML_STRIDE * ML_BLOCK primes the first ML_BLOCK run normally,
+ * timed together (real time, and mock cost charged within them), and
+ * each of the rest is charged their mean. Timing a block rather than a
+ * single child spreads the cost of the clock reads over ML_BLOCK
+ * children.
+ * With $MOCK_LEAF_OFF set, leaf loops are identified but not stubbed,
+ * so that comparing the two gives c_prime and c_prime_sq (the counts of
+ * primes stubbed are reported at the end of the run).
+ */
+#define ML_MAX 256
+#define ML_PENDING 1
+#define ML_LEAF 2
+#define ML_NOT 3
+#define ML_SQ 4
+#define ML_STRIDE 16
+#define ML_BLOCK 8
+#define ML_SQ_PMIN 65536
+static uint ml_state[ML_MAX];
+static double ml_iter_cost[ML_MAX], ml_r0[ML_MAX];
+static ulong ml_p0[ML_MAX];
+static ulong ml_count[ML_MAX];      /* ML_SQ: primes seen */
+static double ml_walk[ML_MAX];      /* ML_SQ: walk cost of last prime run */
+/* Striding other loops: whether a sample block is running and how many
+ * of its children have finished, when it started (clock, mock overhead
+ * and mock cost so far), and the mean cost of the last complete block.
+ */
+static bool ml_samp[ML_MAX], ml_have[ML_MAX];
+static uint ml_nsamp[ML_MAX];
+static double ml_t0[ML_MAX], ml_ov0[ML_MAX], ml_m0[ML_MAX], ml_cost[ML_MAX];
+double g_ml_strided = 0;    /* primes skipped by striding */
+double g_ml_primes = 0;     /* primes stubbed, for calibrating cprime */
+double g_ml_primes_sq = 0;  /* likewise, for cprime_sq */
+bool g_ml_off = 0;          /* $MOCK_LEAF_OFF: leave leaf loops real */
+
+/* the cost of the rest of a leaf loop at level lvl, after prime p */
+static double ml_stub_cost(uint lvl, ulong p, ulong limp, uint x) {
+    if (limp <= p)
+        return 0;
+    double np = mock_li(limp) - mock_li(p);
+    double s = x - 1, cost = MC(CM_CPRIME) * np;
+    g_ml_primes += np;
+    double sum = 0, step = pow(2.0, 0.125);
+    for (double lo = p; lo < limp; lo *= step) {
+        double hi = lo * step;
+        if (hi > limp)
+            hi = limp;
+        double n = mock_li(hi) - mock_li(lo);
+        if (n > 0)
+            sum += n * pow(ml_p0[lvl] / sqrt(lo * hi), s);
+    }
+    return cost + ml_iter_cost[lvl] * ml_r0[lvl] * sum;
+}
+
+/* The leaf mock also stubs the ends of loops whose primes apply_single()
+ * would almost all reject on rq > zmax (CHECK_OVERFLOW), as in deep
+ * recursion. With r = prev->rq < a = prev->aq, allocating p^(x-1) gives
+ * rq = r + a.t for t roughly uniform mod p^(x-1), rejected when
+ * t > T = floor((zmax - r) / a); so a prime passes with chance about
+ * (T + 1) / p^(x-1), and for x >= 3 the rest of the loop from p expects
+ * S <= (T + 1) / ((x - 2) p^(x-2) ln p) survivors. Once p passes the P*
+ * where S falls to MR_TAIL_EPS (at once if r > zmax), the loop is ended
+ * and its remaining primes (by li) are charged c_tail each, dropping
+ * the few survivors expected: the bias is at most S times the cost of
+ * a survivor. With $MOCK_TAIL_OFF set, such loops run to the end, so
+ * that comparing the two gives c_tail (the count of primes stubbed is
+ * reported at the end).
+ */
+#define MR_TAIL_EPS 0.01
+static mpz_t mr_t;
+static bool mr_set[ML_MAX];     /* mr_pstar[] is set for this loop */
+static uint mr_seen[ML_MAX];    /* seen_best when it was set */
+static double mr_pstar[ML_MAX]; /* P* */
+double g_mr_tail = 0;           /* primes stubbed in loop tails */
+bool g_mr_tail_off = 0;         /* $MOCK_TAIL_OFF: run loop tails */
+
+static void mr_setup(uint lvl, t_node *prev, uint x) {
+    mr_set[lvl] = 1;
+    mr_seen[lvl] = seen_best;
+    mr_pstar[lvl] = INFINITY;
+    mpz_sub(mr_t, zmax, prev->rq);
+    if (mpz_sgn(mr_t) < 0) {
+        mr_pstar[lvl] = 0;
+        return;
+    }
+    if (x < 3)
+        return;
+    /* Solve (T + 1) / ((x - 2) p^(x-2) ln p) = MR_TAIL_EPS for p: the
+     * fixed point converges fast, since ln p changes slowly.
+     */
+    mpz_fdiv_q(mr_t, mr_t, prev->aq);
+    double c = (mpz_get_d(mr_t) + 1) / ((x - 2) * MR_TAIL_EPS);
+    double e = 1.0 / (x - 2), p = pow(c, e);
+    for (uint i = 0; i < 4; ++i)
+        p = pow(c / log(p < 3 ? 3 : p), e);
+    mr_pstar[lvl] = p;
+}
+
+/* TRUE if the rest of the loop at lvl from p is stubbed */
+static bool mr_tail(uint lvl, t_node *prev, t_act *cur, ulong p) {
+    if (!mr_set[lvl] || mr_seen[lvl] != seen_best)
+        mr_setup(lvl, prev, cur->x);
+    if (p <= mr_pstar[lvl])
+        return 0;
+    double np = mock_li(cur->limp) - mock_li(p) + 1;
+    if (np < 1)
+        np = 1;
+    g_mr_tail += np;
+    g_mock_spent_s += np * MC(CM_CTAIL);
+    return 1;
+}
+
 /* what the mocks stubbed, at the end of a run or on -Ld timeout */
 void mock_report(void) {
     report("368 mock %.3fs (overhead %.3fs)", g_mock_spent_s,
             g_mock_overhead_s);
+    report(", leaf primes %.0f, sq primes %.0f, strided %.0f", g_ml_primes,
+            g_ml_primes_sq, g_ml_strided);
+    report(", tail %.0f", g_mr_tail);
     report("\n");
 }
 
@@ -81,6 +210,9 @@ void mock_init(void) {
     mock_clock_init();
     for (uint i = 0; i < CM_COUNT; ++i)
         mc[i] = cm_const(i);
+    mpz_init(mr_t);
+    g_ml_off = getenv("MOCK_LEAF_OFF") != NULL;
+    g_mr_tail_off = getenv("MOCK_TAIL_OFF") != NULL;
 }
 
 /* walk_v(): for a linear walk or one of a single fixed power (nqc < 2),
@@ -98,6 +230,7 @@ bool mock_walk_v(
         return 0;
     double mo0 = mock_clock();
     double cost;
+    uint L = cur_node->level;
     if (nqc == 0) {
         ulong mock_alloc[k * maxfact];
         t_cmwalk wk;
@@ -111,7 +244,19 @@ bool mock_walk_v(
             iters = 0;
         double loop = MC(CM_LOOP0) + tests * MC(CM_LOOPTEST);
         cost = iters * (loop + pinv * tail);
+        if (L < ML_MAX && ml_state[L] == ML_PENDING) {
+            ml_state[L] = ML_LEAF;
+            ml_iter_cost[L] = loop + pinv * tail;
+            ml_r0[L] = (mpz_get_d(zmax) - mpz_get_d(zmin))
+                    / mpz_get_d(cur_node->aq);
+            ml_p0[L] = acts[L].p;
+        }
     } else {
+        if (L < ML_MAX && ml_state[L] == ML_PENDING) {
+            ml_state[L] = ML_SQ;
+            ml_count[L] = 1;
+            ml_walk[L] = 0;
+        }
         uint sqi = need_square[0];
         uint xi = divisors[t[sqi]].gcddm;
         t_results *xr = res_array(cur_node->level);
@@ -124,6 +269,8 @@ bool mock_walk_v(
         double setup = MC(CM_SQSETUP) * (iters < 1 ? iters : 1);
         cost = setup + iters * cm_root_cost(log2(mpz_get_d(zmax)), rbits, q,
                 t, sqi, need_prime, npc, need_other, noc, inv, inv_count);
+        if (L < ML_MAX && ml_state[L] == ML_SQ)
+            ml_walk[L] += cost;
     }
     g_mock_spent_s += cost;
     g_mock_overhead_s += mock_clock() - mo0 + g_mock_read;
@@ -185,4 +332,93 @@ void mock_w1s_pass(
         g_mock_overhead_s += mock_clock() - mo0 + g_mock_read;
     }
     g_mock_spent_s += mw1.tailsum / mw1.nsample;
+}
+
+/* walk_1_set() from the loop at this level: not a leaf loop */
+void mock_leaf_w1s(uint level) {
+    if (level < ML_MAX && ml_state[level] == ML_PENDING)
+        ml_state[level] = ML_NOT;
+}
+
+/* find_unforced_x() starts a loop at this level */
+void mock_loop_start(uint level) {
+    if (level < ML_MAX) {
+        mr_set[level] = 0;
+        ml_state[level] = ML_PENDING;
+        ml_count[level] = 0;
+        ml_samp[level] = ml_have[level] = 0;
+    }
+    if (level >= 1 && level - 1 < ML_MAX
+            && (ml_state[level - 1] == ML_PENDING
+                || ml_state[level - 1] == ML_SQ))
+        ml_state[level - 1] = ML_NOT;
+}
+
+/* next_unforced() resumes the loop at this level: TRUE if it is a leaf loop,
+ * now charged in full.
+ */
+bool mock_loop_leaf(t_act *cur_act) {
+    uint level = cur_act->level;
+    if (level >= ML_MAX || ml_state[level] != ML_LEAF || g_ml_off)
+        return 0;
+    g_mock_spent_s += ml_stub_cost(level, cur_act->p, cur_act->limp,
+            cur_act->x);
+    ml_state[level] = 0;
+    return 1;
+}
+
+/* next_unforced() has the next prime p for the loop at this level: go on
+ * with it, skip it (charged), or end the loop (its tail charged).
+ */
+e_mock_loop mock_loop_prime(t_node *prev_node, t_act *cur_act, ulong p) {
+    uint level = cur_act->level;
+    if (level >= ML_MAX)
+        return MOCK_LOOP_GO;
+#ifdef CHECK_OVERFLOW
+    if (!g_mr_tail_off && mr_tail(level, prev_node, cur_act, p))
+        return MOCK_LOOP_END;
+#endif
+    if (g_ml_off)
+        return MOCK_LOOP_GO;
+    if (ml_state[level] == ML_SQ) {
+        if (p > ML_SQ_PMIN && ml_count[level]++ % ML_STRIDE) {
+            g_mock_spent_s += MC(CM_CPRIMESQ) + ml_walk[level];
+            ++g_ml_primes_sq;
+            return MOCK_LOOP_SKIP;
+        }
+        ml_walk[level] = 0;
+    }
+    if (ml_state[level] == ML_NOT) {
+        /* The child just finished was in a sample block: when the block
+         * is complete, take its mean cost, real and mocked, less the
+         * mock's own overhead (including the clock reads bracketing it).
+         */
+        if (ml_samp[level] && ++ml_nsamp[level] == ML_BLOCK) {
+            ml_cost[level] = ((mock_clock() - ml_t0[level]) - g_mock_read
+                    - (g_mock_overhead_s - ml_ov0[level])
+                    + (g_mock_spent_s - ml_m0[level])) / ML_BLOCK;
+            if (ml_cost[level] < 0)
+                ml_cost[level] = 0;
+            g_mock_overhead_s += g_mock_read;
+            ml_samp[level] = 0;
+            ml_have[level] = 1;
+        }
+        if (p > ML_SQ_PMIN) {
+            ulong pos = ml_count[level]++ % (ML_STRIDE * ML_BLOCK);
+            if (ml_have[level] && pos >= ML_BLOCK) {
+                g_mock_spent_s += ml_cost[level];
+                ++g_ml_strided;
+                return MOCK_LOOP_SKIP;
+            }
+            if (!ml_samp[level]) {
+                ml_samp[level] = 1;
+                ml_nsamp[level] = 0;
+                g_mock_overhead_s += g_mock_read;
+                ml_t0[level] = mock_clock();
+                ml_ov0[level] = g_mock_overhead_s;
+                ml_m0[level] = g_mock_spent_s;
+            }
+        }
+    }
+    return MOCK_LOOP_GO;
 }
