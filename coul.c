@@ -3776,6 +3776,12 @@ void walk_1_set(
  * other than for the retry case, p would not previously have been
  * seen; however modular fixes via -m or -c change that, requiring a
  * rethink of the logic as a whole.
+ * Residues greater than the greatest possible z are kept. Measured in
+ * Oct 2026, they are common below a fixed value, nearly always at the
+ * leaf just before walk_v(): at 98% of p^2 allocations in D(36,7), all
+ * of them. Pruning them, and rejecting the node when none remain, was
+ * not taken up then, though under -ja1 -ka it cut D(30,5) run time by
+ * about a further fifth, from skipping some 800k walks of nothing.
  */
 bool update_residues(t_node *old, t_node *new,
         uint vi, ulong p, uint x, mpz_t px, uint retry, uint fold) {
@@ -4508,6 +4514,7 @@ char *parse_midp(char *s) {
 }
 
 static ulong square_endr(t_node *np);
+static inline bool square_applies(t_node *np);
 static inline bool reject_square(ulong p, long d, ulong endr);
 
 /* Try all ways of allocating p^{x-1} at v_i for any p above the selected
@@ -4532,6 +4539,7 @@ void walk_midp(t_node *prev_node, bool recover) {
     /* The constant part needed for reject_square(); we check within the
      * loop that the conditions apply since (vi, x) change each time.
      */
+    bool sq_ok = square_applies(prev_node);
     ulong endr = square_endr(prev_node);
 
     level_setp(cur_act, midpp[0].maxp);
@@ -4608,8 +4616,9 @@ void walk_midp(t_node *prev_node, bool recover) {
             vi = mp->vi;
             x = mp->x;
             /* check the same conditions as reject_prep_square() */
-            if (endr && x == 3 && vi != sq0 && reject_square(
-                p, (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi), endr
+            if (sq_ok && vi != sq0 && reject_square(
+                p, (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi),
+                (x == 3) ? endr : 0
             )) {
                 /* as apply_single() would leave it, for the progress line */
                 cur_act->vi = vi;
@@ -5571,47 +5580,73 @@ static ulong square_endr(t_node *np) {
     return mpz_fits_ulong_p(Z(temp)) ? mpz_get_ui(Z(temp)) : 0;
 }
 
+/* True if reject_square() applies below np: a single fixed value
+ * v_j = q.z^g, with g > 1.
+ */
+static inline bool square_applies(t_node *np) {
+    return np->have_square == 1 && sqg[cur_vlevel[sq0] - 1] > 1;
+}
+
 /* prepare for reject_square() on a loop of p^{x-1} at v_i below prev */
 static inline void reject_prep_square(
     t_node *prev, t_act *cur, uint vi, uint x
 ) {
     cur->rs_ok = 0;
-    if (x != 3 || vi == sq0)
+    if (vi == sq0 || !square_applies(prev))
         return;
-    cur->rs_endr = square_endr(prev);
-    if (!cur->rs_endr)
-        return;
+    /* the lift applies only to p^2 */
+    cur->rs_endr = (x == 3) ? square_endr(prev) : 0;
     cur->rs_d = (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi);
     cur->rs_ok = 1;
 }
 
-/* True if allocating p^2 at a position d places before the fixed square
- * v_j = q.z^2 is certain to be rejected for having no root z <= endr,
- * false if uncertain. Any such z must satisfy q.z^2 == d (mod p^2).
- * Half the primes have no solution even mod p, which the Jacobi symbol
- * shows. Otherwise, since p does not divide q.d, the solutions are two
- * classes +/-r (mod p^2), where r is a square root of d/q mod p lifted
- * to p^2. Once p^2 > endr each class holds at most one z up to endr, its
- * least residue, so p is rejected unless r or p^2 - r is at most endr.
- * Each rejection saves us from the expensive step of recalculating the
- * residues mod p^2.
+/* True if allocating p^{x-1} at a position d places before the fixed
+ * value v_j = q.z^g is certain to be rejected for having no root z, false
+ * if uncertain. Any such z must satisfy q.z^g == d (mod p), so d/q must
+ * be a g-th power residue mod p; with h = gcd(g, p - 1), that is so for
+ * only 1/h of the primes. For h = 2 the Jacobi symbol shows it, else a
+ * power of d.q^{h-1} mod p.
+ * If endr is non-zero, we are allocating p^2 below a square (g = 2), and
+ * endr is the greatest z with v_j within zmax. Any z must then satisfy
+ * q.z^2 == d (mod p^2): since p does not divide q.d, the solutions are
+ * two classes +/-r (mod p^2), where r is a square root of d/q mod p
+ * lifted to p^2. Once p^2 > endr each class holds at most one z up to
+ * endr, its least residue, so p is rejected unless r or p^2 - r is at
+ * most endr.
+ * Each rejection saves us from the expensive step of applying p^{x-1},
+ * including recalculating the residues mod p^{x-1}.
+ * Findings (Oct 2026), to recheck if the calculus changes: under
+ * -ja1 -ka, the test mod p for x != 3 (mostly p^1 in a -W sweep) cut
+ * the run time of D(30,5) by about a fifth. A lift for other x or g is
+ * not attempted: the allocations that survive the test mod p mostly
+ * leave no residue in range, but nearly always at the leaf (see
+ * update_residues()).
  */
 static inline bool reject_square(ulong p, long d, ulong endr) {
     if (!(p & 1))
         return 0;
-    mpz_t *q = &value[sq0].alloc[cur_vlevel[sq0] - 1].q;
+    uint sql = cur_vlevel[sq0];
+    mpz_t *q = &value[sq0].alloc[sql - 1].q;
     ulong qm = mpz_fdiv_ui(*q, p);
     ulong dm = (d < 0) ? (ulong)(-d) % p : (ulong)d % p;
     assert(qm != 0 && dm != 0);     /* required since p is an unforced prime */
     if (d < 0)
         dm = p - dm;
-    if (jacobi_u64(mulmod_u64(dm, qm, p), p) != 1)
-        return 1;
+    uint g = sqg[sql - 1];
+    ulong h = (g == 2) ? 2 : simple_gcd(g, p - 1);
+    if (h == 2) {
+        if (jacobi_u64(mulmod_u64(dm, qm, p), p) != 1)
+            return 1;
+    } else if (h > 2) {
+        ulong a = mulmod_u64(dm, powmod_u64(qm, h - 1, p), p);
+        if (powmod_u64(a, (p - 1) / h, p) != 1)
+            return 1;
+    }
 #ifndef HAVE_UINT128
-    /* without 128-bit support, we get just the Jacobi rejection above */
+    /* without 128-bit support, we get just the test mod p above */
     return 0;
 #else
-    if (p <= endr / p)
+    if (!endr || p <= endr / p)
         return 0;
     /* r == sqrt(d/q) (mod p) */
     ulong r = sqrtmod_u64(mulmod_u64(dm, invert_u64(qm, p), p), p);

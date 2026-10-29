@@ -90,9 +90,10 @@ typedef struct s_act {
      */
     bool rj_ok, rj_limb;
     ulong rj_mult;
-    /* Likewise for reject_square(), below a fixed square v_j = q.z^2:
+    /* Likewise for reject_square(), below a fixed value v_j = q.z^g:
      * rs_ok if it applies to this loop, rs_d the difference of offsets
-     * j - i, and rs_endr the greatest z for which v_j is within zmax.
+     * j - i, and rs_endr for p^2 below a square the greatest z for which
+     * v_j is within zmax, else 0.
      */
     bool rs_ok;
     long rs_d;
