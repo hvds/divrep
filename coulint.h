@@ -90,6 +90,7 @@ static inline uint test_multi_run(tau_failure_handler tfh) {
 
 /* for the planner (coulplan.c) */
 
+#define MAXK_KERN 64    /* under -k: positions are bits of a ulong */
 /* Sentinel values returned by best_v() and strategies[] functions.
  * Any real v_i is < BV_SPECIAL; BV_WALK means there is no v_i to allocate
  * to; BV_NEXTX means there is no work left to do for this x.
@@ -110,6 +111,14 @@ typedef enum {
 } e_xr;
 
 extern void walk_v_inner(t_node *cur_node, mpz_t start);
+#if defined(TYPE_r)
+    extern uint *target_tau;
+    extern uint target_lcm;
+    static inline uint target_t(uint vi) { return target_tau[vi]; }
+#else
+#   define target_lcm (n)
+    static inline uint target_t(uint vi) { return n; }
+#endif
 
 extern double zmax_given;
 extern mpz_t best;
@@ -119,11 +128,19 @@ extern bool highpow;
 extern ulong limp_cap;
 extern bool midp_only, need_midp;
 extern ulong kern_b;
+extern uint kern_keep;
+extern bool kern_auto;
+extern bool kern_keep_given;
+extern slong batch_alloc;
 extern uint strategy;
 extern t_fact nf;
 extern uint *maxforce;
 extern void done(void);
 extern ulong next_prime(ulong cur);
+extern bool walk_v_price_prep(t_node *cur_node);
+extern double walk_v_price(uint *t);
+extern bool kern_6x(void);
+extern void kern_sets(uint keep, ulong *atp, ulong *passedp);
 extern t_kern *kern_state(t_node *np);
 extern bool kern_at(uint vi);
 extern bool kern_passed(uint vi);
@@ -198,6 +215,12 @@ static inline mpz_t *kern_q(uint vi) {
     while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
         --vil;
     return &vp->alloc[vil - 1].q;
+}
+
+/* true if -ka has made a choice for the current batch */
+static inline bool kern_planned(void) {
+    t_kern *ks = kern_cur();
+    return ks && ks->planned;
 }
 
 /* The x of the previous allocation at v_i if it was unforced, else 0. */
