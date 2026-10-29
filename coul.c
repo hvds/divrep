@@ -3774,6 +3774,9 @@ void walk_1_set(
     uint vi, ulong plow, ulong phigh, uint x
 ) {
     t_node *cur_node = &nodes[cur_act->level];
+#ifdef MOCK
+    mock_leaf_w1s(prev_node->level);
+#endif
 #ifdef SQONLY
     if (!cur_node->have_square)
         return;
@@ -6985,6 +6988,9 @@ static inline bool find_unforced_x(t_act *cur_act) {
           case PUX_SKIP_THIS_X:
             continue;
           case PUX_DO_THIS_X:
+#ifdef MOCK
+            mock_loop_start(cur_act->level);
+#endif
             return 1;
         }
     }
@@ -6998,6 +7004,10 @@ bool next_unforced(t_act *cur_act) {
     t_node *prev_node = &nodes[cur_act->level - 1];
     t_node *cur_node = &nodes[cur_act->level];
     while (1) {
+#ifdef MOCK
+        if (mock_loop_leaf(cur_act))
+            goto end_x;
+#endif
         /* recalculate limit if we have an improved maximum */
         if (improve_max && seen_best > cur_act->max_at) {
             ulong limp = limit_p(cur_act, cur_act->vi, cur_act->x,
@@ -7014,12 +7024,19 @@ bool next_unforced(t_act *cur_act) {
         /* note: only valid to use from just below here */
       redo_unforced: ;
         ulong p = prime_iterator_next(&cur_act->piter);
-        if (p > cur_act->limp) {
-            next_x(cur_act);
-            if (!find_unforced_x(cur_act))
-                return 0;
-            continue;
+        if (p > cur_act->limp)
+            goto end_x;
+#ifdef MOCK
+        switch (mock_loop_prime(prev_node, cur_act, p)) {
+          case MOCK_LOOP_GO:
+            break;
+          case MOCK_LOOP_SKIP:
+            goto redo_unforced;
+          case MOCK_LOOP_END:
+            cur_act->p = p;
+            goto end_x;
         }
+#endif
 #ifdef VERBOSE
         if (VB(VB_GATE))
             gs_rec_prime(cur_act->level, p);
@@ -7045,6 +7062,10 @@ bool next_unforced(t_act *cur_act) {
             continue;
         }
         return 1;
+      end_x:
+        next_x(cur_act);
+        if (!find_unforced_x(cur_act))
+            return 0;
     }
 }
 
@@ -7246,8 +7267,8 @@ static const char *clock_unit(char *buf, size_t size, double ghz) {
  */
 void cost_table_check(void) {
     static const char *mpu[] = { "scan", "prime", "multi", "ladder", "qs" };
-    static const char *coul[] = { "walk", "w1s" };
-    for (uint i = 0; i < 7; ++i) {
+    static const char *coul[] = { "walk", "w1s", "leaf", "tail" };
+    for (uint i = 0; i < 9; ++i) {
         bool is_mpu = i < 5;
         const char *sec = is_mpu ? mpu[i] : coul[i - 5];
         const char *sha = cm_table_sha(sec);
