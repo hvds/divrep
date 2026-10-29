@@ -133,7 +133,7 @@ double cc_work(void) {
             + cc.rec_prime * c[CM_CPRIME]
             + cc.rec_applied * c[CM_CAPPLY]
             + cc.rec_fail * c[CM_CFAIL]
-            + cc.test + ct_test_charged + ct_ladder_charged;
+            + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
 
 /* Settle the costs the gates share with the cost table, once it is
@@ -190,7 +190,10 @@ static double gr_less_setup(char kind, uint L, double t0, double t1,
     return 0;
 }
 
-/* the walks seen, for sampling them */
+/* The walks seen, for sampling them. A walk resumed on recovery is not
+ * seen again: it was counted when it began, and what is left of it is
+ * not a whole walk to learn from.
+ */
 static uint gr_ctr = 0;
 void walk_v_gr(t_node *cur_node, mpz_t start) {
     uint L = cur_node->level;
@@ -437,6 +440,7 @@ static ulong cost_start(t_node *lp, ulong p) {
 #define JA_TWO 5        /* recursing to leave t = 2 */
 #define JA_POW2 6       /* recursing to leave a higher power of 2 */
 #define JA_PARTS 7
+static const char ja_tag[JA_PARTS - JA_LPARTS + 1] = "rspab";
 #define JA_NB 24
 #define JA_BLOW (-36)
 #define JA_BFULL 7
@@ -518,6 +522,92 @@ static inline void ja_learn(
         ja_A[L][part] += dt;
         ja_E[L][part] += est;
     }
+}
+
+/* The 316 log line: what -ja has learnt, written before each 305 or 315
+ * line, so that a run recovered from that line carries on from it
+ * rather than learning afresh:
+ *   316 <counted> <walks> [<level>:<t>,<i>,<n>,<A>,<E>,<A>,<E>] ...
+ *       [r<e>:<A>,<E>] ... [s<e>:<A>,<E>] ...
+ * with the cost counted so far (see cc_work()) and the walks seen by
+ * the sampler; then for each level with anything learnt, the cost,
+ * iterations and number of the walks sampled for the gate (gr_t[],
+ * gr_i[], gr_n[]), and the actual and estimated cost of the walks and
+ * of the walk_1_set() calls that -ja2 chose (ja_A[], ja_E[]); then for
+ * each band of node size with anything learnt, of nodes costing from
+ * 2^e seconds to walk, the actual and estimated cost of recursing (r)
+ * and of recursing where a square is left (s) (ja_SA[], ja_SE[]).
+ * Costs are in seconds, with digits enough to restore each exactly.
+ * What was being measured as the line was written is not recorded: the
+ * recovered run learns nothing from the walk it resumes, nor from the
+ * positions already chosen on the path to it.
+ */
+void ja_save(FILE *fp) {
+    fprintf(fp, "316 %.17g %u", cc.on ? cc_work() : 0.0, gr_ctr);
+    for (uint L = 0; L < GR_MAXL; ++L) {
+        bool any = (gr_n[L] != 0);
+        for (uint part = 0; part < JA_LPARTS; ++part)
+            if (ja_A[L][part] != 0 || ja_E[L][part] != 0)
+                any = 1;
+        if (!any)
+            continue;
+        fprintf(fp, " %u:%.17g,%.17g,%u", L, gr_t[L], gr_i[L], gr_n[L]);
+        for (uint part = 0; part < JA_LPARTS; ++part)
+            fprintf(fp, ",%.17g,%.17g", ja_A[L][part], ja_E[L][part]);
+    }
+    for (uint s = 0; s < JA_PARTS - JA_LPARTS; ++s)
+        for (uint b = 0; b < JA_NB; ++b)
+            if (ja_SA[b][s] != 0 || ja_SE[b][s] != 0)
+                fprintf(fp, " %c%d:%.17g,%.17g", ja_tag[s],
+                        JA_BLOW + 3 * (int)b, ja_SA[b][s], ja_SE[b][s]);
+    fprintf(fp, "\n");
+}
+
+/* restore what a 316 line records, given what follows its code */
+void ja_restore(char *s) {
+    char *line = s;
+    double counted;
+    int off = 0;
+    if (sscanf(s, "%lf %u%n", &counted, &gr_ctr, &off) != 2 || off == 0)
+        fail("518 could not parse learnt costs: '%s'", line);
+    cc.base = counted;
+    s += off;
+    while (s[0] == ' ' && isdigit(s[1])) {
+        uint L;
+        off = 0;
+        if (sscanf(s, " %u:%n", &L, &off) != 1 || off == 0 || L >= GR_MAXL)
+            fail("518 could not parse learnt costs: '%s'", line);
+        s += off;
+        off = 0;
+        if (sscanf(s, "%lf,%lf,%u%n", &gr_t[L], &gr_i[L], &gr_n[L], &off)
+                != 3 || off == 0)
+            fail("518 could not parse learnt costs: '%s'", line);
+        s += off;
+        for (uint part = 0; part < JA_LPARTS; ++part) {
+            off = 0;
+            if (sscanf(s, ",%lf,%lf%n", &ja_A[L][part], &ja_E[L][part], &off)
+                    != 2 || off == 0)
+                fail("518 could not parse learnt costs: '%s'", line);
+            s += off;
+        }
+    }
+    while (s[0] == ' ' && s[1] && strchr(ja_tag, s[1])) {
+        uint part = strchr(ja_tag, s[1]) - ja_tag;
+        int e, b;
+        double A, E;
+        off = 0;
+        if (sscanf(s + 2, "%d:%lf,%lf%n", &e, &A, &E, &off) != 3 || off == 0)
+            fail("518 could not parse learnt costs: '%s'", line);
+        b = (e - JA_BLOW) / 3;
+        if (e < JA_BLOW || (e - JA_BLOW) % 3 != 0 || b >= JA_NB)
+            fail("518 could not parse learnt costs: '%s'", line);
+        ja_SA[b][part] = A;
+        ja_SE[b][part] = E;
+        s += 2 + off;
+    }
+    ja_stale = 1;
+    if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
+        fail("518 could not parse learnt costs: '%s'", line);
 }
 
 /* the walk chosen at lp is done: learn from its cost */
