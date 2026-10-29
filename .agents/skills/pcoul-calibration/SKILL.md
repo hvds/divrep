@@ -1,6 +1,6 @@
 ---
 name: pcoul-calibration
-description: How pcoul costs its own work - the cost table - with what was measured and what was tried and dropped
+description: How pcoul costs its own work - the cost table and the mocks - with what was measured and what was tried and dropped
 ---
 ## Calibration and cost models for pcoul
 
@@ -126,6 +126,29 @@ an existing table, so a new MPUGMP needs only scan, prime, ladder and
 qs (and multi), a change to coul.c only walk and w1s. pcoul builds in
 a default table from the file timings, used unless $COST_TABLE names
 another; `-dT` notes sections from a different build.
+
+### The mock pcoul (mock.c, MOCK=1)
+
+Runs the search with the costly parts replaced by their modelled cost,
+from the machine's cost table. The 367 line reports real time outside
+the mocks plus modelled time; the 368 line is the modelled part alone,
+with what was stubbed.
+
+- walk_v(): linear walks and walks of one fixed power (nqc < 2) are
+  costed, not run: per iteration the loop, plus the inverse-filter
+  pass rate (exact from inv[]; over root residues for fixed powers)
+  times the tests. Tests model trial division from the exact or
+  modelled valuations of each position's value (honouring the inverse
+  filter's exclusions), primality tests stage by stage as
+  test_primes() runs them, and the factoring ladder rung by rung as
+  tau_multi_run() interleaves its pending values. The root of a fixed
+  power is costed as the walk tests it: trial division at once, and if
+  that does not settle it, the ladder with the other values once the
+  primes have passed. Pell walks (nqc >= 2) run for real.
+- walk_1_set(): the first 10000 primes run for real with modelled
+  tests (every 8th exactly), the rest charged at their rates.
+- Always real: the recursion, prep_unforced_x(), walk_6x(),
+  walk_midp(), and each walk's setup.
 
 ### Findings under a fixed gain (to 2026-09-25)
 
@@ -308,12 +331,18 @@ substantially, the calibrated options may no longer be optimal.
 - Progress after a fixed CPU time (-Ld) is noisy on a VM (25-50% run
   to run): compare complete units. A fully specified -I pattern is one
   batch.
+- Read the mock's 367 line, not the 368 line.
 - Build without PORTABLE (it is for distribution binaries).
 - Per-node comparisons across runs need the node set to be the same:
   pair by order only at levels whose parents decide identically.
+- Profile the mock's own overhead like anything else: most of its time
+  once went on building the trial model's cache key (12.4s to 4.0s on
+  D(96,8) b220367 once that was fixed).
 
 ### Tried and dropped
 
+- MOCK_LADDER (coulmock.c): a per-residual chain model of the ladder
+  from Dickman's rho; superseded by the measured G rows.
 - rungbench, a standalone bench of single rungs of the ladder: its pq
   mode built n = p*q, so multiplicity was 1 by construction and said
   nothing of real inputs. The ladder bench in bench.c replaced it.
