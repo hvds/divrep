@@ -1,0 +1,254 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use File::Temp qw{ tempdir };
+use List::Util qw{ sum0 min max };
+
+# No maths content beyond small integers, so no lib/reexec.
+
+=head1 jastudy - gather data on how -ja2 chooses positions
+
+Runs a calibrate build of pcoul under C<-ja2 -dv64> (a VERBOSE build),
+then analyses the records of each choice of position by cost:
+
+=over 4
+
+=item * B<by x>: for each x of each chosen position, the counted cost
+against -ja2's raw estimate (K records), grouped by the shape of the
+tau left at that position after x (2, a power of 2, odd, 1, or other)
+and by part (recursing, recursing to leave a square, ...). The ratio
+depends strongly on the size of the node, so each is also shown
+relative to the mean for nodes of its size (by factor-of-8 bands of
+the node's estimated cost to walk).
+
+=item * B<replay> (with -r): for the largest choices, every alternative
+the choice had (each position, and walking) is run again from the same
+node with C<-I><pattern> C<-dJ><v>, and its counted cost compared with
+the estimate and with what was chosen.
+
+=back
+
+Usage: jastudy [options] -- <pcoul args> n k
+
+  -b<path>   pcoul binary (default ./pcoul)
+  -o<file>   keep the records in <file> rather than a temporary file
+  -s<file>   analyse an existing records file instead of running
+  -r<count>  replay <count> choices (default 0), among those with at
+             least 2 alternatives whose cost in the run was in the range
+             given by -q, spread evenly by the log of that cost
+  -q<lo>:<hi>  that range of counted cost, in us (default 1e3:1e7)
+  -w<us>     skip replaying a walk estimated above <us> (default 60e6)
+  -t<s>      time limit for each replay in seconds (default 600)
+
+Output lines carry three-digit codes:
+
+  210 run: <counted cost> ...
+  220 by x: <part> <shape>: <count> ratio <gmean> rel <gmean rel> cost <sum>
+  230 replay <id> L<level> W <walk est> q <cost in the run> sq <squares>
+      <pattern>
+  231   <choice> est <estimate> actual <cost> [chosen] [best]
+  233 <id> <level> <walk est> <choice> <t> <estimate> <actual> <c><b>:
+      the same as one line per choice, for further analysis
+  232 replay summary ...
+
+=cut
+
+my($bin, $keep, $stats, $nreplay, $maxwalk, $tlimit)
+        = ('./pcoul', undef, undef, 0, 60e6, 600);
+my($qlo, $qhi) = (1e3, 1e7);
+while (@ARGV && $ARGV[0] =~ /^-/) {
+    my $arg = shift @ARGV;
+    last if $arg eq '--';
+    $bin = $1, next if $arg =~ /^-b(.+)/;
+    $keep = $1, next if $arg =~ /^-o(.+)/;
+    $stats = $1, next if $arg =~ /^-s(.+)/;
+    $nreplay = $1, next if $arg =~ /^-r(\d+)$/;
+    ($qlo, $qhi) = ($1, $2), next if $arg =~ /^-q([\d.e]+):([\d.e]+)$/;
+    $maxwalk = $1, next if $arg =~ /^-w([\d.e]+)$/;
+    $tlimit = $1, next if $arg =~ /^-t(\d+)$/;
+    die "Unknown option '$arg'\n";
+}
+my @args = @ARGV;
+die "Usage: $0 [options] -- <pcoul args> n k\n" if !$stats && @args < 2;
+$| = 1;
+
+my $tmp = tempdir(CLEANUP => 1);
+unless ($stats) {
+    $stats = $keep // "$tmp/main.log";
+    my $out = run_pcoul($stats, @args);
+    my($cost) = $out =~ /^369 cost counted (\S+)s/m;
+    my($cand) = scalar(() = $out =~ /^202 /mg);
+    printf "210 run: counted %s, %d candidates%s\n", $cost // '?', $cand,
+            $cand ? ' (replays below a node can differ from the run)' : '';
+}
+my $rec = read_stats($stats);
+analyse_by_x($rec);
+replay($rec) if $nreplay;
+exit 0;
+
+sub run_pcoul {
+    my($file, @a) = @_;
+    local $ENV{GATE_STATS} = $file;
+    my @cmd = ($bin, '-ja2', '-dv64', '-Ls0', @a);
+    open my $fh, '-|', 'timeout', $tlimit, @cmd
+            or die "cannot run @cmd: $!";
+    local $/;
+    my $out = <$fh> // '';
+    close $fh;
+    return $out;
+}
+
+sub read_stats {
+    my($file) = @_;
+    open my $fh, '<', $file or die "$file: $!";
+    my %r = (node => {});
+    while (<$fh>) {
+        my @f = split;
+        my $c = shift @f // next;
+        if ($c eq 'Y') {
+            my($id, $L, $w, $best, $sq, @pat) = @f;
+            my $nd = $r{node}{$id} //= {};
+            @$nd{qw{ id L w best sq pat }}
+                    = ($id, $L, $w, $best, $sq, join ' ', @pat);
+        } elsif ($c eq 'Z') {
+            my($id, $vi, $t, $est) = @f;
+            push @{ $r{node}{$id}{z} }, { vi => $vi, t => $t, est => $est };
+        } elsif ($c eq 'K') {
+            my($id, $part, $vi, $t, $x, $est, $dt) = @f;
+            push @{ $r{k} }, {
+                id => $id, part => $part, vi => $vi, t => $t, x => $x,
+                est => $est, dt => $dt,
+            };
+        } elsif ($c eq 'Q') {
+            my($id, $dt) = @f;
+            $r{node}{$id}{q} = $dt;
+        }
+    }
+    return \%r;
+}
+
+# the shape of the tau left after allocating p^{x-1} where t was left
+sub shape {
+    my($t) = @_;
+    return '1' if $t == 1;
+    return '2' if $t == 2;
+    return 'odd' if $t & 1;
+    return 'pow2' if ($t & ($t - 1)) == 0;
+    my $odd = $t;
+    $odd >>= 1 while !($odd & 1);
+    return "2^a.$odd";
+}
+
+sub band {
+    my($w) = @_;
+    return 'none' unless $w && $w > 0;
+    return int(log($w) / log(8));
+}
+
+my %partname;
+BEGIN {
+    %partname = (0 => 'walk', 1 => 'w1set', 2 => 'qwalk', 3 => 'recurse',
+            4 => 'square', 5 => 'qrecurse', 6 => 'pqsq', 7 => 'two',
+            8 => 'pow2');
+}
+
+sub analyse_by_x {
+    my($r) = @_;
+    my @k = grep $_->{est} > 0 && $_->{dt} > 0, @{ $r->{k} // [] };
+    printf "211 records: %d choices, %d x-loops\n",
+            scalar(keys %{ $r->{node} }), scalar @k;
+    return unless @k;
+    # mean log ratio by part and band of node size
+    my %bandsum;
+    for my $e (@k) {
+        my $w = $r->{node}{$e->{id}}{w};
+        $e->{band} = band($w);
+        $e->{lr} = log($e->{dt} / $e->{est});
+        my $b = $bandsum{"$e->{part} $e->{band}"} //= [ 0, 0 ];
+        $b->[0] += $e->{lr};
+        ++$b->[1];
+    }
+    my %group;
+    for my $e (@k) {
+        my $b = $bandsum{"$e->{part} $e->{band}"};
+        $e->{rel} = $e->{lr} - $b->[0] / $b->[1];
+        my $key = sprintf '%s %s', $partname{$e->{part}} // $e->{part},
+                shape($e->{t} / $e->{x});
+        push @{ $group{$key} }, $e;
+    }
+    for my $key (sort keys %group) {
+        my $g = $group{$key};
+        printf "220 by x: %-20s %6d ratio %8.4g rel %8.4g cost %.4g\n",
+                $key, scalar @$g, exp(sum0(map $_->{lr}, @$g) / @$g),
+                exp(sum0(map $_->{rel}, @$g) / @$g),
+                sum0(map $_->{dt}, @$g);
+    }
+}
+
+sub replay {
+    my($r) = @_;
+    my @nodes = grep {
+        defined($_->{q}) && $_->{q} >= $qlo && $_->{q} <= $qhi && $_->{pat}
+        && 2 <= grep($_->{est} != -2, @{ $_->{z} // [] }) + 1
+    } values %{ $r->{node} };
+    @nodes = sort { $a->{q} <=> $b->{q} } @nodes;
+    if (@nodes > $nreplay) {
+        # evenly spaced by log cost, largest first
+        my($l0, $l1) = (log($nodes[0]{q}), log($nodes[-1]{q}));
+        my($i, @pick) = (0);
+        for my $j (0 .. $nreplay - 1) {
+            my $target = $l0 + ($l1 - $l0) * $j / ($nreplay > 1 ? $nreplay - 1 : 1);
+            ++$i while $i < $#nodes && log($nodes[$i]{q}) < $target;
+            push @pick, $nodes[$i] unless @pick && $pick[-1] == $nodes[$i];
+        }
+        @nodes = @pick;
+    }
+    @nodes = reverse @nodes;
+    my($n, $right, @regret) = (0, 0);
+    for my $nd (grep defined, @nodes) {
+        printf "230 replay %s L%s W %.4g q %.4g sq %s %s\n",
+                @$nd{qw{ id L w q sq pat }};
+        my @choice = map [ $_->{vi}, $_->{est}, "v$_->{vi}(t=$_->{t})" ],
+                grep $_->{est} != -2, @{ $nd->{z} };
+        push @choice, [ 'w', $nd->{w}, 'walk' ] if $nd->{w} <= $maxwalk;
+        my %actual;
+        for my $c (@choice) {
+            my($v, $est, $name) = @$c;
+            my $file = "$tmp/replay.log";
+            unlink $file;
+            my $out = run_pcoul($file, "-dJ$v", "-I$nd->{pat}",
+                    grep(!/^-I/, @args));
+            my $sub = read_stats($file);
+            my $first = $sub->{node}{1};
+            if (!$first || ($first->{pat} // '') ne $nd->{pat}) {
+                $actual{$v} = 'unreached';
+                next;
+            }
+            $actual{$v} = $first->{q} // 'timeout';
+        }
+        my($best) = sort { $actual{$a} <=> $actual{$b} }
+                grep $actual{$_} =~ /^[\d.e+-]+$/, keys %actual;
+        my $chosen = $nd->{best} < 0 ? 'w' : $nd->{best};
+        for my $c (@choice) {
+            my($v, $est, $name) = @$c;
+            printf "231   %-12s est %10.4g actual %10s%s%s\n", $name, $est,
+                    ($actual{$v} // '-') =~ /^[\d.e+-]+$/
+                            ? sprintf('%.4g', $actual{$v}) : $actual{$v} // '-',
+                    $v eq $chosen ? ' chosen' : '',
+                    (defined($best) && $v eq $best) ? ' best' : '';
+            my($t) = $name =~ /t=(\d+)/;
+            printf "233 %s %s %.4g %s %s %.4g %s %s%s\n", $nd->{id}, $nd->{L},
+                    $nd->{w}, $v, $t // 0, $est, $actual{$v} // '-',
+                    $v eq $chosen ? 'c' : '-',
+                    (defined($best) && $v eq $best) ? 'b' : '-';
+        }
+        next unless defined($best)
+                && ($actual{$chosen} // '') =~ /^[\d.e+-]+$/;
+        ++$n;
+        ++$right if $chosen eq $best;
+        push @regret, $actual{$chosen} / $actual{$best};
+    }
+    printf "232 replay summary: %d nodes, chosen was best at %d, regret gmean %.4g max %.4g\n",
+            $n, $right, @regret ? exp(sum0(map log, @regret) / @regret) : 1,
+            @regret ? max(@regret) : 1;
+}
