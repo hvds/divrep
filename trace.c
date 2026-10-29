@@ -130,6 +130,72 @@ static void gs_close(void) {
     gs_fp = NULL;
 }
 
+/* What timing each test preparation recorded adds to its time, to take
+ * from it: the mean time between two reads of its clock (ct_clock, see
+ * coultau.c) with nothing between them. It is a system call, so
+ * comparable with the cheapest preparations; measured once.
+ */
+static double gs_clock_gap(void) {
+    static double cost = -1;
+    if (cost < 0) {
+        double sum = 0;
+        for (uint i = 0; i < 10000; ++i) {
+            double a = (*ct_clock)();
+            sum += (*ct_clock)() - a;
+        }
+        cost = sum / 10000;
+    }
+    return cost;
+}
+
+/* A test preparation (VB_PREP): 1 in 8 recorded, as T records:
+ *   T nbits steps gcd0 .. gcd4 nprime pbits npower full zbits dt
+ * where dt excludes what the clock reads timing it add (see
+ * gs_clock_gap()).
+ */
+void gs_prep_record(uint nbits, const t_ct_work *w, double dt) {
+    static uint ctr = 0;
+    if (++ctr % 8)
+        return;
+    dt -= gs_clock_gap();
+    fprintf(gs_file(), "T %u %u %u %u %u %u %u %u %.0f %u %u %.0f %.9f\n",
+            nbits, w->steps, w->gcd[0], w->gcd[1], w->gcd[2], w->gcd[3],
+            w->gcd[4], w->nprime, w->pbits, w->npower, w->full ? 1 : 0,
+            w->zbits, dt);
+}
+
+/* A prime test's preparation (VB_PREP), with its result res (see
+ * cm_pprep_price()): 1 in 8 recorded, as U records:
+ *   U nbits res dt
+ */
+void gs_pprep_record(uint nbits, int res, double dt) {
+    static uint ctr = 0;
+    if (++ctr % 8)
+        return;
+    dt -= gs_clock_gap();
+    fprintf(gs_file(), "U %u %d %.9f\n", nbits, res, dt);
+}
+
+/* The whole run (VB_COUNTS), as an N record:
+ *   N lin_walks lin_iter lin_inv sq_walks sq_iter sq_inv w1s_prime
+ *       w1s_check rec_prime rec_applied preps ppreps charged cpu rec_fail
+ * where lin_iter includes pell_iter (see cc_work()), preps and ppreps
+ * are the calls of tau_multi_prep() and tau_prime_prep(), charged is
+ * what the tests were priced at, cpu the process CPU time, and rec_fail
+ * the primes rejected by apply_single() rather than in single limbs.
+ */
+void gs_count_record(const t_cc *c, double charged) {
+    struct timespec t;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &t);
+    fprintf(gs_file(),
+            "N %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %.6f %.6f"
+            " %lu\n",
+            c->lin_walks, c->lin_iter + c->pell_iter, c->lin_inv,
+            c->sq_walks, c->sq_iter, c->sq_inv, c->w1s_prime, c->w1s_check,
+            c->rec_prime, c->rec_applied, ct_preps, ct_ppreps, charged,
+            t.tv_sec + t.tv_nsec * 1e-9, c->rec_fail);
+}
+
 FILE *gs_file(void) {
     if (!gs_fp) {
         const char *fn = getenv("GATE_STATS");

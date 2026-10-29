@@ -33,6 +33,7 @@
 #include "coulvec.h"
 #include "assume.h"
 #include "coulcost.h"
+#include "coulplan.h"
 #include "mock.h"
 #include "trace.h"
 #include "bench.h"
@@ -252,6 +253,8 @@ ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
 ulong gain2 = 0;    /* as gain/antigain for squares */
 ulong antigain2 = 0;
+uint auto_level = 0;    /* -ja<level>: choices by estimated cost, see README */
+t_cc cc;                /* what the run has done, for costing it */
 /* maxp[e] is the greatest prime we should attempt to allocate as power p^e;
  * minp[e] is the threshold that at least one allocated p^e should exceed
  * (else we can skip the walk); midp[e] is the additional threshold up to
@@ -2586,6 +2589,8 @@ void check_exceptions(void) {
 
 void init_post(void) {
     init_cycles();
+    /* time the tests in the unit of reported times */
+    ct_clock = &work_clock;
     init_tau(rough, opt_flake);
     init_stats(k);
     alloc_taum(k);
@@ -2708,6 +2713,8 @@ void report_init(FILE *fp, char *prog) {
         } else
             fprintf(fp, " -j%u", strategy);
     }
+    if (auto_level)
+        fprintf(fp, " -ja%u", auto_level);
     if (opt_print) {
         fprintf(fp, " -o");
         if (opt_flake)
@@ -3212,7 +3219,7 @@ int inv_comparator(const void *va, const void *vb) {
     return (b->v < a->v) - (a->v < b->v);
 }
 
-/* the walk itself: walk_v() wraps it */
+/* the walk itself: walk_v() wraps it (see walk_v_gr()) */
 #define walk_v walk_v_inner
 void walk_v(t_node *cur_node, mpz_t start) {
 #ifdef SQONLY
@@ -3398,6 +3405,7 @@ void walk_v(t_node *cur_node, mpz_t start) {
                     break;  /* CHECKME: should this be an error? */
 
                 ++countwi;
+                ++cc.pell_iter;
                 ++pc;
                 if (need_work)
                     diag_walk_pell(cur_node, pc);
@@ -3539,11 +3547,14 @@ void walk_v(t_node *cur_node, mpz_t start) {
         }
 #endif
 
+        ++cc.sq_walks;
+        cc.sq_setres += xr->count;
         while (1) {
             mpz_add(Z(wv_r), Z(wv_qqr), xr->r[rindex]);
             if (tester && mpz_cmp(Z(wv_r), Z(wv_endr)) > 0)
                 return;
             ++countwi;
+            ++cc.sq_iter;
             GS_INC(gs_sq_iter);
             mpz_pow_ui(Z(wv_rx), Z(wv_r), xi);
             mpz_sub(Z(wv_ati), Z(wv_rx), *oi);
@@ -3554,16 +3565,22 @@ void walk_v(t_node *cur_node, mpz_t start) {
                 diag_walk_zv(cur_node, Z(wv_ati), Z(wv_end));
             if (check && !cvec_test_prepped(cx0, ZP(wv_ati)))
                 goto next_sqati;
-            for (uint ii = 0; ii < inv_count; ++ii) {
+            uint ii;
+            for (ii = 0; ii < inv_count; ++ii) {
                 t_mod *ip = &inv[ii];
                 if (mpz_fdiv_ui(Z(wv_ati), ip->m) == ip->v)
-                    goto next_sqati;
+                    break;
             }
+            cc.sq_inv += ii + (ii < inv_count);
+            if (ii < inv_count)
+                goto next_sqati;
 
             GS_INC(gs_n_inv);
             test_multi_reset();
             /* note: test_multi_append() steals Z(wv_r) */
             if (prime_power) {
+                if (cc.on)
+                    cc.test += cm_price_prime(Z(wv_r));
                 if (!GS_STAGE(gs_t_sq, tau_prime_test(Z(wv_r)))) {
                     TRACK_BAD(0, sqi);
                     goto next_sqati;
@@ -3616,17 +3633,25 @@ void walk_v(t_node *cur_node, mpz_t start) {
 #endif
     if (check)
         cvec_prep_test(cx0, m, aq);
+    ++cc.lin_walks;
+    cc.lin_setinv += inv_count;
     for (ulong ati = mpz_get_ui(Z(wv_ati)); ati <= end; ++ati) {
         ++countwi;
+        ++cc.lin_iter;
         if (need_work)
             diag_walk_v(cur_node, ati, end);
         if (check && !cvec_test_ui_prepped(cx0, ati))
             goto next_ati;
-        for (uint ii = 0; ii < inv_count; ++ii) {
+        uint ii;
+        for (ii = 0; ii < inv_count; ++ii) {
             t_mod *ip = &inv[ii];
             if (ati % ip->m == ip->v)
-                goto next_ati;
+                break;
         }
+        /* the entries tested, including any that rejected it */
+        cc.lin_inv += ii + (ii < inv_count);
+        if (ii < inv_count)
+            goto next_ati;
 #ifdef VERBOSE
         if (VB(VB_TRACE))
             gmp_printf("prefilter_pass call=%u ati=%lu\n", g_walkv_call, ati);
@@ -3666,11 +3691,11 @@ void walk_v(t_node *cur_node, mpz_t start) {
 void walk_v(t_node *cur_node, mpz_t start) {
 #ifdef VERBOSE
     if (VB(VB_GATE)) {
-        trace_walk_v(cur_node, start, walk_v_inner);
+        trace_walk_v(cur_node, start, walk_v_gr);
         return;
     }
 #endif
-    walk_v_inner(cur_node, start);
+    walk_v_gr(cur_node, start);
 }
 
 /* test the case where v_i has all divisors accounted for */
@@ -3780,6 +3805,7 @@ void walk_1_set(
     if (!cur_node->have_square)
         return;
 #endif
+    ++cc.w1s_calls;
     /* p must exceed minp[x - 1] */
     if (!cur_node->have_min && plow < minp[x - 1])
         plow = minp[x - 1];
@@ -3840,6 +3866,7 @@ void walk_1_set(
             break;
 #endif
         GS_INC(gs_w1s_primes);
+        ++cc.w1s_prime;
         if (known_prime(prev_node, p))
             continue;
         /* Must diag before need_mod checks, which can reject a high
@@ -3861,6 +3888,7 @@ void walk_1_set(
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
         mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
         ++countw;
+        ++cc.w1s_check;
         GS_INC(gs_w1s_check);
         if (check && !cvec_testv(cx0, Z(w1_v)))
             continue;
@@ -5931,16 +5959,6 @@ static inline ulong start_p(uint vi, uint x) {
     return maxforce[vi];
 }
 
-/* True if run_flip_pqsq() can take over from p^{x-1} at a v_i left with
- * tau 2z: that relies on z and 2z being the only powers still to try there,
- * every smaller one having been done in reverse (see done_in_reverse()).
- * z does not need to be prime. Powers of 2 are instead tried in order
- * of p, whatever the power, so they do not qualify.
- */
-static inline bool can_flip(uint x) {
-    return !ispow2_u64(x);
-}
-
 /* If t is of the form 2x^2 for an x that can_flip(), returns x, else
  * returns 0.
  */
@@ -6230,9 +6248,9 @@ e_pux limit_unforced_x(
     return PUX_DO_THIS_X;
 }
 
-/* The gate: true if the gain heuristics say to walk prev_node, rather
- * than recurse by allocating p^{x-1} at cur_act's v_i for each prime
- * after p up to limp.
+/* The gate: true if prev_node should be walked, rather than recursed
+ * into by allocating p^{x-1} at cur_act's v_i for each prime after p up
+ * to limp. By the gain heuristics, or under -ja by estimated cost.
  */
 bool gate_walk(t_node *prev_node, t_act *cur_act, ulong p, ulong limp) {
     uint ti = cur_act->ti;
@@ -6284,6 +6302,8 @@ bool gate_walk(t_node *prev_node, t_act *cur_act, ulong p, ulong limp) {
         gs_gate(cur_act->level, vi, x, ti, p, cap, mpz_get_d(Z(r_walk)),
                 prev_node->have_square, do_walk);
 #endif
+    if (auto_level)
+        do_walk = ja_gate(prev_node, cur_act, p, cap, do_walk);
     return do_walk;
 }
 
@@ -7034,6 +7054,7 @@ bool next_unforced(t_act *cur_act) {
         /* note: only valid to use from just below here */
       redo_unforced: ;
         ulong p = prime_iterator_next(&cur_act->piter);
+        ++cc.rec_prime;
         if (p > cur_act->limp)
             goto end_x;
 #ifdef MOCK
@@ -7066,11 +7087,15 @@ bool next_unforced(t_act *cur_act) {
         }
         /* note: this returns 0 if t=1 */
         if (!apply_single(prev_node, cur_node, cur_act->vi, p, cur_act->x)) {
+            /* below a fixed square, priced with the roots */
+            if (!prev_node->have_square)
+                ++cc.rec_fail;
             if (need_work)
                 diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
             /* not redo_unforced, we may have improved zmax */
             continue;
         }
+        ++cc.rec_applied;
         return 1;
       end_x:
         next_x(cur_act);
@@ -7474,7 +7499,12 @@ int main(int argc, char **argv, char **envp) {
         else if (arg[1] == 'j') {
             if (arg[2] == 'p')
                 defer_pell = 1;
-            else if (arg[2] == 's') {
+            else if (arg[2] == 'a') {
+                /* -ja<level>: automate choices by estimated cost */
+                auto_level = strtoul(&arg[3], NULL, 10);
+                if (auto_level != 1)
+                    fail("-ja: only -ja1 is supported so far");
+            } else if (arg[2] == 's') {
                 set_fixed_strategy(&arg[3]);
             } else {
                 strategy = strtoul(&arg[2], NULL, 10);
@@ -7514,6 +7544,25 @@ int main(int argc, char **argv, char **envp) {
     /* a bench searches nothing, so needs no range */
     if (!bench_spec && mpz_cmp(zmin, zmax) >= 0)
         fail("require min < max, not %Zu:%Zu", zmin, zmax);
+    /* Learning charges the factoring ladder its expected cost, given a
+     * cost table.
+     */
+#ifndef MOCK
+    if (auto_level && cm_have_table()) {
+        ct_ladder_model = &cm_ladder_cost;
+        ct_prep_price = &cm_prep_price;
+        ct_pprep_price = &cm_pprep_price;
+        ct_ptest_price = &cm_ptest_price;
+        cc.on = 1;
+    }
+#endif
+    gr_init();
+#ifdef VERBOSE
+    if (VB(VB_PREP) && cc.on) {
+        ct_prep_record = &gs_prep_record;
+        ct_pprep_record = &gs_pprep_record;
+    }
+#endif
 
     init_post();
     if (opt_alloc & 2)
@@ -7521,6 +7570,7 @@ int main(int argc, char **argv, char **envp) {
     else {
         report_init(stdout, argv[0]);
         if (rfp) report_init(rfp, argv[0]);
+        cm_table_report();
     }
     /* after init_post(), which settles the unit of this run's times */
     if (debugT)
@@ -7611,6 +7661,15 @@ int main(int argc, char **argv, char **envp) {
         report("]\n");
 #else
         report("\n");
+#endif
+        /* how well the counted cost (see cc_work()) matches CPU time */
+        if (cc.on)
+            report("369 cost counted %.2fs, ladder %.3fs against %.3fs\n",
+                    cc_work(), ct_ladder_charged, ct_ladder_actual);
+#ifdef VERBOSE
+        if (VB(VB_COUNTS) && cc.on)
+            gs_count_record(&cc,
+                    cc.test + ct_test_charged + ct_ladder_charged);
 #endif
         if (!seen_valid && !seen_best)
             report("406 Error: no valid arrangement of powers\n");
