@@ -22,9 +22,9 @@ MPUGMP_VER ?= 39982f872b
 # MSIQS_VER ?= c71d023e22
 
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
-    coulvec.c coulmint.c trace.c bench.c coulcost.c timings.c
+    coulvec.c coulmint.c trace.c bench.c coulcost.c coulplan.c timings.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h \
-    coulvec.h coulmint.h trace.h bench.h coulcost.h \
+    coulvec.h coulmint.h trace.h bench.h coulcost.h coulplan.h \
     coul.h coulint.h types.h builtins.h mock.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
