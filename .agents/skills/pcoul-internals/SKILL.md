@@ -268,10 +268,10 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   batch has been allocated (ie when `fp_need` reaches 0). The caps
   are state of each node (`t_node.cap`, inherited from the node
   above): the `-p` cap from the start, and the `-W` threshold below a
-  node that is swept. So recursion below a swept node allocates only
-  primes up to the threshold, and the sweep covers each p^{x-1} from
-  there up to the cap that node itself inherited. What it
-  sweeps (`prep_midp()`):
+  node that is swept (a sweep for `-k` alone caps nothing below it).
+  So recursion below a swept node allocates only primes up to the
+  threshold, and the sweep covers each p^{x-1} from there up to the
+  cap that node itself inherited. What it sweeps (`prep_midp()`):
   - only the powers recursion itself would allocate: p^{x-1} for x not
     a power of 2, unless under highpow (see "Order of powers" above).
     So without `-j4`/`-js`, `-Wx<P>^1` sweeps nothing at all, and is
@@ -411,6 +411,9 @@ easy to confuse by mnemonic alone:
   to `-p` despite the mnemonic overlap. (The comment on `opt_print` in
   `coul.c` does not describe this.)
 - `-a`/`-b`: batch selection (see "Batches" above).
+- `-k<bound>`: in a batch that leaves exactly one position needing a
+  square, first try each prime up to the bound to an odd power at each
+  other position that needs one, by Pell.
 - `-I`: recovery/injection pattern (see "recovery patterns" above).
 - `-dw<n>` / `-dW<n>` / `-dL<n>` (debug): show every progress line
   (`-dw` leaves out the steps of a walk, `-dW` includes them), or

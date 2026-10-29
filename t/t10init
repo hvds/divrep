@@ -105,6 +105,38 @@ sub test_init {
         like($lines->{367}[-1] // '', qr{ walkc 0 },
             q{a walk does not try the minimum});
     }
+    # -k tries primes to an odd power first, where that leaves a Pell equation
+    expect_result(q{-k find f(6,5)},
+            $result65, '', [qw{ -k1000 -x1e20 6 5 }]);
+    expect_result(q{-k -W find f(6,5)},
+            $result65, '', [qw{ -k1e5 -W100 -x1e17 6 5 }]);
+    for my $opts (
+        [], [qw{ -k30 }], [qw{ -k1e4 }], [qw{ -k1e4 -W100 }], [qw{ -k1e4 -j4 }],
+    ) {
+        my $lines = run_test($type, [ @$opts, qw{ -X -x1e13 6 4 } ], 0);
+        is(0 + @{ $lines->{202} // [] }, 21,
+                "all f(6,4) candidates to 1e13 found with '@$opts'");
+    }
+    # not in a batch STRATEGY_6X takes, where the pass would be wasted
+    {
+        my @walks = map {
+            my $lines = run_test($type, [ @$_, qw{ -b0 -x1e18 18 5 } ], 0);
+            ($lines->{367}[0] // '') =~ /walk (\d+)/ ? $1 : -1;
+        } [], [qw{ -k1e4 }];
+        is($walks[1], $walks[0], '-k makes no pass in a STRATEGY_6X batch');
+    }
+    # a position with tau 6 left is passed over where another has 18
+    # and nothing is allocated there, so that -W need not sweep it
+    for my $opts (
+        [], [qw{ -k30 }], [qw{ -k1e4 }],
+        [qw{ -k30 -W100 }],
+    ) {
+        my $lines = run_test($type, [ @$opts, qw{ -X -x1e10 18 3 } ], 0);
+        my %seen;
+        ++$seen{$_} for map /^202 Candidate (\d+)/, @{ $lines->{202} // [] };
+        is(0 + keys %seen, 56,
+                "all f(18,3) candidates to 1e10 found with '@$opts'");
+    }
     # v + 1 = 64013.100003^2: with nothing for trial division to find,
     # the ladder finds 64013 and is left with the square of a prime
     {
@@ -248,6 +280,10 @@ sub test_recover {
         [qw{ -j4 -W100 -x318680 32 3 }],
         ['305 b6: . . . W(101,2,2)'],
         'b6: . . . W(101,2,2): 0 / 1577', 2,
+    );
+    expect_recover(q{recover -k pass}, [qw{ -x1e20 -f3 -k1000 6 5 }],
+        ['305 b0: . 2 3^2 2^2 5^2 W(769,2,0)'],
+        'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
     );
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
