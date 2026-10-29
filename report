@@ -37,8 +37,8 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
             if $arg =~ /^-mp(.*)/;
     $filter = chain_topprime($filter, $1 || shift(@ARGV)), next
             if $arg =~ /^-tp(.*)/;
-    $filter = chain_mod($filter, $1, $2), next
-            if $arg =~ /^-m(\d+)=([0-9,]+)$/;
+    $filter = chain_mod($filter, $1, $2, $3), next
+            if $arg =~ /^-m(\d+)([=!])([0-9,]+)$/;
     ($nfilter, $filter) = ($filter, sub { 1 }), next
             if $arg eq '-k';
     die "Unknown option '$arg'";
@@ -295,11 +295,12 @@ sub chain_topprime {
 }
 
 sub chain_mod {
-    my($next, $m, $v) = @_;
+    my($next, $m, $op, $v) = @_;
+    my $match = ($op eq '=') ? 1 : 0;
     my %v = map +($_ => 1), split /,/, $v;
     return sub {
         return 0 unless $next->($_[0]);
-        return $v{$_[0] % $m} ? 1 : 0;
+        return $v{$_[0] % $m} ? $match : !$match;
     };
 }
 
