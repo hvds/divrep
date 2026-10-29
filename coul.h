@@ -116,8 +116,9 @@ extern t_node *nodes;
 extern uint cur_batch_level;
 
 /* What -k does in a batch, planned once the batch is complete and kept
- * with its node (see kern_state()): whether it applies at all, its bound,
- * and as bit vectors the positions it applies to and those passed over.
+ * with its node (see kern_state()): whether it applies at all, its bound
+ * and count of -K, and as bit vectors the positions it applies to and
+ * those passed over.
  * It applies to a batch that fixes exactly one square, unless that is
  * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
  * at v_{i-2} and gains nothing from the pass.
@@ -126,6 +127,7 @@ typedef struct s_kern {
     int id;             /* batch_alloc when it was planned */
     bool on;
     ulong b;            /* the bound of -k, 0 if it is not to apply */
+    uint keep;          /* the count of -K */
     ulong at, passed;   /* needs MAXK_KERN <= 64 */
 } t_kern;
 
