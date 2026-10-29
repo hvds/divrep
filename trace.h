@@ -9,6 +9,8 @@
  *                 file named by $GATE_STATS (see trace.c)
  *   VB_STAGE   4: with VB_GATE, the time inside each test stage of the
  *                 walks (two clock reads per candidate tested)
+ *   VB_CHOICE  8: with -ja, a J record of each choice of position by
+ *                 estimated cost, to the same file (see ja_choose())
  *   VB_PREP   16: a T record of 1 in 8 of the test preparations
  *                 (tau_multi_prep()), with what each did and its time,
  *                 and a U record of 1 in 8 of those for prime tests,
@@ -29,6 +31,7 @@ extern uint verbose;
 #   define VB_TRACE 1
 #   define VB_GATE 2
 #   define VB_STAGE 4
+#   define VB_CHOICE 8
 #   define VB_PREP 16
 #   define VB_COUNTS 32
 #   define VB(bits) (verbose & (bits))
