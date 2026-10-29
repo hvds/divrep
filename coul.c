@@ -242,6 +242,7 @@ bool midp_only = 0, need_midp = 0;
  * each a Pell equation; elsewhere those primes are known to exceed kern_b.
  */
 ulong kern_b = 0;
+uint kern_keep = 0;     /* -K: positions to keep of those -k would pass over */
 /* where to walk for -W (midp) */
 typedef struct s_midpp {
     uint vi;
@@ -882,6 +883,12 @@ void disp_batch(void) {
         if (np->have_square) {
             uint l = strlen(diag_buf);
             sprintf(&diag_buf[l], " [sq=%u]", np->have_square);
+        }
+        /* with one square, the residues of its root mod aq / q */
+        if (opt_alloc && np->have_square == 1) {
+            uint l = strlen(diag_buf);
+            sprintf(&diag_buf[l], " [rc=%u]",
+                    (uint)res_array(np->level)->count);
         }
         if (opt_alloc)
             /* with the batch's modulus, as a guide to its size */
@@ -2741,6 +2748,8 @@ void report_init(FILE *fp, char *prog) {
     }
     if (kern_b)
         fprintf(fp, " -k%lu", kern_b);
+    if (kern_keep)
+        fprintf(fp, " -K%u", kern_keep);
     if (force_all)
         fprintf(fp, " -f%u", force_all);
     if (unforce_all) {
@@ -4433,8 +4442,9 @@ void mintau_restricted(t_node *cur_node, mpz_t mint, uint t, uint r) {
 }
 
 /* What -k does in a batch, planned once the batch is complete and kept
- * with its node (see kern_state()): whether it applies at all, its bound,
- * and as bit vectors the positions it applies to and those passed over.
+ * with its node (see kern_state()): whether it applies at all, its bound
+ * and count of -K, and as bit vectors the positions it applies to and
+ * those passed over.
  * It applies to a batch that fixes exactly one square, unless that is
  * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
  * at v_{i-2} and gains nothing from the pass.
@@ -4443,6 +4453,7 @@ typedef struct s_kern {
     int id;             /* batch_alloc when it was planned */
     bool on;
     ulong b;            /* the bound of -k, 0 if it is not to apply */
+    uint keep;          /* the count of -K */
     ulong at, passed;   /* needs MAXK_KERN <= 64 */
 } t_kern;
 
@@ -4474,6 +4485,15 @@ static inline uint kern_tau(uint vi) {
     while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
         --vil;
     return vp->alloc[vil - 1].t;
+}
+
+/* what was allocated at v_i once the current batch was complete */
+static inline mpz_t *kern_q(uint vi) {
+    t_value *vp = &value[vi];
+    uint vil = cur_vlevel[vi];
+    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
+        --vil;
+    return &vp->alloc[vil - 1].q;
 }
 
 /* True if the current batch is one STRATEGY_6X takes, see apply_secondary().
@@ -4512,6 +4532,7 @@ static t_kern *kern_state(t_node *np) {
     bool later = 0;
     ks->id = batch_alloc;
     ks->b = kern_b;
+    ks->keep = kern_keep;
     ks->at = 0;
     ks->passed = 0;
     ks->on = (np->have_square == 1 && !kern_6x());
@@ -4533,6 +4554,16 @@ static t_kern *kern_state(t_node *np) {
                 ks->at &= ~(1UL << vi);
                 ks->passed |= 1UL << vi;
             }
+    /* -K: keep those with most allocated, so the lowest limits */
+    for (uint keep = ks->keep; keep && ks->passed; --keep) {
+        uint best = k;
+        for (uint vi = 0; vi < k; ++vi)
+            if (((ks->passed >> vi) & 1) && (best == k
+                    || mpz_cmp(*kern_q(vi), *kern_q(best)) > 0))
+                best = vi;
+        ks->passed &= ~(1UL << best);
+        ks->at |= 1UL << best;
+    }
     return ks;
 }
 
@@ -7030,6 +7061,8 @@ int main(int argc, char **argv, char **envp) {
             limp_cap = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'k')
             kern_b = ulston(&arg[2]);
+        else if (arg[1] == 'K')
+            kern_keep = strtoul(&arg[2], NULL, 10);
         else if (arg[1] == 'W') {
             need_midp = 1;
             char *w = &arg[2];
