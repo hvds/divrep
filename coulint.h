@@ -1,12 +1,17 @@
 #ifndef COULINT_H
 #define COULINT_H
 
-/* Internals of coul.c shared with its helpers (coulcost.c, trace.c,
- * bench.c), not needed by the other modules.
+/* Internals of coul.c shared with its helpers (coulcost.c, mock.c,
+ * trace.c, bench.c), not needed by the other modules.
  */
 
 #include "coul.h"
 #include "coultau.h"
+
+/* As dtov(), for an estimate in doubles: v_i for the given d. */
+static inline double dtov_d(double d, uint vi) {
+    return TYPE_MULT(vi) * d + TYPE_OFFSET(vi);
+}
 
 /* the clock for timing parts of the work, and its unit (see coul.c) */
 extern double work_clock(void);
