@@ -111,13 +111,16 @@ typedef enum {
 
 extern void walk_v_inner(t_node *cur_node, mpz_t start);
 
+extern double zmax_given;
 extern mpz_t best;
 extern uint auto_level;
+extern ulong *minp, *maxp, *midp;
 extern bool highpow;
 extern ulong limp_cap;
-extern bool midp_only, in_midp, need_maxp, need_midp;
+extern bool midp_only, need_midp;
 extern ulong kern_b;
 extern uint strategy;
+extern t_fact nf;
 extern uint *maxforce;
 extern void done(void);
 extern ulong next_prime(ulong cur);
@@ -177,6 +180,24 @@ static inline bool dis_bit(t_dis *dp, uint vi) {
 static inline bool dis_at(t_node *np, uint vi) {
     assert(np->dis);
     return dis_bit(np->dis, vi);
+}
+
+/* the tau left at v_i once the current batch was complete */
+static inline uint kern_tau(uint vi) {
+    t_value *vp = &value[vi];
+    uint vil = cur_vlevel[vi];
+    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
+        --vil;
+    return vp->alloc[vil - 1].t;
+}
+
+/* what was allocated at v_i once the current batch was complete */
+static inline mpz_t *kern_q(uint vi) {
+    t_value *vp = &value[vi];
+    uint vil = cur_vlevel[vi];
+    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
+        --vil;
+    return &vp->alloc[vil - 1].q;
 }
 
 /* The x of the previous allocation at v_i if it was unforced, else 0. */
