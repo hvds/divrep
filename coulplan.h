@@ -33,6 +33,8 @@ extern bool ja_gate(
 );
 #ifdef VERBOSE
 extern int ja_force;
+extern double ja_stol;
+extern bool ja_sblind;
 extern void ja_vb_close(t_act *lp);
 #endif
 

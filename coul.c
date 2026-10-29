@@ -7569,8 +7569,13 @@ int main(int argc, char **argv, char **envp) {
 #endif
               case 'J':
 #ifdef VERBOSE
-                ja_force = (arg[3] == 'w') ? -1
-                        : (int)strtoul(&arg[3], NULL, 10);
+                if (arg[3] == 's')
+                    ja_stol = strtod(&arg[4], NULL);
+                else if (arg[3] == 'b')
+                    ja_sblind = 1;
+                else
+                    ja_force = (arg[3] == 'w') ? -1
+                            : (int)strtoul(&arg[3], NULL, 10);
                 break;
 #else
                 fail("-dJ needs a VERBOSE build");
