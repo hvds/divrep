@@ -33,6 +33,7 @@
 #include "coulvec.h"
 #include "assume.h"
 #include "coulcost.h"
+#include "mock.h"
 #include "trace.h"
 #include "bench.h"
 
@@ -185,6 +186,10 @@ uint lastprime;
 
 /* set to utime at start of run, minus last timestamp of recovery file */
 double t0 = 0;
+/* The cost the mocks have modelled: always declared, and 0 unless
+ * built with MOCK, so that seconds() needs no #ifdef.
+ */
+double g_mock_spent_s = 0;
 struct rusage rusage_buf;
 
 /* Reported times are user-mode CPU cycles divided by a reference clock
@@ -750,8 +755,11 @@ void report(char *format, ...) {
     }
 }
 
+/* CPU time the mocks spend computing costs, not part of what they model */
+double g_mock_overhead_s = 0;
+
 double seconds(double t1) {
-    return (t1 - t0);
+    return (t1 - t0) + g_mock_spent_s - g_mock_overhead_s;
 }
 
 double elapsed(void) {
@@ -913,6 +921,9 @@ void diag_any(t_node *cur_node, bool need_disp) {
             if (t1 >= death_delay) {
                 keep_diag();
                 report("301 Timeout after %.2fs\n", seconds(t1));
+#ifdef MOCK
+                mock_report();
+#endif
                 fail_silent();
             }
     }
@@ -3320,6 +3331,12 @@ void walk_v(t_node *cur_node, mpz_t start) {
     }
 #endif
 
+#ifdef MOCK
+    if (mock_walk_v(cur_node, q, t, nqc, need_square, need_prime, npc,
+            need_other, noc, inv, inv_count, Z(wv_ati), Z(wv_end)))
+        return;
+#endif
+
     if (nqc) {
         uint sqi = need_square[0];
         mpz_t *oi = &wv_o[sqi];
@@ -3809,10 +3826,17 @@ void walk_1_set(
     }
 
     level_setp(cur_act, plow);
+#ifdef MOCK
+    mock_w1s_start();
+#endif
     while (1) {
         ulong p = prime_iterator_next(&cur_act->piter);
         if (p > phigh)
             break;
+#ifdef MOCK
+        if (mock_w1s_prime(p, phigh))
+            break;
+#endif
         GS_INC(gs_w1s_primes);
         if (known_prime(prev_node, p))
             continue;
@@ -3853,6 +3877,10 @@ void walk_1_set(
             mpz_set(wv_o[vj], Z(w1_j));
         }
         ++countwi;
+#ifdef MOCK
+        mock_w1s_pass(Z(w1_v), t, need_prime, npc, need_other, noc);
+        continue;
+#endif
         GS_INC(gs_w1_pass);
         if (!GS_STAGE(gs_w1_tprime, test_1primes(need_prime, npc)))
             goto reject_this_one;
@@ -7499,6 +7527,9 @@ int main(int argc, char **argv, char **envp) {
             check = 1;
     }
     prep_presquare();
+#ifdef MOCK
+    mock_init();
+#endif
 #ifdef VERBOSE
     if (bench_spec) {
         multibench(bench_spec);
@@ -7531,6 +7562,9 @@ int main(int argc, char **argv, char **envp) {
     if (have_pend202)
         apply_pend202();
     keep_diag();
+#ifdef MOCK
+    mock_report();
+#endif
 
     if ((opt_alloc & 2) == 0) {
         double tz = utime();

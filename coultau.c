@@ -1174,6 +1174,18 @@ ulong tm_rungmask(uint bits) {
     return _find_tmfb(bits);
 }
 
+/* The rung masks by size, as tau_multi_run() uses them (so including
+ * any flake masking from init_tmfbl()), for the cost model: the array
+ * by bits up to *out_maxb, and the mask beyond that in *out_lim.
+ */
+const ulong *get_tmfbl(uint *out_maxb, ulong *out_lim) {
+    if (!tmfbl)
+        fail("get_tmfbl: init_tmfbl() has not been called yet");
+    *out_maxb = tmfb_maxb;
+    *out_lim = tmfb_lim;
+    return tmfbl;
+}
+
 /* see also other_comparator() in coul.c */
 int taum_comparator(const void *va, const void *vb) {
     t_tm *tma = (t_tm *)va;
