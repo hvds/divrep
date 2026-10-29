@@ -72,5 +72,7 @@ extern uint tm_rungs(void);
 extern ulong tm_rungmask(uint bits);
 extern bool tm_rung(uint i, t_tm *tm);
 extern mpz_t *tm_factor(t_tm *tm);
+/* the ladder's rung masks by size, as used by tau_multi_run() */
+extern const ulong *get_tmfbl(uint *out_maxb, ulong *out_lim);
 
 #endif
