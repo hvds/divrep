@@ -119,9 +119,14 @@ extern uint cur_batch_level;
  * with its node (see kern_state()): whether it applies at all, its bound
  * and count of -K, and as bit vectors the positions it applies to and
  * those passed over.
- * It applies to a batch that fixes exactly one square, unless that is
- * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
- * at v_{i-2} and gains nothing from the pass.
+ * It applies to a batch that fixes exactly one square. One that
+ * STRATEGY_6X can take (2.z^2 at v_i, i >= 2) has its own loop at
+ * v_{i-2}, and gains nothing from the pass: it is left to that, unless
+ * the search under -k is estimated to cost less (see ke_batch()), when
+ * best_6x() stands aside. That loop runs to the 4th root of zmax
+ * whatever n is, while under -k the limits fall as the powers of n
+ * rise, so for n = 6p the batch with 2^{p-1} at v_{i-2} goes to -k from
+ * about p = 5.
  */
 typedef struct s_kern {
     int id;             /* batch_alloc when it was planned */
