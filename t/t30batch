@@ -99,5 +99,6 @@ sub test_show {
 sub batches {
     my(@args) = @_;
     my @lines = `$prog -Ls0 -a @args 2>&1`;
-    return [ map /^203 b\d+: (.*?)(?: \[sq=\d+\])? \[aq=/ ? $1 : (), @lines ];
+    return [ map /^203 b\d+: (.*?)(?: \[sq=\d+\])?(?: \[rc=\d+\])? \[aq=/
+            ? $1 : (), @lines ];
 }
