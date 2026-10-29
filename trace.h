@@ -19,6 +19,9 @@
  *                 counted for costing it and the CPU time it took, to
  *                 the same file, for pricing what is counted (see
  *                 gs_count_record())
+ *   VB_STRAT  64: with -ja, records of each choice of position by cost
+ *                 (Y, Z) and of its cost by x and in all (K, Q), to the
+ *                 same file, for studying strategy (see ja_choose())
  * The same build also runs the benches ($MULTIBENCH, see bench.c).
  */
 
@@ -34,6 +37,7 @@ extern uint verbose;
 #   define VB_CHOICE 8
 #   define VB_PREP 16
 #   define VB_COUNTS 32
+#   define VB_STRAT 64
 #   define VB(bits) (verbose & (bits))
 
 #   define GS_MAXLEVEL 256

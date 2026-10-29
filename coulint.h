@@ -178,6 +178,9 @@ extern ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt);
 extern e_xr classify_x(
     t_node *prev_node, uint vi, uint x, ulong p, ulong limp
 );
+#ifdef VERBOSE
+extern const char *ja_pattern(t_node *cur_node);
+#endif
 
 /* True if p is never allocated as an unforced prime, wherever it lies:
  * under TYPE_a each p | n divides every v_i or none, as the batch has it.

@@ -1505,15 +1505,40 @@ void ja_learnt(t_act *lp) {
 /* the current x of the position chosen at lp is done: learn from it */
 void ja_learnx(t_act *lp) {
     uint di = lp->di;
-    if (di < ja_nd)
-        ja_learn(lp->level - 1, lp->ja_xp[di], lp->ja_w, lp->ja_ex[di],
-                gr_clock() - lp->ja_xt0);
+    if (di < ja_nd) {
+        double dt = gr_clock() - lp->ja_xt0;
+        ja_learn(lp->level - 1, lp->ja_xp[di], lp->ja_w, lp->ja_ex[di], dt);
+#ifdef VERBOSE
+        /* K <id> <part> <vi> <t> <x> <estimate> <actual>, in us */
+        if (VB(VB_STRAT) && lp->ja_ex[di] > 0)
+            fprintf(gs_file(), "K %lu %u %u %u %u %.4g %.4g\n", lp->ja_id,
+                    lp->ja_xp[di], lp->vi, lp->ti,
+                    divisors[lp->ti].div[di], lp->ja_ex[di] * 1e6, dt * 1e6);
+#endif
+    }
 }
+
+#ifdef VERBOSE
+/* -dJ: the position the first choice by cost must make, -1 to walk */
+int ja_force = -2;
+static ulong ja_ids = 0;
+
+/* Q <id> <actual>: the choice made at lp is done, what it cost in all */
+void ja_vb_close(t_act *lp) {
+    fprintf(gs_file(), "Q %lu %.4g\n", lp->ja_id,
+            (gr_clock() - lp->ja_tc) * 1e6);
+    lp->ja_vb = 0;
+}
+#endif
 
 /* The act at lp is done, as unwinding passes it: learn from what was
  * chosen there by cost.
  */
 void ja_unwind(t_act *lp) {
+#ifdef VERBOSE
+    if (lp->ja_vb)
+        ja_vb_close(lp);
+#endif
     if (lp->ja_t0 > 0)
         ja_learnt(lp);
     if (lp->ja_on) {
@@ -1687,8 +1712,16 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
     bool fsq = (prev_node->have_square != 0);
     double W0 = fsq ? gq_wcost(prev_node) : gr_wcost(prev_node);
     double W = W0 * ja_ratio(L, fsq ? JA_QWALK : JA_WALK);
+#ifdef VERBOSE
+    /* -dv64: an id for the records of this choice */
+    ulong id = VB(VB_STRAT) ? ++ja_ids : 0;
+    /* under -dJ the first choice is made whatever it would cost */
+    bool force = (ja_force != -2);
+#else
+    bool force = 0;
+#endif
     /* not worth choosing: leave it to the strategy and the gate */
-    if (W < JA_MIN_WALK && auto_level >= 2)
+    if (W < JA_MIN_WALK && auto_level >= 2 && !force)
         return sv;
     for (uint part = JA_LPARTS; part < JA_PARTS; ++part)
         ja_rx[part - JA_LPARTS] = ja_rsize(part, W0);
@@ -1698,6 +1731,15 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
     uint best = sv, nblind = 0, neval = 1;
     double bT = sT;
     ja_swap();
+#ifdef VERBOSE
+    /* Z <id> <vi> <t> <estimate>: each position costed, in us, with -1
+     * if outside the model, -2 if alike to one already costed
+     */
+    if (id)
+        fprintf(gs_file(), "Z %lu %u %u %.4g\n", id, sv,
+                value[sv].alloc[cur_vlevel[sv] - 1].t,
+                sblind ? -1.0 : sT * 1e6);
+#endif
     if (sblind)
         goto done;
     if (W <= bT) {
@@ -1724,10 +1766,26 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
         for (uint vj = 0; !seen && vj < vi; ++vj)
             if (ja_alike(prev_node, vi, vj))
                 seen = 1;
-        if (seen)
+        if (seen) {
+#ifdef VERBOSE
+            if (id)
+                fprintf(gs_file(), "Z %lu %u %u -2\n", id, vi, ti);
+#endif
             continue;
+        }
         ++neval;
+#ifdef VERBOSE
+        /* Costed in full for the record: past bT it is not chosen
+         * either way.
+         */
+        double T = ja_cost(prev_node, cur_act, vi,
+                id ? HUGE_VAL : bT, &blind);
+        if (id)
+            fprintf(gs_file(), "Z %lu %u %u %.4g\n", id, vi, ti,
+                    blind ? -1.0 : T * 1e6);
+#else
         double T = ja_cost(prev_node, cur_act, vi, bT, &blind);
+#endif
         if (blind) {
             ++nblind;
             continue;
@@ -1739,6 +1797,23 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
         }
     }
   done:
+#ifdef VERBOSE
+    if (force) {
+        if (ja_force < 0)
+            best = BV_WALK;
+        else {
+            uint vf = (uint)ja_force;
+            if (vf >= k || divisors[value[vf].alloc[cur_vlevel[vf] - 1].t]
+                    .high <= (kern_highpow() ? 1 : 2))
+                fail("-dJ%u: nothing to allocate at v_%u", vf, vf);
+            /* its estimates by x, for learning */
+            ja_cost(prev_node, cur_act, vf, HUGE_VAL, &blind);
+            ja_swap();
+            best = vf;
+        }
+        ja_force = -2;
+    }
+#endif
     /* time what was chosen by cost: a walk whole, a position by x */
     if (auto_level >= 2 && !sblind) {
         if (best == BV_WALK) {
@@ -1762,6 +1837,15 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
                 L, strategy, W * 1e6, sv, sblind ? -1.0
                 : sT * 1e6, best < BV_SPECIAL ? (int)best : -1, bT * 1e6,
                 neval, nblind, auto_level);
+    /* Y <id> <level> <walk estimate> <chosen> <squares> <pattern> */
+    if (id) {
+        fprintf(gs_file(), "Y %lu %u %.4g %d %u %s\n", id, L, W * 1e6,
+                best < BV_SPECIAL ? (int)best : -1, prev_node->have_square,
+                ja_pattern(prev_node));
+        cur_act->ja_id = id;
+        cur_act->ja_tc = gr_clock();
+        cur_act->ja_vb = 1;
+    }
 #endif
     return (auto_level >= 2) ? best : sv;
 }
