@@ -105,7 +105,8 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   skill for all of the cost work.
 - `coulplan.c` - the planner: estimates of what parts of the search
   would cost, and the choices made by them: the `-ja` gate
-  (`ja_gate()`).
+  (`ja_gate()`); its choice of position (`ja_choose()`) and what `-ja`
+  learns.
 - `mock.c` - calibration-only stubs of the walks and of the innermost
   recursion loops, compiled only with `MOCK=1`. Never for a real
   search: no candidate is tested.
@@ -427,10 +428,12 @@ easy to confuse by mnemonic alone:
   to `-p` despite the mnemonic overlap. (The comment on `opt_print` in
   `coul.c` does not describe this.)
 - `-a`/`-b`: batch selection (see "Batches" above).
-- `-ja1` (`auto_level`, experimental): decide walk or recurse at the
-  gate by estimated cost, from the cost table, in place of the gain.
-  Identical runs make identical choices, since the costs are counted,
-  not timed.
+- `-ja1` / `-ja2` (`auto_level`, experimental): decide by estimated
+  cost, from the cost table, instead of by fixed options. `-ja1`
+  decides walk or recurse at the gate, in place of the gain; `-ja2`
+  also chooses the position to allocate at next, in place of the
+  strategy. Identical runs make identical choices, since the costs
+  are counted, not timed.
 - `-k<bound>` / `-K<count>`: in a batch that leaves exactly one
   position needing a square, first try each prime up to the bound to
   an odd power at each other position that needs one, by Pell; `-K`
