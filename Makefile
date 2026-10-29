@@ -22,9 +22,9 @@ MPUGMP_VER ?= 39982f872b
 # MSIQS_VER ?= c71d023e22
 
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
-    coulvec.c coulmint.c trace.c
+    coulvec.c coulmint.c trace.c bench.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
-    coulvec.h coulmint.h trace.h coulint.h types.h builtins.h
+    coulvec.h coulmint.h trace.h bench.h coulint.h types.h builtins.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"
@@ -92,7 +92,7 @@ ifdef CHECK_OVERFLOW
     DEFINES += -DCHECK_OVERFLOW
 endif
 # Makes instrumentation available, selected at runtime with -dv<bits>
-# (see trace.h).
+# (see trace.h), and the benches (see bench.c).
 ifdef VERBOSE
     DEFINES += -DVERBOSE
 endif
