@@ -138,8 +138,11 @@ static t_cmc cm_C[] = {
     { "sqsetup", 0, 0, 1 },     /* fixed-power walk per walk */
     { "sqloop0", 0, 0, 1 },     /* fixed-power walk per root */
     { "sqtest", 0, 0, 1 },      /* fixed-power walk per inverse test */
+    { "cprime", 0, 0, 1 },      /* leaf loop per prime */
+    { "cprimesq", 0, 0, 1 },    /* likewise, with a fixed-power walk */
     { "w1siter", 0, 0, 1 },     /* walk_1_set() per prime */
     { "w1scheck", 0, 0, 1 },    /* walk_1_set() per prime passing mod check */
+    { "ctail", 0, 0, 1 },       /* rest of a loop of rejects, per prime */
     /* linear walk per walk (with a value for a table that lacks it) */
     { "linsetup", 0, 0, 1, 2e-6 },
     /* Recurse loop, the further cost of each prime applied:
