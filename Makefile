@@ -21,9 +21,10 @@ MPUGMP_VER ?= 39982f872b
 # not specified.
 # MSIQS_VER ?= c71d023e22
 
-COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c coulmint.c
-HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
-    coulvec.h coulmint.h types.h builtins.h
+COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c \
+    coulvec.c coulmint.c trace.c
+HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h prime_iterator.h coul.h \
+    coulvec.h coulmint.h trace.h coulint.h types.h builtins.h
 
 GCC_MAJOR := $(shell gcc -dumpversion)
 ifeq "${GCC_MAJOR}" "7"
@@ -90,7 +91,8 @@ endif
 ifdef CHECK_OVERFLOW
     DEFINES += -DCHECK_OVERFLOW
 endif
-# Produces factorization debugging output to stdout.
+# Makes instrumentation available, selected at runtime with -dv<bits>
+# (see trace.h).
 ifdef VERBOSE
     DEFINES += -DVERBOSE
 endif
@@ -143,7 +145,7 @@ sq12 dsq12: Makefile sq12.c diag.c coultau.c coulfact.c prime_iterator.c diag.h 
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 # coul.h needs a type
-test_pell test_tau ftest speed sq12: DEFINES += -DTYPE_o
+test_pell test_tau ftest speed sq12 dsq12: DEFINES += -DTYPE_o
 
 # The tests from t/t50 on are soak tests, each of a program of its own:
 # they take longer, and are for when we have changed what they test. Each
