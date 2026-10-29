@@ -1,0 +1,82 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+use List::Util qw{ sum0 min max };
+
+# No maths content: summarises jastudy replay output (231 lines).
+
+=head1 stratsum - summarise jastudy replays across runs
+
+Usage: stratsum <jastudy output> ...
+
+For each replayed choice, compares the positions on offer by the tau
+left at each (the largest t on offer against the rest), and reports
+how far apart -ja2's estimates were against how far apart the actual
+costs were.
+
+=cut
+
+my %agg;
+for my $file (@ARGV) {
+    open my $fh, '<', $file or die "$file: $!";
+    my($case) = $file =~ m{([^/]+)\.out$};
+    my @nodes;
+    while (<$fh>) {
+        if (/^230 replay (\d+)/) {
+            push @nodes, { id => $1, alt => [] };
+        } elsif (/^231\s+v(\d+)\(t=(\d+)\)\s+est\s+(\S+)\s+actual\s+(\S+)(.*)/) {
+            my($v, $t, $est, $act, $rest) = ($1, $2, $3, $4, $5);
+            next unless $act =~ /^[\d.e+-]+$/;
+            push @{ $nodes[-1]{alt} }, {
+                v => $v, t => $t, est => $est, act => $act,
+                chosen => $rest =~ /chosen/ ? 1 : 0,
+            };
+        }
+    }
+    for my $nd (@nodes) {
+        my @a = @{ $nd->{alt} };
+        next if @a < 2;
+        my $best = min map $_->{act}, @a;
+        my @est = grep $_ > 0, map $_->{est}, @a;
+        my $tmax = max map $_->{t}, @a;
+        my $g = $agg{$case} //= {};
+        ++$g->{nodes};
+        $g->{espread} += log(max(@est) / min(@est)) if @est > 1;
+        $g->{aspread} += log(max(map $_->{act}, @a) / $best);
+        my($ch) = grep $_->{chosen}, @a;
+        if ($ch) {
+            ++$g->{chosen};
+            $g->{regret} += log($ch->{act} / $best);
+            ++$g->{chose_tmax} if $ch->{t} == $tmax;
+        }
+        for my $x (@a) {
+            my $k = $x->{t} == $tmax ? 'tmax' : 'other';
+            # only nodes offering both kinds
+            next if $tmax == min map $_->{t}, @a;
+            $g->{"n_$k"}++;
+            $g->{"r_$k"} += log($x->{act} / $best);
+            my $b = $g->{bytest} //= {};
+            $b->{"t=$x->{t}"}[0]++;
+            $b->{"t=$x->{t}"}[1] += log($x->{act} / $best);
+        }
+    }
+}
+for my $case (sort keys %agg) {
+    my $g = $agg{$case};
+    my $n = $g->{nodes};
+    printf "240 %s: %d nodes; estimates spread x%.3f, actual spread x%.3f; regret x%.3f; chose largest t %d of %d\n",
+            $case, $n, exp(($g->{espread} // 0) / $n),
+            exp($g->{aspread} / $n),
+            exp(($g->{regret} // 0) / ($g->{chosen} || 1)),
+            $g->{chose_tmax} // 0, $g->{chosen} // 0;
+    for my $k (qw{ tmax other }) {
+        next unless $g->{"n_$k"};
+        printf "241   %-6s positions: %d, actual/best x%.3f\n", $k,
+                $g->{"n_$k"}, exp($g->{"r_$k"} / $g->{"n_$k"});
+    }
+    for my $t (sort { ($a =~ /(\d+)/)[0] <=> ($b =~ /(\d+)/)[0] } keys %{ $g->{bytest} // {} }) {
+        my $b = $g->{bytest}{$t};
+        printf "242     %-6s %3d actual/best x%.3f\n", $t, $b->[0],
+                exp($b->[1] / $b->[0]);
+    }
+}
