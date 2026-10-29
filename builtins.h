@@ -19,6 +19,20 @@
 #endif
 
 #ifdef __GNUC__
+    /* the number of bits set in x */
+    static inline uint popcount_u64(ulong x) {
+        return __builtin_popcountl(x);
+    }
+#else
+    static inline uint popcount_u64(ulong x) {
+        x -= (x >> 1) & 0x5555555555555555UL;
+        x = (x & 0x3333333333333333UL) + ((x >> 2) & 0x3333333333333333UL);
+        x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0fUL;
+        return (x * 0x0101010101010101UL) >> 56;
+    }
+#endif
+
+#ifdef __GNUC__
     /* the number of trailing zero bits of x; x must not be 0 */
     static inline uint trailing_zeroes_u64(ulong x) {
         return __builtin_ctzl(x);
