@@ -1,6 +1,7 @@
 #ifndef COULFACT_H
 #define COULFACT_H 1
 #include "types.h"
+#include "builtins.h"
 #include <gmp.h>
 
 typedef struct s_ppow {
@@ -72,6 +73,63 @@ static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
     return result;
 }
 #endif
+
+/* a^e mod m */
+static inline ulong powmod_u64(ulong a, ulong e, ulong m) {
+    ulong r = 1;
+    for (a %= m; e; e >>= 1) {
+        if (e & 1)
+            r = mulmod_u64(r, a, m);
+        a = mulmod_u64(a, a, m);
+    }
+    return r;
+}
+
+/* the Jacobi symbol (a / n) for odd n */
+static inline int jacobi_u64(ulong a, ulong n) {
+    int t = 1;
+    a %= n;
+    while (a) {
+        uint z = trailing_zeroes_u64(a);
+        a >>= z;
+        if ((z & 1) && ((n & 7) == 3 || (n & 7) == 5))
+            t = -t;
+        if ((a & 3) == 3 && (n & 3) == 3)
+            t = -t;
+        ulong r = n % a;
+        n = a;
+        a = r;
+    }
+    return (n == 1) ? t : 0;
+}
+
+/* a square root of the quadratic residue a mod an odd prime p */
+static inline ulong sqrtmod_u64(ulong a, ulong p) {
+    if ((p & 3) == 3)
+        return powmod_u64(a, (p + 1) >> 2, p);
+    /* Tonelli-Shanks */
+    ulong q = p - 1, n = 2;
+    uint s = trailing_zeroes_u64(q);
+    q >>= s;
+    while (jacobi_u64(n, p) != -1)
+        ++n;
+    ulong c = powmod_u64(n, q, p);
+    ulong r = powmod_u64(a, (q + 1) >> 1, p);
+    ulong t = powmod_u64(a, q, p);
+    while (t != 1) {
+        uint i = 0;
+        for (ulong u = t; u != 1; u = mulmod_u64(u, u, p))
+            ++i;
+        ulong b = c;
+        for (uint j = i + 1; j < s; ++j)
+            b = mulmod_u64(b, b, p);
+        r = mulmod_u64(r, b, p);
+        c = mulmod_u64(b, b, p);
+        t = mulmod_u64(t, c, p);
+        s = i;
+    }
+    return r;
+}
 
 /* CRT for a prime power: as chinese_ppow() but with known inverse ai */
 static inline void chinese_ppow_ai(

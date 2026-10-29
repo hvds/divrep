@@ -90,6 +90,13 @@ typedef struct s_act {
      */
     bool rj_ok, rj_limb;
     ulong rj_mult;
+    /* Likewise for reject_square(), below a fixed square v_j = q.z^2:
+     * rs_ok if it applies to this loop, rs_d the difference of offsets
+     * j - i, and rs_endr the greatest z for which v_j is within zmax.
+     */
+    bool rs_ok;
+    long rs_d;
+    ulong rs_endr;
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
     ulong p;
