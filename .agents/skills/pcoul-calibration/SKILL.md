@@ -1,6 +1,6 @@
 ---
 name: pcoul-calibration
-description: How pcoul costs its own work - the brief this began from and its aims
+description: How pcoul costs its own work - the cost table - with what was measured and what was tried and dropped
 ---
 ## Calibration and cost models for pcoul
 
@@ -92,8 +92,40 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
   walk_1_set(), flip and midp phase (trace.c). With -dv6 its clock
   reads inflate walks (~10% on D(48,10)); use it for structure and
   ratios, not absolute walk times.
-- $MULTIBENCH: benches of the tests and of the factoring ladder
-  (bench.c).
+- $MULTIBENCH: the benches behind the cost table (bench.c, see
+  multibench-table).
+
+### The cost table (bench.c, multibench-table, coulcost.c)
+
+One table per machine, MPUGMP build and n (`-f<flake>` for runs using
+-o). Rows: C (per-operation constants fitted from -dv6 runs), S/L
+(trial division by size and prime), P/R (prime tests), test_multi()
+rows by t, e and size, G (the ladder per rung: reach, cost, hit rate,
+factor size, cofactor primality), Q (QS alone by size). Sizes sit
+either side of the limb boundaries at 64 and 128 bits. G rows from 100
+bits use inputs built from their factors, with the smallest factor
+oversampled and weighted back (Buchstab). Without -f, G rows reach 255
+bits, and the rows above 230 bits take over an hour to generate.
+
+The benches' inputs are the same from run to run (each bench seeds a
+GMP generator of its own from a constant and the size, and each size is
+a fresh process, so MPU::GMP's ISAAC starts from seed 1 too), but need
+not be between versions of GMP, whose default generator may differ.
+Only the inputs depend on it: the search draws on ISAAC alone. Five
+runs of the 112-bit ladder bench agreed in every column but the times,
+of which four agreed within 5% and one was 15-60% slower throughout.
+
+Coverage of the ladder: sound to about 191 bits; 207-255 bits from 60
+inputs each; above that (with -f only) the single ECM rung is benched
+from 12-30 inputs and is rough. Rungs after QS count as never reached.
+
+The table is in sections (scan, prime, multi, ladder, qs, walk, w1s),
+each stamped with the build that made it ("V section sha"):
+`-s<sections>` rebuilds only some, and `-u<table>` takes the rest from
+an existing table, so a new MPUGMP needs only scan, prime, ladder and
+qs (and multi), a change to coul.c only walk and w1s. pcoul builds in
+a default table from the file timings, used unless $COST_TABLE names
+another; `-dT` notes sections from a different build.
 
 ### Findings under a fixed gain (to 2026-09-25)
 
