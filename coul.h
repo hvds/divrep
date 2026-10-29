@@ -262,4 +262,12 @@ typedef struct s_value {
 } t_value;
 extern t_value *value;
 
+extern uint k;
+
+/* used to store disallowed inverses in walk_v() */
+typedef struct s_mod {
+    ulong v;
+    ulong m;
+} t_mod;
+
 #endif
