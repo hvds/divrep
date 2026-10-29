@@ -67,8 +67,8 @@ endif
 ifdef VERBOSE
     DEFINES += -DVERBOSE
 endif
-# For calibration only: walks are replaced by their modelled cost (see
-# mock.h).
+# For calibration only: walks and innermost recurse loops are replaced
+# by their modelled cost (see mock.h).
 ifdef MOCK
     DEFINES += -DMOCK
     COUL += mock.c
