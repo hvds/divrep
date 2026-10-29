@@ -40,7 +40,7 @@ typedef struct {
     bool on;
     ulong lin_walks, lin_iter, lin_inv, sq_walks, sq_iter, sq_inv,
             pell_iter, w1s_prime, w1s_check, rec_prime, rec_applied,
-            rec_fail;
+            rec_sq, rec_res, rec_root, rec_fail;
     /* inverse-filter entries set up by linear walks, and root residues
      * walked by those below a fixed power, for the cost of their setup
      */
@@ -138,6 +138,7 @@ extern uint *maxforce;
 extern void done(void);
 extern ulong next_prime(ulong cur);
 extern t_kern *kern_state(t_node *np);
+extern bool kern_at(uint vi);
 extern bool kern_passed(uint vi);
 extern ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt);
 extern e_xr classify_x(

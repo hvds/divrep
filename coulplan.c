@@ -20,15 +20,17 @@
 
 /* -ja1: the gate decides whether to walk a node or recurse over its
  * next allocation by estimated cost rather than by gain, for nodes with
- * no fixed square, looking one level ahead. Walking now costs GR_SETUP
- * plus its Z/aq iterations (Z = zmax - zmin) at the cost per iteration
- * learnt for its level; recursing costs GR_APPLY per prime p tried, plus
- * the walks of the children as if every one walks: Z/(aq.p^{x-1})
- * iterations, or if that is below 1, one iteration with that chance, the
- * sums over primes in closed form. At the leaf recursion that estimate
- * is right (actual/estimated 0.84-1.07 on D(96,8), D(48,10)); higher up
- * it overestimates recursion, so the estimate is scaled by GR_RSCALE
- * (-ja2 learns the scale instead, see ja_rsize()).
+ * no fixed square (and see gq_recurse() for those with one), looking one
+ * level ahead. Walking now costs gr_setup plus its Z/aq iterations
+ * (Z = zmax - zmin) at the cost per iteration learnt for its level;
+ * recursing costs gr_apply per prime p tried, and gr_fail more for each
+ * that only apply_single() can reject (see gr_nfail()), plus the walks
+ * of the children as if every one walks: Z/(aq.p^{x-1}) iterations, or
+ * if that is below 1, one iteration with that chance, the sums over
+ * primes in closed form. At the leaf recursion that estimate is right
+ * (actual/estimated 0.84-1.07 on D(96,8), D(48,10)); higher up it
+ * overestimates recursion, so the estimate is scaled by GR_RSCALE (-ja2
+ * learns the scale instead, see ja_rsize()).
  * The cost per iteration is learnt per level from 1 in GR_SAMPLE of the
  * walks made, by the cost counted for each (see gr_clock()).
  */
@@ -41,16 +43,31 @@
 #define GR_DEFIT 400e-9     /* per iteration, until a level has samples */
 double gr_t[GR_MAXL], gr_i[GR_MAXL];
 uint gr_n[GR_MAXL];
+/* Likewise below one fixed square: the cost per root of a walk, learnt
+ * per level; the setup of such a walk; and what a loop there costs for
+ * each prime that reaches apply_single(), where the roots are extended
+ * (the cost table's sqsetup, and cprimesq less cprime).
+ */
+#define GQ_SETUP 1.7e-6
+#define GQ_PRIME 2.2e-6
+#define GQ_APPLY 0.5e-6
+#define GQ_RES 0.25e-6      /* per test mod p by reject_square() */
+#define GQ_ROOT 0.6e-6      /* per root taken by reject_square() */
+#define GQ_RSCALE 1.0
+#define GQ_DEFIT 1e-6       /* per root, until a level has samples */
+double gq_t[GR_MAXL], gq_i[GR_MAXL];
+uint gq_n[GR_MAXL];
 /* Those of the costs above that the cost table also has: when costs are
  * counted (see gr_clock()), the table's, so that a walk learns what was
  * counted for it less exactly the setup that was counted; else the
  * defaults. See gr_init().
  */
 static double gr_setup = GR_SETUP, gr_apply = GR_APPLY, gr_fail = GR_FAIL;
-/* and the setup per inverse-filter entry of a linear walk, 0 without a
- * table
+static double gq_setup = GQ_SETUP, gq_prime = GQ_PRIME, gq_apply = GQ_APPLY;
+/* and the setup per inverse-filter entry of a linear walk, and per root
+ * residue of one below a fixed square, 0 without a table
  */
-static double gr_setupinv = 0;
+static double gr_setupinv = 0, gq_setupres = 0;
 /* -ja2: what walk_1_set() costs per prime iterated, per prime passing the
  * check mod aq / q_i, and per call, the table's when costs are counted;
  * and what the tests of those passing it cost, by a rough constant.
@@ -101,6 +118,13 @@ static inline double gr_wsetup(uint more) {
             : gr_setup;
 }
 
+/* The setup of a walk below a fixed square of the node at lv, by its
+ * root residues; a child of it expects as many.
+ */
+static inline double gq_wsetup(t_node *lv) {
+    return gq_setup + gq_setupres * res_array(lv->level)->count;
+}
+
 static inline double gr_now(void) {
     return work_clock();
 }
@@ -108,8 +132,10 @@ static inline double gr_now(void) {
 /* The cost of what the run has done, counted rather than timed, so that
  * learning depends neither on the machine's load nor on luck, and two
  * identical runs make identical choices: walk iterations and inverse
- * filter entries tested, primes tried by walk_1_set() and the recursion,
- * each at its cost from the cost table; each test's preparation by where
+ * filter entries tested, primes tried by walk_1_set() and the recursion
+ * (those reaching apply_single() below a fixed square at cprimesq, and
+ * elsewhere those rejected only there at cfail more), each
+ * at its cost from the cost table; each test's preparation by where
  * its trial division stopped, and the factoring ladder at its expected
  * cost (see cm_prep_price(), cm_pprep_price(), cm_price_prime() and
  * cm_ladder_cost()).
@@ -131,6 +157,8 @@ double cc_work(void) {
             + cc.w1s_prime * c[CM_W1SITER] + cc.w1s_check * c[CM_W1SCHECK]
             + cc.w1s_calls * c[CM_W1SCALL]
             + cc.rec_prime * c[CM_CPRIME]
+            + cc.rec_sq * (c[CM_CPRIMESQ] - c[CM_CPRIME])
+            + cc.rec_res * GQ_RES + cc.rec_root * GQ_ROOT
             + cc.rec_applied * c[CM_CAPPLY]
             + cc.rec_fail * c[CM_CFAIL]
             + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
@@ -145,7 +173,11 @@ void gr_init(void) {
     gr_setup = cm_const(CM_LINSETUP);
     gr_apply = cm_const(CM_CPRIME);
     gr_fail = cm_const(CM_CFAIL);
+    gq_setup = cm_const(CM_SQSETUP);
+    gq_prime = cm_const(CM_CPRIMESQ) - cm_const(CM_CPRIME);
+    gq_apply = cm_const(CM_CAPPLY);
     gr_setupinv = cm_const(CM_LINSETUPINV);
+    gq_setupres = cm_const(CM_SQSETUPRES);
     ja_w1s = cm_const(CM_W1SITER);
     ja_w1c = cm_const(CM_W1SCHECK);
     ja_w1call = cm_const(CM_W1SCALL);
@@ -167,6 +199,20 @@ double gr_clock(void) {
  */
 static inline double gr_iters(t_node *lv) {
     return (mpz_get_d(zmax) - mpz_get_d(zmin)) / mpz_get_d(lv->aq);
+}
+
+/* The roots a walk at the node lv is expected to visit, with one square
+ * fixed: those of its residue classes mod qq = aq / q up to the root of
+ * zmax / q, where q is what is allocated at the square (as the gain
+ * gate's r_walk, less what lies below zmin).
+ */
+static double gq_roots(t_node *lv) {
+    uint sql = cur_vlevel[sq0];
+    double g = sqg[sql - 1];
+    double q = mpz_get_d(value[sq0].alloc[sql - 1].q);
+    double hi = pow(mpz_get_d(zmax) / q, 1 / g);
+    double lo = pow(mpz_get_d(zmin) / q, 1 / g);
+    return (hi - lo) * q * res_array(lv->level)->count / mpz_get_d(lv->aq);
 }
 
 /* A sampled walk's cost less its setup, at level L (kind 'q' below a
@@ -197,9 +243,24 @@ static double gr_less_setup(char kind, uint L, double t0, double t1,
 static uint gr_ctr = 0;
 void walk_v_gr(t_node *cur_node, mpz_t start) {
     uint L = cur_node->level;
-    if (!auto_level || cur_node->have_square || L >= GR_MAXL
+    /* below a fixed square, only where the gate can use it */
+    bool fsq = (cur_node->have_square == 1 && kern_batch());
+    if (!auto_level || (cur_node->have_square && !fsq) || L >= GR_MAXL
             || mpz_sgn(start) != 0 || (++gr_ctr % GR_SAMPLE)) {
         walk_v_inner(cur_node, start);
+        return;
+    }
+    if (fsq) {
+        double za = gq_roots(cur_node);
+        ulong w0 = cc.sq_walks, s0 = cc.sq_setres;
+        double t0 = gr_clock();
+        walk_v_inner(cur_node, start);
+        /* with costs counted, the setup counted; else an estimate */
+        double setup = cc.on ? (cc.sq_walks - w0) * gq_setup
+                + (cc.sq_setres - s0) * gq_setupres : gq_setup;
+        gq_t[L] += gr_less_setup('q', L, t0, gr_clock(), setup);
+        gq_i[L] += za;
+        ++gq_n[L];
         return;
     }
     double za = gr_iters(cur_node);
@@ -231,6 +292,21 @@ static double gr_cit(uint L) {
             return gr_t[l] > 0 ? gr_t[l] / gr_i[l] : GR_DEFIT;
     }
     return GR_DEFIT;
+}
+
+/* likewise the cost per root of a walk at level L below a fixed square,
+ * its walks expected to visit GR_MINI roots between them
+ */
+static double gq_cit(uint L) {
+    for (uint d = 0; d < GR_MAXL; ++d) {
+        uint l = L + d;
+        if (l < GR_MAXL && gq_n[l] >= GR_SAMPLE && gq_i[l] >= GR_MINI)
+            return gq_t[l] > 0 ? gq_t[l] / gq_i[l] : GQ_DEFIT;
+        l = L - d;
+        if (d <= L && gq_n[l] >= GR_SAMPLE && gq_i[l] >= GR_MINI)
+            return gq_t[l] > 0 ? gq_t[l] / gq_i[l] : GQ_DEFIT;
+    }
+    return GQ_DEFIT;
 }
 
 /* The number of primes up to x: exact below GR_PIMAX, where the
@@ -367,6 +443,109 @@ static bool gr_walk(
     return W < gr_recurse(prev_node, p, cap, x) * rr;
 }
 
+/* The fraction of primes q, not dividing q_j.d, for which d/q_j is a
+ * g-th power residue mod q, as reject_square() tests: the mean of
+ * 1/gcd(g, q - 1), with q spread evenly over the units mod g. That is
+ * 1/2 for g = 2, 3/8 for g = 4, 1/3 for g = 6.
+ */
+static double gq_resfrac(uint g) {
+    static uint last_g = 0;
+    static double last_f;
+    if (g < 2)
+        return 1;
+    if (g != last_g) {
+        double sum = 0;
+        uint units = 0;
+        for (uint a = 1; a < g; ++a) {
+            if (tiny_gcd(a, g) != 1)
+                continue;
+            ++units;
+            sum += 1.0 / tiny_gcd(g, a - 1);
+        }
+        last_g = g;
+        last_f = sum / units;
+    }
+    return last_f;
+}
+
+/* As reject_square() mod q: given d and q_j mod q, nonzero, the number
+ * of g-th roots of d/q_j mod q, 0 if it is not a g-th power residue.
+ */
+static ulong gq_resroots(ulong dm, ulong qm, uint g, ulong q) {
+    ulong h = simple_gcd(g, q - 1);
+    if (h < 2)
+        return 1;
+    ulong a = mulmod_u64(dm, powmod_u64(qm, h - 1, q), q);
+    return (powmod_u64(a, (q - 1) / h, q) == 1) ? h : 0;
+}
+
+/* The same below one fixed value v_j = q_j.z^g, for a loop at a position
+ * that -k applies to (see gq_costable()).
+ * A prime q has d roots of the fixed power with chance 1/d, so a child
+ * expects the node's roots over q^{x-1}, and the walks of the children
+ * sum as in gr_recurse(). Primes giving a least v_0 within zmax (all up
+ * to the root of zl = zmax / aq, and above it each with chance
+ * zl / q^{x-1}) go on to the test mod q of reject_square(), and only the
+ * fraction f that pass it (see gq_resfrac()) reach apply_single(), have
+ * their roots extended, and are walked.
+ * For q^2 against a square, once q^2 passes the greatest root endr
+ * reject_square() also lets through only those with a root in range,
+ * each with chance 2.endr / q^2, at the cost of a root mod q for those
+ * passing the test mod q.
+ */
+static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
+    uint L = prev_node->level;
+    double za = gq_roots(prev_node);
+    double zl = mpz_get_d(zmax) / mpz_get_d(prev_node->aq);
+    double ci = gq_cit(L + 1);
+    double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
+    double np = gr_li(b) - gr_li(a) + 1;
+    double cs = gq_wsetup(prev_node);
+    uint sql = cur_vlevel[sq0];
+    uint g = sqg[sql - 1];
+    /* those reaching the test mod q */
+    double ql = pow(zl, 1 / s);
+    double mA = (ql < b) ? ql : b, mB = (ql > a) ? ql : a;
+    double nv = ((mA > a) ? gr_li(mA) - gr_li(a) : 0)
+            + zl * gr_psum(mB, b, s);
+    double ct = (g > 1) ? nv * GQ_RES : 0;
+    if (x == 3 && g == 2) {
+        double endr = sqrt(mpz_get_d(zmax)
+                / mpz_get_d(value[sq0].alloc[sql - 1].q));
+        /* the scale that binds first, and where */
+        double c = (zl < 2 * endr) ? zl : 2 * endr, qc = sqrt(c);
+        double mC = (qc < b) ? qc : b, mD = (qc > a) ? qc : a;
+        double ns = (((mC > a) ? gr_li(mC) - gr_li(a) : 0)
+                + c * gr_psum(mD, b, s)) / 2;
+        double se = sqrt(endr), mR = (se > a) ? se : a;
+        double nr = (b > mR) ? (gr_li(b) - gr_li(mR)) / 2 : 0;
+        return np * gr_apply + ct + nr * GQ_ROOT
+                + ns * (gq_prime + gq_apply + cs)
+                + ci * za * gr_psum(a, b, s);
+    }
+    return np * gr_apply + ct
+            + nv * gq_resfrac(g) * (gq_prime + gq_apply + cs)
+            + ci * za * gr_psum(a, b, s);
+}
+
+/* the estimated cost of walking the node at lv now, likewise */
+static inline double gq_wcost(t_node *lv) {
+    return gq_wsetup(lv) + gq_cit(lv->level) * gq_roots(lv);
+}
+
+/* as gr_walk() below one fixed square */
+static bool gq_walk(
+    t_node *prev_node, ulong p, ulong cap, uint x, double w0, double rw,
+    double rr
+) {
+    if (cap < p)
+        return 0;
+    double W = w0 * rw;
+    if (W < (gr_li(cap) - gr_li(p) + 1) * gr_apply)
+        return 1;
+    return W < gq_recurse(prev_node, p, cap, x) * rr;
+}
+
 /* true if n is prime, for n < GR_PIMAX */
 static inline bool gr_isprime(ulong n) {
     gr_li(3);
@@ -393,11 +572,12 @@ static ulong cost_start(t_node *lp, ulong p) {
 }
 
 /* -ja2 learns the actual cost of what it chose against the estimate, in
- * seven parts: walking the node, walk_1_set(), recursing, recursing
+ * nine parts: walking the node, walk_1_set(), recursing, recursing
  * where a square is left, where the children can flip, where t = 2 is
- * left, and where a higher power of 2 is left. A walk is timed whole,
- * and a position chosen one x at a time, each x being of a single part.
- * The estimates are then corrected by the ratios found.
+ * left, and where a higher power of 2 is left; and below one fixed
+ * square, walking and recursing. A walk is timed
+ * whole, and a position chosen one x at a time, each x being of a single
+ * part. The estimates are then corrected by the ratios found.
  * Walking and walk_1_set() are off by small factors, learnt per level.
  * Recursing is estimated as if every child walks, which is about right
  * for the smallest nodes and far too high for the rest, by a factor
@@ -415,6 +595,12 @@ static ulong cost_start(t_node *lp, ulong p) {
  * cheaper costs little, since each child chooses again and may walk,
  * while walking where recursing was cheaper can cost far more (D(64,3)
  * -j4 -x1e15: 29s walking at level 1, 0.1s recursing).
+ * Below one fixed square the trees are shallow, and the estimate of
+ * recursing is close for all but the few largest nodes (D(18,5) -k1e6
+ * -x1e22: actual/estimated 0.82-1.01 for nodes costing up to 1s to
+ * walk, 0.03-0.3 at the root of a batch). There the prior does not
+ * decay, since an optimistic one opens loops of a million primes to
+ * save a walk of a fraction of a second.
  * A loop allocating p^{z-1} where t = 2z^2 is left (see can_flip()) is
  * estimated like any other: a flip below it costs little, and most of
  * its children go on elsewhere. But it is learnt apart, since its ratio
@@ -428,23 +614,26 @@ static ulong cost_start(t_node *lp, ulong p) {
  * runs (D(144,3) -x1e15 16%, D(100,4) -x1e18 10-21%, D(162,3) -x1e14
  * 12%); nothing was slower beyond noise.
  * The -ja1 gate learns nothing, and scales its estimate of recursing
- * by GR_RSCALE throughout.
+ * by GR_RSCALE throughout (GQ_RSCALE below one fixed square).
  */
 #define JA_PRIOR 1e-3
 #define JA_WALK 0
 #define JA_W1 1
-#define JA_LPARTS 2     /* the parts learnt by level come first */
-#define JA_RECURSE 2
-#define JA_SQUARE 3
-#define JA_PQSQ 4       /* recursing where the children can flip */
-#define JA_TWO 5        /* recursing to leave t = 2 */
-#define JA_POW2 6       /* recursing to leave a higher power of 2 */
-#define JA_PARTS 7
-static const char ja_tag[JA_PARTS - JA_LPARTS + 1] = "rspab";
+#define JA_QWALK 2      /* walking below one fixed square */
+#define JA_LPARTS 3     /* the parts learnt by level come first */
+#define JA_RECURSE 3
+#define JA_SQUARE 4
+#define JA_QREC 5       /* recursing below one fixed square */
+#define JA_PQSQ 6       /* recursing where the children can flip */
+#define JA_TWO 7        /* recursing to leave t = 2 */
+#define JA_POW2 8       /* recursing to leave a higher power of 2 */
+#define JA_PARTS 9
+static const char ja_tag[JA_PARTS - JA_LPARTS + 1] = "rsfpab";
 #define JA_NB 24
 #define JA_BLOW (-36)
 #define JA_BFULL 7
 #define JA_BDECAY 0.4
+#define JA_QDECAY 1.0   /* likewise, for recursing below one fixed square */
 static double ja_A[GR_MAXL][JA_LPARTS], ja_E[GR_MAXL][JA_LPARTS];
 static double ja_SA[JA_NB][JA_PARTS - JA_LPARTS];
 static double ja_SE[JA_NB][JA_PARTS - JA_LPARTS];
@@ -485,7 +674,8 @@ static double ja_rsize(uint part, double w) {
             for (uint b = 0; b < JA_NB; ++b) {
                 double r0 = (s >= JA_PQSQ - JA_LPARTS)
                         ? ja_SR[b][JA_RECURSE - JA_LPARTS]
-                        : (b <= JA_BFULL) ? 1 : ja_SR[b - 1][s] * JA_BDECAY;
+                        : (b <= JA_BFULL) ? 1 : ja_SR[b - 1][s]
+                        * ((s == JA_QREC - JA_LPARTS) ? JA_QDECAY : JA_BDECAY);
                 ja_SR[b][s] = (ja_SA[b][s] + JA_PRIOR * r0)
                         / (ja_SE[b][s] + JA_PRIOR);
             }
@@ -527,16 +717,20 @@ static inline void ja_learn(
 /* The 316 log line: what -ja has learnt, written before each 305 or 315
  * line, so that a run recovered from that line carries on from it
  * rather than learning afresh:
- *   316 <counted> <walks> [<level>:<t>,<i>,<n>,<A>,<E>,<A>,<E>] ...
- *       [r<e>:<A>,<E>] ... [s<e>:<A>,<E>] ...
+ *   316 <counted> <walks> [<level>:<t>,<i>,<n>,<A>,<E>,<A>,<E>,<A>,<E>]
+ *       ... [q<level>:<t>,<i>,<n>] ... [r<e>:<A>,<E>] ... [s<e>:<A>,<E>]
+ *       ... [f<e>:<A>,<E>] ...
  * with the cost counted so far (see cc_work()) and the walks seen by
  * the sampler; then for each level with anything learnt, the cost,
  * iterations and number of the walks sampled for the gate (gr_t[],
- * gr_i[], gr_n[]), and the actual and estimated cost of the walks and
- * of the walk_1_set() calls that -ja2 chose (ja_A[], ja_E[]); then for
- * each band of node size with anything learnt, of nodes costing from
- * 2^e seconds to walk, the actual and estimated cost of recursing (r)
- * and of recursing where a square is left (s) (ja_SA[], ja_SE[]).
+ * gr_i[], gr_n[]), and the actual and estimated cost of the walks, of
+ * the walk_1_set() calls, and of the walks below one fixed square that
+ * -ja2 chose (ja_A[], ja_E[]); then for each level the cost, roots and
+ * number of the walks sampled below one fixed square (gq_t[], gq_i[],
+ * gq_n[]); then for each band of node size with anything learnt, of
+ * nodes costing from 2^e seconds to walk, the actual and estimated
+ * cost of recursing (r), of recursing where a square is left (s), and
+ * of recursing below one fixed square (f) (ja_SA[], ja_SE[]).
  * Costs are in seconds, with digits enough to restore each exactly.
  * What was being measured as the line was written is not recorded: the
  * recovered run learns nothing from the walk it resumes, nor from the
@@ -555,6 +749,9 @@ void ja_save(FILE *fp) {
         for (uint part = 0; part < JA_LPARTS; ++part)
             fprintf(fp, ",%.17g,%.17g", ja_A[L][part], ja_E[L][part]);
     }
+    for (uint L = 0; L < GR_MAXL; ++L)
+        if (gq_n[L])
+            fprintf(fp, " q%u:%.17g,%.17g,%u", L, gq_t[L], gq_i[L], gq_n[L]);
     for (uint s = 0; s < JA_PARTS - JA_LPARTS; ++s)
         for (uint b = 0; b < JA_NB; ++b)
             if (ja_SA[b][s] != 0 || ja_SE[b][s] != 0)
@@ -583,13 +780,26 @@ void ja_restore(char *s) {
                 != 3 || off == 0)
             fail("518 could not parse learnt costs: '%s'", line);
         s += off;
-        for (uint part = 0; part < JA_LPARTS; ++part) {
+        /* a line written before JA_QWALK has fewer parts */
+        for (uint part = 0; part < JA_LPARTS && s[0] == ','; ++part) {
             off = 0;
             if (sscanf(s, ",%lf,%lf%n", &ja_A[L][part], &ja_E[L][part], &off)
                     != 2 || off == 0)
                 fail("518 could not parse learnt costs: '%s'", line);
             s += off;
         }
+    }
+    while (s[0] == ' ' && s[1] == 'q') {
+        uint L;
+        off = 0;
+        if (sscanf(s + 2, "%u:%n", &L, &off) != 1 || off == 0 || L >= GR_MAXL)
+            fail("518 could not parse learnt costs: '%s'", line);
+        s += 2 + off;
+        off = 0;
+        if (sscanf(s, "%lf,%lf,%u%n", &gq_t[L], &gq_i[L], &gq_n[L], &off)
+                != 3 || off == 0)
+            fail("518 could not parse learnt costs: '%s'", line);
+        s += off;
     }
     while (s[0] == ' ' && s[1] && strchr(ja_tag, s[1])) {
         uint part = strchr(ja_tag, s[1]) - ja_tag;
@@ -612,7 +822,7 @@ void ja_restore(char *s) {
 
 /* the walk chosen at lp is done: learn from its cost */
 void ja_learnt(t_act *lp) {
-    ja_learn(lp->level - 1, JA_WALK, lp->ja_ew, lp->ja_ew,
+    ja_learn(lp->level - 1, lp->ja_wp, lp->ja_ew, lp->ja_ew,
             gr_clock() - lp->ja_t0);
     lp->ja_t0 = 0;
 }
@@ -635,6 +845,18 @@ void ja_unwind(t_act *lp) {
         ja_learnx(lp);
         lp->ja_on = 0;
     }
+}
+
+/* True if a loop of allocations at v_i can be costed below one fixed
+ * square: only at a position that -k applies to. There the loop leaves
+ * no second square, when each child would be a Pell equation, and its
+ * children cannot flip; and in such a batch no strategy allocates at the
+ * square, so that every child can indeed walk it. Elsewhere a child may
+ * go on to walk_1_set() over every prime at the square, which the gate
+ * never sees: D(6,4) -X -x1e13 ran for over 20s that way, not 0.1s.
+ */
+static inline bool gq_costable(uint vi) {
+    return kern_at(vi);
 }
 
 /* -ja2: the corrected estimate c of recursing over every prime in
@@ -691,6 +913,11 @@ static double ja_cost(
             *blind = 1;
             return 0;
           case XR_WALK1: {
+            /* not at a position that -k applies to, so not costed */
+            if (prev_node->have_square) {
+                *blind = 1;
+                return 0;
+            }
             /* About 1 in m of the primes pass the check mod m = aq / q_i
              * to reach the tests.
              */
@@ -704,6 +931,19 @@ static double ja_cost(
           }
           case XR_RANGE: {
             ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+            if (prev_node->have_square) {
+                if (!gq_costable(vi)) {
+                    *blind = 1;
+                    return 0;
+                }
+                if (cap > p) {
+                    double cr = gq_recurse(prev_node, p, cap, x);
+                    ja_cx[di] = cr;
+                    ja_cp[di] = JA_QREC;
+                    total += cr * ja_rx[JA_QREC - JA_LPARTS];
+                }
+                break;
+            }
             /* Leaving a square, the children are costed as if they did
              * not, which overestimates them, and likewise where they can
              * flip; learning corrects each by a ratio of its own, as it
@@ -769,8 +1009,9 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
         ja_cp = malloc(ja_nd);
         ja_bp = malloc(ja_nd);
     }
-    double W0 = gr_wcost(prev_node);
-    double W = W0 * ja_ratio(L, JA_WALK);
+    bool fsq = (prev_node->have_square != 0);
+    double W0 = fsq ? gq_wcost(prev_node) : gr_wcost(prev_node);
+    double W = W0 * ja_ratio(L, fsq ? JA_QWALK : JA_WALK);
     /* not worth choosing: leave it to the strategy and the gate */
     if (W < JA_MIN_WALK && auto_level >= 2)
         return sv;
@@ -827,6 +1068,7 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
     if (auto_level >= 2 && !sblind) {
         if (best == BV_WALK) {
             cur_act->ja_ew = W0;
+            cur_act->ja_wp = fsq ? JA_QWALK : JA_WALK;
             cur_act->ja_t0 = gr_clock();
         } else {
             if (!cur_act->ja_ex) {
@@ -858,8 +1100,11 @@ bool ja_gate(
 ) {
     uint ti = cur_act->ti;
     uint x = divisors[ti].div[cur_act->di];
+    uint vi = cur_act->vi;
 
-    /* -ja1, except with a square fixed, which keeps the gain */
+    /* -ja1, except with a square fixed any but those at a position that
+     * -k applies to, which keep the gain.
+     */
     if (!prev_node->have_square) {
         uint L = prev_node->level;
         uint part = ja_rpart(ti, x);
@@ -868,6 +1113,14 @@ bool ja_gate(
         double rw = (auto_level >= 2) ? ja_ratio(L, JA_WALK) : 1;
         double rr = (auto_level >= 2) ? ja_rsize(part, w0) : GR_RSCALE;
         do_walk = gr_walk(prev_node, cost_start(prev_node, p), cap, x,
+                w0, rw, rr);
+    } else if (prev_node->have_square == 1 && gq_costable(vi)) {
+        /* likewise below one fixed square */
+        uint L = prev_node->level;
+        double w0 = gq_wcost(prev_node);
+        double rw = (auto_level >= 2) ? ja_ratio(L, JA_QWALK) : 1;
+        double rr = (auto_level >= 2) ? ja_rsize(JA_QREC, w0) : GQ_RSCALE;
+        do_walk = gq_walk(prev_node, cost_start(prev_node, p), cap, x,
                 w0, rw, rr);
     }
     return do_walk;

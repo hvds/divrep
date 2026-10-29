@@ -5772,7 +5772,8 @@ static inline e_choice choose_action(t_act *cur_act, bool fresh) {
 #ifdef VERBOSE
                 || (auto_level && VB(VB_CHOICE))
 #endif
-            ) && !prev_node->have_square
+            ) && (!prev_node->have_square
+                || (prev_node->have_square == 1 && kern_batch()))
             && strategy != STRATEGY_6X && strategy != STRATEGY_FIXED) {
         uint sv = vi;
         vi = ja_choose(prev_node, cur_act, vi);
@@ -6031,6 +6032,8 @@ static inline bool reject_square(ulong p, long d, ulong endr) {
         dm = p - dm;
     uint g = sqg[sql - 1];
     ulong h = (g == 2) ? 2 : simple_gcd(g, p - 1);
+    if (h > 1)
+        ++cc.rec_res;
     if (h == 2) {
         if (jacobi_u64(mulmod_u64(dm, qm, p), p) != 1)
             return 1;
@@ -6045,6 +6048,7 @@ static inline bool reject_square(ulong p, long d, ulong endr) {
 #else
     if (!endr || p <= endr / p)
         return 0;
+    ++cc.rec_root;
     /* r == sqrt(d/q) (mod p) */
     ulong r = sqrtmod_u64(mulmod_u64(dm, invert_u64(qm, p), p), p);
     /* We need z == r + pt (mod p^2), with 2qrt == (d - qr^2) / p (mod p) */
@@ -7042,6 +7046,13 @@ bool next_unforced(t_act *cur_act) {
                 diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
             goto redo_unforced;
         }
+#ifdef MOCK
+        if (mock_loop_sq(cur_act, p) == MOCK_LOOP_SKIP)
+            goto redo_unforced;
+#endif
+        /* below a fixed square, the roots are extended to each prime */
+        if (prev_node->have_square)
+            ++cc.rec_sq;
         /* note: this returns 0 if t=1 */
         if (!apply_single(prev_node, cur_node, cur_act->vi, p, cur_act->x)) {
             /* below a fixed square, priced with the roots */
