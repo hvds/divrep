@@ -180,6 +180,7 @@ extern e_xr classify_x(
 );
 #ifdef VERBOSE
 extern const char *ja_pattern(t_node *cur_node);
+extern bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x);
 #endif
 
 /* True if p is never allocated as an unforced prime, wherever it lies:

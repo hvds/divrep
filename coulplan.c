@@ -1740,6 +1740,191 @@ static double ja_cost(
     return total;
 }
 
+#ifdef VERBOSE
+/* -dJe<us>: at nodes estimated to cost at least <us> to walk, a second
+ * estimate of each position costed, in an E record, to see whether
+ * looking a level deeper orders the positions as they really cost.
+ * Each loop is costed from sampled children, each applied for real then
+ * costed as the cheaper of walking it and the best of its positions by
+ * the one-level estimate, all uncorrected by learning. The search is
+ * unchanged: what the samples count is not kept.
+ */
+double ja_e2min = 0;
+#define JA_E2PTS 8      /* points sampled in a loop */
+#define JA_E2RUN 4      /* consecutive primes sampled at each */
+static double *ja_e2x = NULL;
+static unsigned char *ja_e2p = NULL;
+
+/* the child just applied at cl: the cheaper of walking it and the best
+ * of its positions
+ */
+static double ja_e2child(t_node *cl) {
+    t_act *nl = &acts[cl->level + 1];
+    if (cl->have_square)
+        return gq_wcost(cl);
+    double best = gr_wcost(cl);
+    for (uint vi = 0; vi < k; ++vi) {
+        uint ti = value[vi].alloc[cur_vlevel[vi] - 1].t;
+        /* eligible as for the strategies */
+        if (divisors[ti].high <= (kern_highpow() ? 1 : 2))
+            continue;
+        if ((ti & 1) && (kern_batch()
+                || (cl->cap && divisors[ti].alldiv == 2)))
+            continue;
+        if (kern_passed(vi))
+            continue;
+        bool blind;
+        double T = ja_cost(cl, nl, vi, best, &blind);
+        if (!blind && T < best)
+            best = T;
+    }
+    return best;
+}
+
+/* the child for prime q of a loop over p^{x-1} at v_i below pl, applied
+ * at cl and costed, or 0 if it is rejected
+ */
+static double ja_e2one(t_node *pl, t_node *cl, uint vi, ulong q, uint x) {
+    t_cc save = cc;
+    double c = 0;
+    if (apply_single(pl, cl, vi, q, x)) {
+        c = ja_e2child(cl);
+        --cur_vlevel[vi];
+    }
+    cc = save;
+    return c;
+}
+
+/* The children of the primes in [lo, hi], each costing m0 at lo and m1
+ * at hi, as a power of the prime between them.
+ */
+static double ja_e2seg(double lo, double hi, double m0, double m1) {
+    if (hi <= lo)
+        return 0;
+    if (m0 <= 0 || m1 <= 0)
+        return (gr_li(hi) - gr_li(lo)) * (m0 + m1) / 2;
+    double a = log(lo), b = log(hi), h = (b - a) / 16, sum = 0;
+    double e = log(m1 / m0) / (b - a);
+    for (uint i = 0; i <= 16; ++i) {
+        double y = a + i * h;
+        /* m0 (q / lo)^e for each prime q, density 1 / log(q) */
+        double f = m0 * exp(e * (y - a) + y) / y;
+        sum += f * ((i == 0 || i == 16) ? 1 : (i & 1) ? 4 : 2);
+    }
+    return sum * h / 3;
+}
+
+/* the loop over p^{x-1} at v_i for the primes after p up to cap, below
+ * pl; *n counts the children costed
+ */
+static double ja_e2loop(
+    t_node *pl, t_act *ca, uint vi, uint x, ulong p, ulong cap, uint *n
+) {
+    t_node *cl = &nodes[ca->level];
+    double total = (gr_li(cap) - gr_li(p) + 1) * gr_apply;
+    if (gr_li(cap) - gr_li(p) <= JA_E2PTS * JA_E2RUN) {
+        for (ulong q = next_prime(p); q <= cap; q = next_prime(q)) {
+            if (known_prime(pl, q))
+                continue;
+            total += ja_e2one(pl, cl, vi, q, x);
+            ++*n;
+        }
+        return total;
+    }
+    double a = p + 1, b = cap, qs[JA_E2PTS], ms[JA_E2PTS];
+    for (uint j = 0; j < JA_E2PTS; ++j) {
+        double q0 = a * pow(b / a, (double)j / (JA_E2PTS - 1));
+        ulong q = (ulong)q0;
+        double sum = 0;
+        uint m = 0;
+        q = (q > p) ? q - 1 : p;
+        while (m < JA_E2RUN) {
+            q = next_prime(q);
+            if (q > cap)
+                break;
+            if (known_prime(pl, q))
+                continue;
+            sum += ja_e2one(pl, cl, vi, q, x);
+            ++m;
+            ++*n;
+        }
+        qs[j] = q0;
+        ms[j] = m ? sum / m : 0;
+    }
+    for (uint j = 0; j + 1 < JA_E2PTS; ++j)
+        total += ja_e2seg(qs[j], qs[j + 1], ms[j], ms[j + 1]);
+    return total;
+}
+
+/* The second estimate of choosing v_i at the node at pl, cl being the
+ * level that would allocate there, given its one-level estimates by x
+ * in ja_cx[] (as ja_cost() leaves them, and restored on return). Returns
+ * HUGE_VAL if some x would walk the node, -1 if it is outside the model;
+ * *n counts the children costed.
+ */
+static double ja_cost2(t_node *pl, t_act *cl, uint vi, uint *n) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    uint ti = ap->t;
+    t_divisors *dp = &divisors[ti];
+    double total = 0;
+    if (!ja_e2x) {
+        ja_e2x = malloc(ja_nd * sizeof(double));
+        ja_e2p = malloc(ja_nd);
+    }
+    memcpy(ja_e2x, ja_cx, ja_nd * sizeof(double));
+    memcpy(ja_e2p, ja_cp, ja_nd);
+    double r1 = ja_r1, rx[JA_PARTS - JA_LPARTS];
+    memcpy(rx, ja_rx, sizeof(rx));
+    ja_r1 = 1;
+    for (uint s = 0; s < JA_PARTS - JA_LPARTS; ++s)
+        ja_rx[s] = 1;
+    *n = 0;
+    for (uint di = 0; di < dp->highdiv; ++di) {
+        uint x = dp->div[di];
+        uint nextt = ti / x;
+        if (done_in_reverse(vi, x, nextt))
+            continue;
+        ulong p = start_p(vi, x);
+        ulong limp = limit_p(cl, vi, x, nextt);
+        e_xr xr = classify_x(pl, vi, x, p, limp);
+        if (xr == XR_SKIP)
+            continue;
+        if (xr == XR_WALK) {
+            total = HUGE_VAL;
+            break;
+        }
+        if (xr == XR_FLIP || pl->have_square) {
+            total = -1;
+            break;
+        }
+        if (xr == XR_WALK1) {
+            total += ja_e2x[di];
+            continue;
+        }
+        ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+        p = cost_start(pl, p);
+        if (cap > p)
+            total += ja_e2loop(pl, cl, vi, x, p, cap, n);
+    }
+    ja_r1 = r1;
+    memcpy(ja_rx, rx, sizeof(rx));
+    memcpy(ja_cx, ja_e2x, ja_nd * sizeof(double));
+    memcpy(ja_cp, ja_e2p, ja_nd);
+    return total;
+}
+
+/* -dJe: the E record of v_i, at the node at pl */
+static void ja_e2rec(
+    t_node *pl, t_act *cl, ulong id, uint vi, uint ti, bool blind
+) {
+    uint n = 0;
+    double T2 = blind ? -1 : ja_cost2(pl, cl, vi, &n);
+    /* E <id> <vi> <t> <estimate> <children>, in us */
+    fprintf(gs_file(), "E %lu %u %u %.4g %u\n", id, vi, ti,
+            T2 < 0 ? -1.0 : T2 * 1e6, n);
+}
+#endif
+
 /* keep the estimates by x of the last position costed as the best */
 static inline void ja_swap(void) {
     double *x = ja_cx;
@@ -1809,6 +1994,10 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
     double sT = ja_cost(prev_node, cur_act, sv, HUGE_VAL, &sblind);
 #ifdef VERBOSE
     ja_tv[sv] = sblind ? -3 : sT;
+    bool e2 = id && ja_e2min > 0 && W * 1e6 >= ja_e2min;
+    if (e2)
+        ja_e2rec(prev_node, cur_act, id, sv,
+                value[sv].alloc[cur_vlevel[sv] - 1].t, sblind);
 #endif
     uint best = sv, nblind = 0, neval = 1;
     double bT = sT;
@@ -1863,6 +2052,8 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
         double T = ja_cost(prev_node, cur_act, vi,
                 (id || ja_stol > 0) ? HUGE_VAL : bT, &blind);
         ja_tv[vi] = blind ? -3 : T;
+        if (e2)
+            ja_e2rec(prev_node, cur_act, id, vi, ti, blind);
         if (id)
             fprintf(gs_file(), "Z %lu %u %u %.4g\n", id, vi, ti,
                     blind ? -1.0 : T * 1e6);

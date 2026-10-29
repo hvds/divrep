@@ -7583,7 +7583,9 @@ int main(int argc, char **argv, char **envp) {
 #endif
               case 'J':
 #ifdef VERBOSE
-                if (arg[3] == 's')
+                if (arg[3] == 'e')
+                    ja_e2min = strtod(&arg[4], NULL);
+                else if (arg[3] == 's')
                     ja_stol = strtod(&arg[4], NULL);
                 else if (arg[3] == 'b')
                     ja_sblind = 1;
