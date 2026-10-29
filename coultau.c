@@ -3,6 +3,7 @@
 #include "coul.h"
 #include "coultau.h"
 #include "coulfact.h"
+#include "trace.h"
 #include "factor.h"
 #include "gmp_main.h"
 #include "primality.h"
@@ -34,6 +35,9 @@ mpz_t simpqs_array[SIMPQS_SIZE];
 #define CG_CLOCK CLOCK_THREAD_CPUTIME_ID
 struct timespec cg_tp0;
 struct timespec cg_tp1;
+#ifdef VERBOSE
+uint verbose = 0;   /* -dv<bits>, see trace.h */
+#endif
 #define GIG 1000000000
 static inline ulong cgdiff(struct timespec *t0) {
     clock_gettime(CG_CLOCK, &cg_tp1);
@@ -42,7 +46,8 @@ static inline ulong cgdiff(struct timespec *t0) {
 }
 #ifdef VERBOSE
 #define dz(format, ...) do { \
-    gmp_printf("(%ld) " format "\n", cgdiff(&cg_tp0), ## __VA_ARGS__); \
+    if (VB(VB_TRACE)) \
+        gmp_printf("(%ld) " format "\n", cgdiff(&cg_tp0), ## __VA_ARGS__); \
 } while (0)
 #else
 #define dz(...) 1
@@ -61,18 +66,24 @@ static inline bool ct_isbpsw(mpz_t n) {
 
 #ifdef VERBOSE
 static inline bool ct_prime(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return ct_isprime(n);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = ct_isprime(n);
     gmp_printf("(%ld) p: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
 }
 static inline ulong ct_power(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return power_factor(n, n);
     clock_gettime(CG_CLOCK, &cg_tp0);
     ulong r = power_factor(n, n);
     gmp_printf("(%ld) pow: %Zd^%lu\n", cgdiff(&cg_tp0), n, r);
     return r;
 }
 static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
+    if (!VB(VB_TRACE))
+        return _GMP_ECM_FACTOR(n, f, b1, curves);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_ECM_FACTOR(n, f, b1, curves);
     gmp_printf("(%ld) ecm: %Zu [%lu, %lu] %u",
@@ -83,6 +94,8 @@ static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
     return r;
 }
 static inline bool ct_pminus1(mpz_t n, mpz_t f, ulong b1, ulong b2) {
+    if (!VB(VB_TRACE))
+        return _GMP_pminus1_factor(n, f, b1, b2);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_pminus1_factor(n, f, b1, b2);
     gmp_printf("(%ld) p-1: %Zu [%lu, %lu] %u", cgdiff(&cg_tp0), n, b1, b2, r);
@@ -92,6 +105,8 @@ static inline bool ct_pminus1(mpz_t n, mpz_t f, ulong b1, ulong b2) {
     return r;
 }
 static inline bool ct_tinyqs(mpz_t n, mpz_t f) {
+    if (!VB(VB_TRACE))
+        return tinyqs(n, f);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = tinyqs(n, f);
     gmp_printf("(%ld) tqs: %Zu %u", cgdiff(&cg_tp0), n, r);
@@ -101,6 +116,8 @@ static inline bool ct_tinyqs(mpz_t n, mpz_t f) {
     return r;
 }
 static inline bool ct_simpqs(mpz_t n, mpz_t *fa) {
+    if (!VB(VB_TRACE))
+        return _GMP_simpqs(n, fa);
     clock_gettime(CG_CLOCK, &cg_tp0);
     int r = _GMP_simpqs(n, fa);
     gmp_printf("(%ld) sqs: %Zu %d", cgdiff(&cg_tp0), n, r);
@@ -110,6 +127,8 @@ static inline bool ct_simpqs(mpz_t n, mpz_t *fa) {
     return r;
 }
 static inline bool ct_holf(mpz_t n, mpz_t f, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return _GMP_holf_factor(n, f, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_holf_factor(n, f, rounds);
     gmp_printf("(%ld) hlf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
@@ -119,6 +138,8 @@ static inline bool ct_holf(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_squfof(mpz_t n, mpz_t f, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return squfof126(n, f, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = squfof126(n, f, rounds);
     gmp_printf("(%ld) sqf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
@@ -128,6 +149,8 @@ static inline bool ct_squfof(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return pbrent63(n, f, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = pbrent63(n, f, rounds);
     gmp_printf("(%ld) b63: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
@@ -137,6 +160,8 @@ static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
     return r;
 }
 static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
+    if (!VB(VB_TRACE))
+        return _GMP_pbrent_factor(n, f, a, rounds);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_pbrent_factor(n, f, a, rounds);
     gmp_printf("(%ld) brent: %Zu [%lu, %lu] %d",
@@ -147,6 +172,8 @@ static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
     return r;
 }
 static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
+    if (!VB(VB_TRACE))
+        return _GMP_cheb_factor(n, f, B, 0);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = _GMP_cheb_factor(n, f, B, 0);
     gmp_printf("(%ld) cheb: %Zu [%lu] %d", cgdiff(&cg_tp0), n, B, r);
@@ -155,8 +182,25 @@ static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
     gmp_printf("\n");
     return r;
 }
+static inline int ct_pretest(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return primality_pretest(n);
+    clock_gettime(CG_CLOCK, &cg_tp0);
+    int r = primality_pretest(n);
+    gmp_printf("(%ld) pretest: %Zd %d\n", cgdiff(&cg_tp0), n, r);
+    return r;
+}
+static inline bool ct_bpsw(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return ct_isbpsw(n);
+    bool r = ct_isbpsw(n);
+    gmp_printf("(%ld) bpsw: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
+    return r;
+}
 extern int fs_trial(factor_state* fs);
 static inline bool ct_trial(factor_state *fs) {
+    if (!VB(VB_TRACE))
+        return fs_trial(fs);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = fs_trial(fs);
     gmp_printf("(%ld) div: %Zu %d", cgdiff(&cg_tp0), fs->n, r);
@@ -178,6 +222,8 @@ static inline bool ct_trial(factor_state *fs) {
 #   define ct_brent(n, f, a, rounds) _GMP_pbrent_factor(n, f, a, rounds)
 #   define ct_trial(fs) fs_trial(fs)
 #   define ct_cheb(n, f, B) _GMP_cheb_factor(n, f, B, 0)
+#   define ct_pretest(n) primality_pretest(n)
+#   define ct_bpsw(n) ct_isbpsw(n)
 #endif
 
 #define NPRIMES_SMALL 6500
@@ -685,7 +731,8 @@ int is_taux(mpz_t n, uint32_t k, uint32_t x) {
     factor_state fs;
 
 #ifdef VERBOSE
-    gmp_printf("is_taux t=%u (%u) %Zu^%u\n", k, mpz_sizeinbase(n, 2), n, x);
+    if (VB(VB_TRACE))
+        gmp_printf("is_taux t=%u (%u) %Zu^%u\n", k, mpz_sizeinbase(n, 2), n, x);
 #endif
     if (cmp < 0)
         return 0;
@@ -777,9 +824,29 @@ static inline bool prep_abort(t_tm *tm, bool result) {
     return result;
 }
 
+/* Effectively identical to _GMP_is_prob_prime(), but with VERBOSE
+ * diagnostics for debugging/calibration.
+ */
+bool tau_prime_test(mpz_t n) {
+#ifdef VERBOSE
+    if (VB(VB_TRACE))
+        gmp_printf("tau_prime_test %Zu\n", n);
+#endif
+    int res = ct_pretest(n);
+    if (res == 0)
+        return 0;
+    if (res != 1)
+        return 1;
+    return ct_bpsw(n);
+}
+
 bool tau_prime_prep(uint i) {
+#ifdef VERBOSE
+    if (VB(VB_TRACE))
+        gmp_printf("tau_prime_prep vi=%u %Zu\n", taum[i].vi, taum[i].n);
+#endif
     /* FIXME: break this out further */
-    int res = primality_pretest(taum[i].n);
+    int res = ct_pretest(taum[i].n);
     if (res == 0)
         return 0;
     taum[i].state = (res == 1) ? 1 : 0;
@@ -822,8 +889,12 @@ bool tau_multi_prep(uint i) {
     tm->state = 1;  /* init */
 
 #ifdef VERBOSE
-    gmp_printf("tau_multi_prep t=%u e=%u (%u) %Zu\n", t, e, nbits, tm->n);
-    clock_gettime(CG_CLOCK, &cg_tp0);
+    extern uint g_ati, g_walkv_call;
+    if (VB(VB_TRACE))
+        gmp_printf("tau_multi_prep vi=%u t=%u e=%u call=%u ati=%u (%u) %Zu\n",
+                tm->vi, t, e, g_walkv_call, g_ati, nbits, tm->n);
+    if (VB(VB_TRACE))
+        clock_gettime(CG_CLOCK, &cg_tp0);
 #endif
     if (t == 1) {
         dz("div: t=1");
@@ -1268,7 +1339,7 @@ uint tau_prime_run(uint first, uint count) {
     count = i;
     qsort(&taum[first], count - first, sizeof(t_tm), &taum_comparator);
     for (i = first; i < count; ++i) {
-        if (!ct_isbpsw(taum[i].n)) {
+        if (!ct_bpsw(taum[i].n)) {
             taum[first].vi = taum[i].vi;
             return count - i;
         }

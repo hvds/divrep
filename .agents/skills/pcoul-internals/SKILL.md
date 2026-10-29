@@ -99,6 +99,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 - `prime_iterator.c` - adapted from Math::Prime::Util's C sources;
   `prime_iterator_prev()`/`prev_prime_in_segment()` are this project's
   own addition on top of the imported forward-iteration code.
+- `trace.c` - instrumentation records, in a build with `VERBOSE=1`,
+  chosen at run time with `-dv<bits>` (see `trace.h`).
+- `coulint.h` - internals of `coul.c` shared with it.
 
 ### Key vocabulary / concepts
 
@@ -415,6 +418,9 @@ easy to confuse by mnemonic alone:
   position needing a square, first try each prime up to the bound to
   an odd power at each other position that needs one, by Pell; `-K`
   keeps positions `-k` would pass over.
+- `-dv<bits>`: instrumentation, in a `VERBOSE=1` build only (`-dc` and
+  `-dC` are the modular-constraint debugging that `-dv`/`-dV` used to
+  be).
 - `-I`: recovery/injection pattern (see "recovery patterns" above).
 - `-dw<n>` / `-dW<n>` / `-dL<n>` (debug): show every progress line
   (`-dw` leaves out the steps of a walk, `-dW` includes them), or
