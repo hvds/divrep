@@ -97,15 +97,24 @@ A VERBOSE=1 build has it all, chosen at runtime by -dv<bits>
 
 ### The cost table (bench.c, multibench-table, coulcost.c)
 
-One table per machine, MPUGMP build and n (`-f<flake>` for runs using
--o). Rows: C (per-operation constants fitted from -dv6 runs), S/L
-(trial division by size and prime), P/R (prime tests), test_multi()
-rows by t, e and size, G (the ladder per rung: reach, cost, hit rate,
-factor size, cofactor primality), Q (QS alone by size). Sizes sit
-either side of the limb boundaries at 64 and 128 bits. G rows from 100
-bits use inputs built from their factors, with the smallest factor
-oversampled and weighted back (Buchstab). Without -f, G rows reach 255
-bits, and the rows above 230 bits take over an hour to generate.
+One table per machine and MPUGMP build, serving every n (`-f<flake>`
+for runs using -o), timed by work_clock(): cycles at the -Lc reference
+clock (3.6GHz) where pcoul can open the cycle counter, so independent
+of the turbo clock while it is made, else CPU seconds; each section's
+V line records which (CY3.6 or CPU, none meaning CPU), and -dT warns
+of a section in a different unit from the run's. Rows: C
+(per-operation constants fitted from -dv6 runs and paired mock runs),
+S/L (trial division by size and prime), P/R (prime tests),
+test_multi() rows by size for each class of (t, e) (cm_tclass(): after
+trial division, tau_multi_prep() depends on t and e only through t vs
+e + 1 and their parities; older tables have a row per divisor of their
+n, used where exact, else by class), G (the ladder per rung: reach,
+cost, hit rate, factor size, cofactor primality), Q (QS alone by
+size). Sizes sit either side of the limb boundaries at 64 and 128
+bits. G rows from 100 bits use inputs built from their factors, with
+the smallest factor oversampled and weighted back (Buchstab). Without
+-f, G rows reach 255 bits, and the rows above 230 bits take over an
+hour to generate.
 
 The benches' inputs are the same from run to run (each bench seeds a
 GMP generator of its own from a constant and the size, and each size is
@@ -119,13 +128,14 @@ Coverage of the ladder: sound to about 191 bits; 207-255 bits from 60
 inputs each; above that (with -f only) the single ECM rung is benched
 from 12-30 inputs and is rough. Rungs after QS count as never reached.
 
-The table is in sections (scan, prime, multi, ladder, qs, walk, w1s),
-each stamped with the build that made it ("V section sha"):
-`-s<sections>` rebuilds only some, and `-u<table>` takes the rest from
-an existing table, so a new MPUGMP needs only scan, prime, ladder and
-qs (and multi), a change to coul.c only walk and w1s. pcoul builds in
-a default table from the file timings, used unless $COST_TABLE names
-another; `-dT` notes sections from a different build.
+The table is in sections (scan, prime, multi, ladder, qs, walk, w1s,
+leaf, tail), each stamped with the build that made it ("V section
+sha"): `-s<sections>` rebuilds only some, and `-u<table>` takes the
+rest from an existing table, so a new MPUGMP needs only scan, prime,
+ladder and qs (and multi), a change to coul.c only walk, w1s, leaf
+and tail. pcoul builds in a default table from the file timings,
+used unless $COST_TABLE names another; `-dT` notes sections from a
+different build.
 
 ### The mock pcoul (mock.c, MOCK=1)
 
@@ -147,8 +157,30 @@ with what was stubbed.
   primes have passed. Pell walks (nqc >= 2) run for real.
 - walk_1_set(): the first 10000 primes run for real with modelled
   tests (every 8th exactly), the rest charged at their rates.
-- Always real: the recursion, prep_unforced_x(), walk_6x(),
-  walk_midp(), and each walk's setup.
+- next_unforced(): an innermost loop whose first child walks is
+  charged in closed form (cprime plus walks scaling as
+  (p0/p)^(x-1)); loops of fixed-power walks, and loops above the
+  leaves, are sampled (above 65536: 8 children of every 128 run and
+  timed, the rest charged their mean); the tail of a loop where nearly
+  every prime fails on rq > zmax is charged ctail per prime.
+- Always real: primes below 65536, apply_single() up to the tail,
+  prep_unforced_x(), flips' outer loops, walk_6x(), walk_midp(), and
+  each walk's setup.
+
+Validation, mock/real (367 totals, tables of 2026-09-29):
+
+| batch | ratio |
+|---|---|
+| D(162,3) b9 subtree 397^2 / 97^2 | 1.09 / 1.15 |
+| D(48,10) b0 | 1.16-1.21 |
+| D(96,8) batches (heavy / small) | 0.93-1.01 / 1.06-1.22 |
+| D(18,4) -x1e18 | 0.97 |
+| D(90,4) -x1e24 / -x1e22 | 0.88 / 0.94 |
+
+With leaf loops real ($MOCK_LEAF_OFF) the 397^2 subtree is 1.00-1.02:
+the walk, test and ladder models are right there, and the rest is in
+the leaf stubs (~5%) and striding (~3%). Mock runs vary ~4% run to run
+(stride samples), as do real ones.
 
 ### Findings under a fixed gain (to 2026-09-25)
 
@@ -343,6 +375,10 @@ substantially, the calibrated options may no longer be optimal.
 
 - MOCK_LADDER (coulmock.c): a per-residual chain model of the ladder
   from Dickman's rho; superseded by the measured G rows.
+- In the leaf mock, stubbing rejected primes one by one: once
+  update_chinese() used chinese_ppow() a real reject cost only about
+  0.045us more than the mock's own test of it. The stubbed ends of
+  loops of rejects still halve the mock's time, and are kept.
 - rungbench, a standalone bench of single rungs of the ladder: its pq
   mode built n = p*q, so multiplicity was 1 by construction and said
   nothing of real inputs. The ladder bench in bench.c replaced it.
