@@ -2,8 +2,8 @@
 #define COULCOST_H
 
 /* The cost table (see multibench-table) and the models built on it, in
- * every build: -ja counts the cost of what a run does, and prices what
- * it might do, from them. See coulcost.c.
+ * every build: -ja and -ka count the cost of what a run does, and price
+ * what it might do, from them. See coulcost.c.
  */
 
 #include "coul.h"
@@ -30,6 +30,13 @@ enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
         CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
         CM_LINSETUP, CM_CAPPLY, CM_LINSETUPINV, CM_SQSETUPRES, CM_W1SCALL,
         CM_CFAIL, CM_COUNT };
+
+/* The modelled cost per root of walking a single fixed power, or a
+ * negative value if the table cannot price it.
+ */
+extern double cm_root_price(double z, mpz_t **q, uint *t, uint sqi,
+        uint *need_prime, uint npc, uint *need_other, uint noc, t_mod *inv,
+        uint inv_count);
 
 /* For mock.c: the model of what the candidates of a walk cost, see
  * coulcost.c.

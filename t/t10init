@@ -207,6 +207,65 @@ sub test_init {
         is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
                 $expect, $legend);
     }
+    # few of those are in a batch -k applies to; in these two all are,
+    # the first with a position passed over, and -ka chooses the bounds
+    for my $case ([ 4, '1e14', 6 ], [ 19, '1e13', 9 ]) {
+        my($batch, $max, $count) = @$case;
+        for my $opts (
+            [], [qw{ -k1e3 }], [qw{ -k1e5 -ja1 }], [qw{ -k1e4 -W1e3 -K1 }],
+            [qw{ -ka }], [qw{ -ka -ja2 }], [qw{ -ka -W300 }],
+        ) {
+            my $lines = run_test($type,
+                    [ @$opts, "-b$batch", '-X', "-x$max", 18, 3 ], 0);
+            my %seen;
+            ++$seen{$_} for map /^202 Candidate (\d+)/,
+                    @{ $lines->{202} // [] };
+            is(0 + keys %seen, $count, "all f(18,3) candidates of b$batch"
+                    . " to $max found with '@$opts'");
+        }
+    }
+    # -ka shows what it chose for a batch, here a sweep as well; and the
+    # cost per root it estimated with, if that came from the cost table
+    {
+        my $lines = run_test($type, [qw{ -a -ka -x1e20 -f3 6 5 }], 0);
+        my $tags = join ' ', map "\\[$_\\]",
+                qw{ sq=1 rc=8 k=\d+ W=\d+ est=[\d.]+ };
+        like($lines->{203}[0] // '',
+                qr{^203 b0: \. 2 3\^2 2\^2 5\^2 $tags (?:\[rootus=[\d.]+\] )?\[aq=1800\] },
+                '-ka shows the bounds chosen for a batch');
+    }
+    # -ka takes a batch from STRATEGY_6X where -k is estimated to cost less,
+    # and leaves it where STRATEGY_6X gives way to a cheaper position
+    {
+        my $lines = run_test($type, [qw{ -a -ka -b0 -x1e24 30 4 }], 0);
+        like($lines->{203}[0] // '', qr{ \[k=[1-9]},
+                '-ka takes a batch from STRATEGY_6X where -k is cheaper');
+        $lines = run_test($type, [qw{ -a -ka -b0 -x1e26 66 4 }], 0);
+        like($lines->{203}[0] // '', qr{ \[k=0\]},
+                '-ka leaves a batch to STRATEGY_6X where that gives way');
+    }
+    # -ap lists the batches as -a does, and for one that fixes a single
+    # square shows what it is estimated to cost: under -ka, the estimate
+    # that chose its bounds, as the sum of its parts; with bounds given,
+    # the estimate for those
+    for my $opts ([qw{ -ka }], [qw{ -k1e4 -W1e3 }]) {
+        my $lines = run_test($type,
+                [ '-ap', @$opts, qw{ -x1e20 -f3 6 5 } ], 0);
+        my($est) = ($lines->{203}[0] // '') =~ /\[est=([\d.]+)\]/;
+        my($tot, $pass, $sweep, $rest) = ($lines->{205}[0] // '') =~ m{
+            ^205\ b0:\ -k\ ([\d.]+)s\ =\ pass\ ([\d.]+)\ \+\ sweep\ ([\d.]+)
+            \ \+\ rest\ ([\d.]+)\ \([\d.e+]+\ nodes,\ [\d.e+]+\ roots\);
+            \ whole\ [\d.]+s$
+        }x;
+        ok(defined($tot) && abs($pass + $sweep + $rest - $tot) < 0.02,
+                "-ap shows an estimate as the sum of its parts with '@$opts'");
+        is($tot, $est, '-ap shows the estimate -ka chose by')
+                if $opts->[0] eq '-ka';
+        my $total = '205 total ' . ($tot // '?')
+                . 's (batches estimated 1, not estimated 0)';
+        like($lines->{205}[1] // '', qr{^\Q$total\E$},
+                "-ap totals the batches estimated with '@$opts'");
+    }
 
     count_batch(q{batches without constraint},
             56, '', $args124);
@@ -319,6 +378,19 @@ sub test_recover {
         ['305 b0: . 2 3^2 2^2 5^2 W(769,2,0)'],
         'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
     );
+    # under -ka a recovered batch goes on with the bounds logged for it
+    {
+        my $fh = temp_log([
+            '316 0 0 k1:1000,0,0', '305 b0: . 2 3^2 2^2 5^2 W(769,2,0)',
+        ]);
+        my $lines = run_test($type, [
+            '-dW1', '-r' . $fh->filename, qw{ -x1e20 -f3 -ka 6 5 },
+        ], 1);
+        like($lines->{203}[0] // '', qr{^203 b0: .* \[k=1000\] \(},
+                'recover -ka: bounds as logged');
+        is($lines->{''}[-1] // '', 'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
+                'recover -ka pass');
+    }
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
         $args124W, ['305 b0: 2^2.3 . 2 3 W(1009,3,1)'],

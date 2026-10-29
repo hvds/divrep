@@ -521,7 +521,9 @@ static bool gq_walk(
 #define KE_PELL 3e-6        /* the pass, per prime at each position */
 #define KE_SWEEP 3e-6       /* a sweep without reject_square(), likewise */
 #define KE_6X 10.7e-6       /* a STRATEGY_6X loop, per prime applied */
+#define KE_PLAN_MIN 0.01    /* -ka leaves alone a batch cheaper to walk */
 typedef struct {
+    uint vi;        /* the position */
     double Z;       /* zmax over what is allocated, and the bound of -k */
     long d;         /* offset of the square less that of this position */
     uint ns;        /* powers still to allocate, as exponents in order */
@@ -539,6 +541,38 @@ typedef struct {
 static double ke_root, ke_endr, ke_pmin;
 static double ke_setup;     /* of a walk in the batch, see ke_root_node() */
 static bool ke_high;
+/* The cost per root to estimate with is a fixed guess by the kind of root,
+ * unless ke_priced is set: then it is taken from the cost table for the
+ * tau left at each position (see ke_price()), which kern_plan() arranges
+ * if it can. Its choices are logged, so they need not come out the same
+ * in a recovered run.
+ */
+static bool ke_priced = 0;
+#define KE_NPRICE 64
+/* the prices found for the batch, each with the tau at every position */
+static struct {
+    uint t[MAXK_KERN];
+    double price;
+} ke_prices[KE_NPRICE];
+static uint ke_nprice;
+/* the tau left at each position by the batch */
+static uint ke_t0[MAXK_KERN];
+/* What is estimated for: the bound of -k, the cap on primes to each power
+ * (0 for none), and whether a sweep runs above the caps.
+ */
+static ulong ke_b, *ke_cap;
+static bool ke_sweep;
+static bool ke_swept;   /* set by ke_batch() if the sweep had anything to do */
+/* What an estimate is made of, collected by ke_batch() if ke_parts is
+ * set (see kern_show()): the costs of the pass and of the sweep, and
+ * over the sweep and the search that follows, the nodes reached and the
+ * roots walked. ke_wt is how many of the node in hand are expected.
+ */
+typedef struct {
+    double pass, sweep, nodes, roots;
+} t_keparts;
+static t_keparts *ke_parts = NULL;
+static double ke_wt;
 
 /* true if n is prime, for n < GR_PIMAX */
 static inline bool gr_isprime(ulong n) {
@@ -575,8 +609,8 @@ static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
         else
             other *= pow(ke_pmin, kp->e[i]);
     double L = pow(kp->Z / other, 1.0 / (e * same));
-    if (maxp[e] && L > maxp[e])
-        L = maxp[e];
+    if (ke_cap[e] && L > ke_cap[e])
+        L = ke_cap[e];
     *hi = L;
     *lo = (kp->laste == e) ? kp->lastp : ke_pmin - 1;
     return e;
@@ -592,9 +626,35 @@ static inline uint ke_tau(t_kepos *kp) {
 
 static double ke_cost(t_kenode *node, double budget);
 
+/* The cost per root of a walk at a node. From the cost table, it is that
+ * of a walk of the batch as it stands but with the tau the node has left
+ * at each of its positions: what the node has allocated besides is not
+ * allowed for.
+ */
+static double ke_price(t_kenode *node) {
+    if (!ke_priced)
+        return ke_root;
+    /* needs k <= MAXK_KERN */
+    uint t[k];
+    memcpy(t, ke_t0, k * sizeof(uint));
+    for (uint j = 0; j < node->np; ++j)
+        t[node->pos[j].vi] = ke_tau(&node->pos[j]);
+    for (uint i = 0; i < ke_nprice; ++i)
+        if (memcmp(ke_prices[i].t, t, k * sizeof(uint)) == 0)
+            return ke_prices[i].price;
+    double price = walk_v_price(t);
+    if (price <= 0)
+        price = ke_root;
+    if (ke_nprice < KE_NPRICE) {
+        memcpy(ke_prices[ke_nprice].t, t, k * sizeof(uint));
+        ke_prices[ke_nprice++].price = price;
+    }
+    return price;
+}
+
 /* the cost of walking a node */
 static inline double ke_walk(t_kenode *node) {
-    return GQ_SETUP + ke_root * node->roots;
+    return ke_setup + ke_price(node) * node->roots;
 }
 
 /* The cost of the loop over the next allocation at position j, each child
@@ -675,13 +735,26 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
         cp->lastp = p;
         if (c == 1 && p < KE_SMALL)
             ch.used[ch.nused++] = (uint)p;
-        double cc = deep ? ke_cost(&ch, (budget - cost) / (c * s * f * r))
-                : ke_walk(&ch);
+        double cc;
+        if (deep) {
+            double wt = ke_wt;
+            ke_wt *= c * s * f * r;
+            cc = ke_cost(&ch, (budget - cost) / (c * s * f * r));
+            ke_wt = wt;
+        } else
+            cc = ke_walk(&ch);
         cost += c * s * f * r * (gq_apply + cc);
         if (cost > budget)
             return HUGE_VAL;
     }
     return cost;
+}
+
+/* a node is walked, at cost w: note its roots, and return w */
+static inline double ke_walked(t_kenode *node, double w) {
+    if (ke_parts)
+        ke_parts->roots += ke_wt * node->roots;
+    return w;
 }
 
 /* the position the default strategy would take at a node, KE_MAXPOS if none */
@@ -714,15 +787,17 @@ static uint ke_best(t_kenode *node) {
 /* the cost of the subtree at a node; HUGE_VAL once past budget */
 static double ke_cost(t_kenode *node, double budget) {
     double w = ke_walk(node);
+    if (ke_parts)
+        ke_parts->nodes += ke_wt;
     uint best = ke_best(node);
     if (best == KE_MAXPOS)
-        return w;
+        return ke_walked(node, w);
     double lo, hi;
     ke_limit(&node->pos[best], &lo, &hi);
     if (hi <= lo || w < (gr_li(hi) - gr_li(lo)) * gr_apply)
-        return w;
+        return ke_walked(node, w);
     if (w < ke_loop(node, best, 0, HUGE_VAL))
-        return w;
+        return ke_walked(node, w);
     return ke_loop(node, best, 1, budget);
 }
 
@@ -755,6 +830,7 @@ static void ke_root_node(t_kenode *root, ulong at, double b) {
         if (!((at >> vi) & 1))
             continue;
         t_kepos *kp = &root->pos[root->np++];
+        kp->vi = vi;
         kp->Z = z / mpz_get_d(*kern_q(vi)) / b;
         kp->d = (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi);
         kp->laste = 0;
@@ -771,29 +847,42 @@ static void ke_root_node(t_kenode *root, ulong at, double b) {
 }
 
 /* The estimated cost of the current batch under -k with the positions of
- * at, including its pass and any sweep; HUGE_VAL once past budget.
+ * at, including its pass and any sweep, for the bounds of ke_b, ke_cap[]
+ * and ke_sweep; HUGE_VAL once past budget.
  */
 static double ke_batch(ulong at, double budget) {
     t_kenode root;
-    ke_root_node(&root, at, kern_b);
+    ke_root_node(&root, at, ke_b);
+    ke_swept = 0;
     double cost = 0;
     for (uint j = 0; j < root.np; ++j) {
         t_kepos *kp = &root.pos[j];
         /* the pass, and the sweep of each power in turn */
-        cost += KE_PELL * gr_li(kern_b);
-        for (uint i = 0; need_midp && i < kp->ns; ++i) {
+        cost += KE_PELL * gr_li(ke_b);
+        if (ke_parts)
+            ke_parts->pass += KE_PELL * gr_li(ke_b);
+        for (uint i = 0; ke_sweep && i < kp->ns; ++i) {
             uint e = kp->e[i];
-            if ((i && kp->e[i - 1] == e) || !maxp[e])
+            if ((i && kp->e[i - 1] == e) || !ke_cap[e])
                 continue;
             double other = 1;
             for (uint l = 0; l < kp->ns; ++l)
                 if (l != i)
                     other *= pow(ke_pmin, kp->e[l]);
-            double L = pow(kp->Z / other, 1.0 / e), W = maxp[e];
+            double L = pow(kp->Z / other, 1.0 / e), W = ke_cap[e];
             if (L <= W)
                 continue;
+            ke_swept = 1;
             double np = gr_li(L) - gr_li(W);
-            cost += ke_root * root.roots * pow(W, 1.0 - e) / (e - 1) / log(W);
+            /* its walks have this power allocated */
+            t_kenode sw = root;
+            t_kepos *sp = &sw.pos[j];
+            --sp->ns;
+            memmove(&sp->e[i], &sp->e[i + 1], (sp->ns - i) * sizeof(sp->e[0]));
+            double sr = root.roots * pow(W, 1.0 - e) / (e - 1) / log(W);
+            cost += ke_price(&sw) * sr;
+            if (ke_parts)
+                ke_parts->roots += sr;
             if (e == 2 && ke_endr > 0) {
                 double re = sqrt(2 * ke_endr);
                 if (re < W)
@@ -807,23 +896,38 @@ static double ke_batch(ulong at, double budget) {
     }
     if (cost > budget)
         return HUGE_VAL;
+    if (ke_parts)
+        ke_parts->sweep = cost - ke_parts->pass;
+    ke_wt = 1;
     return cost + ke_cost(&root, budget - cost);
 }
 
+/* the estimated cost of walking the whole of the current batch */
+static double ke_plain(void) {
+    uint ts = kern_tau(sq0);
+    double q = mpz_get_d(*kern_q(sq0));
+    t_node *lv = &nodes[cur_batch_level];
+    t_kenode whole = { .np = 0 };
+    ke_setup = gq_wsetup(lv);
+    ke_root = (divisors[ts].alldiv == 2) ? 0.7e-6 : 1.5e-6;
+    return ke_setup + ke_price(&whole)
+            * pow(zmax_given / q, 1.0 / divisors[ts].gcddm) * q
+            * res_array(lv->level)->count / mpz_get_d(lv->aq);
+}
+
 /* The estimated cost of the current batch under STRATEGY_6X, given tau 6
- * left at v_i two places before the square; else 0. at gives the
- * positions -k would apply to.
+ * left at v_i two places before the square; else 0.
  * Its loop of q^2 at v_i runs to about (zmax/8)^{1/4}, and reject_square()
  * lets through half of it up to the root of the greatest root. But as
  * best_6x() does, it gives way to the position the default strategy
  * would take if that has a lower limit: the search is then estimated as
- * for -k (see ke_batch()), over the same positions bar v_i, but with no
- * bound on their odd power, no pass and no sweep, and at most the cost
- * of walking the batch whole. The loops of q^2 at v_i that may follow
- * deeper in that search are not allowed for. As for -k, all is taken
- * from zmax as given, not from the current state of the search.
+ * for -k (see ke_batch()), over the positions -k would apply to bar v_i,
+ * but with no bound on their odd power, no pass and no sweep, and at
+ * most the cost of walking the batch whole. The loops of q^2 at v_i that
+ * may follow deeper in that search are not allowed for. As for -k, all
+ * is taken from zmax as given, not from the current state of the search.
  */
-static double ke_6x(ulong at) {
+static double ke_6x(void) {
     uint vi = sq0 - 2;
     if (kern_tau(vi) != 6 || divisors[kern_tau(sq0)].gcddm != 2)
         return 0;
@@ -833,6 +937,12 @@ static double ke_6x(ulong at) {
         se = L;
     double cost = gr_li(L) * (gr_apply + GQ_ROOT / 2) + gr_li(se) * KE_6X;
 
+    ulong at, passed;
+    kern_sets(0, &at, &passed);
+    ulong *cap = ke_cap;
+    t_keparts *parts = ke_parts;
+    ke_cap = maxp;
+    ke_parts = NULL;
     t_kenode root;
     ke_root_node(&root, at & ~(1UL << vi), 1);
     uint j = ke_best(&root);
@@ -841,11 +951,14 @@ static double ke_6x(ulong at) {
         ke_limit(&root.pos[j], &lo, &hi);
         if (hi < L) {
             double whole = ke_walk(&root);
+            ke_wt = 1;
             cost = ke_cost(&root, whole);
             if (cost > whole)
                 cost = whole;
         }
     }
+    ke_cap = cap;
+    ke_parts = parts;
     return cost;
 }
 
@@ -853,9 +966,278 @@ static double ke_6x(ulong at) {
  * is, unless -k at the positions in at is estimated to cost less.
  */
 bool ke_prefer_6x(ulong at) {
-    double c6 = (zmax_given > 0) ? ke_6x(at) : 0;
+    ke_b = kern_b;
+    ke_cap = maxp;
+    ke_sweep = need_midp;
+    double c6 = (zmax_given > 0) ? ke_6x() : 0;
     double ck = (c6 > 0) ? ke_batch(at, c6) : HUGE_VAL;
     return !(ck < c6);
+}
+
+/* The caps below the current batch under -ka with a bound W of -W chosen
+ * for it, into cap: W for each power it applies to, as prep_mp() would
+ * for "-W<W>" but never above a cap given, and the caps given for the
+ * rest. Only made where -W is not given, so maxp[] holds those caps.
+ */
+static void kern_w_cap(ulong W, ulong *cap) {
+    memcpy(cap, maxp, target_lcm * sizeof(ulong));
+    t_divisors *dp = &divisors[target_lcm];
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint dm = dp->div[di] - 1;
+        if (highpow ? dm == 0 : ispow2_u64(dm + 1))
+            break;
+        if (!cap[dm] || W < cap[dm])
+            cap[dm] = W;
+    }
+}
+
+/* Estimate for the bounds of -W that ks chose for the current batch, or
+ * else those the options gave.
+ */
+static inline void ke_bounds(t_kern *ks) {
+    ke_cap = ks->wcap ? ks->wcap : maxp;
+    ke_sweep = ks->wcap ? 1 : need_midp;
+}
+
+/* a choice recovered from the log for the batch of this id, see ja_save() */
+static struct {
+    bool valid;
+    int id;
+    ulong b, w;
+    uint keep;
+} kern_logged = { 0, 0, 0, 0, 0 };
+
+/* The bounds tried for -k and for -W under -ka, the latter in an order
+ * that gets a good estimate early to cut the others short: no sweep is
+ * the slowest to estimate where it is not the cheapest.
+ */
+static const ulong kern_bgrid[] = {
+    1000UL, 2000UL, 5000UL, 10000UL, 20000UL, 50000UL,
+    100000UL, 200000UL, 500000UL, 1000000UL, 2000000UL, 5000000UL,
+    10000000UL, 20000000UL, 50000000UL, 100000000UL, 200000000UL,
+    500000000UL, 1000000000UL, 2000000000UL, 5000000000UL,
+    10000000000UL, 20000000000UL, 50000000000UL
+};
+static const ulong kern_wgrid[] = {
+    100000UL, 30000UL, 10000UL, 300000UL, 1000000UL, 3000UL, 1000UL, 0UL
+};
+#define KERN_NB (sizeof(kern_bgrid) / sizeof(kern_bgrid[0]))
+#define KERN_NW (sizeof(kern_wgrid) / sizeof(kern_wgrid[0]))
+
+/* Have kern_plan() estimate with costs per root from the cost table, if
+ * we are at the batch and they can be had; and return the cost of walking
+ * the batch whole.
+ */
+static double kern_price(t_kern *ks) {
+    bool at_batch = 1;
+    for (uint vi = 0; vi < k; ++vi) {
+        uint vil = cur_vlevel[vi];
+        if (vil > 1 && value[vi].alloc[vil - 1].level > cur_batch_level)
+            at_batch = 0;
+    }
+    ke_priced = 0;
+    ke_nprice = 0;
+    if (at_batch && walk_v_price_prep(&nodes[cur_batch_level])) {
+        /* needs k <= MAXK_KERN */
+        for (uint vi = 0; vi < k; ++vi)
+            ke_t0[vi] = kern_tau(vi);
+        double c = walk_v_price(ke_t0);
+        if (c > 0) {
+            ks->price = c;
+            ke_priced = 1;
+        }
+    }
+    return ke_plain();
+}
+
+/* Under -ka, choose for the current batch (one that fixes exactly one
+ * square) whether -k is to apply, and with what bound; and the bound of
+ * -W and the count of -K, unless the options gave those. Each choice of
+ * the three is estimated by ke_batch(), and the cheapest taken; a batch
+ * that STRATEGY_6X can take is left to it unless the cheapest is
+ * estimated to cost less than that. A choice recovered from the log for
+ * this batch is taken as it is: the batch must go on as it began, even
+ * if the estimates would now differ. A batch that would take less than
+ * KE_PLAN_MIN to walk whole is not worth choosing for, and -k does not
+ * apply to it.
+ * Sets what is chosen in ks, with the caps below the batch for a bound of
+ * -W chosen (see sweep_batch()), and kern_b and kern_keep to match.
+ */
+void kern_plan(t_kern *ks) {
+    static ulong *cap = NULL, *wcap = NULL;
+    ks->planned = 0;
+    ks->b = 0;
+    ks->w = 0;
+    ks->keep = kern_keep;
+    ks->est = 0;
+    ks->price = 0;
+    ks->wcap = NULL;
+    if (!ks->on)
+        return;
+    ks->planned = 1;
+    if (kern_logged.valid && kern_logged.id == ks->id) {
+        ks->b = kern_logged.b;
+        ks->w = kern_logged.w;
+        ks->keep = kern_logged.keep;
+    } else if (zmax_given > 0 && kern_price(ks) >= KE_PLAN_MIN) {
+        /* -k must cost less than walking the batch whole, which the
+         * search without it can always do.
+         */
+        double budget = ke_plain();
+        if (kern_6x()) {
+            /* it stays with STRATEGY_6X where that cannot be estimated */
+            double c6 = ke_6x();
+            if (c6 < budget)
+                budget = c6;
+        }
+        ulong at, passed;
+        kern_sets(0, &at, &passed);
+        uint kmin = 0, kmax = popcount_u64(passed);
+        if (kern_keep_given)
+            kmin = kmax = kern_keep;
+        if (!cap)
+            cap = malloc(target_lcm * sizeof(ulong));
+        for (uint keep = kmin; keep <= kmax && budget > 0; ++keep) {
+            kern_sets(keep, &at, &passed);
+            /* nothing for -k to do */
+            if (!at)
+                continue;
+            for (uint wi = 0; wi < KERN_NW; ++wi) {
+                ulong w = need_midp ? 0 : kern_wgrid[wi];
+                if (w) {
+                    kern_w_cap(w, cap);
+                    ke_cap = cap;
+                    ke_sweep = 1;
+                } else {
+                    ke_cap = maxp;
+                    ke_sweep = need_midp;
+                }
+                for (uint bi = 0; bi < KERN_NB; ++bi) {
+                    ke_b = kern_bgrid[bi];
+                    /* more primes in the pass than the best costs in all */
+                    if (KE_PELL * gr_li(ke_b) > budget)
+                        break;
+                    double c = ke_batch(at, budget);
+                    if (c < budget) {
+                        budget = c;
+                        ks->b = ke_b;
+                        /* a bound above every limit is no sweep at all */
+                        ks->w = ke_swept ? w : 0;
+                        ks->keep = keep;
+                        ks->est = c;
+                    }
+                }
+                if (need_midp)
+                    break;
+            }
+        }
+    }
+    ke_priced = 0;
+    if (!ks->b) {
+        ks->on = 0;
+        return;
+    }
+    if (ks->w) {
+        if (!wcap)
+            wcap = malloc(target_lcm * sizeof(ulong));
+        kern_w_cap(ks->w, wcap);
+        ks->wcap = wcap;
+    }
+}
+
+/* Append to buf what -ka chose for the current batch, as tags for its
+ * 203 line: at most 3 * (5 + MAX_DEC_ULONG) + 40 characters, which
+ * DIAG_TAGS allows for.
+ */
+void kern_tags(char *buf) {
+    if (!kern_planned())
+        return;
+    t_kern *ks = kern_cur();
+    buf += sprintf(buf, " [k=%lu]", ks->b);
+    if (ks->b && ks->w)
+        buf += sprintf(buf, " [W=%lu]", ks->w);
+    if (ks->b && ks->keep)
+        buf += sprintf(buf, " [K=%u]", ks->keep);
+    if (ks->b && ks->est > 0)
+        buf += sprintf(buf, " [est=%.2f]", ks->est);
+    if (ks->price > 0)
+        sprintf(buf, " [rootus=%.2f]", ks->price * 1e6);
+}
+
+/* Under -ap, show on a 205 line what the current batch is estimated to
+ * cost, if it fixes exactly one square: under -k, with the bounds given
+ * or those -ka chose, the total and what it is made of (see t_keparts);
+ * under STRATEGY_6X, where that can take the batch; and walked whole,
+ * which the search without -k can always do, and may improve on by far.
+ * kern_show_total() then gives the sum over the batches estimated under
+ * -k, or else under STRATEGY_6X, and the number of batches left out.
+ */
+static double kern_shown = 0;
+static uint kern_nshown = 0, kern_nleft = 0;
+void kern_show(void) {
+    static int last = -1;
+    t_node *lp = &nodes[cur_batch_level];
+    if (lp->have_square != 1 || !(zmax_given > 0))
+        return;
+    t_kern *ks = kern_state(lp);
+    double whole = kern_price(ks);
+    double c6 = kern_6x() ? ke_6x() : 0;
+    double est = c6;
+    report("205 b%u:", batch_alloc - 1);
+    if (ks->b && ks->on && ks->at) {
+        t_keparts parts = { 0, 0, 0, 0 };
+        ke_b = ks->b;
+        ke_bounds(ks);
+        ke_parts = &parts;
+        est = ke_batch(ks->at, HUGE_VAL);
+        ke_parts = NULL;
+        report(" -k %.2fs = pass %.2f + sweep %.2f + rest %.2f"
+                " (%.3g nodes, %.3g roots);", est, parts.pass, parts.sweep,
+                est - parts.pass - parts.sweep, parts.nodes, parts.roots);
+    }
+    if (c6 > 0)
+        report(" 6x %.2fs;", c6);
+    report(" whole %.2fs\n", whole);
+    ke_priced = 0;
+    if (last != batch_alloc) {
+        last = batch_alloc;
+        if (est > 0) {
+            kern_shown += est;
+            ++kern_nshown;
+        } else
+            ++kern_nleft;
+    }
+}
+
+void kern_show_total(void) {
+    if (kern_nshown || kern_nleft)
+        report("205 total %.2fs (batches estimated %u, not estimated %u)\n",
+                kern_shown, kern_nshown, kern_nleft);
+}
+
+/* What -ka chose for the current batch, as a field of the 316 log line
+ * (see ja_save()): " k<id>:<bound of -k>,<bound of -W>,<count of -K>",
+ * the first 0 if -k is not to apply. A recovered run takes it from there
+ * rather than choosing again.
+ */
+void kern_save(FILE *fp) {
+    t_kern *ks = kern_cur();
+    if (kern_planned())
+        fprintf(fp, " k%d:%lu,%lu,%u", ks->id, ks->b, ks->w, ks->keep);
+}
+
+/* Restore what kern_save() wrote, if it is next in s; returns what
+ * follows it, or NULL if it cannot be parsed.
+ */
+char *kern_restore(char *s) {
+    if (s[0] != ' ' || s[1] != 'k')
+        return s;
+    int off = 0;
+    if (sscanf(s + 2, "%d:%lu,%lu,%u%n", &kern_logged.id, &kern_logged.b,
+            &kern_logged.w, &kern_logged.keep, &off) != 4 || off == 0)
+        return NULL;
+    kern_logged.valid = 1;
+    return s + 2 + off;
 }
 
 /* -ja2 learns the actual cost of what it chose against the estimate, in
@@ -1006,7 +1388,8 @@ static inline void ja_learn(
  * rather than learning afresh:
  *   316 <counted> <walks> [<level>:<t>,<i>,<n>,<A>,<E>,<A>,<E>,<A>,<E>]
  *       ... [q<level>:<t>,<i>,<n>] ... [r<e>:<A>,<E>] ... [s<e>:<A>,<E>]
- *       ... [f<e>:<A>,<E>] ...
+ *       ... [f<e>:<A>,<E>] ... [p<e>:<A>,<E>] ... [a<e>:<A>,<E>]
+ *       ... [b<e>:<A>,<E>] ... [k<id>:<B>,<W>,<K>]
  * with the cost counted so far (see cc_work()) and the walks seen by
  * the sampler; then for each level with anything learnt, the cost,
  * iterations and number of the walks sampled for the gate (gr_t[],
@@ -1016,8 +1399,11 @@ static inline void ja_learn(
  * number of the walks sampled below one fixed square (gq_t[], gq_i[],
  * gq_n[]); then for each band of node size with anything learnt, of
  * nodes costing from 2^e seconds to walk, the actual and estimated
- * cost of recursing (r), of recursing where a square is left (s), and
- * of recursing below one fixed square (f) (ja_SA[], ja_SE[]).
+ * cost of recursing (r), of recursing where a square is left (s), of
+ * recursing below one fixed square (f), of recursing where the children
+ * can flip (p), and of recursing to leave t = 2 (a) or a higher power
+ * of 2 (b) (ja_SA[], ja_SE[]); then under -ka, what was chosen for the
+ * current batch (see kern_save()).
  * Costs are in seconds, with digits enough to restore each exactly.
  * What was being measured as the line was written is not recorded: the
  * recovered run learns nothing from the walk it resumes, nor from the
@@ -1044,6 +1430,7 @@ void ja_save(FILE *fp) {
             if (ja_SA[b][s] != 0 || ja_SE[b][s] != 0)
                 fprintf(fp, " %c%d:%.17g,%.17g", ja_tag[s],
                         JA_BLOW + 3 * (int)b, ja_SA[b][s], ja_SE[b][s]);
+    kern_save(fp);
     fprintf(fp, "\n");
 }
 
@@ -1103,7 +1490,8 @@ void ja_restore(char *s) {
         s += 2 + off;
     }
     ja_stale = 1;
-    if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
+    s = kern_restore(s);
+    if (!s || (s[0] != 0 && s[0] != '\n' && s[0] != '\r'))
         fail("518 could not parse learnt costs: '%s'", line);
 }
 
