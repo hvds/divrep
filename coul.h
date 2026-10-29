@@ -95,6 +95,14 @@ typedef struct s_act {
     double ja_xt0, ja_w;
     double *ja_ex;
     unsigned char *ja_xp;
+#ifdef VERBOSE
+    /* -dv64: the id of the choice made here, when it was made, and
+     * whether its Q record is still to be written
+     */
+    ulong ja_id;
+    double ja_tc;
+    bool ja_vb;
+#endif
     /* Loop of allocations at this level: whether, and above which
      * multiple of aq, an allocation can be rejected early (see
      * reject_single()), and whether aq is a single limb.

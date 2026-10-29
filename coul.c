@@ -669,6 +669,17 @@ bool prep_show_v(t_node *cur_node, bool expanded) {
     return marked;
 }
 
+#ifdef VERBOSE
+/* The allocations so far as an -I pattern, for -dv64 records; only
+ * valid where no walk_midp(), walk_6x() or flip is in progress.
+ */
+const char *ja_pattern(t_node *cur_node) {
+    prep_show_v(cur_node, 0);
+    char *s = strstr(diag_buf, ": ");
+    return s ? s + 2 : diag_buf;
+}
+#endif
+
 void diag_csv_head(void) {
     printf("Batch id");
     for (uint i = 0; i < k; ++i)
@@ -7569,6 +7580,14 @@ int main(int argc, char **argv, char **envp) {
                 break;
 #else
                 fail("-dv needs a VERBOSE build");
+#endif
+              case 'J':
+#ifdef VERBOSE
+                ja_force = (arg[3] == 'w') ? -1
+                        : (int)strtoul(&arg[3], NULL, 10);
+                break;
+#else
+                fail("-dJ needs a VERBOSE build");
 #endif
               case 'm':
                 debugm = 1;
