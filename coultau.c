@@ -3,6 +3,7 @@
 #include "coul.h"
 #include "coultau.h"
 #include "coulfact.h"
+#include "trace.h"
 #include "factor.h"
 #include "gmp_main.h"
 #include "primality.h"
@@ -49,6 +50,9 @@ mpz_t simpqs_array[SIMPQS_SIZE];
 #define CG_CLOCK CLOCK_THREAD_CPUTIME_ID
 struct timespec cg_tp0;
 struct timespec cg_tp1;
+#ifdef VERBOSE
+uint verbose = 0;   /* -dv<bits>, see trace.h */
+#endif
 #define GIG 1000000000
 static inline ulong cgdiff(struct timespec *t0) {
     clock_gettime(CG_CLOCK, &cg_tp1);
@@ -57,7 +61,8 @@ static inline ulong cgdiff(struct timespec *t0) {
 }
 #ifdef VERBOSE
 #define dz(format, ...) do { \
-    gmp_printf("(%ld) " format "\n", cgdiff(&cg_tp0), ## __VA_ARGS__); \
+    if (VB(VB_TRACE)) \
+        gmp_printf("(%ld) " format "\n", cgdiff(&cg_tp0), ## __VA_ARGS__); \
 } while (0)
 #else
 #define dz(...) 1
@@ -80,19 +85,40 @@ static inline uint ct_ispretest(mpz_t n) {
 
 #ifdef VERBOSE
 static inline bool ct_prime(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return ct_isprime(n);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = ct_isprime(n);
     gmp_printf("(%ld) p: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
     return r;
 }
 static inline ulong ct_power(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return power_factor(n, n);
     clock_gettime(CG_CLOCK, &cg_tp0);
     ulong r = power_factor(n, n);
     gmp_printf("(%ld) pow: %Zd^%lu\n", cgdiff(&cg_tp0), n, r);
     return r;
 }
+static inline int ct_pretest(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return ct_ispretest(n);
+    clock_gettime(CG_CLOCK, &cg_tp0);
+    int r = ct_ispretest(n);
+    gmp_printf("(%ld) pretest: %Zd %d\n", cgdiff(&cg_tp0), n, r);
+    return r;
+}
+static inline bool ct_bpsw(mpz_t n) {
+    if (!VB(VB_TRACE))
+        return ct_isbpsw(n);
+    bool r = ct_isbpsw(n);
+    gmp_printf("(%ld) bpsw: %Zd %u\n", cgdiff(&cg_tp0), n, r ? 1 : 0);
+    return r;
+}
 extern int fs_trial(factor_state* fs);
 static inline bool ct_trial(factor_state *fs) {
+    if (!VB(VB_TRACE))
+        return fs_trial(fs);
     clock_gettime(CG_CLOCK, &cg_tp0);
     bool r = fs_trial(fs);
     gmp_printf("(%ld) div: %Zu %d", cgdiff(&cg_tp0), fs->n, r);
@@ -105,6 +131,8 @@ static inline bool ct_trial(factor_state *fs) {
 #   define ct_prime(n) ct_isprime(n)
 #   define ct_power(n) power_factor(n, n)
 #   define ct_trial(fs) fs_trial(fs)
+#   define ct_pretest(n) ct_ispretest(n)
+#   define ct_bpsw(n) ct_isbpsw(n)
 #endif
 
 #define NPRIMES_SMALL 6500
@@ -488,6 +516,8 @@ static const char *rm_name[] = {
 static inline bool ct_rung(uint i, mpz_t n, mpz_t f, uint nbits,
         ulong tlim) {
     const t_rung *rp = &rungs[i];
+    if (!VB(VB_TRACE))
+        return rung_try(rp, n, f, nbits, tlim);
     struct timespec t0;
     clock_gettime(CG_CLOCK, &t0);
     bool r = rung_try(rp, n, f, nbits, tlim);
@@ -799,7 +829,8 @@ int is_taux(mpz_t n, uint32_t k, uint32_t x) {
     factor_state fs;
 
 #ifdef VERBOSE
-    gmp_printf("is_taux t=%u (%u) %Zu^%u\n", k, mpz_sizeinbase(n, 2), n, x);
+    if (VB(VB_TRACE))
+        gmp_printf("is_taux t=%u (%u) %Zu^%u\n", k, mpz_sizeinbase(n, 2), n, x);
 #endif
     if (cmp < 0)
         return 0;
@@ -860,9 +891,29 @@ static inline bool prep_abort(t_tm *tm, bool result) {
     return result;
 }
 
+/* Effectively identical to _GMP_is_prob_prime(), but with VERBOSE
+ * diagnostics for debugging/calibration.
+ */
+bool tau_prime_test(mpz_t n) {
+#ifdef VERBOSE
+    if (VB(VB_TRACE))
+        gmp_printf("tau_prime_test %Zu\n", n);
+#endif
+    int res = ct_pretest(n);
+    if (res == 0)
+        return 0;
+    if (res != 1)
+        return 1;
+    return ct_bpsw(n);
+}
+
 bool tau_prime_prep(uint i) {
+#ifdef VERBOSE
+    if (VB(VB_TRACE))
+        gmp_printf("tau_prime_prep vi=%u %Zu\n", taum[i].vi, taum[i].n);
+#endif
     /* FIXME: break this out further */
-    uint res = ct_ispretest(taum[i].n);
+    int res = ct_pretest(taum[i].n);
     if (res == 0)
         return 0;
     taum[i].state = (res == 1) ? 1 : 0;
@@ -905,8 +956,13 @@ bool tau_multi_prep(uint i) {
     tm->state = 1;  /* init */
 
 #ifdef VERBOSE
-    gmp_printf("tau_multi_prep t=%u e=%u (%u) %Zu\n", t, e, nbits, tm->n);
-    clock_gettime(CG_CLOCK, &cg_tp0);
+    extern ulong g_ati;
+    extern uint g_walkv_call;
+    if (VB(VB_TRACE))
+        gmp_printf("tau_multi_prep vi=%u t=%u e=%u call=%u ati=%lu (%u) %Zu\n",
+                tm->vi, t, e, g_walkv_call, g_ati, nbits, tm->n);
+    if (VB(VB_TRACE))
+        clock_gettime(CG_CLOCK, &cg_tp0);
 #endif
     if (t == 1) {
         dz("div: t=1");
@@ -1282,7 +1338,7 @@ uint tau_prime_run(uint first, uint count) {
     count = i;
     qsort(&taum[first], count - first, sizeof(t_tm), &taum_comparator);
     for (i = first; i < count; ++i) {
-        if (!ct_isbpsw(taum[i].n)) {
+        if (!ct_bpsw(taum[i].n)) {
             taum[first].vi = taum[i].vi;
             return count - i;
         }
