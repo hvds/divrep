@@ -35,6 +35,7 @@ extern bool ja_gate(
 extern int ja_force;
 extern double ja_stol;
 extern bool ja_sblind;
+extern double ja_e2min;
 extern void ja_vb_close(t_act *lp);
 #endif
 

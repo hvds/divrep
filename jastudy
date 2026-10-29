@@ -46,10 +46,18 @@ Output lines carry three-digit codes:
   220 by x: <part> <shape>: <count> ratio <gmean> rel <gmean rel> cost <sum>
   230 replay <id> L<level> W <walk est> q <cost in the run> sq <squares>
       <pattern>
-  231   <choice> est <estimate> actual <cost> [chosen] [best]
-  233 <id> <level> <walk est> <choice> <t> <estimate> <actual> <c><b>:
-      the same as one line per choice, for further analysis
+  231   <choice> est <estimate> [e2 <estimate>] actual <cost> [chosen]
+      [best]
+  233 <id> <level> <walk est> <choice> <t> <estimate> <actual> <c><b>
+      [<e2>]: the same as one line per choice, for further analysis
   232 replay summary ...
+  234 pairs ordered: of the pairs of choices whose actual cost differs
+      by more than 10%, how many each estimate puts the right way round
+
+With -dJe<us> among the pcoul args, each choice at a node estimated to
+cost <us> or more to walk also has a second estimate, looking a level
+deeper (E records, see ja_cost2() in coulplan.c), shown as e2. The
+replays are run without it.
 
 =cut
 
@@ -119,6 +127,9 @@ sub read_stats {
                 id => $id, part => $part, vi => $vi, t => $t, x => $x,
                 est => $est, dt => $dt,
             };
+        } elsif ($c eq 'E') {
+            my($id, $vi, $t, $est) = @f;
+            $r{node}{$id}{e2}{$vi} = $est;
         } elsif ($c eq 'Q') {
             my($id, $dt) = @f;
             $r{node}{$id}{q} = $dt;
@@ -204,20 +215,25 @@ sub replay {
         @nodes = @pick;
     }
     @nodes = reverse @nodes;
-    my($n, $right, @regret) = (0, 0);
+    my($n, $right, $n2, $right2, @regret, @regret2) = (0, 0, 0, 0);
+    my %pairs;
+    my $num = qr{^[\d.e+-]+$};
     for my $nd (grep defined, @nodes) {
         printf "230 replay %s L%s W %.4g q %.4g sq %s %s\n",
                 @$nd{qw{ id L w q sq pat }};
-        my @choice = map [ $_->{vi}, $_->{est}, "v$_->{vi}(t=$_->{t})" ],
-                grep $_->{est} != -2, @{ $nd->{z} };
-        push @choice, [ 'w', $nd->{w}, 'walk' ] if $nd->{w} <= $maxwalk;
+        my $e2 = $nd->{e2} // {};
+        my @choice = map [
+            $_->{vi}, $_->{est}, "v$_->{vi}(t=$_->{t})", $e2->{$_->{vi}},
+        ], grep $_->{est} != -2, @{ $nd->{z} };
+        push @choice, [ 'w', $nd->{w}, 'walk', %$e2 ? $nd->{w} : undef ]
+            if $nd->{w} <= $maxwalk;
         my %actual;
         for my $c (@choice) {
             my($v, $est, $name) = @$c;
             my $file = "$tmp/replay.log";
             unlink $file;
             my $out = run_pcoul($file, "-dJ$v", "-I$nd->{pat}",
-                    grep(!/^-I/, @args));
+                    grep(!/^-(?:I|dJe)/, @args));
             my $sub = read_stats($file);
             my $first = $sub->{node}{1};
             if (!$first || ($first->{pat} // '') ne $nd->{pat}) {
@@ -227,28 +243,64 @@ sub replay {
             $actual{$v} = $first->{q} // 'timeout';
         }
         my($best) = sort { $actual{$a} <=> $actual{$b} }
-                grep $actual{$_} =~ /^[\d.e+-]+$/, keys %actual;
+                grep $actual{$_} =~ $num, keys %actual;
         my $chosen = $nd->{best} < 0 ? 'w' : $nd->{best};
         for my $c (@choice) {
-            my($v, $est, $name) = @$c;
-            printf "231   %-12s est %10.4g actual %10s%s%s\n", $name, $est,
-                    ($actual{$v} // '-') =~ /^[\d.e+-]+$/
+            my($v, $est, $name, $est2) = @$c;
+            printf "231   %-12s est %10.4g%s actual %10s%s%s\n", $name, $est,
+                    defined($est2) ? sprintf(' e2 %10.4g', $est2) : '',
+                    ($actual{$v} // '-') =~ $num
                             ? sprintf('%.4g', $actual{$v}) : $actual{$v} // '-',
                     $v eq $chosen ? ' chosen' : '',
                     (defined($best) && $v eq $best) ? ' best' : '';
             my($t) = $name =~ /t=(\d+)/;
-            printf "233 %s %s %.4g %s %s %.4g %s %s%s\n", $nd->{id}, $nd->{L},
+            printf "233 %s %s %.4g %s %s %.4g %s %s%s%s\n", $nd->{id}, $nd->{L},
                     $nd->{w}, $v, $t // 0, $est, $actual{$v} // '-',
                     $v eq $chosen ? 'c' : '-',
-                    (defined($best) && $v eq $best) ? 'b' : '-';
+                    (defined($best) && $v eq $best) ? 'b' : '-',
+                    defined($est2) ? sprintf(' %.4g', $est2) : '';
         }
-        next unless defined($best)
-                && ($actual{$chosen} // '') =~ /^[\d.e+-]+$/;
+        next unless defined($best) && ($actual{$chosen} // '') =~ $num;
         ++$n;
         ++$right if $chosen eq $best;
         push @regret, $actual{$chosen} / $actual{$best};
+        # each pair whose actual costs differ by more than 10%
+        my @known = grep $actual{$_->[0]} =~ $num, @choice;
+        for my $i (0 .. $#known) {
+            for my $j ($i + 1 .. $#known) {
+                my($ci, $cj) = @known[$i, $j];
+                my $da = $actual{$ci->[0]} - $actual{$cj->[0]};
+                next if abs(log($actual{$ci->[0]} / $actual{$cj->[0]}))
+                        < log(1.1);
+                my $ok1 = $ci->[1] > 0 && $cj->[1] > 0;
+                my $ok2 = ($ci->[3] // -1) > 0 && ($cj->[3] // -1) > 0;
+                my $r1 = $ok1 && ($ci->[1] - $cj->[1]) * $da > 0;
+                my $r2 = $ok2 && ($ci->[3] - $cj->[3]) * $da > 0;
+                ++$pairs{est}[0], $pairs{est}[1] += $r1 if $ok1;
+                ++$pairs{e2}[0], $pairs{e2}[1] += $r2 if $ok2;
+                next unless $ok1 && $ok2;
+                ++$pairs{both}[0];
+                $pairs{both}[1] += $r1;
+                $pairs{both}[2] += $r2;
+            }
+        }
+        # the choice the second estimate would make
+        my($pick2) = map $_->[0], sort { $a->[3] <=> $b->[3] }
+                grep +($_->[3] // -1) > 0 && $actual{$_->[0]} =~ $num, @choice;
+        next unless defined $pick2;
+        ++$n2;
+        ++$right2 if $pick2 eq $best;
+        push @regret2, $actual{$pick2} / $actual{$best};
     }
     printf "232 replay summary: %d nodes, chosen was best at %d, regret gmean %.4g max %.4g\n",
             $n, $right, @regret ? exp(sum0(map log, @regret) / @regret) : 1,
             @regret ? max(@regret) : 1;
+    printf "232 by e2: %d nodes, its choice was best at %d, regret gmean %.4g max %.4g\n",
+            $n2, $right2, exp(sum0(map log, @regret2) / @regret2),
+            max(@regret2)
+        if @regret2;
+    my %p = map +($_ => $pairs{$_} // [0, 0, 0]), qw{ est e2 both };
+    printf "234 pairs ordered: est %d of %d, e2 %d of %d; where both: est %d, e2 %d of %d\n",
+            @{ $p{est} }[1, 0], @{ $p{e2} }[1, 0],
+            @{ $p{both} }[1, 2, 0];
 }
