@@ -9,6 +9,7 @@ extern double cc_work(void);
 extern double gr_clock(void);
 extern void gr_init(void);
 extern void walk_v_gr(t_node *cur_node, mpz_t start);
+extern bool ke_prefer_6x(ulong at);
 extern void ja_save(FILE *fp);
 extern void ja_restore(char *s);
 extern void ja_learnt(t_act *lp);
