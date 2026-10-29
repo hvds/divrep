@@ -35,6 +35,7 @@ typedef enum {
 extern void mock_leaf_w1s(uint level);
 extern void mock_loop_start(uint level);
 extern bool mock_loop_leaf(t_act *cur_act);
+extern e_mock_loop mock_loop_sq(t_act *cur_act, ulong p);
 extern e_mock_loop mock_loop_prime(t_node *prev_node, t_act *cur_act,
         ulong p);
 
