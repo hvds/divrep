@@ -245,6 +245,7 @@ volatile bool need_work, need_diag, need_log;
 bool clock_is_realtime = 0;
 
 mpz_t zmin, zmax;   /* limits to check for v_0 */
+double zmax_given = 0;  /* zmax as given: it may since have improved */
 mpz_t best;         /* best solution seen */
 bool improve_max = 1;   /* reduce zmax when solution found */
 bool any_bound = 0;     /* apply_single() accepts rq > zmax */
@@ -2839,6 +2840,7 @@ void set_minmax(char *s) {
         mpz_set_ui(zmin, 0);
         ston(zmax, s);
     }
+    zmax_given = mpz_get_d(zmax);
 }
 
 void set_gain(char *s) {
@@ -4587,24 +4589,6 @@ void mintau_restricted(t_node *cur_node, mpz_t mint, uint t, uint r) {
     mintau_restricted_r(0, mint, t, r, ri);
 }
 
-/* the tau left at v_i once the current batch was complete */
-static inline uint kern_tau(uint vi) {
-    t_value *vp = &value[vi];
-    uint vil = cur_vlevel[vi];
-    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
-        --vil;
-    return vp->alloc[vil - 1].t;
-}
-
-/* what was allocated at v_i once the current batch was complete */
-static inline mpz_t *kern_q(uint vi) {
-    t_value *vp = &value[vi];
-    uint vil = cur_vlevel[vi];
-    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
-        --vil;
-    return &vp->alloc[vil - 1].q;
-}
-
 /* true if the current batch is one STRATEGY_6X takes, see apply_secondary() */
 static bool kern_6x(void) {
 #if defined(TYPE_o)
@@ -4648,7 +4632,7 @@ t_kern *kern_state(t_node *np) {
     ks->keep = kern_keep;
     ks->at = 0;
     ks->passed = 0;
-    ks->on = (np->have_square == 1 && !kern_6x());
+    ks->on = (np->have_square == 1);
     np->kern = ks;
     if (!ks->on)
         return ks;
@@ -4676,6 +4660,14 @@ t_kern *kern_state(t_node *np) {
                 best = vi;
         ks->passed &= ~(1UL << best);
         ks->at |= 1UL << best;
+    }
+    /* A batch that STRATEGY_6X can take is left to it unless that is
+     * estimated to cost more.
+     */
+    if (kern_6x() && ke_prefer_6x(ks->at)) {
+        ks->on = 0;
+        ks->at = 0;
+        ks->passed = 0;
     }
     return ks;
 }
@@ -5536,9 +5528,11 @@ ulong loop_limit(t_act *cur_act, uint vi) {
  * choice depends on zmax, see updated_zmax().
  */
 uint best_6x(t_act *cur_act) {
-    /* check if conditions for STRATEGY_6X still hold */
+    /* Check if conditions for STRATEGY_6X still hold, and that the batch
+     * is not one that -k takes instead (see kern_state()).
+     */
     t_node *prev_node = &nodes[cur_act->level - 1];
-    if (!prev_node->have_square || sq0 < 2) {
+    if (!prev_node->have_square || sq0 < 2 || kern_batch()) {
         strategy = prev_strategy;
         return best_v(cur_act);
     }

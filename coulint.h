@@ -100,9 +100,14 @@ static inline uint test_multi_run(tau_failure_handler tfh) {
  * with its node (see kern_state()): whether it applies at all, its bound
  * and count of -K, and as bit vectors the positions it applies to and
  * those passed over.
- * It applies to a batch that fixes exactly one square, unless that is
- * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
- * at v_{i-2} and gains nothing from the pass.
+ * It applies to a batch that fixes exactly one square. One that
+ * STRATEGY_6X can take (2.z^2 at v_i, i >= 2) has its own loop at
+ * v_{i-2}, and gains nothing from the pass: it is left to that, unless
+ * the search under -k is estimated to cost less (see ke_batch()), when
+ * best_6x() stands aside. That loop runs to the 4th root of zmax
+ * whatever n is, while under -k the limits fall as the powers of n
+ * rise, so for n = 6p the batch with 2^{p-1} at v_{i-2} goes to -k from
+ * about p = 5.
  */
 typedef struct s_kern {
     int id;             /* batch_alloc when it was planned */
@@ -126,14 +131,17 @@ typedef enum {
 
 extern void walk_v_inner(t_node *cur_node, mpz_t start);
 
+extern double zmax_given;
 extern mpz_t best;
 extern uint auto_level;
+extern ulong *minp, *maxp, *midp;
 extern bool highpow;
 extern ulong limp_cap;
-extern bool midp_only, in_midp, need_maxp, need_midp;
+extern bool midp_only, need_midp;
 extern ulong kern_b;
 extern uint cur_batch_level;
 extern uint strategy;
+extern t_fact nf;
 extern uint *maxforce;
 extern void done(void);
 extern ulong next_prime(ulong cur);
@@ -192,6 +200,24 @@ static inline bool kern_batch(void) {
  */
 static inline bool kern_highpow(void) {
     return highpow && !kern_batch();
+}
+
+/* the tau left at v_i once the current batch was complete */
+static inline uint kern_tau(uint vi) {
+    t_value *vp = &value[vi];
+    uint vil = cur_vlevel[vi];
+    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
+        --vil;
+    return vp->alloc[vil - 1].t;
+}
+
+/* what was allocated at v_i once the current batch was complete */
+static inline mpz_t *kern_q(uint vi) {
+    t_value *vp = &value[vi];
+    uint vil = cur_vlevel[vi];
+    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
+        --vil;
+    return &vp->alloc[vil - 1].q;
 }
 
 /* The x of the previous allocation at v_i if it was unforced, else 0. */
