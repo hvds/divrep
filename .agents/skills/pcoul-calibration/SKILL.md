@@ -509,6 +509,20 @@ within 1% of the recursions and walk iterations of the run (b4: 4090
 and 23700 against 4114 and 23788; b5: 19900 and 131000 against 19961
 and 130598; b7: 4090 and 508000 against 4119 and 507778).
 
+Two gaps in -ap seen on D(126,3) (-ja2 -ka -j1 -f3, 2026-10-24), where
+no batch had cost-table rows (no `[rootus=]`):
+
+- The "whole" figure is then a fixed guess, and can be wildly high:
+  b4 (`2^6 . 2.3^2`) was put at 1488s and b0 at 992s, and every one of
+  b0-b17 completed in 0.06s in all. -ka compares -k against that
+  figure, so the guess biases it towards -k (harmless there, since -k
+  was estimated at 0.00s anyway).
+- b2, b4, b14 and b16 (`2^6 . 2.3^x`, `2^8 . 2.3^x`: tau 18 or 14 left
+  at v_0, the square at v_2 as 2.z^2) were given neither a -k plan nor
+  a 6x estimate, only "whole", while `2^20 . 2.3^x` got a 6x estimate.
+  They finished at once with or without -ka, presumably taken by
+  STRATEGY_6X; why -ap does not estimate them as such was not traced.
+
 ### Findings under a fixed gain (to 2026-09-25)
 
 These predate -ja. They were measured with the gain set by hand and
@@ -634,6 +648,20 @@ Measured on D(18,4) at reduced `-x` (1e15-1e17):
   far looser than the recursion's first-allocation cap, and midp has no
   gate. Master's skip of odd-prime-tau positions in `prep_midp()` cut
   the first batch's midp work 7.3M -> 3.0M tries but does not fix this.
+  The same seen at full scale (D(126,3), 2026-10-24): the rerun's
+  rule for -W, W = 15 (zmax/aq_min)^0.28, fitted on runs with little
+  single-square work, gave `-W5246639`, and b0 (`2^6.3^2 . 2`) sat in a
+  sweep of p^2 at v_0 (tau 6 left) from p ~ 8e8 downwards, one near-
+  empty walk per prime; under -ka (no -W given) all 18 single-square
+  batches b0-b17 took 0.06s. -k passes such positions over (see
+  kern_sets()); a plain -W has nothing like that. With a square fixed
+  the sweep's walks are over roots, so the best threshold there is
+  likely to differ from the no-square one, possibly by orders of
+  magnitude, while a single -W serves both kinds of batch. So the rule
+  must not be applied where single-square batches carry much of the
+  cost; -ka, or no -W, there, until -W can be set separately for them
+  (or per node by cost, to do 3). (Without highpow `-Wx<P>^1` sweeps
+  nothing, so it is no way to restrict the sweep to p^1.)
 - The square gate estimates the walk from the root of the width
   (zmax - zmin); the walk itself starts at the root of zmin, so narrow
   windows overstate square walks and push the gate towards recursion.
@@ -671,6 +699,77 @@ the flip also matters more) is not yet known.
 
 Calibration assumes no candidate lowers zmax during the run; if one does
 substantially, the calibrated options may no longer be optimal.
+
+### Gain experiments: odd-p fold and per-level gain (2026-10-13)
+
+Measured in real runs (2 vCPUs, the two builds compared running side by
+side; unique candidate sets identical throughout), on this branch
+rebased over master 20e21cc.
+
+#### The odd-p fold
+
+The fold (master 20e21cc, p = 2 only) fixes v_0 (mod p^{e+1}) when the
+other positions with the primary's p^e leave one unit for v_primary /
+p^e (mod p). Branch 'overfold' (0b44d8d, WIP) enables it for odd p. In
+every run looked at only p = 3 folds: 3^1 at two positions (D(24,5),
+D(48,6), D(96,8)), or 3^2 at v_0 and v_9 (D(48,10) -f7, all 25791 such
+batches). Folding batches were 31 of 247 in D(24,5) -x1e12, 25k of 1.34M
+in D(48,10) and 16k of 470k in D(96,8), about 14%, 3% and 6% of the
+time; a few hundred more drop out, aq*3 then nearing zmax.
+
+At equal gain the fold is 5-15% slower: a walk has 3x fewer iterations
+but the same values to test, and the gate, seeing it 3x cheaper, walks
+sooner (recursing ~45% less, sending ~50% more values to the tests).
+The optimum gain for folding batches is ~3x higher, and there they are
+1-5% faster than base at its own optimum (D(24,5) ~5%, D(48,10) ~2%,
+D(96,8) ~1.5%; under -ja2 1-5%, -ja1 2.5%). A gate scaling the walk
+estimate back up by the batch's odd fold primes (experiment on top of
+overfold) gets the same at base's gain. The saving is in walk
+iterations, which are cheap beside the tests, so the fold is worth
+~0.1-0.5% of D(48,10) or D(96,8), and 1-2% of D(24,5) -x1e12, within
+run-to-run noise.
+
+The mock got the ratio of optima right (0.95 against a real ~0.95) but
+had the fold winning at equal gain where it really loses ~8%: it
+underprices the extra walking. A gain search on mocks would misjudge
+such a change.
+
+#### Per-batch optimum gain
+
+On the folding batches sampled, the base build's per-batch optimum gain
+saved little over the best single gain: 1.5% on D(24,5) (g16-g1024),
+0.2% on D(96,8) (g24, g48; g48 was 12-20% faster on most heavy
+batches), 3.7% on D(48,10) (g15-g60, within the 10-28% noise of
+repeating its small batches). A misjudged global gain costs more: g24
+against g48 on D(96,8) 10-18%. -ja2 took 13% less than -g30 on the
+D(48,10) sample, and 43% less than -g48 on the D(96,8) one.
+
+#### Gain by level
+
+An effective gain of g.a^L at L levels below the last batch (experiment,
+$PCOUL_ACCEL, squares untouched), full -X runs, g 4-1024 by a 0.5-2:
+
+| run | best overall | best at a = 1 |
+|---|---|---|
+| D(24,5) -x3e10 | 30.4s (g64, a1.4) | 31.5s (g256) |
+| D(40,5) -x1e17 | 6.0s (g1024, a0.5) | 6.1s (g256) |
+| D(56,5) -x1e24 | 16.1s (g1024, a0.7) | 16.6s (g256) |
+
+The optima lie on a ridge, a > 1 paying at low gain and a < 1 at high,
+so a mostly substitutes for g: 2-4% off a = 1 at best, within noise,
+with a decisive level about 2 below the batch for n = 24 and 40. The
+largest prime q of n changes the cost of too low a gain, not the
+optimum: at g4 a=1, 2.1x the best for q = 3 (n = 24), 4.0x for q = 5
+(n = 40), 3.4x for q = 7 (n = 56); with a = 0.5, 3.5x, 9.5x and 9.2x.
+A position needing p^{q-1} has a cap near (Z/aq)^{1/(q-1)}, tiny for
+large q, so recursing there is cheap and walking early dear. D(40,4)
+-x1e15 and D(56,4) -x1e20 were flat over the grid: far above the
+answer, 44k-64k candidates and large walks, the gate barely matters.
+
+What learning in -ja2 found points the same way: its correction to the
+recursion estimate follows the node's size far better than its level
+(see "What -ja learns"), so a fixed a^L can only follow size where
+level stands in for it.
 
 ### To do
 
@@ -718,6 +817,194 @@ substantially, the calibrated options may no longer be optimal.
    months). A walk chosen then must unwind; and recovery rebuilds
    levels without asking the gate, so a changed choice would need the
    log to show it.
+10. Toward the runtime optimiser of the aims: a dynamic auto-calibration
+    with a range of weapons at its disposal, each used where its cost
+    says it pays: the odd-p fold (with the gate seeing a folded walk at
+    its unfolded size), gain varying with level or with aq (the size of
+    the node, as -ja2 already learns its corrections), -W, the strategy
+    and -k. The experiments above found no fixed formula that carries
+    far on its own (a^L moved along the ridge, not off it); cost per
+    node does.
+11. Strategic choices above the fully costed nodes (proposed
+    2026-10-24; first data below). -ja2's one-level estimate is sound
+    where every child will be walked; above that it prices a subtree it
+    will not run. There, an allocation serves two ends: (a) cutting the
+    space (zmax/aq), which the estimate sees, and (b) moving positions
+    up the structural ladder (pcoul-internals, "What makes a batch
+    cheap": t_i = 2, one odd t_i, a second odd t_i giving Pell), or
+    making the next allocation able to - which a one-level estimate
+    cannot see. The idea is a heuristic credit for (b), on the same
+    scale as the cost so that it can be calibrated: largest for
+    bringing a second position within reach of odd t once a square is
+    fixed, then for a first odd t_i, least for t_i = 2; each credited
+    per position, not only when the whole batch reaches a shape like
+    -k or 6X. Without highpow an allocation lowers v2(t_i) only if
+    e + 1 is even but not a power of 2, so the room for (b) depends on
+    n: for 3 | n p^5 and p^2; for n = 4q (q > 3 prime) little beyond
+    p^{q-1} leaving a power of 2; shrinking as v2(n) grows, until
+    highpow is viable. For n = 12 every unforced allocation is its
+    position's last, so (b) there is only the order of positions.
+    Cases to test first: n = 4 (mod 8), with and without 3 | n - n = 20,
+    44, 92 (to see p grow), 100, 140 for other shapes; 12, 36, 60 (12 | n
+    allows k > 7, and a gain at n = 12 would help the rerun backlog
+    most) - at k where -ja2 takes minutes, then checking that any gain
+    grows with k. Before building it: from -dv8 records (adding the
+    measured cost there if they lack it), compare
+    -ja2's estimate against the measured subtree cost at nodes that
+    are not fully costed, grouped by what the choice did to t_i; if
+    (b) is real, choices that lowered v2(t_i) or reached odd t should
+    be systematically underpriced.
+    First data (2026-10-24, -dv64 records and -dJ replays via
+    jastudy/stratsum, all with -f<k>, -x below any candidate except
+    where noted; counted costs on the sandbox):
+    - Replays reproduce the run: the chosen position replayed from its
+      -I pattern costs within 1% of what it cost in the run, so the
+      learning carried into a node matters little to its cost.
+    - At nodes costing 3ms-3s, the estimates of the positions on offer
+      differ by x1.00-1.04 (gmean of max/min) on 20/6, 44/7, 12/7,
+      12/8, 36/5, 36/6, while what they cost differs by x1.2-2.5:
+      recursing one level then walking costs about the same whichever
+      position is chosen, and the difference is all further down. The
+      choice then falls to the strategy's position, nearly always the
+      largest t.
+    - In every n = 4 (mod 8) case tried (12, 20, 36, 44, 60, 100, 140)
+      the best position was the one with t = n/2 (2 mod 4, all of the
+      odd part still to place), within x1.01-1.11 of the best on
+      average; the largest t cost x1.1-2.5 more, and a 2 mod 4 position
+      with less odd part left (t = 6, 10 in n = 36, 60, 100) x1.8-19.
+      Regret of the choice made, gmean over 13-30 nodes: 100/4 x1.85,
+      36/6 x1.79, 36/5 x1.36, 100/3 x1.32, 44/7 x1.32, 12/7 x1.28,
+      140/6 x1.20, 12/8 x1.12, 60/4 x1.11, 20/6 x1.04.
+    - Where t = n/2 is 2q^2 (t = 18 in n = 36, 50 in n = 100), ja_cost()
+      called it blind (a flip may follow), so -ja2 could never choose
+      it. Such loops were most of the positions it could not cost (t = 50
+      in n = 100; 18 in 36, 90, 144; 72 in 144), while flips cost next to
+      nothing (0-47 a run, about 1ms, on 36/5, 36/6, 100/3, 100/4, even
+      with -dJb choosing them): most children go on elsewhere and walk.
+      So they are now costed like any other loop, by the gate too, with
+      a ratio learnt apart (2026-10-25; shared with the plain recursing
+      ratio, their evidence moved it 10x at some sizes on 162/3).
+      Counted cost under -ja2 (-f<k>), before -> after: 36/5 -x1e10
+      1.43 -> 1.04, 36/6 -x1e11 7.15 -> 3.76, 90/3 -x1e15 4.33 -> 1.06,
+      100/3 -x1e18 1.63 -> 1.23, 100/4 -x1e18 2.15 -> 0.69, 108/3
+      -x1e12 7.18 -> 4.07, 126/3 -x1e18 14.16 -> 1.20, 162/3 -x1e14
+      4.54 -> 3.82; 18/4, 50/3, 54/4, 98/3 unchanged. Under -ja1 (the
+      gate alone): 36/4 -j4 -x1e12 162 -> 61, 126/3 14.2 -> 4.1. The
+      one loss: 144/3 at its bound (-x47440455423) 2.35 -> 2.65 at -j0
+      (-j2 3.02 -> 2.50), where t = 72 can now be compared and loses on
+      its x = 3 loop (p^2 leaving 24), estimated 15x too high relative
+      to t = 48's: the misordering below, not the flip. Recovered runs
+      now differ more often from an unbroken one in the work done
+      (choices nearly tie), though by under 2% in cost.
+    - By x (K records, relative to nodes of the same size): loops
+      leaving odd part still to place cost x0.64-0.84 of the estimate,
+      those leaving t = 2 or a power of 2 x0.9-1.4 - the estimate
+      assumes every child walks, which is furthest out where children
+      can still recurse.
+    - The experimental -dJs0.02 -dJb (prefer the larger odd part of t,
+      then fewer factors of 2, among positions within 2% of the best
+      estimate or blind) gave the same answers, at counted cost: 100/4
+      -x1e18 2.34s -> 0.80s (with -j2 2.02 -> 0.60), -x1e19 6.90 -> 2.11;
+      36/6 8.05 -> 6.16; 36/5 1.68 -> 1.47; 24/6 -x1e14 5.67 -> 5.01;
+      20/5 0.77 -> 0.68; 60/4 -x1e16 9.41 -> 8.77; 140/6 1.02 -> 0.87;
+      12/7, 12/8, 20/6, 48/5 3-8% less; 44/7, 18/4, 30/4 unchanged; but
+      90/3 4.76 -> 6.49 and 144/3 3.61 -> 4.62. In 90/3 (n/2 odd) the
+      t = 18 positions were sometimes best by x1.2 and sometimes worse
+      by x12. So the n/2 rule holds for n = 4 (mod 8) only, as tested;
+      n = 0 (mod 8) and n = 2 (mod 4) need data of their own.
+    - A two-level estimate (-dJe, 2026-10-25: each loop from about 30
+      sampled children, each the cheaper of walking it and its best
+      position by the one-level estimate, uncorrected by learning)
+      orders the positions far better. Of pairs of positions at a
+      replayed node whose cost differs by over 10%, the one-level
+      estimate (as corrected) orders 297 of 451 right (66%), the
+      two-level 385 (85%): 100/3 12 -> 25 of 30, 100/4 41 -> 46 of 59,
+      12/7 9 -> 16 of 20, 12/8 11 -> 21 of 21, 36/5 56 -> 79 of 84,
+      36/6 85 -> 102 of 114, 60/4 52 -> 56 of 61, 90/3 30 -> 30 of 33;
+      but 44/7 (-x1e42) 1 -> 10 of 29. Choosing by it, the regret at
+      replayed nodes (gmean) would fall from x1.03-1.37 to x1.00-1.09,
+      44/7 x1.26 -> 1.15. In 44/7 the positions' estimates stay within
+      a few % where their costs differ 10-35% (t = 22 = n/2 best,
+      t = 44 worst). But there the cost counted was a quarter of the
+      CPU time: most primes of loops over p^10 failed only in
+      apply_single() (see "Two costs the counts exposed"). Counted
+      in full, the positions differ less (11 pairs differ by over 10%,
+      not 29; regret of the choice made x1.09, by the two-level
+      estimate x1.05), though both estimates still put t = 44 level
+      with t = 22 where it costs 10-18% more. Unscaled, it overestimates
+      large nodes as the one-level one does (100/4 at W ~ 5e15: 1.8e9
+      against 3.3e4), so a comparison with walking would need a learnt
+      ratio of its own. Each position costed this way took 16-56us,
+      adding 3-4% to 12/7 and 44/7 at nodes from 1ms but 95% to 36/5.
+    - Choosing by it (-ja3, not kept; 2026-10-25): as -ja2, but at
+      nodes whose walk is estimated at 10ms or more, among the
+      positions that beat walking, the one the two-level estimate
+      puts cheapest. Over 28 runs (gmean against -ja2), counted cost
+      -10% with about 30 children sampled a position, but CPU +28%;
+      with 8 a position -11% and +2-4%; reusing the choice for sibling
+      nodes of the same shape and size band -9% and -2.4%. Wins:
+      162/3 -x1e14 3.85 -> 1.50 counted, 50/3, 98/3, 144/3, 12/8,
+      60/4 -x1e16; losses: 36/6 -j2 +16%, 108/3 +8%. The gain is in
+      the many small and middling nodes: at nodes whose best position
+      is estimated at 1ms or more it all but vanishes (162/3 worse).
+      Its overrides are not near-ties: allowed only among positions
+      within 1.2-1.5x of the best one-level estimate, the gain goes.
+    - What those overrides did: where n has an odd square (36, 100,
+      108, 162), -ja2 left the strategy's choice (largest t) at most
+      large nodes for a smaller t, and 65-95% of overrides went back
+      to the strategy's choice; for n = 4 (mod 8) with no odd square
+      (12, 60, 44), -ja2 nearly always took the strategy's choice, and
+      overrides went to t = n/2.
+    - Fixed rules tried instead (n = 4 (mod 8)): the shape rule
+      (larger odd part, then fewer 2s) applied regardless of the
+      estimates was 21% worse under -ja2; as a tie-break within 2% of
+      the best estimate, 3% better (not kept). As a strategy without
+      -ja (CPU, against -j0 / -j2): t = n/2 first, else the largest t
+      (-j0), took 36/5 1.67 / 4.21 -> 1.38s, 36/6 9.1 / 18.2 -> 5.9s,
+      100/4 -x1e19 15.9 / 17.8 -> 12.6s, 196/3 level with -j0; t = n/2
+      first, else the lowest t (-j2), 100/4 -x1e19 9.3s, 100/3 7.7 /
+      7.4 -> 6.0s, but 36/6 7.2s. So for n = 4p^2 t = n/2 first pays,
+      and the better fallback depends on p: for p = 5 the lowest t,
+      whose p^4 cuts the space a lot and leaves t = 2; for p = 3 the
+      largest, the p^2 of the lowest t cutting little. For n = 4p the
+      rule is -j2 (the lowest t is n/2). For 60 = 4.3.5 either rule
+      loses (-j0 8.7s, n/2 first 13.3s, the lowest t >300s): with two
+      odd primes the larger p^{q-1} cuts the space more. Under -ja2 no
+      such strategy helped (they decide only nodes under JA_MIN_WALK).
+      For the cost model to explain: what an allocation cuts from the
+      space against the step towards t = 2 it buys.
+    - Learning by shape instead (kept, 2026-10-25): the ratio for
+      recursing learnt apart for loops leaving t = 2 and leaving a
+      higher power of 2 (JA_TWO, JA_POW2), each band starting from the
+      plain ratio. Over the same 28 runs, counted cost -5.2% and CPU
+      -5.7% (gmean), at no cost to a choice: of all tried here the
+      best by CPU. Splitting also 2m (m odd) from 2^a.m: -4.6%, -5.2%,
+      evidence spread thinner. Sampling the two-level estimate at 1 in
+      8 or 32 large nodes to set the split parts' starting ratios
+      (relative to plain recursing): no better in counted cost (-5.5%,
+      -5.1%), since real evidence soon outweighs a prior, and 1 in 8
+      cost its own CPU.
+
+### Why some of this is hard
+
+- The upper levels are discrete: forced primes, the first unforced
+  allocations, mintau exclusions and best_v()'s choices depend on the
+  path. Density arguments fail there, so they have to be enumerated
+  (the mock runs them for real).
+- Walk or recurse is a threshold, so the tree's shape changes abruptly
+  with the options. Estimates of whole subtrees compound their errors
+  with depth.
+- Walk costs depend on residues, not only sizes: inverse-filter pass
+  rates, fixed-power root counts, and where a loop starts failing on
+  rq > zmax. These are computed exactly per walk, not averaged.
+- The per-iteration cost of a walk varies with level and shape (0.9us
+  per root at level 2 against 1.8us at level 3 on D(90,4)), so it
+  cannot be borrowed between levels.
+- Factoring costs are heavy-tailed: rare inputs reach rungs costing
+  seconds to hours, so sampling needs weighting, and means need many
+  samples.
+- Costs step with limb count (at 65 bits a t=15 prep costs 2.4x that
+  at 64) and with QS parameters by decimal digits.
 
 ### Methodology lessons
 
@@ -748,6 +1035,11 @@ substantially, the calibrated options may no longer be optimal.
 
 ### Tried and dropped
 
+- An analytic recursion estimator (lib/Calibrate, Mertens-style sums
+  per level): exact at the top decision, but 2-8x spread per batch on
+  D(12,9) and up to 49000x wrong on fixed-square batches.
+- batch-estimate (idealised recursion from batch records): 1.1-1.8x,
+  too slow for batches with huge X.
 - MOCK_LADDER (coulmock.c): a per-residual chain model of the ladder
   from Dickman's rho; superseded by the measured G rows.
 - For -ja1: fixed-square nodes with the same estimate (lost 12-40%), a
