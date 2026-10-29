@@ -1578,6 +1578,22 @@ void ja_learnx(t_act *lp) {
 #ifdef VERBOSE
 /* -dJ: the position the first choice by cost must make, -1 to walk */
 int ja_force = -2;
+/* -dJs<tol>: among positions estimated within tol of the best, choose by
+ * shape (see ja_skey()), to measure what that would gain
+ */
+double ja_stol = 0;
+/* -dJb: -dJs may choose positions outside the model too */
+bool ja_sblind = 0;
+static double *ja_tv = NULL;
+
+/* The shape of the tau left at v_i, for -dJs: first the larger odd
+ * part, then the fewer factors of 2.
+ */
+static double ja_skey(uint vi) {
+    uint t = value[vi].alloc[cur_vlevel[vi] - 1].t;
+    uint v2 = __builtin_ctz(t);
+    return (double)(t >> v2) * 1e3 - v2;
+}
 static ulong ja_ids = 0;
 
 /* Q <id> <actual>: the choice made at lp is done, what it cost in all */
@@ -1783,8 +1799,17 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
     for (uint part = JA_LPARTS; part < JA_PARTS; ++part)
         ja_rx[part - JA_LPARTS] = ja_rsize(part, W0);
     ja_r1 = ja_ratio(L, JA_W1);
-    bool blind, sblind;
+#ifdef VERBOSE
+    if (!ja_tv)
+        ja_tv = malloc(k * sizeof(double));
+    for (uint vi = 0; vi < k; ++vi)
+        ja_tv[vi] = -1;
+#endif
+    bool blind, sblind, pick_blind = 0;
     double sT = ja_cost(prev_node, cur_act, sv, HUGE_VAL, &sblind);
+#ifdef VERBOSE
+    ja_tv[sv] = sblind ? -3 : sT;
+#endif
     uint best = sv, nblind = 0, neval = 1;
     double bT = sT;
     ja_swap();
@@ -1836,7 +1861,8 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
          * either way.
          */
         double T = ja_cost(prev_node, cur_act, vi,
-                id ? HUGE_VAL : bT, &blind);
+                (id || ja_stol > 0) ? HUGE_VAL : bT, &blind);
+        ja_tv[vi] = blind ? -3 : T;
         if (id)
             fprintf(gs_file(), "Z %lu %u %u %.4g\n", id, vi, ti,
                     blind ? -1.0 : T * 1e6);
@@ -1853,6 +1879,25 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
             ja_swap();
         }
     }
+#ifdef VERBOSE
+    if (ja_stol > 0 && best < BV_SPECIAL) {
+        uint pick = best;
+        for (uint vi = 0; vi < k; ++vi)
+            if (((ja_tv[vi] >= 0 && ja_tv[vi] <= bT * (1 + ja_stol))
+                        || (ja_sblind && ja_tv[vi] == -3))
+                    && ja_skey(vi) > ja_skey(pick))
+                pick = vi;
+        if (pick != best) {
+            pick_blind = (ja_tv[pick] == -3);
+            /* its estimates by x, for learning */
+            if (!pick_blind) {
+                ja_cost(prev_node, cur_act, pick, HUGE_VAL, &blind);
+                ja_swap();
+            }
+            best = pick;
+        }
+    }
+#endif
   done:
 #ifdef VERBOSE
     if (force) {
@@ -1872,7 +1917,7 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
     }
 #endif
     /* time what was chosen by cost: a walk whole, a position by x */
-    if (auto_level >= 2 && !sblind) {
+    if (auto_level >= 2 && !sblind && !pick_blind) {
         if (best == BV_WALK) {
             cur_act->ja_ew = W0;
             cur_act->ja_wp = fsq ? JA_QWALK : JA_WALK;
