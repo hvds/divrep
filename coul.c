@@ -32,6 +32,7 @@
 #include "pell.h"
 #include "coulvec.h"
 #include "assume.h"
+#include "coulcost.h"
 #include "trace.h"
 #include "bench.h"
 
@@ -227,6 +228,11 @@ double work_clock(void) {
     struct timespec ts;
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+/* the unit of work_clock(): cycles at this many GHz, or 0 for seconds */
+double work_clock_ghz(void) {
+    return (cyc_fd >= 0) ? cyc_ghz : 0;
 }
 timer_t diag_timerid, log_timerid;
 volatile bool need_work, need_diag, need_log;
@@ -428,6 +434,7 @@ bool debugW = 0;    /* diag and keep every case seen (including walk) */
 uint debugw_count = 0;  /* debugw/W only for the first n iterations */
 bool debugx = 0;    /* show p^x constraints */
 bool debugb = 0;    /* show batch id, if changed */
+bool debugT = 0;    /* check the builds that made the cost table */
 bool debugB = 0;    /* show every batch id */
 bool debugf = 0;    /* show prepped sub-batches */
 bool debugt = 0;    /* show target_t() */
@@ -7205,6 +7212,57 @@ e_is prune_stale(e_is jump) {
     return jump;
 }
 
+/* a unit of times, for cost_table_check() */
+static const char *clock_unit(char *buf, size_t size, double ghz) {
+    if (ghz)
+        snprintf(buf, size, "cycles at %gGHz", ghz);
+    else
+        snprintf(buf, size, "CPU seconds");
+    return buf;
+}
+
+/* With -dT, warn of each section of the cost table made by a different
+ * build: those for the factoring tests by a different MPU::GMP, the rest
+ * by a different divrep; and of each timed in a different unit from this
+ * run's times.
+ */
+void cost_table_check(void) {
+    static const char *mpu[] = { "scan", "prime", "multi", "ladder", "qs" };
+    static const char *coul[] = { "walk", "w1s" };
+    for (uint i = 0; i < 7; ++i) {
+        bool is_mpu = i < 5;
+        const char *sec = is_mpu ? mpu[i] : coul[i - 5];
+        const char *sha = cm_table_sha(sec);
+        const char *want = is_mpu ? MPU_CHANGE : DIVREP_CHANGE;
+        if (!sha) {
+            report("000 cost table: no build recorded for %s\n", sec);
+            continue;
+        }
+        /* "divrep(base)*;mpu(base)": the part for this section */
+        const char *s = sha;
+        if (is_mpu) {
+            s = strchr(sha, ';');
+            s = s ? s + 1 : "";
+        }
+        size_t len = strcspn(s, "(*;");
+        if (len != strlen(want) || strncmp(s, want, len) != 0)
+            report("000 cost table: %s from build %s\n", sec, sha);
+    }
+    /* and of each whose times are in a different unit from this run's */
+    static const char *all[] = { "scan", "prime", "multi", "ladder", "qs",
+            "walk", "w1s", "leaf", "tail", "situ" };
+    double ghz = work_clock_ghz();
+    for (uint i = 0; i < sizeof(all) / sizeof(all[0]); ++i) {
+        double tg = cm_table_ghz(all[i]);
+        if (tg < 0 || tg == ghz)
+            continue;
+        char tu[32], ru[32];
+        report("000 cost table: %s timed in %s, this run in %s\n", all[i],
+                clock_unit(tu, sizeof(tu), tg),
+                clock_unit(ru, sizeof(ru), ghz));
+    }
+}
+
 int main(int argc, char **argv, char **envp) {
     int i = 1;
 #ifdef HAVE_SETPROCTITLE
@@ -7320,6 +7378,9 @@ int main(int argc, char **argv, char **envp) {
               case 'b':
                 debugb = 1;
                 break;
+              case 'T':
+                debugT = 1;
+                break;
               case 'B':
                 debugb = 1;
                 debugB = 1;
@@ -7412,6 +7473,9 @@ int main(int argc, char **argv, char **envp) {
         report_init(stdout, argv[0]);
         if (rfp) report_init(rfp, argv[0]);
     }
+    /* after init_post(), which settles the unit of this run's times */
+    if (debugT)
+        cost_table_check();
 
     if (check || modfix) {
         uint *tt = calloc(k, sizeof(uint));
