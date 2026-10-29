@@ -349,8 +349,7 @@ static const t_rung rungs[] = {
 #endif
 };
 #define TM_TERM 0
-/* leave room for possible power check at rung 1 */
-#define TM_INIT 2
+/* TM_INIT (see coultau.h) leaves room for possible power check at rung 1 */
 #define TM_MAX (sizeof(rungs) / sizeof(t_rung))
 
 #ifdef MPUG_SIQS
@@ -891,6 +890,11 @@ static inline bool prep_abort(t_tm *tm, bool result) {
     return result;
 }
 
+/* primality as tau_multi_prep() tests it, for the benches */
+bool tau_isprime(mpz_t n) {
+    return ct_prime(n);
+}
+
 /* Effectively identical to _GMP_is_prob_prime(), but with VERBOSE
  * diagnostics for debugging/calibration.
  */
@@ -1194,6 +1198,17 @@ static inline void tmf_miss(uint i, t_tm *tm) {
     tm->state = i + 1;
     if (rungs[i].flags & RF_ONCE)
         tm->missed |= 1UL << i;
+}
+
+/* the ladder for the benches (bench.c) */
+uint tm_rungs(void) {
+    return TM_MAX;
+}
+bool tm_rung(uint i, t_tm *tm) {
+    return tmf_try(i, tm);
+}
+ulong tm_rungmask(uint bits) {
+    return _find_tmfb(bits);
 }
 
 /* Returns the number of values still being tested at the point a failure
