@@ -5760,7 +5760,8 @@ static inline e_choice choose_action(t_act *cur_act, bool fresh) {
 #ifdef VERBOSE
                 || (auto_level && VB(VB_CHOICE))
 #endif
-            ) && !prev_node->have_square
+            ) && (!prev_node->have_square
+                || (prev_node->have_square == 1 && kern_batch()))
             && strategy != STRATEGY_6X && strategy != STRATEGY_FIXED) {
         uint sv = vi;
         vi = ja_choose(prev_node, cur_act, vi);
@@ -6031,6 +6032,7 @@ static inline bool reject_square(ulong p, long d, ulong endr) {
     if (p <= endr / p)
         return 0;
 #ifdef HAVE_UINT128
+    ++cc.rec_root;
     /* z == s (mod p) */
     ulong s = sqrtmod_u64(mulmod_u64(dm, invert_u64(qm, p), p), p);
     /* z == s + p.t (mod p^2), with 2.q.s.t == (d - q.s^2) / p (mod p) */
@@ -7031,6 +7033,9 @@ bool next_unforced(t_act *cur_act) {
                 diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
             goto redo_unforced;
         }
+        /* below a fixed square, the roots are extended to each prime */
+        if (prev_node->have_square)
+            ++cc.rec_sq;
         /* note: this returns 0 if t=1 */
         if (!apply_single(prev_node, cur_node, cur_act->vi, p, cur_act->x)) {
             /* below a fixed square, priced with the roots */
