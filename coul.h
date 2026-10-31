@@ -69,7 +69,9 @@ typedef struct s_node {
     uint have_square;   /* number of v_i residues forced square so far */
     uint nextpi;    /* index of least prime not yet allocated */
     ulong maxp;     /* highest prime allocated so far, or never_unforced() */
-    ulong *cap;     /* if set, cap[x-1] limits p of p^{x-1} below here */
+    ulong *cap;     /* if set, caps p of p^{x-1} at v_i below here, cap_at() */
+    ulong *capv;    /* storage for cap, once this node has set its own */
+    ulong *wfloor;  /* the -W threshold this node was swept above, or NULL */
     uint vi_depth;  /* depth of this allocation */
     uint *pfreev;   /* bit vector of available primes */
     uint fp_need;   /* bitvector of forcedp still to apply */

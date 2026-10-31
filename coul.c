@@ -1090,10 +1090,25 @@ bool candidate(mpz_t c) {
     return improve_max;
 }
 
+/* The cap on p of p^{x-1} at v_i in caps 'cap' (see t_node.cap), or 0
+ * for none.
+ */
+static inline ulong cap_at(ulong *cap, uint vi, uint x) {
+    return cap ? cap[vi * target_lcm + x - 1] : 0;
+}
+
+/* np's own storage for caps, allocated when first needed */
+static ulong *node_capv(t_node *np) {
+    if (!np->capv)
+        np->capv = malloc(k * target_lcm * sizeof(ulong));
+    return np->capv;
+}
+
 void free_levels(void) {
     for (uint i = 0; i < maxlevel; ++i) {
         t_node *np = &nodes[i];
         free(np->pfreev);
+        free(np->capv);
         mpz_clear(np->aq);
         mpz_clear(np->rq);
         prime_iterator_destroy(&acts[i].piter);
@@ -1129,7 +1144,14 @@ void init_levels(void) {
     np->maxp = 0;
 #endif
     /* the -p cap, if any: under -W that is midp[], see prep_mp() */
-    np->cap = (smaxp || smaxpx) ? (need_midp ? midp : maxp) : NULL;
+    if (smaxp || smaxpx) {
+        ulong *mp = need_midp ? midp : maxp;
+        np->cap = node_capv(np);
+        for (uint vi = 0; vi < k; ++vi)
+            memcpy(&np->cap[vi * target_lcm], mp, target_lcm * sizeof(ulong));
+    } else
+        np->cap = NULL;
+    np->wfloor = NULL;
     np->vi_depth = 1;
     memset(np->pfreev, 0xff, pfree_vecsize * sizeof(uint));
     if (forcedp + 1 > 8 * sizeof(np->fp_need))
@@ -2517,6 +2539,7 @@ void prep_presquare(void) {
         cur->nextpi = prev->nextpi;
         cur->maxp = prev->maxp;
         cur->cap = prev->cap;
+        cur->wfloor = NULL;
         cur->fp_need = prev->fp_need;
         memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
@@ -4061,6 +4084,7 @@ void apply_level(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
         cur->nextpi = find_nextpi(cur, cur->nextpi);
     cur->maxp = (x > 1 && p > prev->maxp) ? p : prev->maxp;
     cur->cap = prev->cap;
+    cur->wfloor = NULL;
 }
 
 /* Apply a notional level of p^0 at v_0.
@@ -4440,35 +4464,68 @@ static inline ulong *cap_above(t_node *np) {
     return nodes[np->level - 1].cap;
 }
 
+/* True if a sweep above the -W threshold w covers p^{x-1} at a position
+ * with tau t left. Only the powers recursion itself would allocate are
+ * swept, and only where w gives a threshold for them.
+ * Nor is a position whose remaining tau is an odd prime swept: below a
+ * sweep no strategy allocates there (best_v0() .. best_v4() "skip prime
+ * powers when capped", best_fixed() and best_6x() walk instead). Such a
+ * position is a fixed square (or higher power), covered by the walks
+ * for every size of root, so a p^{x-1} allocation there would only
+ * duplicate that.
+ * A position and power not swept keeps the cap from above the sweep, see
+ * sweep_cap(), so this need not agree with what the strategies do.
+ */
+static inline bool w_sweeps(ulong *w, uint t, uint x) {
+    if (highpow ? x == 1 : ispow2_u64(x))
+        return 0;
+    if ((t & 1) && divisors[t].alldiv == 2)
+        return 0;
+    return w[x - 1] != 0;
+}
+
+/* np is to be swept above the -W threshold w: set the caps below np. At
+ * each position and power the sweep covers, that is the threshold (if
+ * lower than the cap from above); elsewhere it is the cap from above.
+ */
+static void sweep_cap(t_node *np, ulong *w) {
+    ulong *above = cap_above(np);
+    ulong *cap = node_capv(np);
+    if (above)
+        memcpy(cap, above, k * target_lcm * sizeof(ulong));
+    else
+        memset(cap, 0, k * target_lcm * sizeof(ulong));
+    for (uint vi = 0; vi < k; ++vi) {
+        uint t = value[vi].alloc[cur_vlevel[vi] - 1].t;
+        t_divisors *dp = &divisors[t];
+        for (uint di = 0; di < dp->alldiv; ++di) {
+            uint x = dp->div[di];
+            if (!w_sweeps(w, t, x))
+                continue;
+            ulong *cp = &cap[vi * target_lcm + x - 1];
+            if (!*cp || w[x - 1] < *cp)
+                *cp = w[x - 1];
+        }
+    }
+    np->cap = cap;
+    np->wfloor = w;
+}
+
 /* Populate midpp[] with the capped min and max p for each possible
  * allocation of p^{x-1} at each v_i.
  */
 void prep_midp(t_node *prev_node) {
     ulong *upper = cap_above(prev_node);
+    ulong *lower = prev_node->wfloor;
     for (uint vi = 0; vi < k; ++vi) {
         t_value *vp = &value[vi];
         uint vil = cur_vlevel[vi];
         t_allocation *ap = &vp->alloc[vil - 1];
         uint t = ap->t;
-        if (highpow ? t == 1 : ispow2_u64(t))
-            continue;
-        /* Below a sweep allocations are capped, and then no strategy
-         * allocates at a position whose remaining tau is an odd prime:
-         * best_v0() .. best_v4() skip it ("skip prime powers when
-         * capped"), and best_fixed() and best_6x() walk instead. Such a
-         * position is a fixed square (or higher power), covered by the
-         * walks for every size of root, so a p^{x-1} allocation here
-         * would only duplicate that.
-         */
-        if ((t & 1) && divisors[t].alldiv == 2)
-            continue;
         t_divisors *dp = &divisors[t];
-        /* try all divisors until we reach the powers of 2 */
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
-            if (highpow ? x == 1 : ispow2_u64(x))
-                break;
-            if (maxp[x - 1] == 0)
+            if (!w_sweeps(lower, t, x))
                 continue;
             /* find range of p for allocating p^e at v_i */
             mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
@@ -4477,9 +4534,9 @@ void prep_midp(t_node *prev_node) {
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
 
-            /* our range of interest is p: maxp[e] < p <= upper[e] */
-            ulong target_maxp = upper ? upper[x - 1] : 0;
-            ulong target_minp = maxp[x - 1];
+            /* our range of interest is p: lower[e] < p <= upper[e] */
+            ulong target_maxp = cap_at(upper, vi, x);
+            ulong target_minp = lower[x - 1];
             if (mpz_fits_ulong_p(Z(temp))) {
                 ulong target_limit = mpz_get_ui(Z(temp));
                 if (!target_maxp || target_limit < target_maxp)
@@ -4803,13 +4860,13 @@ bool apply_batch(
 }
 
 /* A batch is complete at np: under -W it is to be swept above the -W
- * threshold, which then caps the allocations below it. Returns TRUE if
- * it is to be swept.
+ * threshold, which then caps the allocations below it that the sweep
+ * covers, see sweep_cap(). Returns TRUE if it is to be swept.
  */
 static inline bool sweep_batch(t_node *np) {
     if (!need_midp)
         return 0;
-    np->cap = maxp;
+    sweep_cap(np, maxp);
     return 1;
 }
 
@@ -5483,9 +5540,9 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
         mpz_root(Z(lp_x), Z(lp_x), x - 1);
     }
 
-    ulong *cap = nodes[cur_act->level - 1].cap;
-    if (cap && cap[x - 1] && mpz_cmp_ui(Z(lp_x), cap[x - 1]) > 0)
-        return cap[x - 1];
+    ulong cap = cap_at(nodes[cur_act->level - 1].cap, vi, x);
+    if (cap && mpz_cmp_ui(Z(lp_x), cap) > 0)
+        return cap;
     if (!mpz_fits_ulong_p(Z(lp_x)))
         return 0;
     if (mpz_sgn(Z(lp_x)) <= 0)
