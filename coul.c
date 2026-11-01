@@ -1299,8 +1299,7 @@ void free_mint(t_mint *mtp) {
 }
 
 void mint_free_base(t_mint ***p) {
-    uint maxtau = target_lcm / divisors[target_lcm].high;
-    t_divisors *dp = &divisors[maxtau];
+    t_divisors *dp = &divisors[target_lcm];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint f = dp->div[di];
         if (f == 1)
