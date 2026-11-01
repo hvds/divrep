@@ -276,8 +276,10 @@ the schema and run `Seq::Run::finalize()` etc for testing.
     a power of 2, unless under highpow (see "Order of powers" above).
     So without `-j4`/`-js`, `-Wx<P>^1` sweeps nothing at all, and is
     the same as no `-W`;
-  - not at a position whose remaining tau is an odd prime (a fixed
-    square, covered by the walks);
+  - not at a position no allocation may be made at below the sweep
+    (`t_node.dis`, see `dis_pos()`), such as one whose remaining tau
+    is an odd prime (a fixed square, covered by the walks): every
+    strategy keeps to that set, and `best_v()` fails if one does not;
   - a plain `-W<P>` sets the same threshold P for every power, so p^2
     is swept from sqrt(what is left) all the way down to P, one
     `apply_single()` and walk per prime. The sweep has no gate.

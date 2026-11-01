@@ -48,6 +48,9 @@
  * (TYPE_t not yet supported.)
  */
 #define MAXK 66     /* nextprime(8 * sizeof(ulong)) - 1 */
+#if MAXK > 64 * DIS_WORDS
+#error "t_dis needs MAXK <= 64 * DIS_WORDS"
+#endif
 uint n, k;
 
 /* mpz_t passed as function parameter decays to pointer in a way that
@@ -1095,6 +1098,80 @@ bool candidate(mpz_t c) {
  */
 static inline ulong cap_at(ulong *cap, uint vi, uint x) {
     return cap ? cap[vi * target_lcm + x - 1] : 0;
+}
+
+/* True if no allocation may be made at v_i with tau t left, below a
+ * node whose allocations are capped or not: where no x is left that
+ * recursion allocates; and when capped, where t is an odd prime. Such
+ * a position is a fixed square (or higher power), covered by the walks
+ * for every size of root, so an allocation there would only duplicate
+ * them, and its cap would need a sweep to justify it.
+ * Every strategy keeps to this, as best_v() checks, so a sweep need not
+ * cover such a position (see w_sweeps()).
+ */
+static inline bool dis_pos(uint vi, uint t, bool capped) {
+    if (divisors[t].high <= (highpow ? 1 : 2))
+        return 1;
+    if (capped && (t & 1) && divisors[t].alldiv == 2)
+        return 1;
+    return 0;
+}
+
+static inline bool dis_bit(t_dis *dp, uint vi) {
+    return (dp->v[vi >> 6] >> (vi & 63)) & 1;
+}
+
+/* True if no allocation may be made at v_i below np. Only valid once a
+ * batch is complete.
+ */
+static inline bool dis_at(t_node *np, uint vi) {
+    assert(np->dis);
+    return dis_bit(np->dis, vi);
+}
+
+ulong dis_gen = 0;
+
+/* Set the positions disallowed below np, at which a batch is complete.
+ * They are held by the act that reaches np.
+ */
+static void dis_batch(t_node *np, bool capped) {
+    t_act *ap = &acts[np->level];
+    t_dis *dp = &ap->dis;
+    memset(dp->v, 0, sizeof(dp->v));
+    for (uint vi = 0; vi < k; ++vi)
+        if (dis_pos(vi, value[vi].alloc[cur_vlevel[vi] - 1].t, capped))
+            dp->v[vi >> 6] |= 1UL << (vi & 63);
+    dp->gen = ++dis_gen;
+    ap->dis_from = NULL;
+    np->dis = dp;
+}
+
+/* Set the positions disallowed below cur, reached from prev by an
+ * allocation at v_i, so that only v_i can change. Throughout a loop of
+ * allocations that is the same for each p, so where it changes the
+ * result is kept in the act and rebuilt only when what it derives
+ * from changes.
+ */
+static inline void dis_apply(t_node *prev, t_node *cur, uint vi) {
+    t_dis *from = prev->dis;
+    cur->dis = from;
+    if (!from)
+        return;
+    uint t = value[vi].alloc[cur_vlevel[vi] - 1].t;
+    if (dis_pos(vi, t, cur->cap != NULL) == dis_bit(from, vi))
+        return;
+    t_act *ap = &acts[cur->level];
+    t_dis *dp = &ap->dis;
+    if (ap->dis_from != from || ap->dis_from_gen != from->gen
+            || ap->dis_vi != vi) {
+        *dp = *from;
+        dp->v[vi >> 6] ^= 1UL << (vi & 63);
+        dp->gen = ++dis_gen;
+        ap->dis_from = from;
+        ap->dis_from_gen = from->gen;
+        ap->dis_vi = vi;
+    }
+    cur->dis = dp;
 }
 
 /* np's own storage for caps, allocated when first needed */
@@ -2540,6 +2617,7 @@ void prep_presquare(void) {
         cur->maxp = prev->maxp;
         cur->cap = prev->cap;
         cur->wfloor = NULL;
+        cur->dis = prev->dis;
         cur->fp_need = prev->fp_need;
         memcpy(cur->pfreev, prev->pfreev, pfree_vecsize * sizeof(uint));
         mpz_set(cur->aq, prev->aq);
@@ -4085,6 +4163,7 @@ void apply_level(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     cur->maxp = (x > 1 && p > prev->maxp) ? p : prev->maxp;
     cur->cap = prev->cap;
     cur->wfloor = NULL;
+    cur->dis = prev->dis;
 }
 
 /* Apply a notional level of p^0 at v_0.
@@ -4138,6 +4217,7 @@ bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     /* this can fail only by requiring an impossible square */
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
+    dis_apply(prev, cur, vi);
 
     t_value *vp = &value[vi];
     uint t = vp->alloc[ cur_vlevel[vi] - 1 ].t;
@@ -4464,22 +4544,18 @@ static inline ulong *cap_above(t_node *np) {
     return nodes[np->level - 1].cap;
 }
 
-/* True if a sweep above the -W threshold w covers p^{x-1} at a position
- * with tau t left. Only the powers recursion itself would allocate are
- * swept, and only where w gives a threshold for them.
- * Nor is a position whose remaining tau is an odd prime swept: below a
- * sweep no strategy allocates there (best_v0() .. best_v4() "skip prime
- * powers when capped", best_fixed() and best_6x() walk instead). Such a
- * position is a fixed square (or higher power), covered by the walks
- * for every size of root, so a p^{x-1} allocation there would only
- * duplicate that.
+/* True if a sweep at np above the -W threshold w covers p^{x-1} at v_i.
+ * Only the powers recursion itself would allocate are swept, only where
+ * w gives a threshold for them, and not at a position disallowed below
+ * np (see dis_pos()): nothing is allocated there below the sweep, so the
+ * walks cover it.
  * A position and power not swept keeps the cap from above the sweep, see
- * sweep_cap(), so this need not agree with what the strategies do.
+ * sweep_cap().
  */
-static inline bool w_sweeps(ulong *w, uint t, uint x) {
+static inline bool w_sweeps(t_node *np, ulong *w, uint vi, uint x) {
     if (highpow ? x == 1 : ispow2_u64(x))
         return 0;
-    if ((t & 1) && divisors[t].alldiv == 2)
+    if (dis_at(np, vi))
         return 0;
     return w[x - 1] != 0;
 }
@@ -4500,7 +4576,7 @@ static void sweep_cap(t_node *np, ulong *w) {
         t_divisors *dp = &divisors[t];
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
-            if (!w_sweeps(w, t, x))
+            if (!w_sweeps(np, w, vi, x))
                 continue;
             ulong *cp = &cap[vi * target_lcm + x - 1];
             if (!*cp || w[x - 1] < *cp)
@@ -4525,7 +4601,7 @@ void prep_midp(t_node *prev_node) {
         t_divisors *dp = &divisors[t];
         for (uint di = 0; di < dp->alldiv; ++di) {
             uint x = dp->div[di];
-            if (!w_sweeps(lower, t, x))
+            if (!w_sweeps(prev_node, lower, vi, x))
                 continue;
             /* find range of p for allocating p^e at v_i */
             mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
@@ -4864,6 +4940,7 @@ bool apply_batch(
  * covers, see sweep_cap(). Returns TRUE if it is to be swept.
  */
 static inline bool sweep_batch(t_node *np) {
+    dis_batch(np, need_midp || np->cap);
     if (!need_midp)
         return 0;
     sweep_cap(np, maxp);
@@ -4928,11 +5005,6 @@ bool process_batch(t_node *cur_node, bool recover) {
     return after_sweep(cur_node);
 }
 
-/* Whether allocations at cur_act's level are capped (see t_node.cap). */
-static inline bool is_capped(t_act *cur_act) {
-    return nodes[cur_act->level - 1].cap != NULL;
-}
-
 uint best_v(t_act *cur_act);
 
 /* Choose that v_i with the highest t_i still to fulfil, or (on equality)
@@ -4940,7 +5012,7 @@ uint best_v(t_act *cur_act);
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v0(t_act *cur_act) {
-    bool capped = is_capped(cur_act);
+    t_node *np = &nodes[cur_act->level - 1];
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4952,11 +5024,8 @@ uint best_v0(t_act *cur_act) {
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
 
-        /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
-            continue;
-        /* skip prime powers when capped */
-        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip where disallowed, see dis_pos() */
+        if (dis_at(np, vj))
             continue;
         if (ti) {
             /* skip if not higher tau, or same tau with higher q */
@@ -4978,7 +5047,7 @@ uint best_v0(t_act *cur_act) {
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v1(t_act *cur_act) {
-    bool capped = is_capped(cur_act);
+    t_node *np = &nodes[cur_act->level - 1];
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -4990,11 +5059,8 @@ uint best_v1(t_act *cur_act) {
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
 
-        /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
-            continue;
-        /* skip prime powers when capped */
-        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip where disallowed, see dis_pos() */
+        if (dis_at(np, vj))
             continue;
         if (ti) {
             uint hi = divisors[ti].high;
@@ -5018,7 +5084,7 @@ uint best_v1(t_act *cur_act) {
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v2(t_act *cur_act) {
-    bool capped = is_capped(cur_act);
+    t_node *np = &nodes[cur_act->level - 1];
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -5030,11 +5096,8 @@ uint best_v2(t_act *cur_act) {
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
 
-        /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
-            continue;
-        /* skip prime powers when capped */
-        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip where disallowed, see dis_pos() */
+        if (dis_at(np, vj))
             continue;
         if (ti) {
             /* skip if not lower tau, or same tau with higher q */
@@ -5054,7 +5117,7 @@ uint best_v2(t_act *cur_act) {
  * was the square root of the remaining tau (and unforced), always take it.
  */
 uint best_v3(t_act *cur_act) {
-    bool capped = is_capped(cur_act);
+    t_node *np = &nodes[cur_act->level - 1];
     uint vi, ti = 0;
     mpz_t *qi;
 
@@ -5066,11 +5129,8 @@ uint best_v3(t_act *cur_act) {
         uint tj = apj->t;
         mpz_t *qj = &apj->q;
 
-        /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
-            continue;
-        /* skip prime powers when capped */
-        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip where disallowed, see dis_pos() */
+        if (dis_at(np, vj))
             continue;
         /* shortcircuit if single allocation of (even) sqrt(n) */
         if ((tj & 1) == 0 && apj->x == apj->t) {
@@ -5109,7 +5169,7 @@ uint best_v3(t_act *cur_act) {
  * If there is no best entry, returns BV_WALK.
  */
 uint best_v4(t_act *cur_act) {
-    bool capped = is_capped(cur_act);
+    t_node *np = &nodes[cur_act->level - 1];
     uint vi, ti = 0, hi;
     ulong mini;
     mpz_t *qi, *limi;
@@ -5124,11 +5184,8 @@ uint best_v4(t_act *cur_act) {
         mpz_t *limj = &apj->lim;
         ulong minj;
 
-        /* skip if no odd prime factor */
-        if (divisors[tj].high <= (highpow ? 1 : 2))
-            continue;
-        /* skip prime powers when capped */
-        if (capped && (tj & 1) && divisors[tj].alldiv == 2)
+        /* skip where disallowed, see dis_pos() */
+        if (dis_at(np, vj))
             continue;
         uint hj = divisors[tj].high;
         if (ti) {
@@ -5399,24 +5456,23 @@ uint best_fixed(t_act *cur_act) {
     if (effective_level >= fixed_level)
         return BV_WALK;
     uint vi = fixed_v[effective_level];
-    t_value *vp = &value[vi];
-    uint vlevel = cur_vlevel[vi];
-    t_allocation *ap_last = &vp->alloc[vlevel - 1];
-    uint t = ap_last->t;
-    if (t == 1)
-        return BV_WALK;
-    /* skip prime powers when capped (invariant) */
-    if (is_capped(cur_act) && (t & 1) && divisors[t].alldiv == 2)
+    /* walk where disallowed (invariant), see dis_pos() */
+    if (dis_at(&nodes[cur_act->level - 1], vi))
         return BV_WALK;
     return vi;
 }
 
 /* Find the best entry to allocate to next, using the selected strategy.
  * If there is no such entry, returns BV_WALK; if there is no work to
- * do for this x, returns BV_NEXTX.
+ * do for this x, returns BV_NEXTX. It is a fatal error for a strategy
+ * to choose a disallowed position.
  */
 uint best_v(t_act *cur_act) {
-    return strategies[strategy](cur_act);
+    uint vi = strategies[strategy](cur_act);
+    if (vi < BV_SPECIAL && dis_at(&nodes[cur_act->level - 1], vi))
+        fail("panic: strategy %u chose v_%u, disallowed at level %u",
+                strategy, vi, cur_act->level);
+    return vi;
 }
 
 /* Decide what the act at a new level is to do: the batches of the next

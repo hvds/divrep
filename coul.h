@@ -63,6 +63,16 @@ typedef enum {
     A_NONE          /* none of the above; also the number of actions */
 } e_action;
 
+/* The positions at which no allocation may be made below a node, as
+ * bits by position (needs MAXK <= 64 * DIS_WORDS); gen changes whenever
+ * v[] is rewritten. See dis_pos().
+ */
+#define DIS_WORDS 2
+typedef struct s_dis {
+    ulong gen;
+    ulong v[DIS_WORDS];
+} t_dis;
+
 typedef struct s_node {
     uint level;     /* index of this entry */
     bool have_min;  /* we have passed any minp requirement */
@@ -72,6 +82,7 @@ typedef struct s_node {
     ulong *cap;     /* if set, caps p of p^{x-1} at v_i below here, cap_at() */
     ulong *capv;    /* storage for cap, once this node has set its own */
     ulong *wfloor;  /* the -W threshold this node was swept above, or NULL */
+    t_dis *dis;     /* positions disallowed below here, or NULL before a batch */
     uint vi_depth;  /* depth of this allocation */
     uint *pfreev;   /* bit vector of available primes */
     uint fp_need;   /* bitvector of forcedp still to apply */
@@ -86,6 +97,15 @@ typedef struct s_act {
     bool next_best; /* vi is known stable result of best_v() */
     bool unsorted;  /* this level is not where best_v() would put it */
     uint choice_strategy;   /* the strategy in force when vi was chosen */
+    /* The positions disallowed below the node this act reaches, where it
+     * holds them itself: for a batch complete there, or for v_i changed
+     * from those at dis_from as they were at generation dis_from_gen
+     * (see dis_apply()).
+     */
+    t_dis dis;
+    t_dis *dis_from;
+    ulong dis_from_gen;
+    uint dis_vi;
     /* Loop of allocations at this level: whether, and above which
      * multiple of aq, an allocation can be rejected early (see
      * reject_single()), and whether aq is a single limb.
