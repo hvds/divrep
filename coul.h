@@ -83,6 +83,7 @@ typedef struct s_node {
     ulong *capv;    /* storage for cap, once this node has set its own */
     ulong *wfloor;  /* the -W threshold this node was swept above, or NULL */
     t_dis *dis;     /* positions disallowed below here, or NULL before a batch */
+    struct s_kern *kern;    /* the plan of -k for a batch complete here */
     uint vi_depth;  /* depth of this allocation */
     uint *pfreev;   /* bit vector of available primes */
     uint fp_need;   /* bitvector of forcedp still to apply */
