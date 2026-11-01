@@ -90,7 +90,7 @@ static inline mpz_t *ZP(t_zstash e) { return &zstash[e]; }
 #define Z(e) *ZP(e)
 /* additional arrays of mpz_t initialized once at start */
 mpz_t *wv_o, *wv_qq;        /* size [k] */
-mpz_t *mint_best, *mint_px; /* size [sumpm(n / high(n))] */
+mpz_t *mint_best, *mint_px; /* size [mint_depth()] */
 /* for failure diagnostics */
 mpz_t *g_q0;
 ulong g_ati;
@@ -1233,6 +1233,20 @@ void mint_init_base(t_mint ***p) {
     }
 }
 
+/* mintau() may be asked for t = t_i / x for any x > 1 dividing t_i, so
+ * for any t | n/p with p the least prime dividing n: prep_midp() sweeps
+ * powers that need not be a multiple of h(t_i). Returns the depth that
+ * needs, sumpm(n/p).
+ */
+static uint mint_depth(void) {
+    uint p = 2;
+    if (target_lcm == 1)
+        return 0;
+    while (target_lcm % p)
+        ++p;
+    return divisors[target_lcm / p].sumpm;
+}
+
 void prep_mintau(void) {
     mint_init_base(&mint_base);
 
@@ -1255,9 +1269,7 @@ void prep_mintau(void) {
             mint_init_base(&mint_base_restricted[i]);
     }
 
-    uint maxtau = target_lcm / divisors[target_lcm].high;
-    dp = &divisors[maxtau];
-    uint maxdepth = dp->sumpm;
+    uint maxdepth = mint_depth();
     pfree_vecsize = (nsprimes + 31) >> 5;
     t_mint_state *s = &mint_state;
     s->pfreei = calloc(maxdepth, sizeof(ushort));
@@ -1312,9 +1324,7 @@ void done_mintau(void) {
         free(mint_base_restricted);
     }
 
-    uint maxtau = target_lcm / divisors[target_lcm].high;
-    t_divisors *dp = &divisors[maxtau];
-    uint maxdepth = dp->sumpm;
+    uint maxdepth = mint_depth();
     for (uint i = 0; i < maxdepth; ++i) {
         mpz_clear(mint_best[i]);
         mpz_clear(mint_px[i]);
@@ -4252,8 +4262,8 @@ static inline void mintau_cache_result(
 /* Calculate the minimum contribution from unused primes satisfying
  * the given tau.
  *
- * If h(n) is the highest prime dividing n, this may be called for
- * any t: t | n/h(n).
+ * This may be called for any t: t | n/p, p the least prime dividing n
+ * (see mint_depth()).
  *
  * Sets mint to the result - there is always a valid value.
  */
@@ -4307,8 +4317,8 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
 /* Calculate the minimum contribution from unused primes satisfying
  * the given tau.
  *
- * If h(n) is the highest prime dividing n, this may be called for
- * any t: t | n/h(n).
+ * This may be called for any t: t | n/p, p the least prime dividing n
+ * (see mint_depth()).
  *
  * Sets mint to the result - there is always a valid value.
  *
@@ -4327,8 +4337,8 @@ void mintau(t_node *cur_node, mpz_t mint, uint t) {
 /* Calculate the minimum contribution from unused primes satisfying
  * the given tau, while avoiding powers p^x: h(x) == h(r), x <= r.
  *
- * If h(n) is the highest prime dividing n, this may be called for
- * any t: t | n/h(n).
+ * This may be called for any t: t | n/p, p the least prime dividing n
+ * (see mint_depth()).
  *
  * Sets mint to the result, or to zero if no valid value.
  */
@@ -4387,8 +4397,8 @@ void mintau_restricted_r(ushort depth0, mpz_t mint, uint t, uint r, uint ri) {
 /* Calculate the minimum contribution from unused primes satisfying
  * the given tau, while avoiding powers p^x: h(x) == h(r), x <= r.
  *
- * If h(n) is the highest prime dividing n, this may be called for
- * any t: t | n/h(n).
+ * This may be called for any t: t | n/p, p the least prime dividing n
+ * (see mint_depth()).
  *
  * Sets mint to the result, or to zero if no valid value.
  *
