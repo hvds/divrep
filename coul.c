@@ -1071,11 +1071,19 @@ bool candidate(mpz_t c) {
     return improve_max;
 }
 
-/* The cap on p of p^{x-1} at v_i in caps 'cap' (see t_node.cap), or 0
- * for none.
+/* Each node's caps (see t_node.cap) are cap_size() entries, the one for
+ * p^{x-1} at v_i at cap_ix(vi, x).
  */
+static inline uint cap_size(void) {
+    return k * xsize();
+}
+static inline uint cap_ix(uint vi, uint x) {
+    return vi * xsize() + xi(x);
+}
+
+/* The cap on p of p^{x-1} at v_i in caps 'cap', or 0 for none. */
 static inline ulong cap_at(ulong *cap, uint vi, uint x) {
-    return cap ? cap[vi * target_lcm + x - 1] : 0;
+    return cap ? cap[cap_ix(vi, x)] : 0;
 }
 
 /* True if the strategies may allocate p^{2^z-1}. Not in a batch that -k
@@ -1174,7 +1182,7 @@ static inline void dis_apply(t_node *prev, t_node *cur, uint vi) {
 /* np's own storage for caps, allocated when first needed */
 static ulong *node_capv(t_node *np) {
     if (!np->capv)
-        np->capv = malloc(k * target_lcm * sizeof(ulong));
+        np->capv = malloc(cap_size() * sizeof(ulong));
     return np->capv;
 }
 
@@ -1220,9 +1228,13 @@ void init_levels(void) {
     /* the -p cap, if any: under -W that is midp[], see prep_mp() */
     if (smaxp || smaxpx) {
         ulong *mp = need_midp ? midp : maxp;
+        t_divisors *dp = &divisors[target_lcm];
         np->cap = node_capv(np);
         for (uint vi = 0; vi < k; ++vi)
-            memcpy(&np->cap[vi * target_lcm], mp, target_lcm * sizeof(ulong));
+            for (uint di = 0; di < dp->alldiv; ++di) {
+                uint x = dp->div[di];
+                np->cap[cap_ix(vi, x)] = mp[x - 1];
+            }
     } else
         np->cap = NULL;
     np->wfloor = NULL;
@@ -4241,9 +4253,9 @@ static void sweep_cap(t_node *np, ulong *w) {
     ulong *above = cap_above(np);
     ulong *cap = node_capv(np);
     if (above)
-        memcpy(cap, above, k * target_lcm * sizeof(ulong));
+        memcpy(cap, above, cap_size() * sizeof(ulong));
     else
-        memset(cap, 0, k * target_lcm * sizeof(ulong));
+        memset(cap, 0, cap_size() * sizeof(ulong));
     for (uint vi = 0; vi < k; ++vi) {
         uint t = value[vi].alloc[cur_vlevel[vi] - 1].t;
         t_divisors *dp = &divisors[t];
@@ -4251,7 +4263,7 @@ static void sweep_cap(t_node *np, ulong *w) {
             uint x = dp->div[di];
             if (!w_sweeps(np, w, vi, x))
                 continue;
-            ulong *cp = &cap[vi * target_lcm + x - 1];
+            ulong *cp = &cap[cap_ix(vi, x)];
             if (!*cp || w[x - 1] < *cp)
                 *cp = w[x - 1];
         }
