@@ -1,6 +1,7 @@
 #ifndef COUL_H
 #define COUL_H
 
+#include <assert.h>
 #include <gmp.h>
 #include "types.h"
 #include "prime_iterator.h"
@@ -33,6 +34,22 @@ typedef struct s_divisors {
     uint *div;      /* array of divisors of i */
 } t_divisors;
 extern t_divisors *divisors;
+
+/* Arrays with an entry for each x dividing target_lcm are packed: they
+ * have xsize() entries, and the entry for x is at xi(x), the position of
+ * x in divisors[target_lcm].div. See prep_fact().
+ */
+extern ushort *div_lookup;      /* xi(x) for x | target_lcm, else DIV_NONE */
+extern uint div_lookup_size;    /* target_lcm + 1 */
+extern uint div_count;          /* number of divisors of target_lcm */
+#define DIV_NONE ((ushort)~0)
+static inline uint xsize(void) {
+    return div_count;
+}
+static inline uint xi(uint x) {
+    assert(x < div_lookup_size && div_lookup[x] != DIV_NONE);
+    return div_lookup[x];
+}
 
 /* the small primes available for allocation, see prep_primes() */
 extern uint nsprimes;

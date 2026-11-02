@@ -108,6 +108,9 @@ typedef struct s_mod {
 /* warn if the divisor array will be bigger than this */
 #define DIVISOR_WARN_LIMIT (100000)
 t_divisors *divisors = NULL;
+ushort *div_lookup = NULL;
+uint div_lookup_size = 0;
+uint div_count = 0;
 #if defined(TYPE_r)
     uint *target_tau = NULL;
     uint target_lcm;
@@ -1328,6 +1331,7 @@ void done(void) {
         for (int i = 0; i <= target_lcm; ++i)
             free(divisors[i].div);
     free(divisors);
+    free(div_lookup);
 #if defined(TYPE_r)
     free(target_tau);
 #endif
@@ -1860,6 +1864,7 @@ void prep_target(void) {
  * When a square is fixed, walk_v() wants gcddm, the gcd{d_j-1} of all
  * divisors d_j of t_i.
  * Flip recovery wants sqrt, the square root of t_i where it is a square.
+ * Packed arrays want div_lookup[], see xi().
  */
 void prep_fact(void) {
     t_fact f;
@@ -1895,6 +1900,17 @@ void prep_fact(void) {
         dp->gcddm = g;
     }
     free_fact(&f);
+
+    t_divisors *dp = &divisors[target_lcm];
+    if (dp->alldiv >= DIV_NONE)
+        fail("too many divisors (%u) of %u", dp->alldiv, target_lcm);
+    div_count = dp->alldiv;
+    div_lookup_size = target_lcm + 1;
+    div_lookup = malloc(div_lookup_size * sizeof(ushort));
+    for (uint i = 0; i < div_lookup_size; ++i)
+        div_lookup[i] = DIV_NONE;
+    for (uint di = 0; di < dp->alldiv; ++di)
+        div_lookup[dp->div[di]] = di;
 }
 
 void prep_maxforce(void) {
