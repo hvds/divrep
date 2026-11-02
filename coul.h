@@ -34,6 +34,11 @@ typedef struct s_divisors {
 } t_divisors;
 extern t_divisors *divisors;
 
+/* the small primes available for allocation, see prep_primes() */
+extern uint nsprimes;
+extern uint *sprimes;
+extern size_t pfree_vecsize;   /* uints in a bit vector of sprimes[] */
+
 /* Each level of "recursion" allocates one prime power p^{x-1} with x | n
  * to one value v_i. It may be "forced", in which case it is part of a
  * group of simultaneous allocations of the same p to different i (and
@@ -91,6 +96,39 @@ typedef struct s_node {
     mpz_t rq;       /* running CRT of (-i) % p^x */
 } t_node;
 extern t_node *nodes;
+extern uint cur_batch_level;
+
+/* What -k does in a batch, planned once the batch is complete and kept
+ * with its node (see kern_state()): whether it applies at all, its bound,
+ * and as bit vectors the positions it applies to and those passed over.
+ * It applies to a batch that fixes exactly one square, unless that is
+ * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
+ * at v_{i-2} and gains nothing from the pass.
+ */
+typedef struct s_kern {
+    int id;             /* batch_alloc when it was planned */
+    bool on;
+    ulong b;            /* the bound of -k, 0 if it is not to apply */
+    ulong at, passed;   /* needs MAXK_KERN <= 64 */
+} t_kern;
+
+/* the plan of -k for the current batch, if any */
+static inline t_kern *kern_cur(void) {
+    return nodes[cur_batch_level].kern;
+}
+
+/* true if -k applies to this batch */
+static inline bool kern_batch(void) {
+    t_kern *ks = kern_cur();
+    return ks && ks->on && ks->b;
+}
+
+/* True if v_i is a position that -k applies to in this batch; needs
+ * MAXK_KERN <= 64, as does kern_passed().
+ */
+static inline bool kern_at(uint vi) {
+    return kern_batch() && ((kern_cur()->at >> vi) & 1);
+}
 
 typedef struct s_act {
     uint level;     /* index of this entry */

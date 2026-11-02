@@ -94,6 +94,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   only for divisor/exponent bookkeeping (values always small).
 - `coulvec.c` - modular-constraint bitvector handling for the `-m`/
   `-c*` options.
+- `coulmint.c` - `mintau()`, the minimum contribution from unused primes
+  for a given tau, and its memoizing cache, with the `-k` variants
+  `mintau_at()` and `mintau_restricted_at()`.
 - `diag.c` - terminal progress-line display, unrelated to the search
   algorithm itself.
 - `prime_iterator.c` - adapted from Math::Prime::Util's C sources;
