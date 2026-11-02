@@ -231,10 +231,11 @@ ulong gain = 0;     /* used to fine-tune balance of recursion vs. walk */
 ulong antigain = 0;
 ulong gain2 = 0;    /* as gain/antigain for squares */
 ulong antigain2 = 0;
-/* maxp[e] is the greatest prime we should attempt to allocate as power p^e;
- * minp[e] is the threshold that at least one allocated p^e should exceed
- * (else we can skip the walk); midp[e] is the additional threshold up to
- * which we should pre-walk.
+/* maxp[] is the greatest prime we should attempt to allocate as power
+ * p^{x-1}; minp[] is the threshold that at least one allocated p^{x-1}
+ * should exceed (else we can skip the walk); midp[] is the additional
+ * threshold up to which we should pre-walk. Each has the entry for
+ * p^{x-1} at xi(x), and 0 means no threshold.
  * sminp, smaxp, smidp are the strings that express the requests.
  */
 ulong *minp = NULL, *maxp = NULL, *midp = NULL;
@@ -1233,7 +1234,7 @@ void init_levels(void) {
         for (uint vi = 0; vi < k; ++vi)
             for (uint di = 0; di < dp->alldiv; ++di) {
                 uint x = dp->div[di];
-                np->cap[cap_ix(vi, x)] = mp[x - 1];
+                np->cap[cap_ix(vi, x)] = mp[di];
             }
     } else
         np->cap = NULL;
@@ -2236,7 +2237,7 @@ void prep_forcep(void) {
                 if (fx == 1)
                     continue;
                 /* a cap of 0 means no cap, as in limit_p() */
-                if (restrict_forced && maxp[fx - 1] && maxp[fx - 1] < p)
+                if (restrict_forced && maxp[xi(fx)] && maxp[xi(fx)] < p)
                     continue;
                 uint status = test_forcep(fbp, p, vi, fx);
                 if (status == TFP_BAD)
@@ -2321,7 +2322,7 @@ ulong ulston(char *s) {
 }
 
 void do_prep_mp(ulong **mp, char *sp, char *spx) {
-    *mp = calloc(target_lcm, sizeof(ulong));
+    *mp = calloc(xsize(), sizeof(ulong));
     if (sp) {
         char *t = strchr(sp, '^');
         t_divisors *dp = &divisors[target_lcm];
@@ -2337,7 +2338,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
                     break;
                 mpz_root(Z(wv_cand), Z(temp), dm);
                 if (mpz_fits_ulong_p(Z(wv_cand)))
-                    (*mp)[dm] = mpz_get_ui(Z(wv_cand));
+                    (*mp)[di] = mpz_get_ui(Z(wv_cand));
                 else
                     fail("%lu^%u does not fit 64-bit for p^%u", p, e, dm);
             }
@@ -2347,7 +2348,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
                 uint dm = dp->div[di] - 1;
                 if (highpow ? dm == 0 : ispow2_u64(dm + 1))
                     break;
-                (*mp)[dm] = p;
+                (*mp)[di] = p;
             }
         }
     }
@@ -2370,7 +2371,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
             *tc = ',';
         if (target_lcm % (e + 1))
             fail("invalid power %u in '%s'", e, spx);
-        (*mp)[e] = p;
+        (*mp)[xi(e + 1)] = p;
         if (tc)
             sp2 = tc + 1;
         else
@@ -2387,7 +2388,7 @@ void disp_px(char *name, ulong *mp) {
             break;
         if (di)
             report("; ");
-        report("%lu^%u", mp[dm], dm);
+        report("%lu^%u", mp[di], dm);
     }
     report(" ]\n");
 }
@@ -3169,7 +3170,7 @@ void walk_v(t_node *cur_node, mpz_t start) {
 #endif
     if (!cur_node->have_min) {
         t_act *cur_act = &acts[cur_node->level];
-        ulong min = minp[cur_act->x - 1];
+        ulong min = minp[xi(cur_act->x)];
         if (min)
             level_setp(cur_act, min);
         return;
@@ -3546,7 +3547,7 @@ void walk_1(t_node *cur_node, uint vi) {
 #endif
     if (!cur_node->have_min) {
         t_act *cur_act = &acts[cur_node->level];
-        ulong min = minp[cur_act->x - 1];
+        ulong min = minp[xi(cur_act->x)];
         if (min)
             level_setp(cur_act, min);
         return;
@@ -3625,9 +3626,12 @@ void walk_1_set(
     if (!cur_node->have_square)
         return;
 #endif
-    /* p must exceed minp[x - 1] */
-    if (!cur_node->have_min && plow < minp[x - 1])
-        plow = minp[x - 1];
+    /* p must exceed minp[] for x */
+    if (!cur_node->have_min) {
+        ulong min = minp[xi(x)];
+        if (plow < min)
+            plow = min;
+    }
 
     t_value *vip = &value[vi];
     uint vil = cur_vlevel[vi];
@@ -4062,7 +4066,8 @@ void apply_null(t_node *prev, t_node *cur, ulong p) {
  */
 bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     apply_level(prev, cur, vi, p, x);
-    cur->have_min = prev->have_min || (minp[x - 1] && p > minp[x - 1]);
+    ulong min = minp[xi(x)];
+    cur->have_min = prev->have_min || (min && p > min);
     mpz_ui_pow_ui(px, p, x - 1);
     if (!update_chinese(prev, cur, vi, p, px, single_fold(p)))
         return 0;
@@ -4242,7 +4247,7 @@ static inline bool w_sweeps(t_node *np, ulong *w, uint vi, uint x) {
         return 0;
     if (dis_at(np, vi))
         return 0;
-    return w[x - 1] != 0;
+    return w[xi(x)] != 0;
 }
 
 /* np is to be swept above the -W threshold w: set the caps below np. At
@@ -4264,8 +4269,9 @@ static void sweep_cap(t_node *np, ulong *w) {
             if (!w_sweeps(np, w, vi, x))
                 continue;
             ulong *cp = &cap[cap_ix(vi, x)];
-            if (!*cp || w[x - 1] < *cp)
-                *cp = w[x - 1];
+            ulong wx = w[xi(x)];
+            if (!*cp || wx < *cp)
+                *cp = wx;
         }
     }
     np->cap = cap;
@@ -4331,16 +4337,17 @@ void prep_midp(t_node *prev_node) {
                 top = kern_cur()->b;
             }
 
-            /* for -W, lower[e] < p <= top */
-            if (for_w && top > lower[x - 1])
-                push_midpp(vi, x, lower[x - 1], top, 0);
+            /* for -W, lower[] < p <= top */
+            ulong low = for_w ? lower[xi(x)] : 0;
+            if (for_w && top > low)
+                push_midpp(vi, x, low, top, 0);
             /* for -k, maxforce < p <= top, less what -W takes */
             if (for_k) {
                 ulong ktop = top;
                 if (x == 2 && kern_cur()->b < ktop)
                     ktop = kern_cur()->b;
-                if (for_w && lower[x - 1] < ktop)
-                    ktop = lower[x - 1];
+                if (for_w && low < ktop)
+                    ktop = low;
                 if (ktop > maxforce[vi])
                     push_midpp(vi, x, maxforce[vi], ktop, 1);
             }
