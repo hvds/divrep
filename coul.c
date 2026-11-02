@@ -2345,7 +2345,7 @@ void do_prep_mp(ulong **mp, char *sp, char *spx) {
         *t = '^';
         if (tc)
             *tc = ',';
-        if (n % (e + 1))
+        if (target_lcm % (e + 1))
             fail("invalid power %u in '%s'", e, spx);
         (*mp)[e] = p;
         if (tc)
