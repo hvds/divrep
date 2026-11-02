@@ -94,12 +94,12 @@ t_mint_capped *mint_capped(t_mint *base, uint pdiff, bool create) {
 
 void mint_init_base(t_mint ***p) {
     t_divisors *dp = &divisors[target_lcm];
-    *p = calloc(target_lcm + 1, sizeof(t_mint *));
+    *p = calloc(xsize(), sizeof(t_mint *));
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint f = dp->div[di];
         if (f == 1)
             continue;
-        (*p)[f] = new_mint();
+        (*p)[di] = new_mint();
     }
 }
 
@@ -175,7 +175,7 @@ void mint_free_base(t_mint ***p) {
         uint f = dp->div[di];
         if (f == 1)
             continue;
-        t_mint *mtp = (*p)[f];
+        t_mint *mtp = (*p)[di];
         if (mtp)
             free_mint(mtp);
     }
@@ -316,7 +316,7 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
     uint maxdepth = depth0 - 1 + dp->sumpm;
 
     /* check if we already know this mintau */
-    if (mintau_check_known(mint_base[t], mint, depth0, maxdepth))
+    if (mintau_check_known(mint_base[xi(t)], mint, depth0, maxdepth))
         goto mintau_done;
 
     /* calculate this mintau */
@@ -346,7 +346,7 @@ void mintau_r(ushort depth0, mpz_t mint, uint t) {
         track_mintau(*mbest, t, depth0);
 
     /* work out where to cache the result */
-    mintau_cache_result(mint_base[t], mbest, depth0, maxdepth);
+    mintau_cache_result(mint_base[xi(t)], mbest, depth0, maxdepth);
     mpz_set(mint, *mbest);
   mintau_done:
     ;
@@ -391,9 +391,10 @@ void mintau_restricted_r(ushort depth0, mpz_t mint, uint t, uint r, uint ri) {
     t_divisors *dp = &divisors[t];
     t_mint_state *s = &mint_state;
     uint maxdepth = depth0 - 1 + dp->sumpm;
+    t_mint *base = mint_base_restricted[ri][xi(t)];
 
     /* check if we already know this mintau */
-    if (mintau_check_known(mint_base_restricted[ri][t], mint, depth0, maxdepth))
+    if (mintau_check_known(base, mint, depth0, maxdepth))
         goto mintau_done;
 
     /* calculate this mintau */
@@ -426,7 +427,7 @@ void mintau_restricted_r(ushort depth0, mpz_t mint, uint t, uint r, uint ri) {
         track_mintau(*mbest, t, depth0);
 
     /* work out where to cache the result */
-    mintau_cache_result(mint_base_restricted[ri][t], mbest, depth0, maxdepth);
+    mintau_cache_result(base, mbest, depth0, maxdepth);
     mpz_set(mint, *mbest);
   mintau_done:
     ;
