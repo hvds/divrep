@@ -39,8 +39,8 @@ typedef struct s_mint_state {
 } t_mint_state;
 uint mint_maxdepth;     /* size of pfreei[], mint_best[] and mint_px[] */
 t_mint **mint_base;
-uint *restricted;
 uint restricted_count;
+/* The cache bases for mintau_restricted(r), at xi(r); NULL for r not used */
 t_mint ***mint_base_restricted;
 t_mint_state mint_state;
 
@@ -123,7 +123,7 @@ void prep_mintau(uint lcm) {
     mint_init_base(&mint_base);
 
     restricted_count = 0;
-    restricted = NULL;
+    mint_base_restricted = calloc(xsize(), sizeof(t_mint **));
     t_divisors *dp = &divisors[target_lcm];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint d = dp->div[di];
@@ -132,13 +132,8 @@ void prep_mintau(uint lcm) {
             break;
         if ((target_lcm / d) % h)
             continue;
-        restricted = realloc(restricted, (restricted_count + 1) * sizeof(uint));
-        restricted[restricted_count++] = d;
-    }
-    if (restricted_count) {
-        mint_base_restricted = malloc(restricted_count * sizeof(t_mint **));
-        for (uint i = 0; i < restricted_count; ++i)
-            mint_init_base(&mint_base_restricted[i]);
+        mint_init_base(&mint_base_restricted[di]);
+        ++restricted_count;
     }
 
     mint_maxdepth = mint_depth();
@@ -187,12 +182,10 @@ void done_mintau(void) {
     free(s->pfreei);
 
     mint_free_base(&mint_base);
-    if (restricted_count) {
-        free(restricted);
-        for (uint i = 0; i < restricted_count; ++i)
+    for (uint i = 0; i < xsize(); ++i)
+        if (mint_base_restricted[i])
             mint_free_base(&mint_base_restricted[i]);
-        free(mint_base_restricted);
-    }
+    free(mint_base_restricted);
 
     for (uint i = 0; i < mint_maxdepth; ++i) {
         mpz_clear(mint_best[i]);
@@ -449,14 +442,8 @@ void mintau_restricted(t_node *cur_node, mpz_t mint, uint t, uint r) {
         mpz_set_ui(mint, 1);
         return;
     }
-    uint ri = restricted_count;
-    for (uint i = 0; i < restricted_count; ++i) {
-        if (restricted[i] != r)
-            continue;
-        ri = i;
-        break;
-    }
-    assert(ri < restricted_count);
+    uint ri = xi(r);
+    assert(mint_base_restricted[ri]);
     mint_init_state(cur_node);
     mintau_restricted_r(0, mint, t, r, ri);
 }
