@@ -718,12 +718,7 @@ void diag_csv(t_node *cur_node) {
             printf("1");
         t_allocation *ap = &vp->alloc[vlevel - 1];
         mpz_lcm(Z(temp), Z(temp), ap->q);
-        uint t = ap->t;
-        for (uint di = 0; di < dp->alldiv; ++di)
-            if (t == dp->div[di]) {
-                ++tc[di];
-                break;
-            }
+        ++tc[xi(ap->t)];
     }
     gmp_printf(",%Zu", Z(temp));
     for (uint di = 0; di < dp->alldiv; ++di)
