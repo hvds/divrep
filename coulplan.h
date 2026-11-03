@@ -31,6 +31,13 @@ extern uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv);
 extern bool ja_gate(
     t_node *prev_node, t_act *cur_act, ulong p, ulong cap, bool do_walk
 );
+extern uint ja_wh;
+extern double ja_node;
+extern double ja_wset;
+extern ulong ja_nsweep;
+extern ulong ja_wsweep(
+    t_node *prev_node, t_act *cur_act, ulong p, ulong cap
+);
 #ifdef VERBOSE
 extern int ja_force;
 extern double ja_stol;
