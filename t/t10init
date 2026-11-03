@@ -46,6 +46,11 @@ sub test_init {
             [qw{ -x1e6:1e5 12 4 }], qr{^require min < max});
     expect_fail(q{fail if the range is empty},
             [qw{ -x1e6:1e6 12 4 }], qr{^require min < max});
+    expect_fail(q{-Wl is refused without -W},
+            [qw{ -Wl1 -x1e6 12 4 }], qr{^-Wl needs a -W threshold});
+    expect_fail(q{-Wl is refused with -k},
+            [qw{ -W100 -Wl1 -k1000 -x1e6 12 4 }],
+            qr{^-Wl cannot be combined with -k});
     expect_log(q{fail if not enough elements},
             502, '2 . 2^2 .', $args65);
     expect_log(q{fail if too many elements},
@@ -224,6 +229,18 @@ sub test_init {
                     . " to $max found with '@$opts'");
         }
     }
+    # -Wl makes the sweep of -W at each node that many unforced levels
+    # below the batch instead of at the batch: nothing is lost
+    for my $opts (
+        [], [qw{ -W300 }], [qw{ -W300 -Wl1 }], [qw{ -W300 -Wl2 }],
+        [qw{ -W100 -Wl3 }],
+    ) {
+        my $lines = run_test($type, [ @$opts, '-X', '-x1e12', 20, 4 ], 0);
+        my %seen;
+        ++$seen{$_} for map /^202 Candidate (\d+)/, @{ $lines->{202} // [] };
+        is(0 + keys %seen, 37,
+                "all f(20,4) candidates to 1e12 found with '@$opts'");
+    }
     # -ka shows what it chose for a batch, here a sweep as well; and the
     # cost per root it estimated with, if that came from the cost table.
     # The batch is one where a sweep is estimated to cost about half as
@@ -387,6 +404,18 @@ sub test_recover {
         [qw{ -j4 -x1e15 -f3 -k1000 -W100 6 5 }],
         ['305 b0: . 2 3^2 2^2 5^2 W(97,2,0)'],
         'b0: . 2 3^2 2^2 5^2 W(83,6,0)', 3,
+    );
+    # under -Wl a sweep below the batch resumes there, and the caps it
+    # sets below it are restored: 31^4 is above the cap at v_3
+    expect_recover(q{recover -Wl sweep},
+        [qw{ -x1e12 -W300 -Wl2 20 4 }],
+        ['305 b0: 2^4.3 5^4 2 3.7^4 W(457,5,2)'],
+        'b0: 2^4.3 5^4 2 3.7^4 W(449,5,2)',
+    );
+    expect_recover(q{recover below a -Wl sweep keeps to its cap},
+        [qw{ -x1e12 -W30 -Wl1 20 4 }],
+        ['305 b0: 2^4.3 5^4 2 3.29^4: 22 / 22'],
+        'b0: 2^4.3 5^4 2 3.7^9', 2,
     );
     # under -ka a recovered batch goes on with the bounds logged for it
     {
