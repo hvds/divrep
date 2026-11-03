@@ -283,7 +283,7 @@ void walk_v_gr(t_node *cur_node, mpz_t start) {
  * then walk a node of millions (as 30 4 did, under -ka).
  */
 #define GR_MINI 100
-static double gr_cit(uint L) {
+static double gr_cit_learnt(uint L) {
     for (uint d = 0; d < GR_MAXL; ++d) {
         uint l = L + d;
         if (l < GR_MAXL && gr_n[l] >= GR_SAMPLE && gr_i[l] >= GR_MINI)
@@ -292,7 +292,13 @@ static double gr_cit(uint L) {
         if (d <= L && gr_n[l] >= GR_SAMPLE && gr_i[l] >= GR_MINI)
             return gr_t[l] > 0 ? gr_t[l] / gr_i[l] : GR_DEFIT;
     }
-    return GR_DEFIT;
+    return -1;
+}
+
+/* as gr_cit_learnt(), GR_DEFIT while nothing is learnt */
+static double gr_cit(uint L) {
+    double c = gr_cit_learnt(L);
+    return (c < 0) ? GR_DEFIT : c;
 }
 
 /* likewise the cost per root of a walk at level L below a fixed square,
@@ -1506,11 +1512,24 @@ char *kern_restore(char *s) {
 #define WA_RUN 1
 static double wa_node(t_node *pl, uint d);
 
-/* the cost of walking the node at pl */
+/* The cost of walking the node at pl. A linear walk's cost per
+ * iteration is as learnt by level; until anything is learnt, it is
+ * priced from the cost table for the node as it is, where that can be
+ * had, rather than taken as GR_DEFIT: the first batches are planned
+ * before any walk is sampled, and may be the largest (D(28,5) -x1e26,
+ * batch 5: 0.4us by default, 3-12us actual).
+ */
 static double wa_walk(t_node *pl) {
     if (pl->have_square > 1)
         return gr_setup;
-    return pl->have_square ? gq_wcost(pl) : gr_wcost(pl);
+    if (pl->have_square)
+        return gq_wcost(pl);
+    if (gr_cit_learnt(pl->level) < 0 && walk_v_price_prep(pl)) {
+        double c = walk_v_iprice();
+        if (c >= 0)
+            return gr_wsetup(0) + c * gr_iters(pl);
+    }
+    return gr_wcost(pl);
 }
 
 /* the child for prime q applied at cl, costed to depth d; 0 if rejected */
