@@ -306,6 +306,11 @@ uint kern_keep = 0;     /* -K: positions to keep of those -k would pass over */
  */
 bool kern_auto = 0;
 bool kern_keep_given = 0;
+/* -Wa[<d>]: the bound of -W is chosen for each batch that -k does not
+ * apply to, by estimated cost to a depth of d levels (see kern_plan());
+ * 0 if not.
+ */
+uint sweep_choose = 0;
 /* -ap: as -a, and show what each batch is estimated to cost */
 bool kern_predict = 0;
 /* where to walk for -W (midp) */
@@ -869,8 +874,8 @@ void disp_batch(void) {
             sprintf(&diag_buf[l], " [rc=%u]",
                     (uint)res_array(np->level)->count);
         }
-        /* what -ka chose for it */
-        if (kern_auto)
+        /* what -ka or -Wa chose for it */
+        if (kern_auto || sweep_choose)
             kern_tags(diag_buf + strlen(diag_buf));
         if (opt_alloc)
             /* with the batch's modulus, as a guide to its size */
@@ -1707,7 +1712,8 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
         ++s;
     if (s[0] != 0 && s[0] != '\n' && s[0] != '\r')
         fail("511 unexpected text at end of init/recovery pattern: %s", s);
-    if (shown == A_MIDP && !need_midp && !kern_b && !kern_auto)
+    if (shown == A_MIDP && !need_midp && !kern_b && !kern_auto
+            && !sweep_choose)
         fail("512 recovery expected -W or -k option");
     t0 -= dtime;
 }
@@ -2726,6 +2732,8 @@ void report_init(FILE *fp, char *prog) {
         fprintf(fp, " -Wha%g:%lu", sweep_auto_f, sweep_auto_m);
     else if (sweep_gate)
         fprintf(fp, " -Wh%s", sweep_focus ? "v" : "");
+    if (sweep_choose)
+        fprintf(fp, " -Wa%u", sweep_choose);
     if (kern_auto)
         fprintf(fp, " -ka");
     else if (kern_b)
@@ -4482,7 +4490,7 @@ t_kern kern_ks;
 t_kern *kern_state(t_node *np) {
     if (np->kern)
         return np->kern;
-    if (!kern_b && !kern_auto && !kern_predict)
+    if (!kern_b && !kern_auto && !kern_predict && !sweep_choose)
         return NULL;
     assert(np->level == cur_batch_level);
     t_kern *ks = &kern_ks;
@@ -4490,11 +4498,12 @@ t_kern *kern_state(t_node *np) {
     ks->at = 0;
     ks->passed = 0;
     ks->planned = 0;
+    ks->shown = 0;
     ks->b = kern_b;
     ks->keep = kern_keep;
     ks->wcap = NULL;
     ks->on = (np->have_square == 1);
-    if (kern_auto)
+    if (kern_auto || sweep_choose)
         kern_plan(ks);
     if (ks->on) {
         kern_sets(ks->keep, &ks->at, &ks->passed);
@@ -5015,6 +5024,30 @@ static inline bool sweep_batch(t_node *np) {
     return kern_batch();
 }
 
+/* -Wa: the estimated cost of the search below the batch complete at np,
+ * as sweep_batch() and walk_midp() would make it with the caps w for a
+ * bound of -W; with w NULL, unswept. np is left as it was.
+ */
+double sweep_estimate(t_node *np, ulong *w) {
+    ulong *cap = np->cap;
+    double c = 0;
+    if (w) {
+        sweep_cap(np, w);
+        dis_batch(np, 1);
+        midppc = 0;
+        prep_midp(np);
+        for (uint mi = 0; mi < midppc; ++mi) {
+            t_midpp *mp = &midpp[mi];
+            c += wa_entry(np, mp->vi, mp->x, mp->minp, mp->maxp);
+        }
+    } else
+        dis_batch(np, cap != NULL);
+    c += wa_subtree(np);
+    np->cap = cap;
+    np->wfloor = NULL;
+    return c;
+}
+
 /* What follows any sweep of the batch complete at np: returns TRUE if
  * the allocation of unforced primes goes on below np, else FALSE, under
  * -WW or once a Pell walk has covered everything below np.
@@ -5060,12 +5093,12 @@ bool process_batch(t_node *cur_node, bool recover) {
         slong batch_id = batch_alloc++;
         cur_batch_level = cur_node->level;
         seen_valid = 1;
-        /* under -ka, choose for this batch before it is shown */
-        if (kern_auto)
+        /* under -ka or -Wa, choose for this batch before it is shown */
+        if (kern_auto || sweep_choose)
             kern_state(cur_node);
         if (debugB)
             disp_batch();
-        else if (kern_planned() && !opt_alloc)
+        else if (kern_visible() && !opt_alloc)
             disp_batch();
         if (opt_alloc) {
             /* check if this is a batch we want to process */
@@ -5088,9 +5121,9 @@ bool process_batch(t_node *cur_node, bool recover) {
     }
   do_process:
     /* a recovered batch has still to take up its choice: show it */
-    if (recover && kern_auto) {
+    if (recover && (kern_auto || sweep_choose)) {
         kern_state(cur_node);
-        if (kern_planned())
+        if (kern_visible())
             disp_batch();
     }
     if (sweep_batch(cur_node))
@@ -7063,7 +7096,7 @@ void recurse(e_is jump_continue) {
     /* A batch recovered below its start has still to take up what -ka
      * chose for it (planned in insert_stack()): show that.
      */
-    if (jump_continue != IS_BATCH && kern_planned())
+    if (jump_continue != IS_BATCH && kern_visible())
         disp_batch();
     /* Find a suitable entry point when not starting from scratch due to
      * init_pattern or recovery.
@@ -7272,6 +7305,12 @@ int main(int argc, char **argv, char **envp) {
         }
         else if (arg[1] == 'W' && arg[2] == 'l')
             sweep_level = strtoul(&arg[3], NULL, 10);
+        else if (arg[1] == 'W' && arg[2] == 'a') {
+            char *e;
+            sweep_choose = arg[3] ? strtoul(&arg[3], &e, 10) : WA_DEPTH;
+            if (arg[3] && (*e || !sweep_choose))
+                fail("-Wa needs a depth of at least 1, not '%s'", &arg[3]);
+        }
         else if (arg[1] == 'W' && arg[2] == 'h') {
             sweep_gate = 1;
             if (arg[3] == 'v')
@@ -7513,8 +7552,10 @@ int main(int argc, char **argv, char **envp) {
         fail("-Wh cannot be combined with -k or -ka");
     if (ja_wh ? auto_level != 1 : sweep_gate && auto_level)
         fail("-Whp and -Whq need -ja1, other -Wh cannot be combined with -ja");
-    /* -ka estimates each batch as searched under -ja */
-    if (kern_auto && !auto_level)
+    if (sweep_choose && (need_midp || kern_b || sweep_level || sweep_gate))
+        fail("-Wa cannot be combined with -W, -k<bound>, -Wl or -Wh");
+    /* -ka and -Wa estimate each batch as searched under -ja */
+    if ((kern_auto || sweep_choose) && !auto_level)
         auto_level = 1;
     /* Learning charges the factoring ladder its expected cost, given a
      * cost table.
@@ -7624,6 +7665,8 @@ int main(int argc, char **argv, char **envp) {
 
     if (ja_wh > 1)
         report("000 -Whp: %lu sweeps chosen\n", ja_nsweep);
+    if (sweep_choose)
+        wa_report();
     if ((opt_alloc & 2) == 0) {
         double tz = utime();
         report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)",

@@ -131,6 +131,8 @@ extern ulong kern_b;
 extern uint kern_keep;
 extern bool kern_auto;
 extern bool kern_keep_given;
+extern uint sweep_choose;
+extern uint maxlevel;
 extern slong batch_alloc;
 extern uint strategy;
 extern t_fact nf;
@@ -148,9 +150,12 @@ extern ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt);
 extern e_xr classify_x(
     t_node *prev_node, uint vi, uint x, ulong p, ulong limp
 );
+extern bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x);
+extern uint best_v(t_act *cur_act);
+extern bool gate_walk(t_node *prev_node, t_act *cur_act, ulong p, ulong limp);
+extern double sweep_estimate(t_node *np, ulong *w);
 #ifdef VERBOSE
 extern const char *ja_pattern(t_node *cur_node);
-extern bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x);
 #endif
 
 /* True if p is never allocated as an unforced prime, wherever it lies:
@@ -221,10 +226,16 @@ static inline mpz_t *kern_q(uint vi) {
     return &vp->alloc[vil - 1].q;
 }
 
-/* true if -ka has made a choice for the current batch */
+/* true if -ka or -Wa has made a choice for the current batch */
 static inline bool kern_planned(void) {
     t_kern *ks = kern_cur();
     return ks && ks->planned;
+}
+
+/* true if the current batch is to be shown for what was chosen */
+static inline bool kern_visible(void) {
+    t_kern *ks = kern_cur();
+    return ks && ks->planned && ks->shown;
 }
 
 /* The x of the previous allocation at v_i if it was unforced, else 0. */
