@@ -225,13 +225,16 @@ sub test_init {
         }
     }
     # -ka shows what it chose for a batch, here a sweep as well; and the
-    # cost per root it estimated with, if that came from the cost table
+    # cost per root it estimated with, if that came from the cost table.
+    # The batch is one where a sweep is estimated to cost about half as
+    # much as none, so that the choice survives a rebuilt cost table.
     {
-        my $lines = run_test($type, [qw{ -a -ka -x1e20 -f3 6 5 }], 0);
+        my $lines = run_test($type, [qw{ -a -ka -x1e16 18 3 }], 0);
         my $tags = join ' ', map "\\[$_\\]",
-                qw{ sq=1 rc=8 k=\d+ W=\d+ est=[\d.]+ };
-        like($lines->{203}[0] // '',
-                qr{^203 b0: \. 2 3\^2 2\^2 5\^2 $tags (?:\[rootus=[\d.]+\] )?\[aq=1800\] },
+                qw{ sq=1 rc=2 k=\d+ W=\d+ est=[\d.]+ };
+        my($line) = grep /^203 b16: /, @{ $lines->{203} // [] };
+        like($line // '',
+                qr{^203 b16: \. 2 3\^2 $tags (?:\[rootus=[\d.]+\] )?\[aq=36\] },
                 '-ka shows the bounds chosen for a batch');
     }
     # -ka takes a batch from STRATEGY_6X where -k is estimated to cost less,
