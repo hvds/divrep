@@ -132,7 +132,8 @@ static inline double gr_now(void) {
 /* The cost of what the run has done, counted rather than timed, so that
  * learning depends neither on the machine's load nor on luck, and two
  * identical runs make identical choices: walk iterations and inverse
- * filter entries tested, primes tried by walk_1_set() and the recursion
+ * filter entries tested, primes tried by walk_1_set(), the recursion
+ * and the -W sweep, counted per power the sweep tries, as for a loop
  * (those reaching apply_single() below a fixed square at cprimesq, and
  * elsewhere those rejected only there at cfail more), each
  * at its cost from the cost table; each test's preparation by where
