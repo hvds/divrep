@@ -34,6 +34,8 @@ enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
 /* The modelled cost per root of walking a single fixed power, or a
  * negative value if the table cannot price it.
  */
+extern double cm_iter_price(double z, mpz_t **q, uint *t, uint *need_prime,
+        uint npc, uint *need_other, uint noc, t_mod *inv, uint inv_count);
 extern double cm_root_price(double z, mpz_t **q, uint *t, uint sqi,
         uint *need_prime, uint npc, uint *need_other, uint noc, t_mod *inv,
         uint inv_count);

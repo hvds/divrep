@@ -1748,6 +1748,61 @@ double cm_root_cost(
     return CMC(CM_SQLOOP0) + tests * CMC(CM_SQTEST) + pinv * after;
 }
 
+/* The modelled cost per iteration of a linear walk, for a search to z:
+ * the loop, and for those that pass the inverse filter, the tests of
+ * the positions, as mock_walk_v() charges it. The other arguments are
+ * as walk_v() prepares them. Returns a negative value if there is no
+ * cost table, or it lacks a row for one of the tests.
+ */
+#define CM_ITER_CACHE 4096
+#define CM_ITER_BITS 12
+static struct {
+    ulong key;
+    double tail;    /* negative if it could not be had */
+} cm_iter_cache[CM_ITER_CACHE];
+double cm_iter_price(
+    double z, mpz_t **q, uint *t, uint *need_prime, uint npc,
+    uint *need_other, uint noc, t_mod *inv, uint inv_count
+) {
+    if (!cm_have_table())
+        return -1;
+    /* The tail is costly to model, and for estimates need not be exact:
+     * it is kept by the tau left and the size of q at each position, to
+     * the nearest CM_ITER_BITS bits, and the bits of z.
+     */
+    ulong key = cm_hash(0xcbf29ce484222325UL, t, k * sizeof(uint));
+    for (uint vi = 0; vi < k; ++vi) {
+        uint b = (uint)(mpz_sizeinbase(*q[vi], 2) + CM_ITER_BITS / 2)
+                / CM_ITER_BITS;
+        key = cm_hash(key, &b, sizeof(b));
+    }
+    uint zb = (uint)log2(z);
+    key = cm_hash(key, &zb, sizeof(zb));
+    if (key == 0)
+        key = 1;
+    uint ci = key % CM_ITER_CACHE;
+    double tail;
+    if (cm_iter_cache[ci].key == key)
+        tail = cm_iter_cache[ci].tail;
+    else {
+        ulong missing = cm_missing;
+        ulong alloc[k * maxfact];
+        t_cmwalk wk;
+        cm_walk_init(&wk, CMK_LINEAR, alloc, k, 0, 0);
+        tail = cm_tail(log2(z), q, t, need_prime, npc, need_other, noc,
+                &wk, inv, inv_count, NULL);
+        if (cm_missing != missing)
+            tail = -1;
+        cm_iter_cache[ci].key = key;
+        cm_iter_cache[ci].tail = tail;
+    }
+    if (tail < 0)
+        return -1;
+    double tests;
+    double pinv = cm_pinv(inv, inv_count, &tests);
+    return CMC(CM_LOOP0) + tests * CMC(CM_LOOPTEST) + pinv * tail;
+}
+
 /* The modelled cost per root of walking a single fixed power at position
  * sqi, for a search to z: as cm_root_cost(), for the caller to estimate
  * with. Returns a negative value if there is no cost table, or it lacks
