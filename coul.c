@@ -282,6 +282,14 @@ uint sweep_level = 0;
  */
 bool sweep_gate = 0;
 bool sweep_focus = 0;
+/* -Wha<f>[:<m>] (experimental): as -Whv, with the threshold chosen at each
+ * node: Wf / f, where Wf is the highest cap under which the gate would
+ * recurse, if Wf is at least m. See gate_flips().
+ */
+double sweep_auto_f = 0;
+ulong sweep_auto_m = 60;
+ulong *sweep_w = NULL;      /* the thresholds for the sweep being made */
+ulong **sweep_wl = NULL;    /* under -Wha, storage for each level's */
 int sweep_only_vi = -1;     /* under -Whv, the one position swept */
 /* -k: where a batch fixes one square, each position with tau == 2 (mod 4)
  * left takes one more prime to an odd power, and that power leaves a
@@ -1199,6 +1207,7 @@ void free_levels(void) {
 
 void init_levels(void) {
     nodes = calloc(maxlevel + 1, sizeof(t_node));
+    sweep_wl = calloc(maxlevel + 1, sizeof(ulong *));
     acts = calloc(maxlevel + 1, sizeof(t_act));
     cur_vlevel = calloc(k, sizeof(uint));
     for (uint i = 0; i < maxlevel; ++i) {
@@ -2710,7 +2719,9 @@ void report_init(FILE *fp, char *prog) {
     }
     if (sweep_level)
         fprintf(fp, " -Wl%u", sweep_level);
-    if (sweep_gate)
+    if (sweep_auto_f)
+        fprintf(fp, " -Wha%g:%lu", sweep_auto_f, sweep_auto_m);
+    else if (sweep_gate)
         fprintf(fp, " -Wh%s", sweep_focus ? "v" : "");
     if (kern_auto)
         fprintf(fp, " -ka");
@@ -6092,7 +6103,7 @@ static bool gate_sweep(t_node *prev_node, t_act *cur_act) {
     t_act save = *cur_act;
     if (sweep_focus)
         sweep_only_vi = (int)cur_act->vi;
-    sweep_cap(prev_node, maxp);
+    sweep_cap(prev_node, sweep_w);
     walk_midp(prev_node, 0);
     sweep_only_vi = -1;
     *cur_act = save;
@@ -6107,11 +6118,33 @@ static inline bool gate_flips(
 ) {
     uint x = divisors[cur_act->ti].div[cur_act->di];
     uint vi = cur_act->vi;
+    if (sweep_auto_f) {
+        if (!gate_walk(prev_node, cur_act, p, limp))
+            return 0;
+        /* the gate recurses for a cap of at most p + r_walk */
+        double wf = (double)p + mpz_get_d(Z(r_walk));
+        if (wf < (double)sweep_auto_m)
+            return 0;
+        double wd = wf / sweep_auto_f;
+        if (wd <= (double)p || (limp && wd >= (double)limp))
+            return 0;
+        uint l = prev_node->level;
+        if (!sweep_wl[l])
+            sweep_wl[l] = malloc(xsize() * sizeof(ulong));
+        ulong *w = sweep_wl[l];
+        memset(w, 0, xsize() * sizeof(ulong));
+        w[xi(x)] = (ulong)wd;
+        if (!w_sweeps(prev_node, w, vi, x))
+            return 0;
+        sweep_w = w;
+        return !gate_walk(prev_node, cur_act, p, w[xi(x)]);
+    }
     if (!w_sweeps(prev_node, maxp, vi, x))
         return 0;
     ulong w = maxp[xi(x)];
     if (limp && limp <= w)
         return 0;
+    sweep_w = maxp;
     return gate_walk(prev_node, cur_act, p, limp)
             && !gate_walk(prev_node, cur_act, p, w);
 }
@@ -7212,7 +7245,18 @@ int main(int argc, char **argv, char **envp) {
             sweep_gate = 1;
             if (arg[3] == 'v')
                 sweep_focus = 1;
-            else if (arg[3])
+            else if (arg[3] == 'a') {
+                sweep_focus = 1;
+                need_midp = 1;
+                char *e;
+                sweep_auto_f = strtod(&arg[4], &e);
+                if (e == &arg[4])
+                    sweep_auto_f = 4;
+                if (*e == ':')
+                    sweep_auto_m = strtoul(e + 1, NULL, 10);
+                if (!(sweep_auto_f > 1))
+                    fail("-Wha needs a divisor above 1, not '%s'", &arg[4]);
+            } else if (arg[3])
                 fail("unknown option '%s'", arg);
         }
         else if (arg[1] == 'W') {
