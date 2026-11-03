@@ -14,6 +14,10 @@ extern void kern_plan(t_kern *ks);
 extern void kern_tags(char *buf);
 extern void kern_show(void);
 extern void kern_show_total(void);
+#define WA_DEPTH 4      /* the depth for -Wa without one */
+extern double wa_subtree(t_node *np);
+extern double wa_entry(t_node *np, uint vi, uint x, ulong lo, ulong hi);
+extern void wa_report(void);
 extern void ja_save(FILE *fp);
 extern void ja_restore(char *s);
 extern void ja_learnt(t_act *lp);
