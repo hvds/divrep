@@ -272,6 +272,10 @@ char *sminpx = NULL, *smaxpx = NULL, *smidpx = NULL;
 bool highpow = 0;   /* allocate even p^{2^x-1} (based on roughness) */
 ulong limp_cap = 0;
 bool midp_only = 0, need_midp = 0;
+/* -Wl<d> (experimental): the -W sweep is made at each node d unforced
+ * allocations below its batch, instead of at the batch; see sweep_mid().
+ */
+uint sweep_level = 0;
 /* -k: where a batch fixes one square, each position with tau == 2 (mod 4)
  * left takes one more prime to an odd power, and that power leaves a
  * second square. walk_midp() tries every such power with p <= kern_b,
@@ -2697,6 +2701,8 @@ void report_init(FILE *fp, char *prog) {
         char *ww = midp_only ? "W" : "";
         fprintf(fp, " -W%sx%s", ww, smidpx);
     }
+    if (sweep_level)
+        fprintf(fp, " -Wl%u", sweep_level);
     if (kern_auto)
         fprintf(fp, " -ka");
     else if (kern_b)
@@ -4961,12 +4967,13 @@ bool apply_batch(
  */
 static inline bool sweep_batch(t_node *np) {
     t_kern *ks = kern_state(np);
-    dis_batch(np, (ks && ks->wcap) || need_midp || np->cap);
+    bool sweep_here = need_midp && !sweep_level;
+    dis_batch(np, (ks && ks->wcap) || sweep_here || np->cap);
     if (ks && ks->wcap) {
         sweep_cap(np, ks->wcap);
         return 1;
     }
-    if (need_midp) {
+    if (sweep_here) {
         sweep_cap(np, maxp);
         return 1;
     }
@@ -4985,6 +4992,20 @@ static inline bool after_sweep(t_node *np) {
         walk_v(np, Z(zero));
         return 0;
     }
+    return 1;
+}
+
+/* Under -Wl<d>, the -W sweep is made not at the batch but at each node
+ * reached by d unforced allocations below it: if np is such a node, set
+ * the caps below it as sweep_batch() would, and return TRUE if it is to
+ * be swept.
+ */
+static inline bool sweep_mid(t_node *np) {
+    if (!sweep_level || np->level != cur_batch_level + sweep_level)
+        return 0;
+    if (acts[np->level].action != A_UNFORCED)
+        return 0;
+    sweep_cap(np, maxp);
     return 1;
 }
 
@@ -6517,6 +6538,8 @@ e_is insert_stack(void) {
             }
             if (!insert_float(rstack->f, NULL, vi, &jump, 0))
                 break;
+            /* under -Wl, cap below the node swept as start_act() does */
+            sweep_mid(&nodes[level - 1]);
         }
 
       insert_check:
@@ -6871,10 +6894,14 @@ static inline void start_walk(t_act *cur_act) {
 #endif
 }
 
-/* Start the act at a new level as choose_action() decides. Returns TRUE
- * if it has made its first child.
+/* Start the act at a new level as choose_action() decides, first making
+ * any sweep under -Wl at the node above it if 'sweep' is set. Returns
+ * TRUE if it has made its first child.
  */
-static inline bool start_act(t_act *cur_act) {
+static inline bool start_act(t_act *cur_act, bool sweep) {
+    t_node *prev_node = &nodes[cur_act->level - 1];
+    if (sweep && sweep_mid(prev_node))
+        walk_midp(prev_node, 0);
     switch (choose_action(cur_act, 1)) {
       case CH_FORCED:
         return try_batches(cur_act, 0);
@@ -6935,11 +6962,20 @@ void recurse(e_is jump_continue) {
         if (process_batch(&nodes[level - 1], batch_alloc > 0))
             goto deeper;
         goto unwind;
-      case IS_MIDP:
-        walk_midp(&nodes[level - 1], 1);
-        if (after_sweep(&nodes[level - 1]))
+      case IS_MIDP: {
+        t_node *np = &nodes[level - 1];
+        walk_midp(np, 1);
+        if (np->level > cur_batch_level) {
+            /* a sweep under -Wl: the act below it starts as usual */
+            ++countr;
+            if (start_act(&acts[level], 0))
+                goto made;
+            goto unwind;
+        }
+        if (after_sweep(np))
             goto deeper;
         goto unwind;
+      }
       case IS_6X: {
         e_choice ch = choose_action(actp, 0);    /* re-verify */
         if (ch != CH_6X)
@@ -6962,7 +6998,7 @@ void recurse(e_is jump_continue) {
     ++level;
   deeper:
     ++countr;
-    if (start_act(&acts[level]))
+    if (start_act(&acts[level], 1))
         goto made;
   unwind:
     if (ja_pending(&acts[level]))
@@ -7110,6 +7146,8 @@ int main(int argc, char **argv, char **envp) {
             kern_keep = strtoul(&arg[2], NULL, 10);
             kern_keep_given = 1;
         }
+        else if (arg[1] == 'W' && arg[2] == 'l')
+            sweep_level = strtoul(&arg[3], NULL, 10);
         else if (arg[1] == 'W') {
             need_midp = 1;
             char *w = &arg[2];
@@ -7311,6 +7349,10 @@ int main(int argc, char **argv, char **envp) {
         fail("require min < max, not %Zu:%Zu", zmin, zmax);
     if (kern_auto && kern_b)
         fail("-ka and -k<bound> cannot be combined");
+    if (sweep_level && (!need_midp || midp_only))
+        fail("-Wl needs a -W threshold, and cannot be combined with -WW");
+    if (sweep_level && (kern_b || kern_auto))
+        fail("-Wl cannot be combined with -k or -ka");
     /* -ka estimates each batch as searched under -ja */
     if (kern_auto && !auto_level)
         auto_level = 1;
