@@ -4792,6 +4792,8 @@ void walk_midp(t_node *prev_node, bool recover) {
                 }
                 continue;
             }
+            /* counted as for a loop of allocations, see cc_work() */
+            ++cc.rec_prime;
             if (used)
                 continue;
             vi = mp->vi;
@@ -4815,14 +4817,22 @@ void walk_midp(t_node *prev_node, bool recover) {
                     diag_attempt(cur_node, vi, p, x);
                 continue;
             }
+            if (prev_node->have_square)
+                ++cc.rec_sq;
             if (apply_single(prev_node, cur_node, vi, p, x)) {
+                ++cc.rec_applied;
                 if (need_work)
                     diag_plain(cur_node);
                 GS_ORIGIN('M');
                 walk_v(cur_node, Z(zero));
                 --cur_vlevel[vi];   /* unallocate */
-            } else if (need_work)
-                diag_attempt(cur_node, vi, p, x);
+            } else {
+                /* below a fixed square, priced with the roots */
+                if (!prev_node->have_square)
+                    ++cc.rec_fail;
+                if (need_work)
+                    diag_attempt(cur_node, vi, p, x);
+            }
           next_mi:
             ;
         }
