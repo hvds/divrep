@@ -155,6 +155,7 @@ extern bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x);
 extern uint best_v(t_act *cur_act);
 extern bool gate_walk(t_node *prev_node, t_act *cur_act, ulong p, ulong limp);
 extern double sweep_estimate(t_node *np, ulong *w);
+extern ulong sweep_limit(t_node *np, ulong *w);
 #ifdef VERBOSE
 extern const char *ja_pattern(t_node *cur_node);
 #endif

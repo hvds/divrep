@@ -1239,20 +1239,41 @@ static double kern_price(t_kern *ks) {
     return ke_plain();
 }
 
-/* -Wa: the bounds of -W tried, wider than -ka's: low bounds are more
- * often the best where -k does not apply.
+/* -Wa: the sampling of loops for an estimate (see wa_loop()), coarse for
+ * the search over bounds and fine to settle a near tie.
  */
-static const ulong wa_wgrid[] = {
-    100UL, 300UL, 1000UL, 3000UL, 10000UL, 30000UL, 100000UL, 300000UL,
-    1000000UL
-};
-#define WA_NW (sizeof(wa_wgrid) / sizeof(wa_wgrid[0]))
+typedef struct {
+    uint exact, pts, run;
+} t_wasample;
+static const t_wasample wa_coarse = { 2, 4, 1 };
+static const t_wasample wa_fine = { 8, 6, 2 };
+static t_wasample wa_sample = { 2, 4, 1 };
+#define WA_TIE 0.1      /* estimates this close are settled finely */
+#define WA_WMIN 30      /* the least bound of -W tried */
+#define WA_MAXTRY 40    /* the most bounds tried, enough for 3.10^19 */
 
-/* -Wa: choose the bound of -W for the current batch as the cheapest by
- * sweep_estimate() of no sweep and each of wa_wgrid[], into ks with
- * its estimate. A batch estimated to cost less than KE_PLAN_MIN unswept
- * is not worth choosing for, and is not swept. cap is scratch space for
- * the caps.
+/* -Wa: the estimate for the current batch at np with a bound w of -W,
+ * 0 for none, at the sampling given. cap is scratch space for the caps.
+ */
+static double wa_try(t_node *np, ulong w, ulong *cap, t_wasample sm) {
+    wa_sample = sm;
+    if (!w)
+        return sweep_estimate(np, NULL);
+    kern_w_cap(w, cap);
+    return sweep_estimate(np, cap);
+}
+
+/* -Wa: choose the bound of -W for the current batch, into ks with its
+ * estimate. The bounds tried are 1 and 3 times a power of 10, from the
+ * greatest below the most the sweep could try (above which it sweeps
+ * nothing) down to WA_WMIN, so that they scale with zmax; the estimates
+ * fall towards the best and rise steeply below it, so the search stops
+ * once two in a row are no better (or, while none beats no sweep, two in
+ * a row are worse than it by more than WA_TIE). If the best and the next best by
+ * bound are within WA_TIE, the two (and no sweep) are estimated again
+ * with fine sampling. A batch estimated to cost less than KE_PLAN_MIN
+ * unswept is not worth choosing for, and is not swept. cap is scratch
+ * space for the caps.
  */
 static ulong wa_nplan = 0, wa_nswept = 0;
 static double wa_time = 0;
@@ -1260,21 +1281,67 @@ static void wa_plan(t_kern *ks, ulong *cap) {
     t_node *np = &nodes[cur_batch_level];
     double t0 = gr_now();
     t_cc save = cc;
-    double best = sweep_estimate(np, NULL);
-    if (best >= KE_PLAN_MIN) {
+    double e0 = wa_try(np, 0, cap, wa_coarse);
+    double best = e0;
+    ulong top = 0;
+    if (e0 >= KE_PLAN_MIN) {
+        kern_w_cap(1, cap);
+        top = sweep_limit(np, cap);
+    }
+    if (top > WA_WMIN) {
         ++wa_nplan;
-        for (uint wi = 0; wi < WA_NW; ++wi) {
-            ulong w = wa_wgrid[wi];
-            kern_w_cap(w, cap);
-            double c = sweep_estimate(np, cap);
-            if (c < best) {
-                best = c;
-                ks->w = w;
+        /* the greatest 10^a or 3.10^a below top */
+        ulong w = 1;
+        while (w <= top / 10)
+            w *= 10;
+        if (3 * w < top)
+            w *= 3;
+        /* the bounds tried in order, after no sweep, and their estimates */
+        ulong ws[WA_MAXTRY + 1];
+        double es[WA_MAXTRY + 1];
+        uint n = 0, bi = 0, worse = 0;
+        ws[n] = 0;
+        es[n++] = e0;
+        while (w >= WA_WMIN && n <= WA_MAXTRY) {
+            ws[n] = w;
+            es[n] = wa_try(np, w, cap, wa_coarse);
+            /* While nothing beats no sweep, bounds that sweep too little
+             * to matter estimate much as it does; only those clearly
+             * worse count.
+             */
+            if (es[n] < es[bi]) {
+                bi = n;
+                worse = 0;
+            } else if ((bi || es[n] > e0 * (1 + WA_TIE)) && ++worse >= 2) {
+                ++n;
+                break;
             }
+            ++n;
+            /* 3.10^a, then 10^a */
+            w = (w % 3 == 0) ? w / 3 : w * 3 / 10;
         }
-        if (ks->w)
+        ulong bw = ws[bi];
+        best = es[bi];
+        /* a near tie with a bound either side is settled finely */
+        uint ni = bi;
+        if (bi > 0)
+            ni = bi - 1;
+        if (bi + 1 < n && (ni == bi || es[bi + 1] < es[ni]))
+            ni = bi + 1;
+        if (bi && ni != bi && es[ni] < best * (1 + WA_TIE)) {
+            double fb = wa_try(np, bw, cap, wa_fine);
+            double fn = wa_try(np, ws[ni], cap, wa_fine);
+            if (fn < fb) {
+                bw = ws[ni];
+                fb = fn;
+            }
+            best = fb;
+        }
+        ks->w = bw;
+        if (bw)
             ++wa_nswept;
     }
+    wa_sample = wa_coarse;
     ks->est = best;
     cc = save;
     wa_time += gr_now() - t0;
@@ -1494,22 +1561,21 @@ char *kern_restore(char *s) {
  * of sweep_choose levels: at each node, the position best_v() chooses
  * there, and for each x the choice of gate_walk(); a loop costs its own
  * part (as gr_own() or gq_loop()) and its children, those of the first
- * WA_EXACT primes each applied and costed, then WA_PTS points spread
- * geometrically over the rest, each of WA_RUN primes, and summed as a
- * power of the prime between them (see gr_seg()). A node at the depth,
+ * few primes each applied and costed, then a few points spread
+ * geometrically over the rest, each of a few primes, and summed as a
+ * power of the prime between them (see gr_seg()), as wa_sample has
+ * it. A node at the depth,
  * or one beyond what the estimate models (a special strategy, a flip,
  * more than one square fixed), is priced as a walk.
  * Under -ja1 to depth 4 (counted cost, against the best of fixed -W in
  * 300..30000): D(12,7) -x155385466971 5.53 against 5.80; D(12,8) -f5
- * -x15724736975643 33.96 against 36.55; D(20,6) -x1e20 5.52 against
- * 7.51; D(28,7) -x1e29 4.61 against 5.42; D(20,5) -x1.5e15 0.327
- * against 0.324; but D(28,5) -x1e26 60.94 against 58.44, where the cost
- * per iteration of the walks below a sweep is far above that learnt by
- * level (see gr_cit()). Choosing took 0.03-0.22s of CPU time.
+ * -x15724736975643 33.87 against 36.55; D(20,6) -x1e18, 1e19, 1e20
+ * 0.92, 2.11, 5.52 against 1.04, 2.22, 7.51; D(28,7) -x1e27, 1e28, 1e29
+ * 1.07, 2.21, 4.61 against 1.14, 2.28, 5.42; D(20,5) -x1.5e15 0.327
+ * against 0.324; but D(28,5) -x1e26 60.37 against 58.44. Choosing took
+ * 0.04-0.38s of CPU time.
  */
-#define WA_EXACT 2
-#define WA_PTS 4
-#define WA_RUN 1
+#define WA_MAXPTS 8     /* the most points wa_sample may have */
 static double wa_node(t_node *pl, uint d);
 
 /* The cost of walking the node at pl. A linear walk's cost per
@@ -1554,7 +1620,7 @@ static double wa_loop(
     double total = pl->have_square ? gq_loop(pl, p, cap, x).own
             : gr_own(pl, p, cap, x);
     /* the children's costs fall steeply with q: the first carry most */
-    for (uint m = 0; m < WA_EXACT; ) {
+    for (uint m = 0; m < wa_sample.exact; ) {
         p = next_prime(p);
         if (p > cap)
             return total;
@@ -1563,20 +1629,21 @@ static double wa_loop(
         total += wa_one(pl, cl, vi, p, x, d);
         ++m;
     }
-    if (gr_li(cap) - gr_li(p) <= WA_PTS * WA_RUN) {
+    if (gr_li(cap) - gr_li(p) <= wa_sample.pts * wa_sample.run) {
         for (ulong q = next_prime(p); q <= cap; q = next_prime(q))
             if (!known_prime(pl, q))
                 total += wa_one(pl, cl, vi, q, x, d);
         return total;
     }
-    double a = p + 1, b = cap, qs[WA_PTS], ms[WA_PTS];
-    for (uint j = 0; j < WA_PTS; ++j) {
-        double q0 = a * pow(b / a, (double)j / (WA_PTS - 1));
+    uint pts = wa_sample.pts;
+    double a = p + 1, b = cap, qs[WA_MAXPTS], ms[WA_MAXPTS];
+    for (uint j = 0; j < pts; ++j) {
+        double q0 = a * pow(b / a, (double)j / (pts - 1));
         ulong q = (ulong)q0;
         double sum = 0;
         uint m = 0;
         q = (q > p) ? q - 1 : p;
-        while (m < WA_RUN) {
+        while (m < wa_sample.run) {
             q = next_prime(q);
             if (q > cap)
                 break;
@@ -1588,7 +1655,7 @@ static double wa_loop(
         qs[j] = q0;
         ms[j] = m ? sum / m : 0;
     }
-    for (uint j = 0; j + 1 < WA_PTS; ++j)
+    for (uint j = 0; j + 1 < pts; ++j)
         total += gr_seg(qs[j], qs[j + 1], ms[j], ms[j + 1]);
     return total;
 }
