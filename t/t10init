@@ -233,13 +233,27 @@ sub test_init {
     # below the batch instead of at the batch: nothing is lost
     for my $opts (
         [], [qw{ -W300 }], [qw{ -W300 -Wl1 }], [qw{ -W300 -Wl2 }],
-        [qw{ -W100 -Wl3 }],
+        [qw{ -W100 -Wl3 }], [qw{ -Wa }],
     ) {
         my $lines = run_test($type, [ @$opts, '-X', '-x1e12', 20, 4 ], 0);
         my %seen;
         ++$seen{$_} for map /^202 Candidate (\d+)/, @{ $lines->{202} // [] };
         is(0 + keys %seen, 37,
                 "all f(20,4) candidates to 1e12 found with '@$opts'");
+    }
+    # -Wa chooses a bound of -W for each batch worth choosing for: here
+    # some are swept, and nothing is lost
+    {
+        my $fh = temp_log([]);
+        my $lines = run_test($type, [
+            '-r' . $fh->filename, qw{ -Wa -X -x1500000000000000 20 5 },
+        ], 1);
+        # not asked for by -d[bB], so the 203 lines go only to the log
+        $lines->{203} = log_203($fh);
+        ok(scalar(grep /\[W=\d+\]/, @{ $lines->{203} // [] }),
+                '-Wa sweeps some batches of f(20,5)');
+        is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
+                '1428502133048749', 'f(20,5) candidates to 1.5e15 with -Wa');
     }
     # -ka shows what it chose for a batch, here a sweep as well; and the
     # cost per root it estimated with, if that came from the cost table.
@@ -435,6 +449,20 @@ sub test_recover {
         ok(!$lines->{203}, 'recover -ka: 203 line not shown');
         is($lines->{''}[-1] // '', 'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
                 'recover -ka pass');
+    }
+    # under -Wa likewise, with the bound of -W logged for it
+    {
+        my $fh = temp_log([
+            '316 0 0 k1:0,300,0', '305 b0: . 2^4.3 . 2 3 W(3499,5,3)',
+        ]);
+        my $lines = run_test($type, [
+            '-dW1', '-r' . $fh->filename, qw{ -X -x1500000000000000 -Wa 20 5 },
+        ], 1);
+        $lines->{203} = log_203($fh);
+        like($lines->{203}[0] // '', qr{^203 b0: .* \[W=300\] \(},
+                'recover -Wa: bound as logged');
+        is($lines->{''}[-1] // '', 'b0: . 2^4.3 . 2 3 W(3491,5,3)',
+                'recover -Wa sweep');
     }
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
@@ -1107,6 +1135,16 @@ sub temp_log {
     print $fh "$_\n" for @$content;
     $fh->close;
     return $fh;
+}
+
+# Returns an arrayref of the 203 lines in the log of $fh.
+sub log_203 {
+    my($fh) = @_;
+    open my $log, '<', $fh->filename or die "Could not read log: $!";
+    my @lines = grep /^203 /, <$log>;
+    close $log;
+    chomp @lines;
+    return \@lines;
 }
 
 # Expect the $dw'th progress line after recovery (default the first).
