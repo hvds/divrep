@@ -356,6 +356,25 @@ static double gr_psum(double lo, double hi, double s) {
     return sum * h / 3;
 }
 
+/* The children of the primes in [lo, hi], each costing m0 at lo and m1
+ * at hi, as a power of the prime between them.
+ */
+static double gr_seg(double lo, double hi, double m0, double m1) {
+    if (hi <= lo)
+        return 0;
+    if (m0 <= 0 || m1 <= 0)
+        return (gr_li(hi) - gr_li(lo)) * (m0 + m1) / 2;
+    double a = log(lo), b = log(hi), h = (b - a) / 16, sum = 0;
+    double e = log(m1 / m0) / (b - a);
+    for (uint i = 0; i <= 16; ++i) {
+        double y = a + i * h;
+        /* m0 (q / lo)^e for each prime q, density 1 / log(q) */
+        double f = m0 * exp(e * (y - a) + y) / y;
+        sum += f * ((i == 0 || i == 16) ? 1 : (i & 1) ? 4 : 2);
+    }
+    return sum * h / 3;
+}
+
 /* Of the primes in [lo, hi] for p^{x-1} below lv, those expected to
  * reach apply_single() and be rejected there, rather than in single
  * limbs by reject_single(). That needs r = (zmax - rq) / aq in a limb,
@@ -551,11 +570,10 @@ static ulong gq_resroots(ulong dm, ulong qm, uint g, ulong q) {
     return (powmod_u64(a, (q - 1) / h, q) == 1) ? h : 0;
 }
 
-/* The same below one fixed value v_j = q_j.z^g, for a loop at a position
- * that -k applies to (see gq_costable()).
- * A prime q has d roots of the fixed power with chance 1/d, so a child
- * expects the node's roots over q^{x-1}, and the walks of the children
- * sum as in gr_recurse(). Primes giving a least v_0 within zmax (all up
+/* A loop below one fixed value v_j = q_j.z^g, at a position that -k
+ * applies to (see gq_costable()), over p^{x-1} for p in [p, cap] below
+ * the node at prev_node: its own cost, and the children it walks.
+ * Primes giving a least v_0 within zmax (all up
  * to the root of zl = zmax / aq, and above it each with chance
  * zl / q^{x-1}) go on to the test mod q of reject_square(), and only the
  * fraction f that pass it (see gq_resfrac()) reach apply_single(), have
@@ -565,14 +583,14 @@ static ulong gq_resroots(ulong dm, ulong qm, uint g, ulong q) {
  * each with chance 2.endr / q^2, at the cost of a root mod q for those
  * passing the test mod q.
  */
-static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
-    uint L = prev_node->level;
-    double za = gq_roots(prev_node);
+typedef struct {
+    double own;     /* the loop's own cost */
+    double nw;      /* the children it walks */
+} t_gqloop;
+static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
     double zl = mpz_get_d(zmax) / mpz_get_d(prev_node->aq);
-    double ci = gq_cit(L + 1);
     double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
     double np = gr_li(b) - gr_li(a) + 1;
-    double cs = gq_wsetup(prev_node);
     uint sql = cur_vlevel[sq0];
     uint g = sqg[sql - 1];
     /* those reaching the test mod q */
@@ -594,13 +612,32 @@ static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
         double mE = (ql > mR) ? ql : mR;
         double nr = (b > mR) ? (((ql > mR) ? gr_li((ql < b) ? ql : b)
                 - gr_li(mR) : 0) + zl * gr_psum(mE, b, s)) / 2 : 0;
-        return np * gr_apply + ct + nr * GQ_ROOT
-                + ns * (gq_prime + gq_apply + cs)
-                + ci * za * gr_psum(a, b, s);
+        t_gqloop r = {
+            .own = np * gr_apply + ct + nr * GQ_ROOT
+                    + ns * (gq_prime + gq_apply),
+            .nw = ns,
+        };
+        return r;
     }
-    return np * gr_apply + ct
-            + nv * gq_resfrac(g) * (gq_prime + gq_apply + cs)
-            + ci * za * gr_psum(a, b, s);
+    double nw = nv * gq_resfrac(g);
+    t_gqloop r = {
+        .own = np * gr_apply + ct + nw * (gq_prime + gq_apply),
+        .nw = nw,
+    };
+    return r;
+}
+
+/* As gr_recurse() below one fixed square: the loop as gq_loop() gives
+ * it, and the walks of its children. A prime q has d roots of the fixed
+ * power with chance 1/d, so a child expects the node's roots over
+ * q^{x-1}, and the walks sum as in gr_recurse().
+ */
+static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
+    t_gqloop l = gq_loop(prev_node, p, cap, x);
+    double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
+    return l.own + l.nw * gq_wsetup(prev_node)
+            + gq_cit(prev_node->level + 1) * gq_roots(prev_node)
+            * gr_psum(a, b, s);
 }
 
 /* the estimated cost of walking the node at lv now, likewise */
@@ -1196,6 +1233,53 @@ static double kern_price(t_kern *ks) {
     return ke_plain();
 }
 
+/* -Wa: the bounds of -W tried, wider than -ka's: low bounds are more
+ * often the best where -k does not apply.
+ */
+static const ulong wa_wgrid[] = {
+    100UL, 300UL, 1000UL, 3000UL, 10000UL, 30000UL, 100000UL, 300000UL,
+    1000000UL
+};
+#define WA_NW (sizeof(wa_wgrid) / sizeof(wa_wgrid[0]))
+
+/* -Wa: choose the bound of -W for the current batch as the cheapest by
+ * sweep_estimate() of no sweep and each of wa_wgrid[], into ks with
+ * its estimate. A batch estimated to cost less than KE_PLAN_MIN unswept
+ * is not worth choosing for, and is not swept. cap is scratch space for
+ * the caps.
+ */
+static ulong wa_nplan = 0, wa_nswept = 0;
+static double wa_time = 0;
+static void wa_plan(t_kern *ks, ulong *cap) {
+    t_node *np = &nodes[cur_batch_level];
+    double t0 = gr_now();
+    t_cc save = cc;
+    double best = sweep_estimate(np, NULL);
+    if (best >= KE_PLAN_MIN) {
+        ++wa_nplan;
+        for (uint wi = 0; wi < WA_NW; ++wi) {
+            ulong w = wa_wgrid[wi];
+            kern_w_cap(w, cap);
+            double c = sweep_estimate(np, cap);
+            if (c < best) {
+                best = c;
+                ks->w = w;
+            }
+        }
+        if (ks->w)
+            ++wa_nswept;
+    }
+    ks->est = best;
+    cc = save;
+    wa_time += gr_now() - t0;
+}
+
+/* -Wa: report what it chose, and the time it took to choose */
+void wa_report(void) {
+    report("000 -Wa: chose for %lu batches, %lu swept (%.2fs), counted %.3fs\n",
+            wa_nplan, wa_nswept, wa_time, cc.on ? cc_work() : 0.0);
+}
+
 /* Under -ka, choose for the current batch (one that fixes exactly one
  * square) whether -k is to apply, and with what bound; and the bound of
  * -W and the count of -K, unless the options gave those. Each choice of
@@ -1206,6 +1290,8 @@ static double kern_price(t_kern *ks) {
  * if the estimates would now differ. A batch that would take less than
  * KE_PLAN_MIN to walk whole is not worth choosing for, and -k does not
  * apply to it.
+ * Under -Wa, the bound of -W is then chosen for a batch that -k does not
+ * apply to (see wa_plan()), which may be any batch.
  * Sets what is chosen in ks, with the caps below the batch for a bound of
  * -W chosen (see sweep_batch()), and kern_b and kern_keep to match.
  */
@@ -1218,14 +1304,18 @@ void kern_plan(t_kern *ks) {
     ks->est = 0;
     ks->price = 0;
     ks->wcap = NULL;
-    if (!ks->on)
+    ks->shown = kern_auto && ks->on;
+    if (!ks->on && !sweep_choose)
         return;
     ks->planned = 1;
+    if (!cap)
+        cap = malloc(xsize() * sizeof(ulong));
     if (kern_logged.valid && kern_logged.id == ks->id) {
         ks->b = kern_logged.b;
         ks->w = kern_logged.w;
         ks->keep = kern_logged.keep;
-    } else if (zmax_given > 0 && kern_price(ks) >= KE_PLAN_MIN) {
+    } else if (kern_auto && ks->on && zmax_given > 0
+            && kern_price(ks) >= KE_PLAN_MIN) {
         /* -k must cost less than walking the batch whole, which the
          * search without it can always do.
          */
@@ -1241,8 +1331,6 @@ void kern_plan(t_kern *ks) {
         uint kmin = 0, kmax = popcount_u64(passed);
         if (kern_keep_given)
             kmin = kmax = kern_keep;
-        if (!cap)
-            cap = malloc(xsize() * sizeof(ulong));
         for (uint keep = kmin; keep <= kmax && budget > 0; ++keep) {
             kern_sets(keep, &at, &passed);
             /* nothing for -k to do */
@@ -1281,9 +1369,15 @@ void kern_plan(t_kern *ks) {
     ke_priced = 0;
     if (!ks->b) {
         ks->on = 0;
-        return;
+        /* a batch at level 0 (no forced primes) has no level above it
+         * for a sweep, see prep_presquare()
+         */
+        if (sweep_choose && cur_batch_level > 0
+                && !(kern_logged.valid && kern_logged.id == ks->id))
+            wa_plan(ks, cap);
     }
     if (ks->w) {
+        ks->shown = 1;
         if (!wcap)
             wcap = malloc(xsize() * sizeof(ulong));
         kern_w_cap(ks->w, wcap);
@@ -1299,12 +1393,13 @@ void kern_tags(char *buf) {
     if (!kern_planned())
         return;
     t_kern *ks = kern_cur();
-    buf += sprintf(buf, " [k=%lu]", ks->b);
-    if (ks->b && ks->w)
+    if (kern_auto)
+        buf += sprintf(buf, " [k=%lu]", ks->b);
+    if (ks->w)
         buf += sprintf(buf, " [W=%lu]", ks->w);
     if (ks->b && ks->keep)
         buf += sprintf(buf, " [K=%u]", ks->keep);
-    if (ks->b && ks->est > 0)
+    if ((ks->b || sweep_choose) && ks->est > 0)
         buf += sprintf(buf, " [est=%.2f]", ks->est);
     if (ks->price > 0)
         sprintf(buf, " [rootus=%.2f]", ks->price * 1e6);
@@ -1384,6 +1479,172 @@ char *kern_restore(char *s) {
         return NULL;
     kern_logged.valid = 1;
     return s + 2 + off;
+}
+
+/* -Wa: the bound of -W for each batch that -k does not apply to is
+ * chosen by estimated cost (see kern_plan()), with sweep_estimate()
+ * estimating each choice from what follows.
+ * The search below a node is estimated as -ja would make it, to a depth
+ * of sweep_choose levels: at each node, the position best_v() chooses
+ * there, and for each x the choice of gate_walk(); a loop costs its own
+ * part (as gr_own() or gq_loop()) and its children, those of the first
+ * WA_EXACT primes each applied and costed, then WA_PTS points spread
+ * geometrically over the rest, each of WA_RUN primes, and summed as a
+ * power of the prime between them (see gr_seg()). A node at the depth,
+ * or one beyond what the estimate models (a special strategy, a flip,
+ * more than one square fixed), is priced as a walk.
+ * Under -ja1 to depth 4 (counted cost, against the best of fixed -W in
+ * 300..30000): D(12,7) -x155385466971 5.53 against 5.80; D(12,8) -f5
+ * -x15724736975643 33.96 against 36.55; D(20,6) -x1e20 5.52 against
+ * 7.51; D(28,7) -x1e29 4.61 against 5.42; D(20,5) -x1.5e15 0.327
+ * against 0.324; but D(28,5) -x1e26 60.94 against 58.44, where the cost
+ * per iteration of the walks below a sweep is far above that learnt by
+ * level (see gr_cit()). Choosing took 0.03-0.22s of CPU time.
+ */
+#define WA_EXACT 2
+#define WA_PTS 4
+#define WA_RUN 1
+static double wa_node(t_node *pl, uint d);
+
+/* the cost of walking the node at pl */
+static double wa_walk(t_node *pl) {
+    if (pl->have_square > 1)
+        return gr_setup;
+    return pl->have_square ? gq_wcost(pl) : gr_wcost(pl);
+}
+
+/* the child for prime q applied at cl, costed to depth d; 0 if rejected */
+static double wa_one(
+    t_node *pl, t_node *cl, uint vi, ulong q, uint x, uint d
+) {
+    double c = 0;
+    if (apply_single(pl, cl, vi, q, x)) {
+        c = wa_node(cl, d);
+        --cur_vlevel[vi];
+    }
+    return c;
+}
+
+/* The loop over p^{x-1} at v_i for the primes after p up to cap below
+ * the node at pl, its children costed to depth d.
+ */
+static double wa_loop(
+    t_node *pl, uint vi, uint x, ulong p, ulong cap, uint d
+) {
+    t_node *cl = &nodes[pl->level + 1];
+    double total = pl->have_square ? gq_loop(pl, p, cap, x).own
+            : gr_own(pl, p, cap, x);
+    /* the children's costs fall steeply with q: the first carry most */
+    for (uint m = 0; m < WA_EXACT; ) {
+        p = next_prime(p);
+        if (p > cap)
+            return total;
+        if (known_prime(pl, p))
+            continue;
+        total += wa_one(pl, cl, vi, p, x, d);
+        ++m;
+    }
+    if (gr_li(cap) - gr_li(p) <= WA_PTS * WA_RUN) {
+        for (ulong q = next_prime(p); q <= cap; q = next_prime(q))
+            if (!known_prime(pl, q))
+                total += wa_one(pl, cl, vi, q, x, d);
+        return total;
+    }
+    double a = p + 1, b = cap, qs[WA_PTS], ms[WA_PTS];
+    for (uint j = 0; j < WA_PTS; ++j) {
+        double q0 = a * pow(b / a, (double)j / (WA_PTS - 1));
+        ulong q = (ulong)q0;
+        double sum = 0;
+        uint m = 0;
+        q = (q > p) ? q - 1 : p;
+        while (m < WA_RUN) {
+            q = next_prime(q);
+            if (q > cap)
+                break;
+            if (known_prime(pl, q))
+                continue;
+            sum += wa_one(pl, cl, vi, q, x, d);
+            ++m;
+        }
+        qs[j] = q0;
+        ms[j] = m ? sum / m : 0;
+    }
+    for (uint j = 0; j + 1 < WA_PTS; ++j)
+        total += gr_seg(qs[j], qs[j + 1], ms[j], ms[j + 1]);
+    return total;
+}
+
+/* the search below the node at pl, as -ja would make it, to depth d */
+static double wa_node(t_node *pl, uint d) {
+    if (d == 0 || pl->level + 2 >= maxlevel)
+        return wa_walk(pl);
+    t_act *ca = &acts[pl->level + 1];
+    t_act save = *ca;
+    double total = 0;
+    uint vi = best_v(ca);
+    if (vi >= BV_SPECIAL) {
+        total = wa_walk(pl);
+        goto done;
+    }
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    uint ti = ap->t;
+    t_divisors *dp = &divisors[ti];
+    ca->vi = vi;
+    ca->ti = ti;
+    for (uint di = 0; di < dp->highdiv; ++di) {
+        uint x = dp->div[di];
+        uint nextt = ti / x;
+        ca->di = di;
+        if (done_in_reverse(vi, x, nextt))
+            continue;
+        ulong p = start_p(vi, x);
+        ulong limp = limit_p(ca, vi, x, nextt);
+        switch (classify_x(pl, vi, x, p, limp)) {
+          case XR_SKIP:
+            continue;
+          case XR_WALK:
+          case XR_FLIP:
+            /* the loops of earlier x stand */
+            total += wa_walk(pl);
+            goto done;
+          case XR_WALK1: {
+            /* as ja_cost() */
+            p = cost_start(pl, p);
+            double m = mpz_get_d(pl->aq) / mpz_get_d(ap->q);
+            total += ja_w1call + (gr_li(limp) - gr_li(p) + 1)
+                    * (ja_w1s + (ja_w1c + JA_W1T) / (m < 1 ? 1 : m));
+            continue;
+          }
+          case XR_RANGE:
+            break;
+        }
+        if (gate_walk(pl, ca, p, limp)) {
+            total += wa_walk(pl);
+            goto done;
+        }
+        ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+        p = cost_start(pl, p);
+        if (cap > p)
+            total += wa_loop(pl, vi, x, p, cap, d - 1);
+    }
+  done:
+    *ca = save;
+    return total;
+}
+
+/* -Wa: the estimated cost of the search below the batch complete at np */
+double wa_subtree(t_node *np) {
+    return wa_node(np, sweep_choose);
+}
+
+/* -Wa: the estimated cost of a sweep's entry for p^{x-1} at v_i, p in
+ * (lo, hi], below the batch complete at np: a loop whose children all
+ * walk.
+ */
+double wa_entry(t_node *np, uint vi, uint x, ulong lo, ulong hi) {
+    if (np->have_square)
+        return gq_recurse(np, lo, hi, x);
+    return wa_loop(np, vi, x, lo, hi, 0);
 }
 
 /* -ja2 learns the actual cost of what it chose against the estimate, in
@@ -1878,25 +2139,6 @@ static double ja_e2one(t_node *pl, t_node *cl, uint vi, ulong q, uint x) {
     return c;
 }
 
-/* The children of the primes in [lo, hi], each costing m0 at lo and m1
- * at hi, as a power of the prime between them.
- */
-static double ja_e2seg(double lo, double hi, double m0, double m1) {
-    if (hi <= lo)
-        return 0;
-    if (m0 <= 0 || m1 <= 0)
-        return (gr_li(hi) - gr_li(lo)) * (m0 + m1) / 2;
-    double a = log(lo), b = log(hi), h = (b - a) / 16, sum = 0;
-    double e = log(m1 / m0) / (b - a);
-    for (uint i = 0; i <= 16; ++i) {
-        double y = a + i * h;
-        /* m0 (q / lo)^e for each prime q, density 1 / log(q) */
-        double f = m0 * exp(e * (y - a) + y) / y;
-        sum += f * ((i == 0 || i == 16) ? 1 : (i & 1) ? 4 : 2);
-    }
-    return sum * h / 3;
-}
-
 /* the loop over p^{x-1} at v_i for the primes after p up to cap, below
  * pl; *n counts the children costed
  */
@@ -1935,7 +2177,7 @@ static double ja_e2loop(
         ms[j] = m ? sum / m : 0;
     }
     for (uint j = 0; j + 1 < JA_E2PTS; ++j)
-        total += ja_e2seg(qs[j], qs[j + 1], ms[j], ms[j + 1]);
+        total += gr_seg(qs[j], qs[j + 1], ms[j], ms[j + 1]);
     return total;
 }
 

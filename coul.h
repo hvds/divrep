@@ -134,7 +134,7 @@ typedef struct s_kern {
     ulong b;            /* the bound of -k, 0 if it is not to apply */
     uint keep;          /* the count of -K */
     ulong at, passed;   /* needs MAXK_KERN <= 64 */
-    /* Under -ka: whether a choice was made for this batch, which then
+    /* Under -ka or -Wa: whether a choice was made for this batch, which then
      * gives b and keep; the bound of -W (0 for as the options gave) and
      * the estimated cost; and for a bound of -W chosen, the caps below
      * the batch (see sweep_batch()).
@@ -143,6 +143,10 @@ typedef struct s_kern {
     ulong w;
     double est, price;
     ulong *wcap;
+    /* whether the batch is shown for what was chosen: under -Wa a choice
+     * is made for every batch, but most often to leave it unswept
+     */
+    bool shown;
 } t_kern;
 
 /* the plan of -k for the current batch, if any */
