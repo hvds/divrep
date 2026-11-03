@@ -141,6 +141,7 @@ extern void done(void);
 extern ulong next_prime(ulong cur);
 extern bool walk_v_price_prep(t_node *cur_node);
 extern double walk_v_price(uint *t);
+extern double walk_v_iprice(void);
 extern bool kern_6x(void);
 extern void kern_sets(uint keep, ulong *atp, ulong *passedp);
 extern t_kern *kern_state(t_node *np);

@@ -3212,17 +3212,19 @@ int inv_comparator(const void *va, const void *vb) {
     return (b->v < a->v) - (a->v < b->v);
 }
 
-/* Set to have walk_v() keep what it has prepared for a walk of a single
- * fixed power instead of making it, for walk_v_price(): the position of
- * the power, each position's q, and the inverse filter.
+/* Set to have walk_v() keep what it has prepared for a linear walk or
+ * one of a single fixed power instead of making it, for walk_v_price()
+ * and walk_v_iprice(): the position of the power (k for none), each
+ * position's q and tau left, and the inverse filter.
  */
 static bool wv_pricing = 0;
 static struct {
     bool valid;
     uint sqi, inv_count;
     mpz_t **q;
+    uint *t;
     t_mod *inv;
-} wv_kept = { 0, 0, 0, NULL, NULL };
+} wv_kept = { 0, 0, 0, NULL, NULL, NULL };
 
 /* the walk itself: walk_v() wraps it (see walk_v_gr()) */
 #define walk_v walk_v_inner
@@ -3310,16 +3312,18 @@ void walk_v(t_node *cur_node, mpz_t start) {
     }
     g_q0 = q[0];
     if (wv_pricing) {
-        if (nqc != 1)
+        if (nqc > 1)
             return;
         if (!wv_kept.q) {
             wv_kept.q = malloc(k * sizeof(mpz_t *));
+            wv_kept.t = malloc(k * sizeof(uint));
             wv_kept.inv = malloc(maxfact * k * sizeof(t_mod));
         }
         memcpy(wv_kept.q, q, k * sizeof(mpz_t *));
+        memcpy(wv_kept.t, t, k * sizeof(uint));
         memcpy(wv_kept.inv, inv, inv_count * sizeof(t_mod));
         wv_kept.inv_count = inv_count;
-        wv_kept.sqi = need_square[0];
+        wv_kept.sqi = nqc ? need_square[0] : k;
         wv_kept.valid = 1;
         return;
     }
@@ -3718,7 +3722,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
 }
 
 /* Prepare to price walks from cur_node, which must be the node we are
- * at and fix a single power: returns false if that cannot be done.
+ * at and fix at most a single power: returns false if that cannot be
+ * done.
  * Nothing is walked or counted, but the walk's working values are
  * overwritten, and must stay as they are for walk_v_price().
  */
@@ -3742,7 +3747,7 @@ bool walk_v_price_prep(t_node *cur_node) {
 double walk_v_price(uint *t) {
     uint need_prime[k], need_other[k];
     uint npc = 0, noc = 0;
-    if (!wv_kept.valid)
+    if (!wv_kept.valid || wv_kept.sqi == k)
         return -1;
     for (uint vi = 0; vi < k; ++vi) {
         if (vi == wv_kept.sqi)
@@ -3756,6 +3761,28 @@ double walk_v_price(uint *t) {
     oc_size = wv_qq;
     qsort(need_other, noc, sizeof(uint), &other_comparator);
     return cm_root_price(zmax_given, wv_kept.q, t, wv_kept.sqi, need_prime,
+            npc, need_other, noc, wv_kept.inv, wv_kept.inv_count);
+}
+
+/* The cost per iteration of a linear walk as last prepared by
+ * walk_v_price_prep(), as the cost table has it (see cm_iter_price()).
+ * Returns a negative value if that cannot be had.
+ */
+double walk_v_iprice(void) {
+    uint need_prime[k], need_other[k];
+    uint npc = 0, noc = 0;
+    if (!wv_kept.valid || wv_kept.sqi != k)
+        return -1;
+    for (uint vi = 0; vi < k; ++vi) {
+        if (wv_kept.t[vi] == 2)
+            need_prime[npc++] = vi;
+        else
+            need_other[noc++] = vi;
+    }
+    oc_t = wv_kept.t;
+    oc_size = wv_qq;
+    qsort(need_other, noc, sizeof(uint), &other_comparator);
+    return cm_iter_price(mpz_get_d(zmax), wv_kept.q, wv_kept.t, need_prime,
             npc, need_other, noc, wv_kept.inv, wv_kept.inv_count);
 }
 
