@@ -4380,6 +4380,10 @@ char *parse_midp(char *s) {
 static ulong square_endr(t_node *np);
 static inline bool square_applies(t_node *np);
 static inline bool reject_square(ulong p, long d, ulong endr);
+static inline void reject_prep(t_node *prev, t_act *cur_act);
+static inline bool reject_single(
+    t_node *prev, t_act *cur_act, uint vi, ulong p, uint x
+);
 
 /* Try each way of allocating p^{x-1} at v_i for all p above any selected
  * -W limit, and for even x below any selected -k limit.
@@ -4400,11 +4404,13 @@ void walk_midp(t_node *prev_node, bool recover) {
     prep_midp(prev_node);
     if (midppc == 0)
         goto walk_midp_done;
-    /* The constant part needed for reject_square(); we check within the
-     * loop that the conditions apply since (vi, x) change each time.
+    /* The constant parts needed for reject_square() and reject_single().
+     * Since (vi, x) change each time, we check within the loop that the
+     * conditions for reject_square() apply.
      */
     bool sq_ok = square_applies(prev_node);
     ulong endr = square_endr(prev_node);
+    reject_prep(prev_node, cur_act);
 
     level_setp(cur_act, midpp[0].maxp);
     /* setp has set to a prime <= target */
@@ -4482,11 +4488,16 @@ void walk_midp(t_node *prev_node, bool recover) {
                 continue;
             vi = mp->vi;
             x = mp->x;
-            /* check the same conditions as reject_prep_square() */
-            if (sq_ok && vi != sq0 && reject_square(
+            /* Reject as a loop would: by reject_single(), and by
+             * reject_square() under the same conditions as
+             * reject_prep_square().
+             */
+            if ((cur_act->rj_ok && (p & 1)
+                && reject_single(prev_node, cur_act, vi, p, x)
+            ) || (sq_ok && vi != sq0 && reject_square(
                 p, (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi),
                 (x == 3) ? endr : 0
-            )) {
+            ))) {
                 /* as apply_single() would leave it, for the progress line */
                 cur_act->vi = vi;
                 cur_act->p = p;
