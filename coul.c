@@ -5078,6 +5078,25 @@ double sweep_estimate(t_node *np, ulong *w) {
     return c;
 }
 
+/* -Wa: the greatest p that the sweep of the batch complete at np could
+ * try with the caps w for a bound of -W, 0 if it would try nothing; np
+ * is left as it was. A bound of -W at or above it sweeps nothing.
+ */
+ulong sweep_limit(t_node *np, ulong *w) {
+    ulong *cap = np->cap;
+    dis_batch(np, 1);
+    sweep_cap(np, w);
+    midppc = 0;
+    prep_midp(np);
+    ulong top = 0;
+    for (uint mi = 0; mi < midppc; ++mi)
+        if (midpp[mi].maxp > top)
+            top = midpp[mi].maxp;
+    np->cap = cap;
+    np->wfloor = NULL;
+    return top;
+}
+
 /* What follows any sweep of the batch complete at np: returns TRUE if
  * the allocation of unforced primes goes on below np, else FALSE, under
  * -WW or once a Pell walk has covered everything below np.
