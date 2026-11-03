@@ -276,6 +276,13 @@ bool midp_only = 0, need_midp = 0;
  * allocations below its batch, instead of at the batch; see sweep_mid().
  */
 uint sweep_level = 0;
+/* -Wh (experimental): the -W sweep is made at each node the gate would
+ * walk, before asking the gate again; -Whv sweeps only the position the
+ * strategy chose there. See gate_sweep().
+ */
+bool sweep_gate = 0;
+bool sweep_focus = 0;
+int sweep_only_vi = -1;     /* under -Whv, the one position swept */
 /* -k: where a batch fixes one square, each position with tau == 2 (mod 4)
  * left takes one more prime to an odd power, and that power leaves a
  * second square. walk_midp() tries every such power with p <= kern_b,
@@ -2703,6 +2710,8 @@ void report_init(FILE *fp, char *prog) {
     }
     if (sweep_level)
         fprintf(fp, " -Wl%u", sweep_level);
+    if (sweep_gate)
+        fprintf(fp, " -Wh%s", sweep_focus ? "v" : "");
     if (kern_auto)
         fprintf(fp, " -ka");
     else if (kern_b)
@@ -4523,6 +4532,8 @@ static inline bool w_sweeps(t_node *np, ulong *w, uint vi, uint x) {
         return 0;
     if (dis_at(np, vi))
         return 0;
+    if (sweep_only_vi >= 0 && vi != (uint)sweep_only_vi)
+        return 0;
     return w[xi(x)] != 0;
 }
 
@@ -4967,7 +4978,7 @@ bool apply_batch(
  */
 static inline bool sweep_batch(t_node *np) {
     t_kern *ks = kern_state(np);
-    bool sweep_here = need_midp && !sweep_level;
+    bool sweep_here = need_midp && !sweep_level && !sweep_gate;
     dis_batch(np, (ks && ks->wcap) || sweep_here || np->cap);
     if (ks && ks->wcap) {
         sweep_cap(np, ks->wcap);
@@ -6066,6 +6077,45 @@ static inline void set_unforced_x(
     /* TODO: do some constant alloc stuff in advance */
 }
 
+void walk_midp(t_node *prev_node, bool recover);
+static void sweep_cap(t_node *np, ulong *w);
+
+/* Under -Wh, the gate would walk prev_node: sweep it above the -W
+ * threshold instead (only at cur_act's v_i under -Whv), capping what is
+ * below it, so that the gate can be asked again. The sweep borrows
+ * cur_act, so what its loop has set up is kept aside meanwhile.
+ * Returns FALSE if prev_node has been swept already.
+ */
+static bool gate_sweep(t_node *prev_node, t_act *cur_act) {
+    if (prev_node->wfloor)
+        return 0;
+    t_act save = *cur_act;
+    if (sweep_focus)
+        sweep_only_vi = (int)cur_act->vi;
+    sweep_cap(prev_node, maxp);
+    walk_midp(prev_node, 0);
+    sweep_only_vi = -1;
+    *cur_act = save;
+    return 1;
+}
+
+/* Under -Wh, true if the gate would walk prev_node, but would recurse
+ * instead if a sweep above the -W threshold capped this x at v_i.
+ */
+static inline bool gate_flips(
+    t_node *prev_node, t_act *cur_act, ulong p, ulong limp
+) {
+    uint x = divisors[cur_act->ti].div[cur_act->di];
+    uint vi = cur_act->vi;
+    if (!w_sweeps(prev_node, maxp, vi, x))
+        return 0;
+    ulong w = maxp[xi(x)];
+    if (limp && limp <= w)
+        return 0;
+    return gate_walk(prev_node, cur_act, p, limp)
+            && !gate_walk(prev_node, cur_act, p, w);
+}
+
 /* Prepare to allocate p^{x-1} at v_i for a range of p, starting a fresh x.
  * This is the one place we choose between walking and recursing: once we
  * recurse here we stay committed to it, whatever the maximum does.
@@ -6092,6 +6142,14 @@ e_pux prep_unforced_x(t_node *prev_node, t_act *cur_act) {
     if (pux != PUX_DO_THIS_X)
         return pux;
 
+    if (sweep_gate && gate_flips(prev_node, cur_act, p, limp)
+            && gate_sweep(prev_node, cur_act)) {
+        /* prepare this x afresh under the caps the sweep set */
+        limp = limit_p(cur_act, vi, x, nextt);
+        pux = limit_unforced_x(prev_node, cur_act, p, limp, 1);
+        if (pux != PUX_DO_THIS_X)
+            return pux;
+    }
     if (gate_walk(prev_node, cur_act, p, limp)) {
 #ifdef SQONLY
         t_act *prev_act = &acts[prev_node->level];
@@ -6464,6 +6522,8 @@ bool restore_flip(uint vi, t_fact *rs) {
  */
 e_is insert_stack(void) {
     e_is jump = IS_DEEPER;
+    if (rstack && sweep_gate)
+        fail("recovery is not supported with -Wh");
 
     if (istack) {
         /* insert any init forced primes */
@@ -7148,6 +7208,13 @@ int main(int argc, char **argv, char **envp) {
         }
         else if (arg[1] == 'W' && arg[2] == 'l')
             sweep_level = strtoul(&arg[3], NULL, 10);
+        else if (arg[1] == 'W' && arg[2] == 'h') {
+            sweep_gate = 1;
+            if (arg[3] == 'v')
+                sweep_focus = 1;
+            else if (arg[3])
+                fail("unknown option '%s'", arg);
+        }
         else if (arg[1] == 'W') {
             need_midp = 1;
             char *w = &arg[2];
@@ -7353,6 +7420,10 @@ int main(int argc, char **argv, char **envp) {
         fail("-Wl needs a -W threshold, and cannot be combined with -WW");
     if (sweep_level && (kern_b || kern_auto))
         fail("-Wl cannot be combined with -k or -ka");
+    if (sweep_gate && (!need_midp || midp_only || sweep_level))
+        fail("-Wh needs a -W threshold, and cannot be combined with -WW or -Wl");
+    if (sweep_gate && (kern_b || kern_auto || auto_level))
+        fail("-Wh cannot be combined with -k, -ka or -ja");
     /* -ka estimates each batch as searched under -ja */
     if (kern_auto && !auto_level)
         auto_level = 1;
