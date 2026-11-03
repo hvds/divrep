@@ -589,8 +589,11 @@ static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
         double mC = (qc < b) ? qc : b, mD = (qc > a) ? qc : a;
         double ns = (((mC > a) ? gr_li(mC) - gr_li(a) : 0)
                 + c * gr_psum(mD, b, s)) / 2;
+        /* of those passing the test mod q, beyond se */
         double se = sqrt(endr), mR = (se > a) ? se : a;
-        double nr = (b > mR) ? (gr_li(b) - gr_li(mR)) / 2 : 0;
+        double mE = (ql > mR) ? ql : mR;
+        double nr = (b > mR) ? (((ql > mR) ? gr_li((ql < b) ? ql : b)
+                - gr_li(mR) : 0) + zl * gr_psum(mE, b, s)) / 2 : 0;
         return np * gr_apply + ct + nr * GQ_ROOT
                 + ns * (gq_prime + gq_apply + cs)
                 + ci * za * gr_psum(a, b, s);
