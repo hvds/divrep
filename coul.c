@@ -2722,7 +2722,10 @@ void report_init(FILE *fp, char *prog) {
     }
     if (sweep_level)
         fprintf(fp, " -Wl%u", sweep_level);
-    if (sweep_auto_f)
+    if (ja_wh)
+        fprintf(fp, " -Wh%c%g:%g", (ja_wh > 1) ? 'p' : 'q', ja_node * 1e6,
+                ja_wset * 1e6);
+    else if (sweep_auto_f)
         fprintf(fp, " -Wha%g:%lu", sweep_auto_f, sweep_auto_m);
     else if (sweep_gate)
         fprintf(fp, " -Wh%s", sweep_focus ? "v" : "");
@@ -6132,6 +6135,24 @@ static inline bool gate_flips(
 ) {
     uint x = divisors[cur_act->ti].div[cur_act->di];
     uint vi = cur_act->vi;
+    if (ja_wh) {
+        if (ja_wh < 2)
+            return 0;
+        ulong cap = (limp_cap && limp_cap < limp) ? limp_cap : limp;
+        ulong wd = ja_wsweep(prev_node, cur_act, p, cap);
+        if (!wd)
+            return 0;
+        uint l = prev_node->level;
+        if (!sweep_wl[l])
+            sweep_wl[l] = malloc(xsize() * sizeof(ulong));
+        ulong *w = sweep_wl[l];
+        memset(w, 0, xsize() * sizeof(ulong));
+        w[xi(x)] = wd;
+        if (!w_sweeps(prev_node, w, vi, x))
+            return 0;
+        sweep_w = w;
+        return 1;
+    }
     if (sweep_auto_f) {
         if (!gate_walk(prev_node, cur_act, p, limp))
             return 0;
@@ -7259,7 +7280,19 @@ int main(int argc, char **argv, char **envp) {
             sweep_gate = 1;
             if (arg[3] == 'v')
                 sweep_focus = 1;
-            else if (arg[3] == 'a') {
+            else if (arg[3] == 'p' || arg[3] == 'q') {
+                /* -Wh[pq]<c>: priced by -ja1, c us per child node */
+                sweep_focus = 1;
+                need_midp = 1;
+                ja_wh = (arg[3] == 'p') ? 2 : 1;
+                char *e;
+                ja_node = strtod(&arg[4], &e) * 1e-6;
+                if (*e == ':')
+                    ja_wset = strtod(e + 1, &e) * 1e-6;
+                if (*e || ja_node < 0 || ja_wset < 0)
+                    fail("-Wh%c needs a cost per node in us, not '%s'",
+                            arg[3], &arg[4]);
+            } else if (arg[3] == 'a') {
                 sweep_focus = 1;
                 need_midp = 1;
                 char *e;
@@ -7480,8 +7513,10 @@ int main(int argc, char **argv, char **envp) {
         fail("-Wl cannot be combined with -k or -ka");
     if (sweep_gate && (!need_midp || midp_only || sweep_level))
         fail("-Wh needs a -W threshold, and cannot be combined with -WW or -Wl");
-    if (sweep_gate && (kern_b || kern_auto || auto_level))
-        fail("-Wh cannot be combined with -k, -ka or -ja");
+    if (sweep_gate && (kern_b || kern_auto))
+        fail("-Wh cannot be combined with -k or -ka");
+    if (ja_wh ? auto_level != 1 : sweep_gate && auto_level)
+        fail("-Whp and -Whq need -ja1, other -Wh cannot be combined with -ja");
     /* -ka estimates each batch as searched under -ja */
     if (kern_auto && !auto_level)
         auto_level = 1;
@@ -7591,6 +7626,8 @@ int main(int argc, char **argv, char **envp) {
     mock_report();
 #endif
 
+    if (ja_wh > 1)
+        report("000 -Whp: %lu sweeps chosen\n", ja_nsweep);
     if ((opt_alloc & 2) == 0) {
         double tz = utime();
         report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)",

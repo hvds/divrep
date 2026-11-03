@@ -427,22 +427,69 @@ static double gr_own(t_node *prev_node, ulong p, ulong cap, uint x) {
             + gr_fail * gr_nfail(prev_node, (q1 > a) ? q1 : a, b, x);
 }
 
-/* The estimated cost of recursing from the node at prev_node over
- * p^{x-1} for p in [p, cap], every child walking.
+/* The children of a loop over p^{x-1} for p in [a, b] below the node
+ * at lv, each walking: how many are expected, and the cost of their
+ * walks, apart for those expected to make at least one iteration (near)
+ * and the rest (far), each of which walks one iteration with the chance
+ * that it exists at all.
  */
-static double gr_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
-    uint L = prev_node->level;
-    double za = gr_iters(prev_node);
-    double ci = gr_cit(L + 1);
-    double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
+typedef struct {
+    double n, near, far;
+} t_grkids;
+static t_grkids gr_kids(t_node *lv, double a, double b, uint x) {
+    double za = gr_iters(lv);
+    double ci = gr_cit(lv->level + 1);
+    double s = x - 1;
+    if (a < 2)
+        a = 2;
     /* below q1 a child walks at least one iteration */
     double q1 = pow(za, 1 / s);
     double mA = (q1 < b) ? q1 : b, mB = (q1 > a) ? q1 : a;
     double nA = (mA > a) ? gr_li(mA) - gr_li(a) : 0;
+    double nB = za * gr_psum(mB, b, s);
     /* a child sets up an entry more than this node */
     double cs = gr_wsetup(1);
-    return gr_own(prev_node, p, cap, x) + nA * cs
-            + ci * za * gr_psum(a, mA, s) + (cs + ci) * za * gr_psum(mB, b, s);
+    t_grkids r = {
+        .n = nA + nB,
+        .near = nA * cs + ci * za * gr_psum(a, mA, s),
+        .far = (cs + ci) * nB,
+    };
+    return r;
+}
+
+/* The estimated cost of recursing from the node at prev_node over
+ * p^{x-1} for p in [p, cap], every child walking.
+ */
+static double gr_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
+    t_grkids c = gr_kids(prev_node, p, cap, x);
+    return gr_own(prev_node, p, cap, x) + c.near + c.far;
+}
+
+/* -Whp<c>[:<s>] and -Whq<c> (experimental): the gate's estimates as they
+ * would have to be to compare sweeping with recursing (see ja_wsweep()).
+ * With the -ja1 estimates, a sweep of the top of a loop is priced exactly
+ * as that part of the loop, its children walking, while recursion is
+ * scaled by GR_RSCALE, so a sweep could never be chosen. But the scale
+ * corrects for children that recurse more cheaply than they walk, so it
+ * applies only to the near children: the far ones walk at once. What a
+ * child of the loop costs beyond its walk, and a swept entry does not,
+ * is the cost of making it a node and choosing what it does: ja_node per
+ * child. Under -Whq that is how recursion is priced; -Whp also offers
+ * the gate the sweep.
+ */
+uint ja_wh = 0;         /* 1 for -Whq, 2 for -Whp */
+double ja_node = 0;
+double ja_wset = 0;     /* the cost of a sweep itself */
+ulong ja_nsweep = 0;    /* the sweeps chosen */
+
+static double gr_reprice(
+    t_node *prev_node, double a, double b, uint x, double rr
+) {
+    if (b < a)
+        return 0;
+    t_grkids c = gr_kids(prev_node, a, b, x);
+    return gr_own(prev_node, (ulong)a, (ulong)b, x)
+            + c.near * rr + c.far + c.n * ja_node;
 }
 
 /* the estimated cost of walking the node at lv now */
@@ -2170,6 +2217,44 @@ uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv) {
     return (auto_level >= 2) ? best : sv;
 }
 
+/* -Whp: the threshold W at which to sweep the node at prev_node above,
+ * capping p^{x-1} at W, for the loop to go on over [p, W], if that is
+ * estimated cheaper than either walking the node or recursing over all
+ * of [p, cap]; else 0.
+ * A swept prime costs as one of the loop (since walk_midp() rejects in
+ * single limbs as the loop does) and its child walks, so over (W, cap]
+ * the sweep differs from recursing by (1 - rr) for the walks of the near
+ * children, against ja_node for every child, and pays ja_wset for the
+ * sweep. Near children are not swept: what recursing below them saves
+ * is known only through the scale, so W is at least q1, beyond which
+ * every child is far, and then q1 itself saves most.
+ */
+ulong ja_wsweep(t_node *prev_node, t_act *cur_act, ulong p, ulong cap) {
+    if (ja_wh < 2 || prev_node->have_square)
+        return 0;
+    uint x = divisors[cur_act->ti].div[cur_act->di];
+    double a = cost_start(prev_node, p), b = cap;
+    if (a < 2)
+        a = 2;
+    double w = pow(gr_iters(prev_node), 1.0 / (x - 1));
+    if (w < a)
+        w = a;
+    if (b <= w)
+        return 0;
+    double rr = GR_RSCALE;
+    t_grkids c = gr_kids(prev_node, w, b, x);
+    double save = c.n * ja_node - (1 - rr) * c.near - ja_wset;
+    if (save <= 0)
+        return 0;
+    /* the sweep must beat the better of walking and recursing */
+    double r = gr_reprice(prev_node, a, b, x, rr);
+    double w0 = gr_wcost(prev_node);
+    if (w0 < r && r - save >= w0)
+        return 0;
+    ++ja_nsweep;
+    return (ulong)w;
+}
+
 /* The gate under -ja: true if prev_node should be walked, rather than
  * recursed into by allocating p^{x-1} at cur_act's v_i for each prime
  * after p up to cap, given do_walk as the gain heuristics decided it.
@@ -2191,8 +2276,13 @@ bool ja_gate(
         double w0 = gr_wcost(prev_node);
         double rw = (auto_level >= 2) ? ja_ratio(L, JA_WALK) : 1;
         double rr = (auto_level >= 2) ? ja_rsize(part, w0) : GR_RSCALE;
-        do_walk = gr_walk(prev_node, cost_start(prev_node, p), cap, x,
-                w0, rw, rr);
+        if (ja_wh) {
+            ulong a = cost_start(prev_node, p);
+            do_walk = (cap < a) ? 0
+                    : w0 < gr_reprice(prev_node, a, cap, x, rr);
+        } else
+            do_walk = gr_walk(prev_node, cost_start(prev_node, p), cap, x,
+                    w0, rw, rr);
     } else if (prev_node->have_square == 1 && gq_costable(vi)) {
         /* likewise below one fixed square */
         uint L = prev_node->level;
