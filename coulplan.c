@@ -1281,6 +1281,34 @@ static double wa_try(t_node *np, ulong *wx, ulong *cap, t_wasample sm) {
     return sweep_estimate(np, NULL);
 }
 
+/* Local data collection for fitting: under WALOG, each choice is
+ * logged with its whole curve; WASTEP sets a grid of that ratio in
+ * p^{x-1} in place of 1, 3 times a power of 10; WAFULL scans the whole
+ * grid rather than stopping early; WAFINE samples finely throughout.
+ */
+static FILE *wa_log = NULL;
+static int wa_env = -1;
+static double wa_step = 0;
+static bool wa_full = 0, wa_allfine = 0;
+static void wa_envinit(void) {
+    if (wa_env >= 0)
+        return;
+    wa_env = 0;
+    char *s = getenv("WALOG");
+    if (s && *s) {
+        wa_log = fopen(s, "a");
+        if (!wa_log)
+            fail("cannot open WALOG %s", s);
+        setvbuf(wa_log, NULL, _IOLBF, 0);
+        wa_env = 1;
+    }
+    s = getenv("WASTEP");
+    if (s && *s)
+        wa_step = atof(s);
+    wa_full = getenv("WAFULL") ? 1 : 0;
+    wa_allfine = getenv("WAFINE") ? 1 : 0;
+}
+
 /* -Wa: choose the bound of -W for the power at xi() index i, with the
  * bounds for the other powers as wx has them, its own there 0 for none
  * and e the estimate with that; its greatest p in reach is top. Sets
@@ -1297,22 +1325,40 @@ static double wa_try(t_node *np, ulong *wx, ulong *cap, t_wasample sm) {
 static double wa_power(
     t_node *np, uint i, ulong top, double e, ulong *wx, ulong *cap
 ) {
+    wa_envinit();
+    t_wasample smp = wa_allfine ? wa_fine : wa_coarse;
     /* the greatest 10^a or 3.10^a below top */
     ulong w = 1;
     while (w <= top / 10)
         w *= 10;
     if (3 * w < top)
         w *= 3;
+    /* under WASTEP, a grid of ratio wa_step in p^{x-1} from top down */
+    uint gx = divisors[target_lcm].div[i];
+    double gr = wa_step > 1 ? pow(wa_step, 1.0 / (gx - 1)) : 0;
+    double gw = 0;
+    if (gr) {
+        gw = top / gr;
+        w = (ulong)gw;
+    }
     /* the bounds tried in order, after none, and their estimates */
-    ulong ws[WA_MAXTRY + 1];
-    double es[WA_MAXTRY + 1];
+#define WA_MAXN (WA_MAXTRY * 8)
+    ulong ws[WA_MAXN + 1];
+    double es[WA_MAXN + 1];
+    uint maxn = gr ? WA_MAXN : WA_MAXTRY;
     uint n = 0, bi = 0, worse = 0;
     ws[n] = 0;
     es[n++] = e;
-    while (w >= WA_WMIN && n <= WA_MAXTRY) {
+    while (w >= WA_WMIN && n <= maxn) {
+        /* a fine grid may repeat a bound: skip it */
+        if (gr && w == ws[n - 1]) {
+            gw /= gr;
+            w = (ulong)gw;
+            continue;
+        }
         wx[i] = w;
         ws[n] = w;
-        es[n] = wa_try(np, wx, cap, wa_coarse);
+        es[n] = wa_try(np, wx, cap, smp);
         /* While nothing beats no sweep, bounds that sweep too little to
          * matter estimate much as it does; only those clearly worse
          * count.
@@ -1320,13 +1366,25 @@ static double wa_power(
         if (es[n] < es[bi]) {
             bi = n;
             worse = 0;
-        } else if ((bi || es[n] > e * (1 + WA_TIE)) && ++worse >= 2) {
+        } else if ((bi || es[n] > e * (1 + WA_TIE)) && ++worse >= 2
+            && !wa_full
+        ) {
             ++n;
             break;
         }
         ++n;
-        /* 3.10^a, then 10^a */
-        w = (w % 3 == 0) ? w / 3 : w * 3 / 10;
+        if (gr) {
+            gw /= gr;
+            w = (ulong)gw;
+        } else
+            /* 3.10^a, then 10^a */
+            w = (w % 3 == 0) ? w / 3 : w * 3 / 10;
+    }
+    if (wa_log) {
+        fprintf(wa_log, "C %ld %u %lu %u", batch_alloc - 1, gx, top, n);
+        for (uint j = 0; j < n; ++j)
+            fprintf(wa_log, " %lu:%.6g", ws[j], es[j]);
+        fprintf(wa_log, "\n");
     }
     /* a near tie with a bound either side is settled finely */
     uint ni = bi;
@@ -1343,6 +1401,8 @@ static double wa_power(
             bi = ni;
     }
     wx[i] = ws[bi];
+    if (wa_log)
+        fprintf(wa_log, "P %ld %u %lu %.6g\n", batch_alloc - 1, gx, ws[bi], es[bi]);
     return es[bi];
 }
 
@@ -1370,6 +1430,18 @@ static void wa_plan(t_kern *ks, ulong *cap) {
     t_cc save = cc;
     memset(wa_wx, 0, nx * sizeof(ulong));
     double best = wa_try(np, wa_wx, cap, wa_coarse);
+    wa_envinit();
+    if (wa_log) {
+        fprintf(wa_log, "H %ld ", batch_alloc - 1);
+        mpz_out_str(wa_log, 10, np->aq);
+        fprintf(wa_log, " ");
+        mpz_out_str(wa_log, 10, zmax);
+        fprintf(wa_log, " %u %.6g", (uint)np->have_square, best);
+        for (uint vi = 0; vi < k; ++vi)
+            fprintf(wa_log, " %u",
+                    (uint)value[vi].alloc[cur_vlevel[vi] - 1].t);
+        fprintf(wa_log, "\n");
+    }
     uint n = 0;
     if (best >= KE_PLAN_MIN) {
         /* the reach of each power: what a bound of 1 would sweep */
