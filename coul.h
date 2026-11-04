@@ -143,6 +143,10 @@ typedef struct s_kern {
     ulong w;
     double est, price;
     ulong *wcap;
+    /* under -Wa, the bounds of -W chosen for each power p^{x-1} at xi(x),
+     * 0 for none, or NULL if none is swept
+     */
+    ulong *wx;
     /* whether the batch is shown for what was chosen: under -Wa a choice
      * is made for every batch, but most often to leave it unswept
      */

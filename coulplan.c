@@ -1188,13 +1188,19 @@ static inline void ke_bounds(t_kern *ks) {
     ke_sweep = ks->wcap ? 1 : need_midp;
 }
 
-/* a choice recovered from the log for the batch of this id, see ja_save() */
+/* a choice recovered from the log for the batch of this id, see ja_save():
+ * with any bounds of -W chosen per power by -Wa, see kern_save()
+ */
 static struct {
     bool valid;
     int id;
     ulong b, w;
     uint keep;
-} kern_logged = { 0, 0, 0, 0, 0 };
+    /* as logged: read before xi() can map them, see kern_restore() */
+    uint nwx;
+    ulong *wxw;
+    uint *wxe;
+} kern_logged = { 0, 0, 0, 0, 0, 0, NULL, NULL };
 
 /* The bounds tried for -k and for -W under -ka, the latter in an order
  * that gets a good estimate early to cut the others short: no sweep is
@@ -1252,94 +1258,152 @@ static t_wasample wa_sample = { 2, 4, 1 };
 #define WA_WMIN 30      /* the least bound of -W tried */
 #define WA_MAXTRY 40    /* the most bounds tried, enough for 3.10^19 */
 
-/* -Wa: the estimate for the current batch at np with a bound w of -W,
- * 0 for none, at the sampling given. cap is scratch space for the caps.
+/* -Wa: the caps for the bounds wx of -W for each power p^{x-1} at xi(x)
+ * (0 for none), into cap: as kern_w_cap() does for a single bound.
  */
-static double wa_try(t_node *np, ulong w, ulong *cap, t_wasample sm) {
-    wa_sample = sm;
-    if (!w)
-        return sweep_estimate(np, NULL);
-    kern_w_cap(w, cap);
-    return sweep_estimate(np, cap);
+static void wa_caps(ulong *wx, ulong *cap) {
+    memcpy(cap, maxp, xsize() * sizeof(ulong));
+    for (uint i = 0; i < xsize(); ++i)
+        if (wx[i] && (!cap[i] || wx[i] < cap[i]))
+            cap[i] = wx[i];
 }
 
-/* -Wa: choose the bound of -W for the current batch, into ks with its
- * estimate. The bounds tried are 1 and 3 times a power of 10, from the
- * greatest below the most the sweep could try (above which it sweeps
- * nothing) down to WA_WMIN, so that they scale with zmax; the estimates
- * fall towards the best and rise steeply below it, so the search stops
- * once two in a row are no better (or, while none beats no sweep, two in
- * a row are worse than it by more than WA_TIE). If the best and the next best by
- * bound are within WA_TIE, the two (and no sweep) are estimated again
- * with fine sampling. A batch estimated to cost less than KE_PLAN_MIN
- * unswept is not worth choosing for, and is not swept. cap is scratch
- * space for the caps.
+/* -Wa: the estimate for the current batch at np with the bounds wx of -W
+ * for each power, at the sampling given. cap is scratch space.
+ */
+static double wa_try(t_node *np, ulong *wx, ulong *cap, t_wasample sm) {
+    wa_sample = sm;
+    for (uint i = 0; i < xsize(); ++i)
+        if (wx[i]) {
+            wa_caps(wx, cap);
+            return sweep_estimate(np, cap);
+        }
+    return sweep_estimate(np, NULL);
+}
+
+/* -Wa: choose the bound of -W for the power at xi() index i, with the
+ * bounds for the other powers as wx has them, its own there 0 for none
+ * and e the estimate with that; its greatest p in reach is top. Sets
+ * wx[i] to the bound chosen, and returns the estimate with it.
+ * The bounds tried are 1 and 3 times a power of 10, from the greatest
+ * below top (at or above which it sweeps nothing) down to WA_WMIN, so
+ * that they scale with zmax; the estimates fall towards the best and
+ * rise steeply below it, so the search stops once two in a row are no
+ * better (or, while none beats no sweep of this power, two in a row are
+ * worse than that by more than WA_TIE). If the best and a bound either
+ * side are within WA_TIE, the two are estimated again with fine
+ * sampling.
+ */
+static double wa_power(
+    t_node *np, uint i, ulong top, double e, ulong *wx, ulong *cap
+) {
+    /* the greatest 10^a or 3.10^a below top */
+    ulong w = 1;
+    while (w <= top / 10)
+        w *= 10;
+    if (3 * w < top)
+        w *= 3;
+    /* the bounds tried in order, after none, and their estimates */
+    ulong ws[WA_MAXTRY + 1];
+    double es[WA_MAXTRY + 1];
+    uint n = 0, bi = 0, worse = 0;
+    ws[n] = 0;
+    es[n++] = e;
+    while (w >= WA_WMIN && n <= WA_MAXTRY) {
+        wx[i] = w;
+        ws[n] = w;
+        es[n] = wa_try(np, wx, cap, wa_coarse);
+        /* While nothing beats no sweep, bounds that sweep too little to
+         * matter estimate much as it does; only those clearly worse
+         * count.
+         */
+        if (es[n] < es[bi]) {
+            bi = n;
+            worse = 0;
+        } else if ((bi || es[n] > e * (1 + WA_TIE)) && ++worse >= 2) {
+            ++n;
+            break;
+        }
+        ++n;
+        /* 3.10^a, then 10^a */
+        w = (w % 3 == 0) ? w / 3 : w * 3 / 10;
+    }
+    /* a near tie with a bound either side is settled finely */
+    uint ni = bi;
+    if (bi > 0)
+        ni = bi - 1;
+    if (bi + 1 < n && (ni == bi || es[bi + 1] < es[ni]))
+        ni = bi + 1;
+    if (bi && ni != bi && es[ni] < es[bi] * (1 + WA_TIE)) {
+        wx[i] = ws[bi];
+        double fb = wa_try(np, wx, cap, wa_fine);
+        wx[i] = ws[ni];
+        double fn = wa_try(np, wx, cap, wa_fine);
+        if (fn < fb)
+            bi = ni;
+    }
+    wx[i] = ws[bi];
+    return es[bi];
+}
+
+/* -Wa: choose the bounds of -W for each power for the current batch,
+ * into ks with its estimate. Each power in reach of a sweep at all is
+ * chosen for in turn (see wa_power()), that with the least reach first,
+ * holding the others as chosen so far. A batch estimated to cost less
+ * than KE_PLAN_MIN unswept is not worth choosing for, and is not swept.
+ * cap is scratch space for the caps.
  */
 static ulong wa_nplan = 0, wa_nswept = 0;
 static double wa_time = 0;
+static ulong *wa_wx = NULL;     /* the bounds chosen for the batch */
 static void wa_plan(t_kern *ks, ulong *cap) {
+    static ulong *top = NULL;
+    static uint *order = NULL;
+    uint nx = xsize();
+    /* wa_wx may already exist, from a recovered choice (see kern_plan()) */
+    if (!wa_wx)
+        wa_wx = malloc(nx * sizeof(ulong));
+    if (!top) {
+        top = malloc(nx * sizeof(ulong));
+        order = malloc(nx * sizeof(uint));
+    }
     t_node *np = &nodes[cur_batch_level];
     double t0 = gr_now();
     t_cc save = cc;
-    double e0 = wa_try(np, 0, cap, wa_coarse);
-    double best = e0;
-    ulong top = 0;
-    if (e0 >= KE_PLAN_MIN) {
-        kern_w_cap(1, cap);
-        top = sweep_limit(np, cap);
+    memset(wa_wx, 0, nx * sizeof(ulong));
+    double best = wa_try(np, wa_wx, cap, wa_coarse);
+    uint n = 0;
+    if (best >= KE_PLAN_MIN) {
+        /* the reach of each power: what a bound of 1 would sweep */
+        for (uint i = 0; i < nx; ++i)
+            wa_wx[i] = 1;
+        wa_caps(wa_wx, cap);
+        sweep_limits(np, cap, top);
+        memset(wa_wx, 0, nx * sizeof(ulong));
+        /* those in reach, by increasing reach */
+        for (uint i = 0; i < nx; ++i) {
+            if (top[i] <= WA_WMIN)
+                continue;
+            uint j = n++;
+            while (j > 0 && top[order[j - 1]] > top[i]) {
+                order[j] = order[j - 1];
+                --j;
+            }
+            order[j] = i;
+        }
     }
-    if (top > WA_WMIN) {
+    bool swept = 0;
+    if (n)
         ++wa_nplan;
-        /* the greatest 10^a or 3.10^a below top */
-        ulong w = 1;
-        while (w <= top / 10)
-            w *= 10;
-        if (3 * w < top)
-            w *= 3;
-        /* the bounds tried in order, after no sweep, and their estimates */
-        ulong ws[WA_MAXTRY + 1];
-        double es[WA_MAXTRY + 1];
-        uint n = 0, bi = 0, worse = 0;
-        ws[n] = 0;
-        es[n++] = e0;
-        while (w >= WA_WMIN && n <= WA_MAXTRY) {
-            ws[n] = w;
-            es[n] = wa_try(np, w, cap, wa_coarse);
-            /* While nothing beats no sweep, bounds that sweep too little
-             * to matter estimate much as it does; only those clearly
-             * worse count.
-             */
-            if (es[n] < es[bi]) {
-                bi = n;
-                worse = 0;
-            } else if ((bi || es[n] > e0 * (1 + WA_TIE)) && ++worse >= 2) {
-                ++n;
-                break;
-            }
-            ++n;
-            /* 3.10^a, then 10^a */
-            w = (w % 3 == 0) ? w / 3 : w * 3 / 10;
-        }
-        ulong bw = ws[bi];
-        best = es[bi];
-        /* a near tie with a bound either side is settled finely */
-        uint ni = bi;
-        if (bi > 0)
-            ni = bi - 1;
-        if (bi + 1 < n && (ni == bi || es[bi + 1] < es[ni]))
-            ni = bi + 1;
-        if (bi && ni != bi && es[ni] < best * (1 + WA_TIE)) {
-            double fb = wa_try(np, bw, cap, wa_fine);
-            double fn = wa_try(np, ws[ni], cap, wa_fine);
-            if (fn < fb) {
-                bw = ws[ni];
-                fb = fn;
-            }
-            best = fb;
-        }
-        ks->w = bw;
-        if (bw)
-            ++wa_nswept;
+    for (uint j = 0; j < n; ++j) {
+        uint i = order[j];
+        best = wa_power(np, i, top[i], best, wa_wx, cap);
+        if (wa_wx[i])
+            swept = 1;
+    }
+    if (swept) {
+        ++wa_nswept;
+        ks->wx = wa_wx;
     }
     wa_sample = wa_coarse;
     ks->est = best;
@@ -1377,6 +1441,7 @@ void kern_plan(t_kern *ks) {
     ks->est = 0;
     ks->price = 0;
     ks->wcap = NULL;
+    ks->wx = NULL;
     ks->shown = kern_auto && ks->on;
     if (!ks->on && !sweep_choose)
         return;
@@ -1387,6 +1452,14 @@ void kern_plan(t_kern *ks) {
         ks->b = kern_logged.b;
         ks->w = kern_logged.w;
         ks->keep = kern_logged.keep;
+        if (kern_logged.nwx) {
+            if (!wa_wx)
+                wa_wx = malloc(xsize() * sizeof(ulong));
+            memset(wa_wx, 0, xsize() * sizeof(ulong));
+            for (uint j = 0; j < kern_logged.nwx; ++j)
+                wa_wx[xi(kern_logged.wxe[j] + 1)] = kern_logged.wxw[j];
+            ks->wx = wa_wx;
+        }
     } else if (kern_auto && ks->on && zmax_given > 0
             && kern_price(ks) >= KE_PLAN_MIN) {
         /* -k must cost less than walking the batch whole, which the
@@ -1455,6 +1528,12 @@ void kern_plan(t_kern *ks) {
             wcap = malloc(xsize() * sizeof(ulong));
         kern_w_cap(ks->w, wcap);
         ks->wcap = wcap;
+    } else if (ks->wx) {
+        ks->shown = 1;
+        if (!wcap)
+            wcap = malloc(xsize() * sizeof(ulong));
+        wa_caps(ks->wx, wcap);
+        ks->wcap = wcap;
     }
 }
 
@@ -1470,6 +1549,18 @@ void kern_tags(char *buf) {
         buf += sprintf(buf, " [k=%lu]", ks->b);
     if (ks->w)
         buf += sprintf(buf, " [W=%lu]", ks->w);
+    if (ks->wx) {
+        /* as for -Wx, at most xsize() entries, which DIAG_TAGS allows for */
+        char sep = '=';
+        buf += sprintf(buf, " [Wx");
+        for (uint i = 0; i < xsize(); ++i)
+            if (ks->wx[i]) {
+                buf += sprintf(buf, "%c%lu^%u", sep, ks->wx[i],
+                        divisors[target_lcm].div[i] - 1);
+                sep = ',';
+            }
+        buf += sprintf(buf, "]");
+    }
     if (ks->b && ks->keep)
         buf += sprintf(buf, " [K=%u]", ks->keep);
     if ((ks->b || sweep_choose) && ks->est > 0)
@@ -1529,15 +1620,22 @@ void kern_show_total(void) {
                 kern_shown, kern_nshown, kern_nleft);
 }
 
-/* What -ka chose for the current batch, as a field of the 316 log line
- * (see ja_save()): " k<id>:<bound of -k>,<bound of -W>,<count of -K>",
- * the first 0 if -k is not to apply. A recovered run takes it from there
- * rather than choosing again.
+/* What -ka or -Wa chose for the current batch, as a field of the 316 log
+ * line (see ja_save()): " k<id>:<bound of -k>,<bound of -W>,<count of -K>",
+ * the first 0 if -k is not to apply; then for each power p^e that -Wa
+ * chose a bound W of -W for, "/<W>^<e>". A recovered run takes it from
+ * there rather than choosing again.
  */
 void kern_save(FILE *fp) {
     t_kern *ks = kern_cur();
-    if (kern_planned())
-        fprintf(fp, " k%d:%lu,%lu,%u", ks->id, ks->b, ks->w, ks->keep);
+    if (!kern_planned())
+        return;
+    fprintf(fp, " k%d:%lu,%lu,%u", ks->id, ks->b, ks->w, ks->keep);
+    if (ks->wx)
+        for (uint i = 0; i < xsize(); ++i)
+            if (ks->wx[i])
+                fprintf(fp, "/%lu^%u", ks->wx[i],
+                        divisors[target_lcm].div[i] - 1);
 }
 
 /* Restore what kern_save() wrote, if it is next in s; returns what
@@ -1551,7 +1649,25 @@ char *kern_restore(char *s) {
             &kern_logged.w, &kern_logged.keep, &off) != 4 || off == 0)
         return NULL;
     kern_logged.valid = 1;
-    return s + 2 + off;
+    s += 2 + off;
+    kern_logged.nwx = 0;
+    while (s[0] == '/') {
+        ulong w;
+        uint e;
+        off = 0;
+        if (sscanf(s + 1, "%lu^%u%n", &w, &e, &off) != 2 || off == 0
+                || target_lcm % (e + 1))
+            return NULL;
+        uint j = kern_logged.nwx++;
+        kern_logged.wxw = realloc(kern_logged.wxw,
+                kern_logged.nwx * sizeof(ulong));
+        kern_logged.wxe = realloc(kern_logged.wxe,
+                kern_logged.nwx * sizeof(uint));
+        kern_logged.wxw[j] = w;
+        kern_logged.wxe[j] = e;
+        s += 1 + off;
+    }
+    return s;
 }
 
 /* -Wa: the bound of -W for each batch that -k does not apply to is
@@ -1882,7 +1998,7 @@ static inline void ja_learn(
  *   316 <counted> <walks> [<level>:<t>,<i>,<n>,<A>,<E>,<A>,<E>,<A>,<E>]
  *       ... [q<level>:<t>,<i>,<n>] ... [r<e>:<A>,<E>] ... [s<e>:<A>,<E>]
  *       ... [f<e>:<A>,<E>] ... [p<e>:<A>,<E>] ... [a<e>:<A>,<E>]
- *       ... [b<e>:<A>,<E>] ... [k<id>:<B>,<W>,<K>]
+ *       ... [b<e>:<A>,<E>] ... [k<id>:<B>,<W>,<K>[/<W>^<e>...]]
  * with the cost counted so far (see cc_work()) and the walks seen by
  * the sampler; then for each level with anything learnt, the cost,
  * iterations and number of the walks sampled for the gate (gr_t[],
