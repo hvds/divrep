@@ -250,7 +250,7 @@ sub test_init {
         ], 0);
         # not asked for by -d[bB], so the 203 lines go only to the log
         $lines->{203} = log_203($fh);
-        ok(scalar(grep /\[W=\d+\]/, @{ $lines->{203} // [] }),
+        ok(scalar(grep /\[Wx=\d+\^\d+/, @{ $lines->{203} // [] }),
                 '-Wa sweeps some batches of f(20,5)');
         is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
                 '1428502133048749', 'f(20,5) candidates to 1.5e15 with -Wa');
@@ -463,6 +463,20 @@ sub test_recover {
                 'recover -Wa: bound as logged');
         is($lines->{''}[-1] // '', 'b0: . 2^4.3 . 2 3 W(3491,5,3)',
                 'recover -Wa sweep');
+    }
+    # and with bounds logged per power
+    {
+        my $fh = temp_log([
+            '316 0 0 k1:0,0,0/300^4', '305 b0: . 2^4.3 . 2 3 W(3499,5,3)',
+        ]);
+        my $lines = run_test($type, [
+            '-dW1', '-r' . $fh->filename, qw{ -X -x1500000000000000 -Wa 20 5 },
+        ], 1);
+        $lines->{203} = log_203($fh);
+        like($lines->{203}[0] // '', qr{^203 b0: .* \[Wx=300\^4\] \(},
+                'recover -Wa: bounds per power as logged');
+        is($lines->{''}[-1] // '', 'b0: . 2^4.3 . 2 3 W(3491,5,3)',
+                'recover -Wa sweep per power');
     }
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},

@@ -526,7 +526,7 @@ ulong countr, countw, countwi;
 #define MAX_DEC_POWER 5
 #define MAX_EXPANDED 5
 /* room for the tags disp_batch() adds, see also kern_tags() */
-#define DIAG_TAGS 160
+#define DIAG_TAGS (160 + xsize() * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1))
 #define DIAG_BUFSIZE (6 + MAX_DEC_ULONG + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1 + MAX_EXPANDED) + DIAG_TAGS + 1)
 char *diag_buf = NULL;
 uint aux_buf_size = 0;
@@ -4529,6 +4529,7 @@ t_kern *kern_state(t_node *np) {
     ks->b = kern_b;
     ks->keep = kern_keep;
     ks->wcap = NULL;
+    ks->wx = NULL;
     ks->on = (np->have_square == 1);
     if (kern_auto || sweep_choose)
         kern_plan(ks);
@@ -5075,23 +5076,25 @@ double sweep_estimate(t_node *np, ulong *w) {
     return c;
 }
 
-/* -Wa: the greatest p that the sweep of the batch complete at np could
- * try with the caps w for a bound of -W, 0 if it would try nothing; np
- * is left as it was. A bound of -W at or above it sweeps nothing.
+/* -Wa: into top, for each power p^{x-1} at xi(x), the greatest p that
+ * the sweep of the batch complete at np could try with the caps w for
+ * bounds of -W, 0 if it would try none; np is left as it was. A bound at
+ * or above it sweeps nothing of that power.
  */
-ulong sweep_limit(t_node *np, ulong *w) {
+void sweep_limits(t_node *np, ulong *w, ulong *top) {
     ulong *cap = np->cap;
     sweep_cap(np, w);
     dis_batch(np, 1);
     midppc = 0;
     prep_midp(np);
-    ulong top = 0;
-    for (uint mi = 0; mi < midppc; ++mi)
-        if (midpp[mi].maxp > top)
-            top = midpp[mi].maxp;
+    memset(top, 0, xsize() * sizeof(ulong));
+    for (uint mi = 0; mi < midppc; ++mi) {
+        ulong *tp = &top[xi(midpp[mi].x)];
+        if (midpp[mi].maxp > *tp)
+            *tp = midpp[mi].maxp;
+    }
     np->cap = cap;
     np->wfloor = NULL;
-    return top;
 }
 
 /* What follows any sweep of the batch complete at np: returns TRUE if
