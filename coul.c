@@ -5081,6 +5081,10 @@ double sweep_estimate(t_node *np, ulong *w) {
  * bounds of -W, 0 if it would try none; np is left as it was. A bound at
  * or above it sweeps nothing of that power.
  */
+/* local: -Wa formula needs dis set before sweep_limits() */
+void wa_dis_prep(t_node *np) {
+    dis_batch(np, np->cap != NULL);
+}
 void sweep_limits(t_node *np, ulong *w, ulong *top) {
     ulong *cap = np->cap;
     sweep_cap(np, w);

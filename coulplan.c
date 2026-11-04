@@ -1429,6 +1429,43 @@ static void wa_plan(t_kern *ks, ulong *cap) {
     double t0 = gr_now();
     t_cc save = cc;
     memset(wa_wx, 0, nx * sizeof(ulong));
+    /* WAFORM=<A>: no estimates, W_x = A (zmax/aq)^{1/x} for each power
+     * in reach, none in a batch with a square fixed
+     */
+    char *form = getenv("WAFORM");
+    if (form && *form) {
+        extern void wa_dis_prep(t_node *np);
+        wa_dis_prep(np);
+        double fa = atof(form);
+        bool swept = 0;
+        ++wa_nplan;
+        for (uint i = 0; i < nx; ++i)
+            wa_wx[i] = 1;
+        wa_caps(wa_wx, cap);
+        sweep_limits(np, cap, top);
+        memset(wa_wx, 0, nx * sizeof(ulong));
+        if (!np->have_square) {
+            double room = mpz_get_d(zmax) / mpz_get_d(np->aq);
+            for (uint i = 0; i < nx; ++i) {
+                uint x = divisors[target_lcm].div[i];
+                if (x < 2 || top[i] <= WA_WMIN)
+                    continue;
+                double w = fa * pow(room, 1.0 / x);
+                if (w < top[i]) {
+                    wa_wx[i] = (ulong)w;
+                    swept = 1;
+                }
+            }
+        }
+        if (swept) {
+            ++wa_nswept;
+            ks->wx = wa_wx;
+        }
+        ks->est = 0;
+        cc = save;
+        wa_time += gr_now() - t0;
+        return;
+    }
     double best = wa_try(np, wa_wx, cap, wa_coarse);
     wa_envinit();
     if (wa_log) {
