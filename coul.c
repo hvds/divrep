@@ -7751,6 +7751,7 @@ int main(int argc, char **argv, char **envp) {
         if (cc.on)
             report("369 cost counted %.2fs, ladder %.3fs against %.3fs\n",
                     cc_work(), ct_ladder_charged, ct_ladder_actual);
+        cm_dreport();
 #ifdef VERBOSE
         if (VB(VB_COUNTS) && cc.on)
             gs_count_record(&cc,
