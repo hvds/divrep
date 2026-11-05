@@ -115,6 +115,7 @@ typedef struct {
     uint np;
     uint bits[CM_MAXD];
     double n[CM_MAXD], mean[CM_MAXD], ss[CM_MAXD];
+    double bad[CM_MAXD];    /* a negative mean, taken as 0 */
     uint asked;     /* the largest size priced beyond the data */
     ulong beyond;   /* how often */
 } t_cmd;
@@ -438,6 +439,11 @@ static void cm_report_bad(void) {
     if (cm_sq_raised)
         report("000 cost table: C cprimesq %g below cprime, raised to it\n",
                 cm_sq_bad * 1e6);
+    for (uint i = 0; i < cm_nD; ++i)
+        for (uint j = 0; j < cm_D[i].np; ++j)
+            if (cm_D[i].bad[j])
+                report("000 cost table: D %s %u %g negative, taken as 0\n",
+                        cm_D[i].name, cm_D[i].bits[j], cm_D[i].bad[j]);
 }
 
 /* Once the log is open: report what was wrong with the table, now if it
@@ -599,6 +605,12 @@ static void cm_load(void) {
             cm_C[i].bad = cm_C[i].v;
             cm_C[i].v = 0;
         }
+    for (uint i = 0; i < cm_nD; ++i)
+        for (uint j = 0; j < cm_D[i].np; ++j)
+            if (cm_D[i].mean[j] < 0) {
+                cm_D[i].bad[j] = cm_D[i].mean[j];
+                cm_D[i].mean[j] = 0;
+            }
     for (uint i = 0; i < CMK_COUNT; ++i)
         if (cm_K.v[i] < 0) {
             cm_K.bad[i] = cm_K.v[i];
@@ -1966,4 +1978,89 @@ double cm_root_price(
     double cost = cm_root_cost(log2(z), log2(hi > 2 ? hi : 2), q, t, sqi,
             need_prime, npc, need_other, noc, inv, inv_count);
     return (cm_missing == missing) ? cost : -1;
+}
+
+/* In-situ cost samples (see coulcost.h): for each class, by the limbs of
+ * aq, the count, mean and sum of squared deviations of the times taken,
+ * less what reading the clock costs (cs_gap).
+ */
+bool cs_on = 0;
+uint cs_left = CS_EVERY, cs_aleft = CS_AEVERY;
+static double cs_gap;
+typedef struct {
+    ulong n;
+    double mean, ss;
+} t_csstat;
+static t_csstat cs_stat[CR_COUNT][CR_MAXL + 1];
+static const char *cs_name[CR_COUNT] = {
+    "rprime.x2", "rprime.x3", "rprime.xn", "rfail", "rapply"
+};
+static const char *cs_file = NULL;
+
+/* Sample if $COST_SAMPLES names a file, finding what reading the clock
+ * costs.
+ */
+void cs_init(void) {
+    cs_file = getenv("COST_SAMPLES");
+    if (!cs_file || !*cs_file)
+        return;
+    cs_on = 1;
+    double t0 = work_clock(), t1 = t0;
+    for (uint i = 0; i < 10000; ++i)
+        t1 = work_clock();
+    cs_gap = (t1 - t0) / 10000;
+}
+
+/* Add a sample of class which, begun at t0, for a node whose aq has l
+ * limbs: the mean time of k items timed together, weighted by k.
+ */
+void cs_add(uint which, uint l, double t0, uint k) {
+    double dt = (work_clock() - t0 - cs_gap) / k;
+    /* Welford's update, weighted */
+    t_csstat *sp = &cs_stat[which][l];
+    sp->n += k;
+    double d = dt - sp->mean;
+    sp->mean += d * k / sp->n;
+    sp->ss += d * (dt - sp->mean) * k;
+}
+
+/* Append the samples to $COST_SAMPLES as D rows, sized by limbs (64 bits
+ * per limb), after a V line giving the build and the unit of the times,
+ * as multibench-table -S expects.
+ */
+void cs_write(void) {
+    if (!cs_on)
+        return;
+    ulong total = 0;
+    for (uint c = 0; c < CR_COUNT; ++c)
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            total += cs_stat[c][l].n;
+    if (!total)
+        return;
+    FILE *fp = fopen(cs_file, "a");
+    if (!fp) {
+        report("000 cost samples: cannot append to %s: %s\n", cs_file,
+                strerror(errno));
+        return;
+    }
+    extern void fprint_sha(FILE *fp);
+    extern double work_clock_ghz(void);
+    fprintf(fp, "V rec ");
+    fprint_sha(fp);
+    double ghz = work_clock_ghz();
+    if (ghz)
+        fprintf(fp, " CY%g\n", ghz);
+    else
+        fprintf(fp, " CPU\n");
+    for (uint c = 0; c < CR_COUNT; ++c)
+        for (uint l = 1; l <= CR_MAXL; ++l) {
+            t_csstat *sp = &cs_stat[c][l];
+            if (!sp->n)
+                continue;
+            fprintf(fp, "D %s %u %lu %.5f %.5f\n", cs_name[c], 64 * l,
+                    sp->n, sp->mean * 1e6,
+                    (sp->n > 1) ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
+        }
+    fclose(fp);
+    report("000 cost samples: %lu appended to %s\n", total, cs_file);
 }
