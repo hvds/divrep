@@ -1381,6 +1381,8 @@ void done(void) {
 }
 
 void fail_silent(void) {
+    /* a run stopped early has sampled costs as well as one that ends */
+    cs_write();
     /* we accept leaks on fatal error, but should close the log file */
     if (rfp)
         fclose(rfp);
@@ -2570,6 +2572,9 @@ void check_exceptions(void) {
 
 void init_post(void) {
     init_cycles();
+#ifndef MOCK
+    cs_init();
+#endif
     /* time the tests in the unit of reported times */
     ct_clock = &work_clock;
     init_tau(rough, opt_flake);
@@ -2678,6 +2683,23 @@ void init_post(void) {
         gain2 = gain;
         antigain2 = antigain;
     }
+}
+
+/* The builds of divrep and MPU::GMP, as the 001 line gives them: each
+ * commit, then the base it was built from if different, and "*" if the
+ * checkout was dirty.
+ */
+void fprint_sha(FILE *fp) {
+    fprintf(fp, "%s", DIVREP_CHANGE);
+    if (strcmp(DIVREP_CHANGE, DIVREP_BASE))
+        fprintf(fp, "(%s)", DIVREP_BASE);
+    if (DIVREP_DIRTY)
+        fprintf(fp, "*");
+    fprintf(fp, ";%s", MPU_CHANGE);
+    if (strcmp(MPU_CHANGE, MPU_BASE))
+        fprintf(fp, "(%s)", MPU_BASE);
+    if (MPU_DIRTY)
+        fprintf(fp, "*");
 }
 
 void report_init(FILE *fp, char *prog) {
@@ -2800,16 +2822,8 @@ void report_init(FILE *fp, char *prog) {
         }
     }
     /* git SHA details for divrep and MPU::GMP */
-    fprintf(fp, " sha=%s", DIVREP_CHANGE);
-    if (strcmp(DIVREP_CHANGE, DIVREP_BASE))
-        fprintf(fp, "(%s)", DIVREP_BASE);
-    if (DIVREP_DIRTY)
-        fprintf(fp, "*");
-    fprintf(fp, ";%s", MPU_CHANGE);
-    if (strcmp(MPU_CHANGE, MPU_BASE))
-        fprintf(fp, "(%s)", MPU_BASE);
-    if (MPU_DIRTY)
-        fprintf(fp, "*");
+    fprintf(fp, " sha=");
+    fprint_sha(fp);
 
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
@@ -4756,6 +4770,10 @@ void walk_midp(t_node *prev_node, bool recover) {
     bool sq_ok = square_applies(prev_node);
     ulong endr = square_endr(prev_node);
     reject_prep(prev_node, cur_act);
+    /* the window of primes being sampled, if any (see cs_prime()) */
+    bool cs = cs_on && !prev_node->have_square;
+    double cs_t = 0, cs_a;
+    uint cs_k = 0, cs_c = 0, cr_l = cr_limbs(prev_node->aq);
 
     level_setp(cur_act, midpp[0].maxp);
     /* setp has set to a prime <= target */
@@ -4831,6 +4849,8 @@ void walk_midp(t_node *prev_node, bool recover) {
             }
             /* counted as for a loop of allocations, see cc_work() */
             ++cc.rec_prime;
+            if (cs)
+                cs_prime(&cs_t, &cs_k, &cs_c, cr_xclass(mp->x), cr_l);
             if (used)
                 continue;
             vi = mp->vi;
@@ -4856,7 +4876,15 @@ void walk_midp(t_node *prev_node, bool recover) {
             }
             if (prev_node->have_square)
                 ++cc.rec_sq;
+            /* the prime's sample ends here, and the call has its own */
+            cs_a = 0;
+            if (cs) {
+                cs_close(&cs_t, cs_k, cs_c, cr_l);
+                cs_a = cs_start(&cs_aleft, CS_AEVERY);
+            }
             if (apply_single(prev_node, cur_node, vi, p, x)) {
+                if (cs_a)
+                    cs_add(CR_APPLY, cr_l, cs_a, 1);
                 ++cc.rec_applied;
                 if (need_work)
                     diag_plain(cur_node);
@@ -4864,6 +4892,8 @@ void walk_midp(t_node *prev_node, bool recover) {
                 walk_v(cur_node, Z(zero));
                 --cur_vlevel[vi];   /* unallocate */
             } else {
+                if (cs_a)
+                    cs_add(CR_FAIL, cr_l, cs_a, 1);
                 /* below a fixed square, priced with the roots */
                 if (!prev_node->have_square)
                     ++cc.rec_fail;
@@ -7004,6 +7034,10 @@ static inline bool find_unforced_x(t_act *cur_act) {
 bool next_unforced(t_act *cur_act) {
     t_node *prev_node = &nodes[cur_act->level - 1];
     t_node *cur_node = &nodes[cur_act->level];
+    /* the window of primes being sampled, if any (see cs_prime()) */
+    bool cs = cs_on && !prev_node->have_square;
+    double cs_t = 0;
+    uint cs_k = 0, cs_c = 0, cr_l = cr_limbs(prev_node->aq);
     while (1) {
 #ifdef MOCK
         if (mock_loop_leaf(cur_act))
@@ -7026,6 +7060,8 @@ bool next_unforced(t_act *cur_act) {
       redo_unforced: ;
         ulong p = prime_iterator_next(&cur_act->piter);
         ++cc.rec_prime;
+        if (cs)
+            cs_prime(&cs_t, &cs_k, &cs_c, cr_xclass(cur_act->x), cr_l);
         if (p > cur_act->limp)
             goto end_x;
 #ifdef MOCK
@@ -7063,8 +7099,16 @@ bool next_unforced(t_act *cur_act) {
         /* below a fixed square, the roots are extended to each prime */
         if (prev_node->have_square)
             ++cc.rec_sq;
+        /* the prime's sample ends here, and the call has its own */
+        double cs_a = 0;
+        if (cs) {
+            cs_close(&cs_t, cs_k, cs_c, cr_l);
+            cs_a = cs_start(&cs_aleft, CS_AEVERY);
+        }
         /* note: this returns 0 if t=1 */
         if (!apply_single(prev_node, cur_node, cur_act->vi, p, cur_act->x)) {
+            if (cs_a)
+                cs_add(CR_FAIL, cr_l, cs_a, 1);
             /* below a fixed square, priced with the roots */
             if (!prev_node->have_square)
                 ++cc.rec_fail;
@@ -7073,9 +7117,13 @@ bool next_unforced(t_act *cur_act) {
             /* not redo_unforced, we may have improved zmax */
             continue;
         }
+        if (cs_a)
+            cs_add(CR_APPLY, cr_l, cs_a, 1);
         ++cc.rec_applied;
         return 1;
       end_x:
+        /* a window would take in moving to the next x */
+        cs_t = 0;
         next_x(cur_act);
         if (!find_unforced_x(cur_act))
             return 0;
@@ -7752,6 +7800,7 @@ int main(int argc, char **argv, char **envp) {
             report("369 cost counted %.2fs, ladder %.3fs against %.3fs\n",
                     cc_work(), ct_ladder_charged, ct_ladder_actual);
         cm_dreport();
+        cs_write();
 #ifdef VERBOSE
         if (VB(VB_COUNTS) && cc.on)
             gs_count_record(&cc,

@@ -32,6 +32,22 @@ extern uint maxfact, sq0, *sqg, *cur_vlevel, *oc_t, seen_best;
 extern mpz_t zmin, zmax, *wv_o, *wv_qq;
 extern int other_comparator(const void *va, const void *vb);
 
+/* The classes of the costs of the recursion loops, which are sampled in
+ * situ (see cs_add()) by the limbs of the aq of the node a loop extends:
+ * a prime tried for p, p^2 or a higher power, and a call of
+ * apply_single() that fails or succeeds.
+ */
+enum { CR_PRIME2, CR_PRIME3, CR_PRIMEN, CR_FAIL, CR_APPLY, CR_COUNT };
+#define CR_MAXL 16      /* limbs beyond this are taken as this */
+static inline uint cr_limbs(mpz_t aq) {
+    uint l = mpz_size(aq);
+    return (l < 1) ? 1 : (l > CR_MAXL) ? CR_MAXL : l;
+}
+/* the class of a prime tried for p^{x-1} */
+static inline uint cr_xclass(uint x) {
+    return (x == 2) ? CR_PRIME2 : (x == 3) ? CR_PRIME3 : CR_PRIMEN;
+}
+
 /* What the run has done, counted for costing it (see cc_work()); tests
  * outside tau_multi_prep(), tau_prime_prep() and tau_multi_run(), which
  * price their own, are priced as they are made. The cost counted before
