@@ -165,6 +165,63 @@ double cc_work(void) {
             + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
 
+/* Local: under CCBREAK, each term of cc_work() as count, unit price and
+ * charge, as 000 lines.
+ */
+void cc_breakdown(void) {
+    if (!getenv("CCBREAK"))
+        return;
+    struct { const char *name; double count, price; } t[] = {
+        { "lin_walks", cc.lin_walks, cm_const(CM_LINSETUP) },
+        { "lin_setinv", cc.lin_setinv, cm_const(CM_LINSETUPINV) },
+        { "lin+pell_iter", cc.lin_iter + cc.pell_iter, cm_const(CM_LOOP0) },
+        { "lin_inv", cc.lin_inv, cm_const(CM_LOOPTEST) },
+        { "sq_walks", cc.sq_walks, cm_const(CM_SQSETUP) },
+        { "sq_setres", cc.sq_setres, cm_const(CM_SQSETUPRES) },
+        { "sq_iter", cc.sq_iter, cm_const(CM_SQLOOP0) },
+        { "sq_inv", cc.sq_inv, cm_const(CM_SQTEST) },
+        { "w1s_prime", cc.w1s_prime, cm_const(CM_W1SITER) },
+        { "w1s_check", cc.w1s_check, cm_const(CM_W1SCHECK) },
+        { "w1s_calls", cc.w1s_calls, cm_const(CM_W1SCALL) },
+        { "rec_sq", cc.rec_sq, cm_const(CM_CPRIMESQ) - cm_const(CM_CPRIME) },
+        { "rec_res", cc.rec_res, GQ_RES },
+        { "rec_root", cc.rec_root, GQ_ROOT },
+    };
+    for (uint i = 0; i < sizeof(t) / sizeof(t[0]); ++i)
+        report("000 cc %-14s %14.0f x %10.4gus = %10.4fs\n", t[i].name,
+                t[i].count, t[i].price * 1e6, t[i].count * t[i].price);
+    {
+        for (uint c = 0; c < CR_COUNT; ++c) {
+            char rn[CR_COUNT][16];
+            static const char *rest[] = {
+                "rec_early", "rec_rej1", "rec_fail", "rec_applied"
+            };
+            if (c < CR_EARLY)
+                snprintf(rn[c], 16, "rec_deep.x%u", c + 2);
+            else
+                snprintf(rn[c], 16, "%s", rest[c - CR_EARLY]);
+            ulong n = 0;
+            double ch = 0;
+            for (uint l = 1; l <= CR_MAXL; ++l) {
+                if (!cc.rec_by[c][l])
+                    continue;
+                n += cc.rec_by[c][l];
+                ch += cc.rec_by[c][l] * cm_rec_price(c, l);
+                report("000 cc %-12s L%u %14lu x %10.4gus = %10.4fs\n",
+                        rn[c], l, cc.rec_by[c][l], cm_rec_price(c, l) * 1e6,
+                        cc.rec_by[c][l] * cm_rec_price(c, l));
+            }
+            if (n)
+                report("000 cc %-14s %14lu x %10.4gus = %10.4fs\n", rn[c], n,
+                        ch / n * 1e6, ch);
+        }
+    }
+    report("000 cc %-14s %39.4fs\n", "test", cc.test);
+    report("000 cc %-14s %39.4fs\n", "test_charged", ct_test_charged);
+    report("000 cc %-14s %39.4fs\n", "ladder", ct_ladder_charged);
+    report("000 cc %-14s %39.4fs\n", "base", cc.base);
+}
+
 /* Settle the costs the gates share with the cost table, once it is
  * known whether costs are counted.
  */

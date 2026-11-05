@@ -7738,6 +7738,10 @@ int main(int argc, char **argv, char **envp) {
         if (kern_predict)
             kern_show_total();
         /* how well the counted cost (see cc_work()) matches CPU time */
+        if (cc.on) {
+            extern void cc_breakdown(void);
+            cc_breakdown();
+        }
         if (cc.on)
             report("369 cost counted %.2fs, ladder %.3fs against %.3fs\n",
                     cc_work(), ct_ladder_charged, ct_ladder_actual);
