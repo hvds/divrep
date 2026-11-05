@@ -32,7 +32,8 @@
  * power v = q.r^g is tested with e = g), runs test_multi_run() on those
  * prep leaves undecided, and reports the outcome fractions and mean
  * times. "prime,bits,count,F" instead measures a prime test on one
- * value (as for a need_prime position or a fixed power's root), and
+ * value (as for a need_prime position or a fixed power's root),
+ * "bpsw,bits,count,F" BPSW alone on primes and on composites (mb_bpsw()),
  * "scan,bits,count,t" the cost of tests that fail at a trial prime, and
  * "ladder,bits,count,F[,alpha]" the factoring ladder and "qs,bits,count"
  * QS alone (mb_ladder(), mb_qs()), and "clock" the cost of reading the
@@ -140,6 +141,69 @@ static double mb_trimmed(double *v, uint count) {
     for (uint i = 0; i < keep; ++i)
         sum += v[i];
     return sum / keep;
+}
+
+/* Print a D row (see coulcost.c) for count times of the series name at
+ * the given bits: their count, mean and standard deviation in us, over
+ * the lowest 98%, discarding outliers such as interrupted measurements.
+ */
+static void mb_drow(const char *name, uint bits, double *v, uint count) {
+    qsort(v, count, sizeof(double), mb_dcmp);
+    uint keep = count - count / 50;
+    double sum = 0, ss = 0;
+    for (uint i = 0; i < keep; ++i)
+        sum += v[i];
+    double mean = sum / keep;
+    for (uint i = 0; i < keep; ++i)
+        ss += (v[i] - mean) * (v[i] - mean);
+    printf("D %s %u %u %.5f %.5f\n", name, bits, keep, 1e6 * mean,
+            (keep > 1) ? 1e6 * sqrt(ss / (keep - 1)) : 0);
+}
+
+/* "bpsw,bits,count,F": BPSW alone, as tau_prime_run() makes it, timed
+ * on count primes of the given bits and on count composites of those
+ * bits with no factor up to F, giving the D rows bpsw.prime and
+ * bpsw.comp (see mb_drow()). A composite usually fails at the first
+ * strong probable prime test, so costs much less than a prime, which
+ * pays for the whole test.
+ */
+static void mb_bpsw(char *spec) {
+    uint bits, count, F;
+    if (sscanf(spec, "%u,%u,%u", &bits, &count, &F) != 3)
+        fail("MULTIBENCH: expected bpsw,bits,count,F");
+    if (bits < 8)
+        fail("MULTIBENCH: bpsw needs at least 8 bits");
+    gmp_randstate_t rs;
+    gmp_randinit_default(rs);
+    gmp_randseed_ui(rs, 2246822519UL + bits);
+    mpz_t m;
+    mpz_init(m);
+    double *v = malloc(count * sizeof(double));
+    uint got = 0;
+    while (got < count) {
+        mpz_urandomb(m, rs, bits - 1);
+        mpz_setbit(m, bits - 1);
+        mpz_nextprime(m, m);
+        if (mpz_sizeinbase(m, 2) != bits)
+            continue;
+        double t0 = mb_now();
+        mb_sink ^= tau_bpsw(m);
+        v[got++] = mb_now() - t0;
+    }
+    mb_drow("bpsw.prime", bits, v, count);
+    got = 0;
+    while (got < count) {
+        mb_random(m, rs, bits, F);
+        if (mpz_probab_prime_p(m, 1))
+            continue;
+        double t0 = mb_now();
+        mb_sink ^= tau_bpsw(m);
+        v[got++] = mb_now() - t0;
+    }
+    mb_drow("bpsw.comp", bits, v, count);
+    free(v);
+    mpz_clear(m);
+    gmp_randclear(rs);
 }
 
 /* "scan,bits,count,t[,t2]": the cost of tests that fail at a trial prime
@@ -579,6 +643,8 @@ void multibench(char *spec) {
     printf("\n");
     if (strncmp(spec, "prime,", 6) == 0)
         return mb_prime(spec + 6);
+    if (strncmp(spec, "bpsw,", 5) == 0)
+        return mb_bpsw(spec + 5);
     if (strncmp(spec, "scan,", 5) == 0)
         return mb_scan(spec + 5);
     if (strcmp(spec, "clock") == 0)
