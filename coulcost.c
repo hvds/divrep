@@ -100,6 +100,27 @@ typedef struct {
     double bits[CM_MAXB], v[CM_MAXB][2];
 } t_cm1;
 static t_cm1 cm_P, cm_R;
+/* The "D series bits n mean sd" rows: a cost measured n times on values
+ * of the given bits, with its mean and standard deviation (us). The
+ * series names what was measured, with any further keys in the name
+ * (as "bpsw.prime"). Rows for the same series and size are pooled as
+ * they load, so that a table may hold several measurements of the same
+ * thing, made at different times, and new data is added by adding rows.
+ * See cm_dprice() for the cost at a given size.
+ */
+#define CM_MAXD 64      /* sizes per series */
+#define CM_MAXDS 32     /* series */
+typedef struct {
+    char name[32];
+    uint np;
+    uint bits[CM_MAXD];
+    double n[CM_MAXD], mean[CM_MAXD], ss[CM_MAXD];
+    uint asked;     /* the largest size priced beyond the data */
+    ulong beyond;   /* how often */
+} t_cmd;
+static t_cmd cm_D[CM_MAXDS];
+static uint cm_nD = 0;
+static int cm_d_bpsw[2] = { -1, -1 };   /* bpsw.comp, bpsw.prime */
 /* The "Q bits us fail" rows: QS alone (rung 24), whose cost depends
  * only on the size, stepping with its parameters by decimal digits.
  */
@@ -220,6 +241,57 @@ static void cm_add1(t_cm1 *tp, double bits, double v0, double v1) {
     tp->v[tp->nb][0] = v0;
     tp->v[tp->nb][1] = v1;
     ++tp->nb;
+}
+
+/* the index of the D series of this name, or -1 if the table has none */
+static int cm_dfind(const char *name) {
+    for (uint i = 0; i < cm_nD; ++i)
+        if (strcmp(cm_D[i].name, name) == 0)
+            return i;
+    return -1;
+}
+
+/* Add a D row, pooling it with any row for the same series and size:
+ * the means weighted by the counts, and the sums of squared deviations
+ * combined as Chan et al. do, so that the order rows come in does not
+ * matter.
+ */
+static void cm_dadd(const char *name, uint bits, double n, double mean,
+        double sd) {
+    if (n <= 0)
+        return;
+    int s = cm_dfind(name);
+    if (s < 0) {
+        if (cm_nD == CM_MAXDS)
+            fail("cost table: too many D series");
+        s = cm_nD++;
+        t_cmd *dp = &cm_D[s];
+        memset(dp, 0, sizeof(*dp));
+        snprintf(dp->name, sizeof(dp->name), "%s", name);
+    }
+    t_cmd *dp = &cm_D[s];
+    double ss = (n > 1) ? sd * sd * (n - 1) : 0;
+    uint j = 0;
+    while (j < dp->np && dp->bits[j] < bits)
+        ++j;
+    if (j < dp->np && dp->bits[j] == bits) {
+        double n0 = dp->n[j], d = mean - dp->mean[j];
+        dp->n[j] = n0 + n;
+        dp->mean[j] += d * n / dp->n[j];
+        dp->ss[j] += ss + d * d * n0 * n / dp->n[j];
+        return;
+    }
+    if (dp->np == CM_MAXD)
+        fail("cost table: too many sizes for D %s", name);
+    memmove(&dp->bits[j + 1], &dp->bits[j], (dp->np - j) * sizeof(uint));
+    memmove(&dp->n[j + 1], &dp->n[j], (dp->np - j) * sizeof(double));
+    memmove(&dp->mean[j + 1], &dp->mean[j], (dp->np - j) * sizeof(double));
+    memmove(&dp->ss[j + 1], &dp->ss[j], (dp->np - j) * sizeof(double));
+    dp->bits[j] = bits;
+    dp->n[j] = n;
+    dp->mean[j] = mean;
+    dp->ss[j] = ss;
+    ++dp->np;
 }
 
 /* The table's sizes are bit counts, where the model has log2 of a value:
@@ -408,6 +480,12 @@ static void cm_load(void) {
         }
         uint t, e, b, F;
         double v[6];
+        int nd = sscanf(line, "D %31s %u %lf %lf %lf", name, &b, &v[0],
+                &v[1], &v[2]);
+        if (nd >= 4) {
+            cm_dadd(name, b, v[0], v[1], (nd == 5) ? v[2] : 0);
+            continue;
+        }
         if (sscanf(line, "K %31s %lf", name, &v[0]) == 2) {
             for (uint i = 0; i < CMK_COUNT; ++i)
                 if (strcmp(name, cm_kname[i]) == 0) {
@@ -503,6 +581,8 @@ static void cm_load(void) {
     }
     if (fp)
         fclose(fp);
+    cm_d_bpsw[0] = cm_dfind("bpsw.comp");
+    cm_d_bpsw[1] = cm_dfind("bpsw.prime");
     for (uint i = 0; i < CM_COUNT; ++i)
         if (!cm_C[i].seen) {
             if (!cm_C[i].dflt && !cm_C[i].opt)
@@ -598,6 +678,65 @@ static double cm_interp1(t_cm1 *tp, double lg, uint k) {
     double f = (bits - tp->bits[j - 1]) / (tp->bits[j] - tp->bits[j - 1]);
     double a = tp->v[j - 1][k], b = tp->v[j][k];
     return (a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a);
+}
+
+/* Extrapolating a D series beyond its largest size, the cost grows as
+ * a power of the size, with the exponent from its two largest sizes,
+ * kept within these bounds: a slope from two close sizes can be wild.
+ */
+#define CM_DGROW_MIN 0.0
+#define CM_DGROW_MAX 3.0
+
+/* The cost in seconds, from D series s, of a value of nbits bits:
+ * interpolated geometrically between the sizes either side; below the
+ * smallest, that of the smallest; beyond the largest, extrapolated (see
+ * CM_DGROW_MAX) and noted for cm_dreport(). The sizes should come in
+ * pairs either side of each limb boundary (64 and 65 bits, and so on),
+ * since costs step up with each limb.
+ */
+static double cm_dprice(int s, uint nbits) {
+    t_cmd *dp = &cm_D[s];
+    uint top = dp->np - 1;
+    if (nbits <= dp->bits[0])
+        return dp->mean[0] * 1e-6;
+    if (nbits >= dp->bits[top]) {
+        if (nbits == dp->bits[top] || top == 0)
+            return dp->mean[top] * 1e-6;
+        if (nbits > dp->asked)
+            dp->asked = nbits;
+        ++dp->beyond;
+        double a = dp->mean[top - 1], b = dp->mean[top];
+        double g = (a > 0 && b > 0)
+                ? log(b / a) / log((double)dp->bits[top] / dp->bits[top - 1])
+                : 1;
+        if (g < CM_DGROW_MIN)
+            g = CM_DGROW_MIN;
+        else if (g > CM_DGROW_MAX)
+            g = CM_DGROW_MAX;
+        return b * pow((double)nbits / dp->bits[top], g) * 1e-6;
+    }
+    uint j = 1;
+    while (nbits > dp->bits[j])
+        ++j;
+    double f = (double)(nbits - dp->bits[j - 1])
+            / (dp->bits[j] - dp->bits[j - 1]);
+    double a = dp->mean[j - 1], b = dp->mean[j];
+    return ((a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a)) * 1e-6;
+}
+
+/* Report each D series priced beyond its data, and how far: these are
+ * the measurements to add to the table next.
+ */
+void cm_dreport(void) {
+    if (!cm_loaded)
+        return;
+    for (uint i = 0; i < cm_nD; ++i) {
+        t_cmd *dp = &cm_D[i];
+        if (dp->beyond)
+            report("000 cost table: D %s extrapolated %lu times, to %u bits"
+                    " (data to %u)\n", dp->name, dp->beyond, dp->asked,
+                    dp->bits[dp->np - 1]);
+    }
 }
 
 /* Interpolate a test_multi() row for a value of bits (see cm_bx());
@@ -1410,10 +1549,17 @@ double cm_pprep_price(uint nbits, int res) {
 }
 
 /* The price of a prime test made by tau_prime_run() on a value of nbits
- * bits: with K rows, as for those tau_multi_prep() makes; else nothing,
+ * bits, found prime or not: with the D series bpsw.prime and bpsw.comp,
+ * as measured for that outcome (a composite usually fails at the first
+ * strong probable prime test, where a prime pays for all of BPSW); else
+ * with K rows, as for those tau_multi_prep() makes; else nothing,
  * cm_pprep_price() having charged it.
  */
-double cm_ptest_price(uint nbits) {
+double cm_ptest_price(uint nbits, bool prime) {
+    if (!cm_loaded)
+        cm_load();
+    if (cm_d_bpsw[0] >= 0 && cm_d_bpsw[1] >= 0)
+        return cm_dprice(cm_d_bpsw[prime ? 1 : 0], nbits);
     if (!cm_K.seen || !cm_K.pseen)
         return 0;
     return nbits * cm_K.v[(nbits <= 64) ? CMK_PBIT : CMK_ZBIT];
