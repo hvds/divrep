@@ -8,8 +8,8 @@ use H::Diag qw{ diag keep_diag };
 
 =head1 multibench-table: tabulate this machine's costs for pcoul
 
-  multibench-table [-v<verbose>] [-m<mock>] [-b<bits,...>] [-f<flake>]
-          [-s<sections> | -o | -M] [-u<table>] [-w<file>]
+  multibench-table [-v<verbose>] [-m<mock>] [-b<bits,...>] [-d<bits,...>]
+          [-f<flake>] [-s<sections> | -o | -M] [-u<table> [-a]] [-w<file>]
 
 Writes to stdout, or to I<file> with C<-w> (when progress is shown on
 stdout as runs done / total), the cost table that pcoul's cost model
@@ -24,11 +24,29 @@ seconds. It needs two builds of pcoul, given by C<-v> (C<VERBOSE=1>,
 default F<./pcoul>), which runs the benches and the instrumented
 calibration runs, and C<-m> (C<MOCK=1>), with which the sections leaf
 and tail are timed.
-The table is in sections (scan, prime, multi, ladder, qs, walk, w1s,
-leaf, tail, situ), each stamped with the build that made it and the
-unit of its times ("V section sha CY3.6", or CPU). C<-s> makes only the
-sections named, and C<-u> copies the rest from an existing table (with
-a warning for any timed in a different unit).
+The table is in sections (scan, prime, bpsw, multi, ladder, qs, walk,
+w1s, leaf, tail, situ), each stamped with the build that made it and
+the unit of its times ("V section sha CY3.6", or CPU). C<-s> makes only
+the sections named, and C<-u> copies the rest from an existing table
+(with a warning for any timed in a different unit).
+
+Some costs are kept as measurements by size rather than as fitted
+constants, in rows
+
+  D series bits n mean_us sd_us
+
+for a cost measured n times on values of the given bits. pcoul pools
+rows for the same series and size, interpolates between sizes, and
+extrapolates beyond the largest, reporting at the end of a run each
+series it priced beyond its data and how far, so that the report says
+which sizes to measure next. With C<-a> (and C<-u>), the D rows of each
+section made are added to that table's rows rather than replacing them,
+so that data for larger values can be added as time permits: for
+example C<-sbpsw -d448,449,512 -utimings -a>. The section keeps a V
+line for each build that measured it, and must be timed in the same
+unit. C<-d> gives the sizes of D rows (default 32 to 384 bits, in
+pairs either side of each limb boundary, since costs step up with each
+limb).
 
 The model costs the trial division stage of each test itself, since
 how often the values a walk tests are divisible by each trial prime
@@ -70,6 +88,11 @@ Then the remaining costs:
   P bits F pass us  a prime test of a value with no factor up to F = L
   R bits us us      the primality test prep makes when only a prime is
                     left to find, on the same inputs and on composites
+  D bpsw.prime ...  BPSW alone, as tau_prime_run() makes it, on primes
+  D bpsw.comp ...   and on composites with no factor up to L (section
+                    bpsw): a composite usually fails at the first
+                    strong probable prime test, at a fraction of the
+                    cost of a prime
   S, L              as above
   C linsetup us     linear walk, per walk
   C linsetupinv us  linear walk, per inverse-filter entry set up
@@ -187,20 +210,25 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 
 =cut
 
-my($verbose, $mock, $outfile, $flake, $update)
-        = ('./pcoul', undef, undef, 0, undef);
-my @sections = qw{ scan prime multi ladder qs walk w1s leaf tail situ };
+my($verbose, $mock, $outfile, $flake, $update, $append)
+        = ('./pcoul', undef, undef, 0, undef, 0);
+my @sections = qw{ scan prime bpsw multi ladder qs walk w1s leaf tail situ };
 my %want = map +($_ => 1), @sections;
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
         96, 112, 128, 129);
+# the sizes of the D rows (section bpsw), likewise in pairs either side
+# of each limb boundary
+my @d_bits = (32, 64, 65, 128, 129, 192, 193, 256, 257, 320, 321, 384);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
     $verbose = $1, next if $arg =~ /^-v(.+)$/;
     $mock = $1, next if $arg =~ /^-m(.+)$/;
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
+    @d_bits = split(/,/, $1), next if $arg =~ /^-d([\d,]+)$/;
+    $append = 1, next if $arg eq '-a';
     $flake = $1, next if $arg =~ /^-f(\d+)$/;
     $outfile = $1, next if $arg =~ /^-w(.+)$/;
     $update = $1, next if $arg =~ /^-u(.+)$/;
@@ -226,8 +254,10 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
 my $need_mock = grep $want{$_}, qw{ leaf tail };
 @ARGV == 0 && ($mock || !$need_mock)
         or die "500 Usage: $0 [-v<verbose>] [-m<mock>] [-b<bits,...>]"
-                . " [-f<flake>] [-s<sections> | -o | -M] [-u<table>]"
-                . " [-w<file>]";
+                . " [-d<bits,...>] [-f<flake>] [-s<sections> | -o | -M]"
+                . " [-u<table> [-a]] [-w<file>]";
+!$append || defined $update
+        or die "-a adds to the D rows of a table, so needs -u";
 # The benches run in a pcoul for this n and k, which serve for every n:
 # n needs the divisors the benches test for (3 and 4 for the test_multi()
 # rows, 4 and 6 for the scan rows).
@@ -342,6 +372,7 @@ my($done, $total) = (0, 0);
 $total += @scan_bits if $want{scan};
 $total += @te * @bits if $want{multi};
 $total += @prime_bits if $want{prime};
+$total += @d_bits if $want{bpsw};
 $total += @ladder_bits if $want{ladder};
 $total += @qs_bits if $want{qs};
 $total += 2 if $want{walk} || $want{w1s};   # the clock bench and 18 4
@@ -366,7 +397,7 @@ my $tx = (grep $_ >= 6 && !($_ & 1), divisors($n))[0];
 $new{scan} = [ map bench("scan,$_,2000,$tscan" . ($tx ? ",$tx" : '')),
         @scan_bits ] if $want{scan};
 my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } lines_of('scan');
-%L or !grep($want{$_}, qw{ multi prime ladder })
+%L or !grep($want{$_}, qw{ multi prime bpsw ladder })
         or die "need the trial division limits: add -sscan, or -u a table";
 sub trial_limit {
     my($bits) = @_;
@@ -393,6 +424,14 @@ if ($want{prime}) {
     for my $b (@prime_bits) {
         push @{ $new{prime} }, grep /^[PR] /,
                 bench("prime,$b,20000," . trial_limit($b));
+    }
+}
+# BPSW alone on primes and on composites with no trial factor, as
+# tau_prime_run() makes it
+if ($want{bpsw}) {
+    for my $b (@d_bits) {
+        push @{ $new{bpsw} }, grep /^D bpsw\./,
+                bench("bpsw,$b,2000," . trial_limit($b));
     }
 }
 if ($want{ladder}) {
@@ -454,22 +493,77 @@ $new{situ} = [ fit_prep(@cal_situ) ] if $want{situ};
 
 # each section rebuilt is marked with the build that made it, and the
 # unit of its times
-my %ver = map { /^V (\w+) / ? ($1 => $_) : () } lines_of('V');
-$ver{$_} = "V $_ $sha $clock" for grep $want{$_}, @sections;
-for my $sec (grep !$want{$_} && $ver{$_}, @sections) {
-    my($c) = $ver{$sec} =~ /^V \S+ \S+ (\S+)/;
-    $c //= 'CPU';
-    warn "multibench-table: section $sec kept is timed in $c, not $clock\n"
-            if $c ne $clock;
+# (with -a, a section's D rows from several builds: one V line for each)
+my %ver;
+for (lines_of('V')) {
+    push @{ $ver{$1} }, $_ if /^V (\w+) /;
 }
-print $out "$ver{$_}\n" for grep $ver{$_}, @sections;
+for my $sec (@sections) {
+    next unless $want{$sec};
+    my @keep = (appended($sec) ? @{ $ver{$sec} // [] } : ());
+    for (@keep) {
+        my($c) = /^V \S+ \S+ (\S+)/;
+        $c //= 'CPU';
+        die "multibench-table: cannot add to section $sec, timed in $c,"
+                . " rows timed in $clock\n" if $c ne $clock;
+    }
+    $ver{$sec} = [ (grep !/^V \S+ \Q$sha\E /, @keep), "V $sec $sha $clock" ];
+}
+for my $sec (grep !$want{$_} && $ver{$_}, @sections) {
+    for (@{ $ver{$sec} }) {
+        my($c) = /^V \S+ \S+ (\S+)/;
+        $c //= 'CPU';
+        warn "multibench-table: section $sec kept is timed in $c,"
+                . " not $clock\n" if $c ne $clock;
+    }
+}
+print $out "$_\n" for map @{ $ver{$_} // [] }, @sections;
 print $out "$_\n" for map lines_of($_), @sections;
 finish();
 
-# The lines of a section: as built now, else from the table updated.
+# Whether a section built now adds to the D rows of the table updated
+# (with -a), rather than replacing its lines.
+sub appended {
+    my($sec) = @_;
+    return $append && $new{$sec} && grep /^D /, @{ $old{$sec} // [] };
+}
+
+# The lines of a section: as built now, else from the table updated;
+# with -a, the D rows of both, pooled (see pool_d()).
 sub lines_of {
     my($sec) = @_;
-    return @{ $new{$sec} // $old{$sec} // [] };
+    return pool_d(@{ $old{$sec} }, @{ $new{$sec} }) if appended($sec);
+    return pool_d(@{ $new{$sec} // $old{$sec} // [] });
+}
+
+# Pool the D rows "D series bits n mean sd" for the same series and size
+# as pcoul does on loading them (see cm_dadd() in coulcost.c), so that a
+# table that is added to stays one row per size; other lines pass as
+# they are, D rows coming after them in order of series and size.
+sub pool_d {
+    my(@lines) = @_;
+    my(@other, %d);
+    for (@lines) {
+        my($s, $b, $n, $mean, $sd) = /^D (\S+) (\d+) (\S+) (\S+)(?: (\S+))?$/
+            or push(@other, $_), next;
+        $sd //= 0;
+        my $ss = ($n > 1) ? $sd * $sd * ($n - 1) : 0;
+        my $p = $d{$s}{$b} //= [ 0, 0, 0 ];
+        my($n0, $m0) = @$p;
+        my $nt = $n0 + $n;
+        my $dm = $mean - $m0;
+        $p->[0] = $nt;
+        $p->[1] = $m0 + $dm * $n / $nt;
+        $p->[2] += $ss + $dm * $dm * $n0 * $n / $nt;
+    }
+    return @other, map {
+        my $s = $_;
+        map {
+            my($n, $m, $ss) = @{ $d{$s}{$_} };
+            sprintf 'D %s %u %u %.5f %.5f', $s, $_, $n, $m,
+                    ($n > 1) ? sqrt($ss / ($n - 1)) : 0;
+        } sort { $a <=> $b } keys %{ $d{$s} };
+    } sort keys %d;
 }
 
 # the section of a table line, if it has one
@@ -479,6 +573,7 @@ sub section_of {
         : /^\d/ ? 'multi'
         : /^[SL] / ? 'scan'
         : /^[PR] / ? 'prime'
+        : /^D bpsw\./ ? 'bpsw'
         : /^G / ? 'ladder'
         : /^Q / ? 'qs'
         : /^C (?:linsetup|loop0|looptest|sqsetup|sqloop0|sqtest) / ? 'walk'
@@ -524,7 +619,7 @@ sub bench {
     my($spec, @opt) = @_;
     local $ENV{MULTIBENCH} = $spec;
     progress("MULTIBENCH=$spec");
-    my @lines = grep /^(?:MULTIBENCH|[PRCSLGQ]) /,
+    my @lines = grep /^(?:MULTIBENCH|[PRCSLGQD]) /,
             `'$verbose' -X @opt $n $k 2>&1`;
     @lines or die "no result for MULTIBENCH=$spec";
     chomp @lines;
