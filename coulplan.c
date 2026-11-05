@@ -218,6 +218,16 @@ void cc_breakdown(void) {
     }
     report("000 cc %-14s %39.4fs\n", "test", cc.test);
     report("000 cc %-14s %39.4fs\n", "test_charged", ct_test_charged);
+    {
+        extern double ct_split_charge[3][6];
+        extern ulong ct_split_count[3][6];
+        static const char *kn[3] = { "pprep", "prep", "ptest" };
+        for (uint k = 0; k < 3; ++k)
+            for (uint l = 0; l < 6; ++l)
+                if (ct_split_count[k][l])
+                    report("000 cc %-8s L%u %14lu = %10.4fs\n", kn[k], l,
+                            ct_split_count[k][l], ct_split_charge[k][l]);
+    }
     report("000 cc %-14s %39.4fs\n", "ladder", ct_ladder_charged);
     report("000 cc %-14s %39.4fs\n", "base", cc.base);
 }
