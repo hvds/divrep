@@ -219,6 +219,19 @@ void cc_breakdown(void) {
     report("000 cc %-14s %39.4fs\n", "test", cc.test);
     report("000 cc %-14s %39.4fs\n", "test_charged", ct_test_charged);
     {
+        extern double ct_insitu_t[2][6], ct_insitu_c[2][6];
+        extern ulong ct_insitu_n[2][6];
+        for (uint p = 0; p < 2; ++p)
+            for (uint l = 0; l < 6; ++l)
+                if (ct_insitu_n[p][l])
+                    report("000 cc bpsw %s L%u n %lu actual %.4fs charged %.4fs"
+                            " (%.3fus vs %.3fus)\n", p ? "prime" : "comp", l,
+                            ct_insitu_n[p][l], ct_insitu_t[p][l],
+                            ct_insitu_c[p][l],
+                            1e6 * ct_insitu_t[p][l] / ct_insitu_n[p][l],
+                            1e6 * ct_insitu_c[p][l] / ct_insitu_n[p][l]);
+    }
+    {
         extern double ct_split_charge[3][6];
         extern ulong ct_split_count[3][6];
         static const char *kn[3] = { "pprep", "prep", "ptest" };

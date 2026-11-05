@@ -888,6 +888,11 @@ void (*ct_pprep_record)(uint nbits, int res, double dt) = NULL;
 double ct_test_charged = 0;
 /* Local: test charges split by kind (pprep, prep, ptest) and limbs. */
 double ct_split_charge[3][6];
+/* Local: BPSW in tau_prime_run() timed in situ (CCBREAK), by outcome and limbs. */
+bool ct_insitu = 0;
+double ct_insitu_t[2][6], ct_insitu_c[2][6];
+ulong ct_insitu_n[2][6];
+static inline uint l_of(uint nb) { uint l = (nb + 63) / 64; return l > 5 ? 5 : l; }
 ulong ct_split_count[3][6];
 static inline void ct_split(uint k, uint nbits, double c) {
     uint l = (nbits + 63) / 64;
@@ -1495,9 +1500,17 @@ uint tau_prime_run(uint first, uint count) {
     count = i;
     qsort(&taum[first], count - first, sizeof(t_tm), &taum_comparator);
     for (i = first; i < count; ++i) {
+        double tb0 = ct_insitu ? (*ct_clock)() : 0;
         bool prime = ct_bpsw(taum[i].n);
+        if (ct_insitu) {
+            uint l = (mpz_sizeinbase(taum[i].n, 2) + 63) / 64;
+            if (l > 5)
+                l = 5;
+            ct_insitu_t[prime][l] += (*ct_clock)() - tb0;
+            ++ct_insitu_n[prime][l];
+        }
         if (ct_ptest_price)
-            { uint nb = mpz_sizeinbase(taum[i].n, 2); double c = (*ct_ptest_price)(nb, prime); ct_test_charged += c; ct_split(2, nb, c); }
+            { uint nb = mpz_sizeinbase(taum[i].n, 2); double c = (*ct_ptest_price)(nb, prime); ct_test_charged += c; ct_split(2, nb, c); ct_insitu_c[prime][l_of(nb)] += c; }
         if (!prime) {
             taum[first].vi = taum[i].vi;
             return count - i;
