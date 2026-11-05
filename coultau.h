@@ -78,13 +78,15 @@ extern void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt);
 extern void (*ct_pprep_record)(uint nbits, int res, double dt);
 extern double (*ct_clock)(void);
 extern double (*ct_pprep_price)(uint nbits, int res);
-extern double (*ct_ptest_price)(uint nbits);
+extern double (*ct_ptest_price)(uint nbits, bool prime);
 extern double ct_test_charged;
 extern ulong ct_preps, ct_ppreps;
 extern bool tau_prime_prep(uint i);
 extern uint tau_prime_run(uint first, uint count);
 extern bool tau_prime_test(mpz_t n);
 extern bool tau_isprime(mpz_t n);
+/* BPSW alone, the test tau_prime_run() makes, for the benches */
+extern bool tau_bpsw(mpz_t n);
 /* The ladder of factoring methods tau_multi_run() climbs: rungs
  * TM_INIT..tm_rungs()-1, the mask of rungs tried at a size, running
  * rung i on tm, and the factor a successful rung found.
