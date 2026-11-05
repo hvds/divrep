@@ -9,7 +9,8 @@ use H::Diag qw{ diag keep_diag };
 =head1 multibench-table: tabulate this machine's costs for pcoul
 
   multibench-table [-v<verbose>] [-m<mock>] [-b<bits,...>] [-d<bits,...>]
-          [-f<flake>] [-s<sections> | -o | -M] [-u<table> [-a]] [-w<file>]
+          [-f<flake>] [-s<sections> | -o | -M] [-u<table> [-a] [-S<samples>]]
+          [-w<file>]
 
 Writes to stdout, or to I<file> with C<-w> (when progress is shown on
 stdout as runs done / total), the cost table that pcoul's cost model
@@ -47,6 +48,17 @@ line for each build that measured it, and must be timed in the same
 unit. C<-d> gives the sizes of D rows (default 32 to 384 bits, in
 pairs either side of each limb boundary, since costs step up with each
 limb).
+
+The costs of the recursion loops are measured in the runs themselves.
+With C<$COST_SAMPLES> naming a file, every pcoul run times a sample of
+the primes its loops try and of the apply_single() calls they make, and
+on exit appends them to that file as D rows, by the limbs of the aq of
+the node the loop extends: C<rprime.x2>, C<rprime.x3> and C<rprime.xn>
+per prime tried for p, p^2 and higher powers, and C<rfail> and
+C<rapply> per call by its outcome. With C<-S>I<samples> (and C<-u>),
+these are added to the section rec of the table, alone unless C<-s>
+chose sections to make as well. Merging the same samples twice counts
+them twice, so empty the file once its samples are in a table.
 
 The model costs the trial division stage of each test itself, since
 how often the values a walk tests are divisible by each trial prime
@@ -210,10 +222,13 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 
 =cut
 
-my($verbose, $mock, $outfile, $flake, $update, $append)
-        = ('./pcoul', undef, undef, 0, undef, 0);
-my @sections = qw{ scan prime bpsw multi ladder qs walk w1s leaf tail situ };
-my %want = map +($_ => 1), @sections;
+my($verbose, $mock, $outfile, $flake, $update, $append, $samples)
+        = ('./pcoul', undef, undef, 0, undef, 0, undef);
+my @sections
+        = qw{ scan prime bpsw multi ladder qs walk w1s leaf tail situ rec };
+# (rec is made only from samples, with -S)
+my %want = map +($_ => 1), grep $_ ne 'rec', @sections;
+my $chose = 0;  # whether -s, -o or -M chose the sections
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
@@ -229,6 +244,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     @bits = split(/,/, $1), next if $arg =~ /^-b([\d,]+)$/;
     @d_bits = split(/,/, $1), next if $arg =~ /^-d([\d,]+)$/;
     $append = 1, next if $arg eq '-a';
+    $samples = $1, next if $arg =~ /^-S(.+)$/;
     $flake = $1, next if $arg =~ /^-f(\d+)$/;
     $outfile = $1, next if $arg =~ /^-w(.+)$/;
     $update = $1, next if $arg =~ /^-u(.+)$/;
@@ -239,23 +255,50 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
             grep $_ eq $s, @sections or die "Unknown section '$s'";
         }
         %want = map +($_ => 1), @s;
+        $chose = 1;
         next;
     }
     if ($arg eq '-o') {
-        %want = map +($_ => 1), grep $_ ne 'multi', @sections;
+        %want = map +($_ => 1), grep $_ ne 'multi' && $_ ne 'rec', @sections;
+        $chose = 1;
         next;
     }
     if ($arg eq '-M') {
         %want = (multi => 1);
+        $chose = 1;
         next;
     }
     die "Unknown option '$arg'";
 }
+# With -S, the samples pcoul runs appended to a file (see cs_write() in
+# coulcost.c) are added to the section rec of the -u table, alone unless
+# -s (or -o or -M) chose sections to make as well.
+my(@sver, @srows);
+if (defined $samples) {
+    defined $update or die "-S adds samples to a table, so needs -u";
+    %want = () unless $chose;
+    $want{rec} = 1;
+    open my $fh, '<', $samples or die "$samples: $!";
+    while (<$fh>) {
+        chomp;
+        if (/^V rec /) {
+            push @sver, $_;
+        } elsif (/^D /) {
+            push @srows, $_;
+        }
+    }
+    close $fh;
+    my %u;
+    @sver = grep !$u{$_}++, @sver;
+    @srows or die "no samples in $samples";
+}
+!$want{rec} || defined $samples
+        or die "section rec is made only from samples, with -S";
 my $need_mock = grep $want{$_}, qw{ leaf tail };
 @ARGV == 0 && ($mock || !$need_mock)
         or die "500 Usage: $0 [-v<verbose>] [-m<mock>] [-b<bits,...>]"
                 . " [-d<bits,...>] [-f<flake>] [-s<sections> | -o | -M]"
-                . " [-u<table> [-a]] [-w<file>]";
+                . " [-u<table> [-a] [-S<samples>]] [-w<file>]";
 !$append || defined $update
         or die "-a adds to the D rows of a table, so needs -u";
 # The benches run in a pcoul for this n and k, which serve for every n:
@@ -337,14 +380,17 @@ $| = 1;
 # reference clock rate when it can open the cycle counter, so that the
 # table does not depend on the turbo clock while it is made; without the
 # counter, times are CPU seconds at whatever clock the machine ran.
-my($sha, $clock) = build_sha($verbose);
+# (with only samples to add, there is no pcoul to run, and the unit is
+# theirs)
+my $bench = grep $want{$_} && $_ ne 'rec', @sections;
+my($sha, $clock) = $bench ? build_sha($verbose) : (undef, sample_unit());
 if ($need_mock) {
     my(undef, $mclock) = build_sha($mock);
     $mclock eq $clock
             or die "$verbose times in $clock, but $mock in $mclock";
 }
 warn "multibench-table: no cycle counter, times will be CPU seconds,"
-        . " which vary with the turbo clock\n" if $clock eq 'CPU';
+        . " which vary with the turbo clock\n" if $bench && $clock eq 'CPU';
 
 # the test_multi() rows: one (t, e) of each class that makes a test
 # (see cm_tclass() in coulcost.c)
@@ -384,6 +430,7 @@ $total += @cal_situ if $want{situ};
 
 # the lines built, by section
 my %new;
+$new{rec} = \@srows if defined $samples;
 
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
@@ -501,6 +548,15 @@ for (lines_of('V')) {
 for my $sec (@sections) {
     next unless $want{$sec};
     my @keep = (appended($sec) ? @{ $ver{$sec} // [] } : ());
+    if ($sec eq 'rec') {
+        # the builds of the samples, after those of the rows already there
+        my %u;
+        $ver{$sec} = [ grep !$u{$_}++, @keep, @sver ];
+        my %c = map { (/^V \S+ \S+ (\S+)/ ? $1 : 'CPU') => 1 } @{ $ver{$sec} };
+        keys(%c) == 1 or die "multibench-table: section rec would mix"
+                . " times in " . join(' and ', sort keys %c) . "\n";
+        next;
+    }
     for (@keep) {
         my($c) = /^V \S+ \S+ (\S+)/;
         $c //= 'CPU';
@@ -525,7 +581,17 @@ finish();
 # (with -a), rather than replacing its lines.
 sub appended {
     my($sec) = @_;
-    return $append && $new{$sec} && grep /^D /, @{ $old{$sec} // [] };
+    return ($append || $sec eq 'rec') && $new{$sec}
+            && grep /^D /, @{ $old{$sec} // [] };
+}
+
+# The unit of the samples' times (as their V lines give it), which must
+# be the same for all of them.
+sub sample_unit {
+    my %c = map { (/^V \S+ \S+ (\S+)/ ? $1 : 'CPU') => 1 } @sver;
+    keys(%c) == 1 or die "multibench-table: samples in $samples mix"
+            . " times in " . join(' and ', sort keys %c) . "\n";
+    return (keys %c)[0];
 }
 
 # The lines of a section: as built now, else from the table updated;
@@ -574,6 +640,7 @@ sub section_of {
         : /^[SL] / ? 'scan'
         : /^[PR] / ? 'prime'
         : /^D bpsw\./ ? 'bpsw'
+        : /^D r(?:prime|fail|apply)\b/ ? 'rec'
         : /^G / ? 'ladder'
         : /^Q / ? 'qs'
         : /^C (?:linsetup|loop0|looptest|sqsetup|sqloop0|sqtest) / ? 'walk'
