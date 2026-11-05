@@ -853,6 +853,10 @@ bool tau_isprime(mpz_t n) {
     return ct_prime(n);
 }
 
+bool tau_bpsw(mpz_t n) {
+    return ct_bpsw(n);
+}
+
 /* Effectively identical to _GMP_is_prob_prime(), but with VERBOSE
  * diagnostics for debugging/calibration.
  */
@@ -877,8 +881,8 @@ bool tau_prime_test(mpz_t n) {
  */
 double (*ct_prep_price)(uint nbits, const t_ct_work *w) = NULL;
 double (*ct_pprep_price)(uint nbits, int res) = NULL;
-/* likewise, the price of each prime test tau_prime_run() makes */
-double (*ct_ptest_price)(uint nbits) = NULL;
+/* likewise, each prime test tau_prime_run() makes, by its outcome */
+double (*ct_ptest_price)(uint nbits, bool prime) = NULL;
 void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt) = NULL;
 void (*ct_pprep_record)(uint nbits, int res, double dt) = NULL;
 double ct_test_charged = 0;
@@ -1481,10 +1485,11 @@ uint tau_prime_run(uint first, uint count) {
     count = i;
     qsort(&taum[first], count - first, sizeof(t_tm), &taum_comparator);
     for (i = first; i < count; ++i) {
+        bool prime = ct_bpsw(taum[i].n);
         if (ct_ptest_price)
             ct_test_charged += (*ct_ptest_price)(
-                    mpz_sizeinbase(taum[i].n, 2));
-        if (!ct_bpsw(taum[i].n)) {
+                    mpz_sizeinbase(taum[i].n, 2), prime);
+        if (!prime) {
             taum[first].vi = taum[i].vi;
             return count - i;
         }
