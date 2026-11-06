@@ -34,18 +34,19 @@ extern int other_comparator(const void *va, const void *vb);
 
 /* The classes of the costs of the recursion loops, which are sampled in
  * situ (see cs_add()) by the limbs of the aq of the node a loop extends:
- * a prime tried for p, p^2 or a higher power, and a call of
- * apply_single() that fails or succeeds.
+ * a prime tried for p^{x-1}, one class for each x up to CR_MAXX (see
+ * cr_xclass()), and a call of apply_single() that fails or succeeds.
  */
-enum { CR_PRIME2, CR_PRIME3, CR_PRIMEN, CR_FAIL, CR_APPLY, CR_COUNT };
+#define CR_MAXX 32      /* powers p^{x-1} beyond this x are taken as this */
+enum { CR_FAIL = CR_MAXX - 1, CR_APPLY, CR_COUNT };
 #define CR_MAXL 16      /* limbs beyond this are taken as this */
 static inline uint cr_limbs(mpz_t aq) {
     uint l = mpz_size(aq);
     return (l < 1) ? 1 : (l > CR_MAXL) ? CR_MAXL : l;
 }
-/* the class of a prime tried for p^{x-1} */
+/* the class of a prime tried for p^{x-1}, from 0 for x = 2 */
 static inline uint cr_xclass(uint x) {
-    return (x == 2) ? CR_PRIME2 : (x == 3) ? CR_PRIME3 : CR_PRIMEN;
+    return ((x > CR_MAXX) ? CR_MAXX : x) - 2;
 }
 
 /* What the run has done, counted for costing it (see cc_work()); tests
