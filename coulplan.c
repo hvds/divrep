@@ -72,10 +72,6 @@ static double gq_setup = GQ_SETUP, gq_prime = GQ_PRIME;
  * that succeeds. See gr_init().
  */
 static double gr_rec[CR_COUNT][CR_MAXL + 1];
-/* the price of a prime tried for p^{x-1} below lv */
-static inline double gr_pprice(t_node *lv, uint x) {
-    return gr_rec[cr_xclass(x)][cr_limbs(lv->aq)];
-}
 /* and the setup per inverse-filter entry of a linear walk, and per root
  * residue of one below a fixed square, 0 without a table
  */
@@ -487,6 +483,34 @@ static double gr_seg(double lo, double hi, double m0, double m1) {
     return sum * h / 3;
 }
 
+/* What trying the primes in [a, b] for p^{x-1} costs at a node whose aq
+ * has l limbs and leaves room zl = zmax / aq: a prime p passes the first
+ * stage of reject_single() with chance min(1, zl / p) and goes on to the
+ * second, the rest being rejected at the first (see CR_COUNT); with zl
+ * beyond a ulong, reject_single() is not used.
+ */
+static double gr_ploop_z(double zl, uint l, double a, double b, uint x) {
+    if (a < 2)
+        a = 2;
+    if (b < a)
+        return 0;
+    double np = gr_li(b) - gr_li(a) + 1;
+    if (zl >= 0x1p64)
+        return np * gr_rec[CR_EARLY][l];
+    double nd = (zl > a) ? gr_li((zl < b) ? zl : b) - gr_li(a) + 1 : 0;
+    if (zl < b)
+        nd += zl * gr_psum((zl > a) ? zl : a, b, 1);
+    if (nd > np)
+        nd = np;
+    return nd * gr_rec[cr_xclass(x)][l] + (np - nd) * gr_rec[CR_REJ1][l];
+}
+
+/* likewise below the node at lv */
+static double gr_ploop(t_node *lv, double a, double b, uint x) {
+    return gr_ploop_z(mpz_get_d(zmax) / mpz_get_d(lv->aq), cr_limbs(lv->aq),
+            a, b, x);
+}
+
 /* Of the primes in [lo, hi] for p^{x-1} below lv, those expected to
  * reach apply_single() and be rejected there, rather than in single
  * limbs by reject_single(). That needs r = (zmax - rq) / aq in a limb,
@@ -548,14 +572,14 @@ static double gr_nreach(double r, double lo, double hi, uint x) {
 }
 
 /* What a loop over p^{x-1} for p in [p, cap] below prev_node costs for
- * itself: a price per prime tried, and one more for each that only
- * apply_single() rejects, which are among those beyond the last to lead
- * to a child.
+ * itself: the primes tried (see gr_ploop()), and a price more for each
+ * that only apply_single() rejects, which are among those beyond the
+ * last to lead to a child.
  */
 static double gr_own(t_node *prev_node, ulong p, ulong cap, uint x) {
     double a = (p < 2) ? 2 : p, b = cap;
     double q1 = pow(gr_iters(prev_node), 1.0 / (x - 1));
-    return (gr_li(b) - gr_li(a) + 1) * gr_pprice(prev_node, x)
+    return gr_ploop(prev_node, a, b, x)
             + gr_rec[CR_FAIL][cr_limbs(prev_node->aq)]
                     * gr_nfail(prev_node, (q1 > a) ? q1 : a, b, x);
 }
@@ -727,7 +751,7 @@ static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
         double nr = (b > mR) ? (((ql > mR) ? gr_li((ql < b) ? ql : b)
                 - gr_li(mR) : 0) + zl * gr_psum(mE, b, s)) / 2 : 0;
         t_gqloop r = {
-            .own = np * gr_pprice(prev_node, x) + ct + nr * GQ_ROOT
+            .own = gr_ploop(prev_node, a, b, x) + ct + nr * GQ_ROOT
                     + ns * (gq_prime + ap),
             .nw = ns,
         };
@@ -735,7 +759,7 @@ static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
     }
     double nw = nv * gq_resfrac(g);
     t_gqloop r = {
-        .own = np * gr_pprice(prev_node, x) + ct + nw * (gq_prime + ap),
+        .own = gr_ploop(prev_node, a, b, x) + ct + nw * (gq_prime + ap),
         .nw = nw,
     };
     return r;
@@ -767,7 +791,7 @@ static bool gq_walk(
     if (cap < p)
         return 0;
     double W = w0 * rw;
-    if (W < (gr_li(cap) - gr_li(p) + 1) * gr_pprice(prev_node, x))
+    if (W < gr_ploop(prev_node, p, cap, x))
         return 1;
     return W < gq_recurse(prev_node, p, cap, x) * rr;
 }
@@ -945,7 +969,10 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
     if (hi <= lo)
         return 0;
     uint kl = ke_limbs(node->zl);
-    double pp = gr_rec[cr_xclass(e + 1)][kl], ap = gr_rec[CR_APPLY][kl];
+    /* each prime at the mean price over the loop (see gr_ploop_z()) */
+    double pp = gr_ploop_z(node->zl, kl, lo, hi, e + 1)
+            / (gr_li(hi) - gr_li(lo) + 1);
+    double ap = gr_rec[CR_APPLY][kl];
     ulong qm = 0;
     mpz_t *q = kern_q(sq0);
     bool sq = (e == 2 && ke_endr > 0);
@@ -1082,8 +1109,9 @@ static double ke_cost(t_kenode *node, double budget) {
         return ke_walked(node, w);
     double lo, hi;
     uint e = ke_limit(&node->pos[best], &lo, &hi);
-    if (hi <= lo || w < (gr_li(hi) - gr_li(lo))
-            * gr_rec[cr_xclass(e + 1)][ke_limbs(node->zl)])
+    double np = gr_li(hi) - gr_li(lo);
+    if (hi <= lo || w < np * gr_ploop_z(node->zl, ke_limbs(node->zl), lo,
+            hi, e + 1) / (np + 1))
         return ke_walked(node, w);
     if (w < ke_loop(node, best, 0, HUGE_VAL))
         return ke_walked(node, w);
@@ -1177,8 +1205,9 @@ static double ke_batch(ulong at, double budget) {
             if (L <= W)
                 continue;
             ke_swept = 1;
-            double pp = gr_rec[cr_xclass(e + 1)][ke_limbs(root.zl)];
             double np = gr_li(L) - gr_li(W);
+            double pp = gr_ploop_z(root.zl, ke_limbs(root.zl), W, L, e + 1)
+                    / (np + 1);
             double nr = gr_nreach(r, W, L, e + 1);
             /* its walks have this power allocated */
             t_kenode sw = root;
@@ -1244,8 +1273,9 @@ static double ke_6x(void) {
     double se = pow(zmax_given / mpz_get_d(*kern_q(sq0)), 0.25);
     if (se > L)
         se = L;
-    uint bl = cr_limbs(nodes[cur_batch_level].aq);
-    double cost = gr_li(L) * (gr_rec[cr_xclass(5)][bl] + GQ_RES + GQ_ROOT / 2)
+    t_node *bn = &nodes[cur_batch_level];
+    double cost = gr_ploop(bn, 2, L, 5)
+            + gr_li(L) * (GQ_RES + GQ_ROOT / 2)
             + gr_li(se) * KE_6X;
 
     ulong at, passed;
@@ -2577,7 +2607,7 @@ static double ja_e2loop(
     t_node *pl, t_act *ca, uint vi, uint x, ulong p, ulong cap, uint *n
 ) {
     t_node *cl = &nodes[ca->level];
-    double total = (gr_li(cap) - gr_li(p) + 1) * gr_pprice(pl, x);
+    double total = gr_ploop(pl, p, cap, x);
     if (gr_li(cap) - gr_li(p) <= JA_E2PTS * JA_E2RUN) {
         for (ulong q = next_prime(p); q <= cap; q = next_prime(q)) {
             if (known_prime(pl, q))
