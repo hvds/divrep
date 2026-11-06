@@ -1243,7 +1243,7 @@ static double ke_6x(void) {
     if (se > L)
         se = L;
     uint bl = cr_limbs(nodes[cur_batch_level].aq);
-    double cost = gr_li(L) * (gr_rec[CR_PRIMEN][bl] + GQ_RES + GQ_ROOT / 2)
+    double cost = gr_li(L) * (gr_rec[cr_xclass(5)][bl] + GQ_RES + GQ_ROOT / 2)
             + gr_li(se) * KE_6X;
 
     ulong at, passed;
