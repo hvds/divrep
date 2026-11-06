@@ -63,6 +63,10 @@ typedef struct {
      */
     ulong lin_setinv, sq_setres;
     ulong w1s_calls;    /* walk_1_set() calls, for their setup */
+    /* rec_prime, rec_fail and rec_applied by class and limbs (see
+     * CR_COUNT), for pricing them by size
+     */
+    ulong rec_by[CR_COUNT][CR_MAXL + 1];
     double test, base;
 } t_cc;
 extern t_cc cc;

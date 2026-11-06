@@ -4730,10 +4730,12 @@ void walk_midp(t_node *prev_node, bool recover) {
     bool sq_ok = square_applies(prev_node);
     ulong endr = square_endr(prev_node);
     reject_prep(prev_node, cur_act);
+    /* the limbs of aq, by which the loop's work is counted and sampled */
+    uint cr_l = cr_limbs(prev_node->aq);
     /* the window of primes being sampled, if any (see cs_prime()) */
     bool cs = cs_on && !prev_node->have_square;
     double cs_t = 0, cs_a;
-    uint cs_k = 0, cs_c = 0, cr_l = cr_limbs(prev_node->aq);
+    uint cs_k = 0, cs_c = 0;
 
     level_setp(cur_act, midpp[0].maxp);
     /* setp has set to a prime <= target */
@@ -4809,6 +4811,7 @@ void walk_midp(t_node *prev_node, bool recover) {
             }
             /* counted as for a loop of allocations, see cc_work() */
             ++cc.rec_prime;
+            ++cc.rec_by[cr_xclass(mp->x)][cr_l];
             if (cs)
                 cs_prime(&cs_t, &cs_k, &cs_c, cr_xclass(mp->x), cr_l);
             if (used)
@@ -4846,6 +4849,7 @@ void walk_midp(t_node *prev_node, bool recover) {
                 if (cs_a)
                     cs_add(CR_APPLY, cr_l, cs_a, 1);
                 ++cc.rec_applied;
+                ++cc.rec_by[CR_APPLY][cr_l];
                 if (need_work)
                     diag_plain(cur_node);
                 GS_ORIGIN('M');
@@ -4855,8 +4859,10 @@ void walk_midp(t_node *prev_node, bool recover) {
                 if (cs_a)
                     cs_add(CR_FAIL, cr_l, cs_a, 1);
                 /* below a fixed square, priced with the roots */
-                if (!prev_node->have_square)
+                if (!prev_node->have_square) {
                     ++cc.rec_fail;
+                    ++cc.rec_by[CR_FAIL][cr_l];
+                }
                 if (need_work)
                     diag_attempt(cur_node, vi, p, x);
             }
@@ -6938,10 +6944,12 @@ static inline bool find_unforced_x(t_act *cur_act) {
 bool next_unforced(t_act *cur_act) {
     t_node *prev_node = &nodes[cur_act->level - 1];
     t_node *cur_node = &nodes[cur_act->level];
+    /* the limbs of aq, by which the loop's work is counted and sampled */
+    uint cr_l = cr_limbs(prev_node->aq);
     /* the window of primes being sampled, if any (see cs_prime()) */
     bool cs = cs_on && !prev_node->have_square;
     double cs_t = 0;
-    uint cs_k = 0, cs_c = 0, cr_l = cr_limbs(prev_node->aq);
+    uint cs_k = 0, cs_c = 0;
     while (1) {
 #ifdef MOCK
         if (mock_loop_leaf(cur_act))
@@ -6964,6 +6972,7 @@ bool next_unforced(t_act *cur_act) {
       redo_unforced: ;
         ulong p = prime_iterator_next(&cur_act->piter);
         ++cc.rec_prime;
+        ++cc.rec_by[cr_xclass(cur_act->x)][cr_l];
         if (cs)
             cs_prime(&cs_t, &cs_k, &cs_c, cr_xclass(cur_act->x), cr_l);
         if (p > cur_act->limp)
@@ -7014,8 +7023,10 @@ bool next_unforced(t_act *cur_act) {
             if (cs_a)
                 cs_add(CR_FAIL, cr_l, cs_a, 1);
             /* below a fixed square, priced with the roots */
-            if (!prev_node->have_square)
+            if (!prev_node->have_square) {
                 ++cc.rec_fail;
+                ++cc.rec_by[CR_FAIL][cr_l];
+            }
             if (need_work)
                 diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
             /* not redo_unforced, we may have improved zmax */
@@ -7024,6 +7035,7 @@ bool next_unforced(t_act *cur_act) {
         if (cs_a)
             cs_add(CR_APPLY, cr_l, cs_a, 1);
         ++cc.rec_applied;
+        ++cc.rec_by[CR_APPLY][cr_l];
         return 1;
       end_x:
         /* a window would take in moving to the next x */

@@ -122,6 +122,7 @@ typedef struct {
 static t_cmd cm_D[CM_MAXDS];
 static uint cm_nD = 0;
 static int cm_d_bpsw[2] = { -1, -1 };   /* bpsw.comp, bpsw.prime */
+static void cm_rec_fill(void);
 /* The "Q bits us fail" rows: QS alone (rung 24), whose cost depends
  * only on the size, stepping with its parameters by decimal digits.
  */
@@ -247,9 +248,36 @@ static void cm_add1(t_cm1 *tp, double bits, double v0, double v1) {
 /* the index of the D series of this name, or -1 if the table has none */
 static int cm_dfind(const char *name) {
     for (uint i = 0; i < cm_nD; ++i)
-        if (strcmp(cm_D[i].name, name) == 0)
+        if (cm_D[i].np && strcmp(cm_D[i].name, name) == 0)
             return i;
     return -1;
+}
+
+/* A D row too thin to price from: fewer than CM_DMIN_N measurements, or
+ * a standard error of the mean above CM_DMAX_SE of it, as for a size a
+ * run sampled only in passing. Such rows stay in the table, where more
+ * data pools with them, but are left out of pricing until then (see
+ * multibench-table -S, which lists them).
+ */
+#define CM_DMIN_N 100
+#define CM_DMAX_SE 0.1
+static void cm_dthin(void) {
+    for (uint i = 0; i < cm_nD; ++i) {
+        t_cmd *dp = &cm_D[i];
+        uint k = 0;
+        for (uint j = 0; j < dp->np; ++j) {
+            double n = dp->n[j];
+            double se = (n > 1) ? sqrt(dp->ss[j] / (n - 1) / n) : 0;
+            if (n < CM_DMIN_N || se > CM_DMAX_SE * fabs(dp->mean[j]))
+                continue;
+            dp->bits[k] = dp->bits[j];
+            dp->n[k] = n;
+            dp->mean[k] = dp->mean[j];
+            dp->ss[k] = dp->ss[j];
+            ++k;
+        }
+        dp->np = k;
+    }
 }
 
 /* Add a D row, pooling it with any row for the same series and size:
@@ -587,6 +615,7 @@ static void cm_load(void) {
     }
     if (fp)
         fclose(fp);
+    cm_dthin();
     cm_d_bpsw[0] = cm_dfind("bpsw.comp");
     cm_d_bpsw[1] = cm_dfind("bpsw.prime");
     for (uint i = 0; i < CM_COUNT; ++i)
@@ -621,6 +650,7 @@ static void cm_load(void) {
         cm_sq_bad = CMC(CM_CPRIMESQ);
         CMC(CM_CPRIMESQ) = CMC(CM_CPRIME);
     }
+    cm_rec_fill();
     if (cm_report_due)
         cm_report_bad();
     if (cm_K.pseen)
@@ -702,11 +732,11 @@ static double cm_interp1(t_cm1 *tp, double lg, uint k) {
 /* The cost in seconds, from D series s, of a value of nbits bits:
  * interpolated geometrically between the sizes either side; below the
  * smallest, that of the smallest; beyond the largest, extrapolated (see
- * CM_DGROW_MAX) and noted for cm_dreport(). The sizes should come in
- * pairs either side of each limb boundary (64 and 65 bits, and so on),
- * since costs step up with each limb.
+ * CM_DGROW_MAX) and, if note, noted for cm_dreport(). The sizes should
+ * come in pairs either side of each limb boundary (64 and 65 bits, and
+ * so on), since costs step up with each limb.
  */
-static double cm_dprice(int s, uint nbits) {
+static double cm_dprice(int s, uint nbits, bool note) {
     t_cmd *dp = &cm_D[s];
     uint top = dp->np - 1;
     if (nbits <= dp->bits[0])
@@ -714,9 +744,11 @@ static double cm_dprice(int s, uint nbits) {
     if (nbits >= dp->bits[top]) {
         if (nbits == dp->bits[top] || top == 0)
             return dp->mean[top] * 1e-6;
-        if (nbits > dp->asked)
-            dp->asked = nbits;
-        ++dp->beyond;
+        if (note) {
+            if (nbits > dp->asked)
+                dp->asked = nbits;
+            ++dp->beyond;
+        }
         double a = dp->mean[top - 1], b = dp->mean[top];
         double g = (a > 0 && b > 0)
                 ? log(b / a) / log((double)dp->bits[top] / dp->bits[top - 1])
@@ -736,8 +768,54 @@ static double cm_dprice(int s, uint nbits) {
     return ((a > 0 && b > 0) ? a * pow(b / a, f) : a + f * (b - a)) * 1e-6;
 }
 
+/* The prices of the recursion loops' work by class and limbs (see
+ * CR_COUNT), filled in as the table loads: from the D rows in situ
+ * sampling gave (see cs_write()), a class of prime not yet sampled
+ * taking the nearest class that is; else from the C constants cprime,
+ * cfail and capply. cm_rec_d[] is the D series each class is priced
+ * from, or -1.
+ */
+static const char *cm_rec_name[CR_COUNT] = {
+    "rprime.x2", "rprime.x3", "rprime.xn", "rfail", "rapply"
+};
+static double cm_rec[CR_COUNT][CR_MAXL + 1];
+static int cm_rec_d[CR_COUNT];
+static void cm_rec_fill(void) {
+    static const uint near[CR_FAIL][CR_FAIL] = {
+        { CR_PRIME2, CR_PRIME3, CR_PRIMEN },
+        { CR_PRIME3, CR_PRIMEN, CR_PRIME2 },
+        { CR_PRIMEN, CR_PRIME3, CR_PRIME2 },
+    };
+    for (uint c = 0; c < CR_COUNT; ++c) {
+        int s = -1;
+        double dflt;
+        if (c < CR_FAIL) {
+            for (uint k = 0; k < CR_FAIL && s < 0; ++k)
+                s = cm_dfind(cm_rec_name[near[c][k]]);
+            dflt = CMC(CM_CPRIME);
+        } else {
+            s = cm_dfind(cm_rec_name[c]);
+            dflt = CMC((c == CR_FAIL) ? CM_CFAIL : CM_CAPPLY);
+        }
+        cm_rec_d[c] = s;
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            cm_rec[c][l] = (s >= 0) ? cm_dprice(s, 64 * l, 0) : dflt;
+    }
+}
+
+/* the price of one item of the recursion loops' work of class c (see
+ * CR_COUNT) for a node whose aq has l limbs
+ */
+double cm_rec_price(uint c, uint l) {
+    if (!cm_loaded)
+        cm_load();
+    return cm_rec[c][l];
+}
+
 /* Report each D series priced beyond its data, and how far: these are
- * the measurements to add to the table next.
+ * the measurements to add to the table next. The recursion prices are
+ * filled in ahead (see cm_rec_fill()), so for them it is the counts of
+ * what the run did at each size that say.
  */
 void cm_dreport(void) {
     if (!cm_loaded)
@@ -748,6 +826,26 @@ void cm_dreport(void) {
             report("000 cost table: D %s extrapolated %lu times, to %u bits"
                     " (data to %u)\n", dp->name, dp->beyond, dp->asked,
                     dp->bits[dp->np - 1]);
+    }
+    if (!cc.on)
+        return;
+    for (uint c = 0; c < CR_COUNT; ++c) {
+        int s = cm_rec_d[c];
+        if (s < 0)
+            continue;
+        uint top = cm_D[s].bits[cm_D[s].np - 1];
+        ulong n = 0;
+        uint asked = 0;
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            if (cc.rec_by[c][l] && 64 * l > top) {
+                n += cc.rec_by[c][l];
+                asked = 64 * l;
+            }
+        if (n)
+            report("000 cost table: D %s extrapolated %lu times, to %u bits"
+                    " (data to %u)%s%s\n", cm_D[s].name, n, asked, top,
+                    (s == cm_dfind(cm_rec_name[c])) ? "" : " for ",
+                    (s == cm_dfind(cm_rec_name[c])) ? "" : cm_rec_name[c]);
     }
 }
 
@@ -1571,7 +1669,7 @@ double cm_ptest_price(uint nbits, bool prime) {
     if (!cm_loaded)
         cm_load();
     if (cm_d_bpsw[0] >= 0 && cm_d_bpsw[1] >= 0)
-        return cm_dprice(cm_d_bpsw[prime ? 1 : 0], nbits);
+        return cm_dprice(cm_d_bpsw[prime ? 1 : 0], nbits, 1);
     if (!cm_K.seen || !cm_K.pseen)
         return 0;
     return nbits * cm_K.v[(nbits <= 64) ? CMK_PBIT : CMK_ZBIT];
@@ -1937,9 +2035,6 @@ typedef struct {
     double mean, ss;
 } t_csstat;
 static t_csstat cs_stat[CR_COUNT][CR_MAXL + 1];
-static const char *cs_name[CR_COUNT] = {
-    "rprime.x2", "rprime.x3", "rprime.xn", "rfail", "rapply"
-};
 static const char *cs_file = NULL;
 
 /* Sample if $COST_SAMPLES names a file, finding what reading the clock
@@ -2002,7 +2097,7 @@ void cs_write(void) {
             t_csstat *sp = &cs_stat[c][l];
             if (!sp->n)
                 continue;
-            fprintf(fp, "D %s %u %lu %.5f %.5f\n", cs_name[c], 64 * l,
+            fprintf(fp, "D %s %u %lu %.5f %.5f\n", cm_rec_name[c], 64 * l,
                     sp->n, sp->mean * 1e6,
                     (sp->n > 1) ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
         }
