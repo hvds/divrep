@@ -575,7 +575,21 @@ for my $sec (grep !$want{$_} && $ver{$_}, @sections) {
 }
 print $out "$_\n" for map @{ $ver{$_} // [] }, @sections;
 print $out "$_\n" for map lines_of($_), @sections;
+thin_report() if defined $samples;
 finish();
+
+# List the rows of section rec still too thin for pcoul to price from
+# (see cm_dthin() in coulcost.c), so as to know what needs more samples.
+sub thin_report {
+    for (lines_of('rec')) {
+        my($s, $b, $n, $mean, $sd) = /^D (\S+) (\d+) (\S+) (\S+) (\S+)$/
+                or next;
+        my $se = ($n > 1) ? $sd / sqrt($n) : 0;
+        warn sprintf "multibench-table: D %s %u too thin to price from"
+                . " (n %u, mean %.4f, se %.4f)\n", $s, $b, $n, $mean, $se
+            if $n < 100 || $se > 0.1 * abs($mean);
+    }
+}
 
 # Whether a section built now adds to the D rows of the table updated
 # (with -a), rather than replacing its lines.
