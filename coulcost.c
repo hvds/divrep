@@ -129,11 +129,24 @@ static void cm_rec_fill(void);
  */
 enum { CS_PPREP = CR_COUNT, CS_COUNT = CR_COUNT + 3 };
 static int cm_d_pprep[3] = { -1, -1, -1 };
-/* the names of the D series of the samples of each class */
-static const char *cm_rec_name[CS_COUNT] = {
-    "rprime.x2", "rprime.x3", "rprime.xn", "rfail", "rapply",
-    "pprep.fail", "pprep.prime", "pprep.test"
-};
+/* The names of the D series of the samples of each class: rprime.x<x>
+ * for a prime tried for p^{x-1} (rprime.x32+ for the last), rfail and
+ * rapply, then pprep.fail, pprep.prime and pprep.test (see cs_name()).
+ */
+static char cs_names[CS_COUNT][16];
+static const char *cs_name(uint c) {
+    if (!cs_names[0][0]) {
+        for (uint x = 2; x <= CR_MAXX; ++x)
+            snprintf(cs_names[cr_xclass(x)], 16, "rprime.x%u%s", x,
+                    (x == CR_MAXX) ? "+" : "");
+        static const char *rest[] = {
+            "rfail", "rapply", "pprep.fail", "pprep.prime", "pprep.test"
+        };
+        for (uint i = 0; i < CS_COUNT - CR_FAIL; ++i)
+            snprintf(cs_names[CR_FAIL + i], 16, "%s", rest[i]);
+    }
+    return cs_names[c];
+}
 /* The "Q bits us fail" rows: QS alone (rung 24), whose cost depends
  * only on the size, stepping with its parameters by decimal digits.
  */
@@ -630,7 +643,7 @@ static void cm_load(void) {
     cm_d_bpsw[0] = cm_dfind("bpsw.comp");
     cm_d_bpsw[1] = cm_dfind("bpsw.prime");
     for (uint r = 0; r < 3; ++r)
-        cm_d_pprep[r] = cm_dfind(cm_rec_name[CS_PPREP + r]);
+        cm_d_pprep[r] = cm_dfind(cs_name(CS_PPREP + r));
     for (uint i = 0; i < CM_COUNT; ++i)
         if (!cm_C[i].seen) {
             if (!cm_C[i].dflt && !cm_C[i].opt)
@@ -783,30 +796,28 @@ static double cm_dprice(int s, uint nbits, bool note) {
 
 /* The prices of the recursion loops' work by class and limbs (see
  * CR_COUNT), filled in as the table loads: from the D rows in situ
- * sampling gave (see cs_write()), a class of prime not yet sampled
- * taking the nearest class that is; else from the C constants cprime,
+ * sampling gave (see cs_write()), a power not yet sampled taking the
+ * nearest that is; else from the C constants cprime,
  * cfail and capply. cm_rec_d[] is the D series each class is priced
  * from, or -1.
  */
 static double cm_rec[CR_COUNT][CR_MAXL + 1];
 static int cm_rec_d[CR_COUNT];
 static void cm_rec_fill(void) {
-    static const uint near[CR_FAIL][CR_FAIL] = {
-        { CR_PRIME2, CR_PRIME3, CR_PRIMEN },
-        { CR_PRIME3, CR_PRIMEN, CR_PRIME2 },
-        { CR_PRIMEN, CR_PRIME3, CR_PRIME2 },
-    };
     for (uint c = 0; c < CR_COUNT; ++c) {
-        int s = -1;
+        int s = cm_dfind(cs_name(c));
         double dflt;
         if (c < CR_FAIL) {
-            for (uint k = 0; k < CR_FAIL && s < 0; ++k)
-                s = cm_dfind(cm_rec_name[near[c][k]]);
+            /* a power not yet sampled takes the nearest that is */
+            for (uint d = 1; s < 0 && d < CR_FAIL; ++d) {
+                if (c >= d)
+                    s = cm_dfind(cs_name(c - d));
+                if (s < 0 && c + d < CR_FAIL)
+                    s = cm_dfind(cs_name(c + d));
+            }
             dflt = CMC(CM_CPRIME);
-        } else {
-            s = cm_dfind(cm_rec_name[c]);
+        } else
             dflt = CMC((c == CR_FAIL) ? CM_CFAIL : CM_CAPPLY);
-        }
         cm_rec_d[c] = s;
         for (uint l = 1; l <= CR_MAXL; ++l)
             cm_rec[c][l] = (s >= 0) ? cm_dprice(s, 64 * l, 0) : dflt;
@@ -854,8 +865,8 @@ void cm_dreport(void) {
         if (n)
             report("000 cost table: D %s extrapolated %lu times, to %u bits"
                     " (data to %u)%s%s\n", cm_D[s].name, n, asked, top,
-                    (s == cm_dfind(cm_rec_name[c])) ? "" : " for ",
-                    (s == cm_dfind(cm_rec_name[c])) ? "" : cm_rec_name[c]);
+                    (s == cm_dfind(cs_name(c))) ? "" : " for ",
+                    (s == cm_dfind(cs_name(c))) ? "" : cs_name(c));
     }
 }
 
@@ -2191,7 +2202,7 @@ void cs_write(void) {
             t_csstat *sp = &cs_stat[c][l];
             if (!sp->n)
                 continue;
-            fprintf(fp, "D %s %u %lu %.5f %.5f\n", cm_rec_name[c], 64 * l,
+            fprintf(fp, "D %s %u %lu %.5f %.5f\n", cs_name(c), 64 * l,
                     sp->n, sp->mean * 1e6,
                     (sp->n > 1) ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
         }
