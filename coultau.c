@@ -902,6 +902,12 @@ static inline void ct_split(uint k, uint nbits, double c) {
     ++ct_split_count[k][l];
 }
 ulong ct_preps = 0, ct_ppreps = 0;  /* the calls of each that are priced */
+/* If set, one call of tau_prime_prep() in ct_pp_every is timed and given
+ * to it with its size and result, for in-situ cost samples (see cs_init()
+ * in coulcost.c), whether or not the preparations are priced.
+ */
+void (*ct_pprep_sample)(uint nbits, int res, double dt) = NULL;
+uint ct_pp_every = 0, ct_pp_left = 1;
 
 /* The clock for the timings above and in tau_multi_run(): the thread's
  * CPU time, unless pcoul sets it to its own (work_clock()), so that they
@@ -916,21 +922,30 @@ double (*ct_clock)(void) = &ct_thread_clock;
 
 static bool tau_prime_prep_inner(uint i);
 bool tau_prime_prep(uint i) {
-    if (!ct_pprep_price)
+    bool sample = ct_pprep_sample && !--ct_pp_left;
+    if (!ct_pprep_price && !sample)
         return tau_prime_prep_inner(i);
-    ++ct_ppreps;
     uint nbits = mpz_sizeinbase(taum[i].n, 2);
-    if (ct_pprep_record) {
+    bool r;
+    if (ct_pprep_record || sample) {
         double t0 = (*ct_clock)();
-        bool r = tau_prime_prep_inner(i);
+        r = tau_prime_prep_inner(i);
         double t1 = (*ct_clock)();
         int res = r ? 1 + taum[i].state : 0;
-        (*ct_pprep_record)(nbits, res, t1 - t0);
-        { double c = (*ct_pprep_price)(nbits, res); ct_test_charged += c; ct_split(0, nbits, c); }
-        return r;
+        if (ct_pprep_record)
+            (*ct_pprep_record)(nbits, res, t1 - t0);
+        if (sample) {
+            ct_pp_left = ct_pp_every;
+            (*ct_pprep_sample)(nbits, res, t1 - t0);
+        }
+    } else
+        r = tau_prime_prep_inner(i);
+    if (ct_pprep_price) {
+        ++ct_ppreps;
+        double c = (*ct_pprep_price)(nbits, r ? 1 + taum[i].state : 0);
+        ct_test_charged += c;
+        ct_split(0, nbits, c);
     }
-    bool r = tau_prime_prep_inner(i);
-    { double c = (*ct_pprep_price)(nbits, r ? 1 + taum[i].state : 0); ct_test_charged += c; ct_split(0, nbits, c); }
     return r;
 }
 
