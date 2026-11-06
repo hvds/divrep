@@ -133,14 +133,26 @@ static inline double gr_now(void) {
  * learning depends neither on the machine's load nor on luck, and two
  * identical runs make identical choices: walk iterations and inverse
  * filter entries tested, primes tried by walk_1_set(), the recursion
- * and the -W sweep, counted per power the sweep tries, as for a loop
- * (those reaching apply_single() below a fixed square at cprimesq, and
- * elsewhere those rejected only there at cfail more), each
+ * and the -W sweep, counted per power the sweep tries, as for a loop,
+ * by class and size (see cm_rec_price(); those reaching apply_single()
+ * below a fixed square at cprimesq more), each
  * at its cost from the cost table; each test's preparation by where
  * its trial division stopped, and the factoring ladder at its expected
  * cost (see cm_prep_price(), cm_pprep_price(), cm_price_prime() and
  * cm_ladder_cost()).
  */
+/* the recursion loops' primes tried and calls of apply_single(), by
+ * class and size (see CR_COUNT)
+ */
+static double cc_rec_work(void) {
+    double cost = 0;
+    for (uint c = 0; c < CR_COUNT; ++c)
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            if (cc.rec_by[c][l])
+                cost += cc.rec_by[c][l] * cm_rec_price(c, l);
+    return cost;
+}
+
 double cc_work(void) {
     static double c[CM_COUNT];
     static bool init = 0;
@@ -157,11 +169,9 @@ double cc_work(void) {
             + cc.sq_inv * c[CM_SQTEST]
             + cc.w1s_prime * c[CM_W1SITER] + cc.w1s_check * c[CM_W1SCHECK]
             + cc.w1s_calls * c[CM_W1SCALL]
-            + cc.rec_prime * c[CM_CPRIME]
+            + cc_rec_work()
             + cc.rec_sq * (c[CM_CPRIMESQ] - c[CM_CPRIME])
             + cc.rec_res * GQ_RES + cc.rec_root * GQ_ROOT
-            + cc.rec_applied * c[CM_CAPPLY]
-            + cc.rec_fail * c[CM_CFAIL]
             + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
 

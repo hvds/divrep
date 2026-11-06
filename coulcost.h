@@ -28,6 +28,8 @@ extern double cm_pprep_price(uint nbits, int res);
 extern double cm_ptest_price(uint nbits, bool prime);
 /* Report each D series priced beyond its data (see coulcost.c). */
 extern void cm_dreport(void);
+/* the price of an item of recursion work of class c, aq of l limbs */
+extern double cm_rec_price(uint c, uint l);
 enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
         CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
         CM_LINSETUP, CM_CAPPLY, CM_LINSETUPINV, CM_SQSETUPRES, CM_W1SCALL,
