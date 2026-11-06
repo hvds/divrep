@@ -129,21 +129,24 @@ static void cm_rec_fill(void);
  */
 enum { CS_PPREP = CR_COUNT, CS_COUNT = CR_COUNT + 3 };
 static int cm_d_pprep[3] = { -1, -1, -1 };
-/* The names of the D series of the samples of each class: rprime.x<x>
- * for a prime tried for p^{x-1} (rprime.x32+ for the last), rfail and
- * rapply, then pprep.fail, pprep.prime and pprep.test (see cs_name()).
+/* The names of the D series of the samples of each class: rdeep.x<x>
+ * for a prime reaching the second stage of reject_single() for p^{x-1}
+ * (rdeep.x32+ for the last), rearly, rrej1, rfail and rapply (see
+ * CR_COUNT), then pprep.fail, pprep.prime and pprep.test (see
+ * cs_name()).
  */
 static char cs_names[CS_COUNT][16];
 static const char *cs_name(uint c) {
     if (!cs_names[0][0]) {
         for (uint x = 2; x <= CR_MAXX; ++x)
-            snprintf(cs_names[cr_xclass(x)], 16, "rprime.x%u%s", x,
+            snprintf(cs_names[cr_xclass(x)], 16, "rdeep.x%u%s", x,
                     (x == CR_MAXX) ? "+" : "");
         static const char *rest[] = {
-            "rfail", "rapply", "pprep.fail", "pprep.prime", "pprep.test"
+            "rearly", "rrej1", "rfail", "rapply",
+            "pprep.fail", "pprep.prime", "pprep.test"
         };
-        for (uint i = 0; i < CS_COUNT - CR_FAIL; ++i)
-            snprintf(cs_names[CR_FAIL + i], 16, "%s", rest[i]);
+        for (uint i = 0; i < CS_COUNT - CR_EARLY; ++i)
+            snprintf(cs_names[CR_EARLY + i], 16, "%s", rest[i]);
     }
     return cs_names[c];
 }
@@ -797,7 +800,8 @@ static double cm_dprice(int s, uint nbits, bool note) {
 /* The prices of the recursion loops' work by class and limbs (see
  * CR_COUNT), filled in as the table loads: from the D rows in situ
  * sampling gave (see cs_write()), a power not yet sampled taking the
- * nearest that is; else from the C constants cprime,
+ * nearest that is; else from the C constants cprime (for each class of
+ * prime),
  * cfail and capply. cm_rec_d[] is the D series each class is priced
  * from, or -1.
  */
@@ -807,17 +811,17 @@ static void cm_rec_fill(void) {
     for (uint c = 0; c < CR_COUNT; ++c) {
         int s = cm_dfind(cs_name(c));
         double dflt;
-        if (c < CR_FAIL) {
+        if (c < CR_EARLY) {
             /* a power not yet sampled takes the nearest that is */
-            for (uint d = 1; s < 0 && d < CR_FAIL; ++d) {
+            for (uint d = 1; s < 0 && d < CR_EARLY; ++d) {
                 if (c >= d)
                     s = cm_dfind(cs_name(c - d));
-                if (s < 0 && c + d < CR_FAIL)
+                if (s < 0 && c + d < CR_EARLY)
                     s = cm_dfind(cs_name(c + d));
             }
-            dflt = CMC(CM_CPRIME);
-        } else
-            dflt = CMC((c == CR_FAIL) ? CM_CFAIL : CM_CAPPLY);
+        }
+        dflt = CMC((c == CR_FAIL) ? CM_CFAIL : (c == CR_APPLY) ? CM_CAPPLY
+                : CM_CPRIME);
         cm_rec_d[c] = s;
         for (uint l = 1; l <= CR_MAXL; ++l)
             cm_rec[c][l] = (s >= 0) ? cm_dprice(s, 64 * l, 0) : dflt;
