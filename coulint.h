@@ -301,4 +301,15 @@ static inline bool can_flip(uint x) {
     return !ispow2_u64(x);
 }
 
+/* Local: under $JASTUDY, the -ja1 estimates at the gate (see ja_sf in
+ * coulplan.c), with the counted cost when the choice began
+ */
+typedef struct {
+    bool on;
+    uint L, x;
+    double W, own, near, far, n, c0;
+} t_jaest;
+extern FILE *ja_sf;
+extern t_jaest ja_se;
+
 #endif

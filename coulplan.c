@@ -271,6 +271,8 @@ void cc_breakdown(void) {
  * known whether costs are counted.
  */
 void gr_init(void) {
+    if (getenv("JASTUDY"))
+        ja_sf = fopen(getenv("JASTUDY"), "w");
     for (uint c = 0; c < CR_COUNT; ++c)
         for (uint l = 1; l <= CR_MAXL; ++l)
             gr_rec[c][l] = cc.on ? cm_rec_price(c, l)
@@ -2934,6 +2936,12 @@ ulong ja_wsweep(t_node *prev_node, t_act *cur_act, ulong p, ulong cap) {
  * recursed into by allocating p^{x-1} at cur_act's v_i for each prime
  * after p up to cap, given do_walk as the gain heuristics decided it.
  */
+/* Local: under $JASTUDY, the -ja1 estimates of the last decision at the
+ * gate for a node without a fixed square, for coul.c to record with
+ * what the choice then cost.
+ */
+FILE *ja_sf = NULL;
+t_jaest ja_se;
 bool ja_gate(
     t_node *prev_node, t_act *cur_act, ulong p, ulong cap, bool do_walk
 ) {
@@ -2958,6 +2966,21 @@ bool ja_gate(
         } else
             do_walk = gr_walk(prev_node, cost_start(prev_node, p), cap, x,
                     w0, rw, rr);
+        if (ja_sf) {
+            ulong a = cost_start(prev_node, p);
+            ja_se.on = 1;
+            ja_se.L = L;
+            ja_se.x = x;
+            ja_se.W = w0;
+            ja_se.own = ja_se.near = ja_se.far = ja_se.n = 0;
+            if (cap >= a) {
+                t_grkids k = gr_kids(prev_node, a, cap, x);
+                ja_se.own = gr_own(prev_node, a, cap, x);
+                ja_se.near = k.near;
+                ja_se.far = k.far;
+                ja_se.n = k.n;
+            }
+        }
     } else if (prev_node->have_square == 1 && gq_costable(vi)) {
         /* likewise below one fixed square */
         uint L = prev_node->level;

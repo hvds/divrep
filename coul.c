@@ -6312,6 +6312,8 @@ static inline bool gate_flips(
  *   PUX_SKIP_THIS_X if nothing more to do for this x;
  *   PUX_DO_THIS_X if prepped for this x with work to do.
  */
+#define GR_MAXL_LOCAL 256
+extern t_jaest ja_ss[];
 e_pux prep_unforced_x(t_node *prev_node, t_act *cur_act) {
     uint ti = cur_act->ti;
     uint x = divisors[ti].div[cur_act->di];
@@ -6344,7 +6346,15 @@ e_pux prep_unforced_x(t_node *prev_node, t_act *cur_act) {
         else if (prev_act->action == A_UNFORCED)
             level_setp(prev_act, prev_act->limp);
 #else
-        walk_v(prev_node, Z(zero));
+        if (ja_sf && ja_se.on) {
+            t_jaest e = ja_se;
+            ja_se.on = 0;
+            double c0 = cc_work();
+            walk_v(prev_node, Z(zero));
+            fprintf(ja_sf, "W %u %u %g %g %g %g %g %g\n", e.L, e.x, e.W,
+                    e.own, e.near, e.far, e.n, cc_work() - c0);
+        } else
+            walk_v(prev_node, Z(zero));
 #endif
         return PUX_NOTHING_TO_DO;
     }
@@ -6352,6 +6362,11 @@ e_pux prep_unforced_x(t_node *prev_node, t_act *cur_act) {
     if (VB(VB_GATE))
         gs_rec_start(cur_act->level, p, 0);
 #endif
+    if (ja_sf && ja_se.on) {
+        ja_ss[cur_act->level] = ja_se;
+        ja_ss[cur_act->level].c0 = cc_work();
+        ja_se.on = 0;
+    }
     set_unforced_x(prev_node, cur_act, p, limp);
     return PUX_DO_THIS_X;
 }
@@ -6987,7 +7002,14 @@ bool next_forced(t_act *cur_act) {
 }
 
 /* Move cur_act's loop on from the x it has done. */
+t_jaest ja_ss[GR_MAXL_LOCAL];     /* Local: see ja_sf */
 static inline void next_x(t_act *cur_act) {
+    if (ja_sf && ja_ss[cur_act->level].on) {
+        t_jaest *e = &ja_ss[cur_act->level];
+        fprintf(ja_sf, "R %u %u %g %g %g %g %g %g\n", e->L, e->x, e->W,
+                e->own, e->near, e->far, e->n, cc_work() - e->c0);
+        e->on = 0;
+    }
 #ifdef VERBOSE
     if (VB(VB_GATE))
         gs_rec_end(cur_act->level);
