@@ -23,8 +23,9 @@
  * no fixed square (and see gq_recurse() for those with one), looking one
  * level ahead. Walking now costs gr_setup plus its Z/aq iterations
  * (Z = zmax - zmin) at the cost per iteration learnt for its level;
- * recursing costs gr_apply per prime p tried, and gr_fail more for each
- * that only apply_single() can reject (see gr_nfail()), plus the walks
+ * recursing costs a price per prime p tried, and a price more for each
+ * that only apply_single() can reject (see gr_nfail()), each by the
+ * size of the node's aq (see gr_rec[]), plus the walks
  * of the children as if every one walks: Z/(aq.p^{x-1}) iterations, or
  * if that is below 1, one iteration with that chance, the sums over
  * primes in closed form. At the leaf recursion that estimate is right
@@ -62,8 +63,19 @@ uint gq_n[GR_MAXL];
  * counted for it less exactly the setup that was counted; else the
  * defaults. See gr_init().
  */
-static double gr_setup = GR_SETUP, gr_apply = GR_APPLY, gr_fail = GR_FAIL;
-static double gq_setup = GQ_SETUP, gq_prime = GQ_PRIME, gq_apply = GQ_APPLY;
+static double gr_setup = GR_SETUP;
+static double gq_setup = GQ_SETUP, gq_prime = GQ_PRIME;
+/* The prices of the recursion loops' work by class and by the limbs of
+ * the aq of the node a loop extends (see CR_COUNT): the cost table's when
+ * costs are counted (see cm_rec_price()), else GR_APPLY per prime tried,
+ * GR_FAIL per call of apply_single() that fails and GQ_APPLY per one
+ * that succeeds. See gr_init().
+ */
+static double gr_rec[CR_COUNT][CR_MAXL + 1];
+/* the price of a prime tried for p^{x-1} below lv */
+static inline double gr_pprice(t_node *lv, uint x) {
+    return gr_rec[cr_xclass(x)][cr_limbs(lv->aq)];
+}
 /* and the setup per inverse-filter entry of a linear walk, and per root
  * residue of one below a fixed square, 0 without a table
  */
@@ -179,14 +191,16 @@ double cc_work(void) {
  * known whether costs are counted.
  */
 void gr_init(void) {
+    for (uint c = 0; c < CR_COUNT; ++c)
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            gr_rec[c][l] = cc.on ? cm_rec_price(c, l)
+                    : (c == CR_FAIL) ? GR_FAIL
+                    : (c == CR_APPLY) ? GQ_APPLY : GR_APPLY;
     if (!cc.on)
         return;
     gr_setup = cm_const(CM_LINSETUP);
-    gr_apply = cm_const(CM_CPRIME);
-    gr_fail = cm_const(CM_CFAIL);
     gq_setup = cm_const(CM_SQSETUP);
     gq_prime = cm_const(CM_CPRIMESQ) - cm_const(CM_CPRIME);
-    gq_apply = cm_const(CM_CAPPLY);
     gr_setupinv = cm_const(CM_LINSETUPINV);
     gq_setupres = cm_const(CM_SQSETUPRES);
     ja_w1s = cm_const(CM_W1SITER);
@@ -427,15 +441,16 @@ static double gr_nreach(double r, double lo, double hi, uint x) {
 }
 
 /* What a loop over p^{x-1} for p in [p, cap] below prev_node costs for
- * itself: gr_apply per prime tried, and gr_fail more for each that only
+ * itself: a price per prime tried, and one more for each that only
  * apply_single() rejects, which are among those beyond the last to lead
  * to a child.
  */
 static double gr_own(t_node *prev_node, ulong p, ulong cap, uint x) {
     double a = (p < 2) ? 2 : p, b = cap;
     double q1 = pow(gr_iters(prev_node), 1.0 / (x - 1));
-    return (gr_li(b) - gr_li(a) + 1) * gr_apply
-            + gr_fail * gr_nfail(prev_node, (q1 > a) ? q1 : a, b, x);
+    return (gr_li(b) - gr_li(a) + 1) * gr_pprice(prev_node, x)
+            + gr_rec[CR_FAIL][cr_limbs(prev_node->aq)]
+                    * gr_nfail(prev_node, (q1 > a) ? q1 : a, b, x);
 }
 
 /* The children of a loop over p^{x-1} for p in [a, b] below the node
@@ -583,6 +598,7 @@ static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
     double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
     double np = gr_li(b) - gr_li(a) + 1;
     double cs = gq_wsetup(prev_node);
+    double ap = gr_rec[CR_APPLY][cr_limbs(prev_node->aq)];
     uint sql = cur_vlevel[sq0];
     uint g = sqg[sql - 1];
     /* those reaching the test mod q */
@@ -604,12 +620,12 @@ static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
         double mE = (ql > mR) ? ql : mR;
         double nr = (b > mR) ? (((ql > mR) ? gr_li((ql < b) ? ql : b)
                 - gr_li(mR) : 0) + zl * gr_psum(mE, b, s)) / 2 : 0;
-        return np * gr_apply + ct + nr * GQ_ROOT
-                + ns * (gq_prime + gq_apply + cs)
+        return np * gr_pprice(prev_node, x) + ct + nr * GQ_ROOT
+                + ns * (gq_prime + ap + cs)
                 + ci * za * gr_psum(a, b, s);
     }
-    return np * gr_apply + ct
-            + nv * gq_resfrac(g) * (gq_prime + gq_apply + cs)
+    return np * gr_pprice(prev_node, x) + ct
+            + nv * gq_resfrac(g) * (gq_prime + ap + cs)
             + ci * za * gr_psum(a, b, s);
 }
 
@@ -626,7 +642,7 @@ static bool gq_walk(
     if (cap < p)
         return 0;
     double W = w0 * rw;
-    if (W < (gr_li(cap) - gr_li(p) + 1) * gr_apply)
+    if (W < (gr_li(cap) - gr_li(p) + 1) * gr_pprice(prev_node, x))
         return 1;
     return W < gq_recurse(prev_node, p, cap, x) * rr;
 }
@@ -785,6 +801,15 @@ static inline double ke_walk(t_kenode *node) {
     return ke_setup + ke_price(node) * node->roots;
 }
 
+/* the limbs of the aq of a node of the abstract search, from its bound
+ * zl = zmax / aq (see cr_limbs())
+ */
+static inline uint ke_limbs(double zl) {
+    double b = log2(zmax_given / zl);
+    uint l = (b > 64) ? (uint)ceil(b / 64) : 1;
+    return (l > CR_MAXL) ? CR_MAXL : l;
+}
+
 /* The cost of the loop over the next allocation at position j, each child
  * walked, or with deep set costed in full; HUGE_VAL once past budget.
  */
@@ -794,6 +819,8 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
     uint e = ke_limit(kp, &lo, &hi);
     if (hi <= lo)
         return 0;
+    uint kl = ke_limbs(node->zl);
+    double pp = gr_rec[cr_xclass(e + 1)][kl], ap = gr_rec[CR_APPLY][kl];
     ulong qm = 0;
     mpz_t *q = kern_q(sq0);
     bool sq = (e == 2 && ke_endr > 0);
@@ -846,7 +873,7 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
         /* those that divide with a root in range, see reject_square() */
         double r = 1;
         if (sq) {
-            cost += c * (gr_apply + s * ct);
+            cost += c * (pp + s * ct);
             if (f == 0)
                 continue;
             if (pe > ke_endr) {
@@ -856,7 +883,7 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
             }
             cost += c * s * f * r * gq_prime;
         } else {
-            cost += c * (gr_apply + s * (ct + f * gq_prime));
+            cost += c * (pp + s * (ct + f * gq_prime));
             if (f == 0)
                 continue;
         }
@@ -879,7 +906,7 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
             ke_wt = wt;
         } else
             cc = ke_walk(&ch);
-        cost += c * s * f * r * (gq_apply + cc);
+        cost += c * s * f * r * (ap + cc);
         if (cost > budget)
             return HUGE_VAL;
     }
@@ -929,8 +956,9 @@ static double ke_cost(t_kenode *node, double budget) {
     if (best == KE_MAXPOS)
         return ke_walked(node, w);
     double lo, hi;
-    ke_limit(&node->pos[best], &lo, &hi);
-    if (hi <= lo || w < (gr_li(hi) - gr_li(lo)) * gr_apply)
+    uint e = ke_limit(&node->pos[best], &lo, &hi);
+    if (hi <= lo || w < (gr_li(hi) - gr_li(lo))
+            * gr_rec[cr_xclass(e + 1)][ke_limbs(node->zl)])
         return ke_walked(node, w);
     if (w < ke_loop(node, best, 0, HUGE_VAL))
         return ke_walked(node, w);
@@ -1024,6 +1052,7 @@ static double ke_batch(ulong at, double budget) {
             if (L <= W)
                 continue;
             ke_swept = 1;
+            double pp = gr_rec[cr_xclass(e + 1)][ke_limbs(root.zl)];
             double np = gr_li(L) - gr_li(W);
             double nr = gr_nreach(r, W, L, e + 1);
             /* its walks have this power allocated */
@@ -1039,13 +1068,13 @@ static double ke_batch(ulong at, double budget) {
                 double re = sqrt(2 * ke_endr);
                 if (re < W)
                     re = W;
-                cost += np * gr_apply + nr * (ct + GQ_ROOT / 2)
+                cost += np * pp + nr * (ct + GQ_ROOT / 2)
                         + (gq_prime + ke_setup) * ((gr_li(re) - gr_li(W)) / 2
                             + ke_endr / re / log(re));
             } else {
                 /* the rest are passed over at the cost of trying them */
-                double sw = (KE_SWEEP > gr_apply) ? KE_SWEEP - gr_apply : 0;
-                cost += np * gr_apply + nr * (ct + fg * sw);
+                double sw = (KE_SWEEP > pp) ? KE_SWEEP - pp : 0;
+                cost += np * pp + nr * (ct + fg * sw);
             }
         }
     }
@@ -1090,7 +1119,8 @@ static double ke_6x(void) {
     double se = pow(zmax_given / mpz_get_d(*kern_q(sq0)), 0.25);
     if (se > L)
         se = L;
-    double cost = gr_li(L) * (gr_apply + GQ_RES + GQ_ROOT / 2)
+    uint bl = cr_limbs(nodes[cur_batch_level].aq);
+    double cost = gr_li(L) * (gr_rec[CR_PRIMEN][bl] + GQ_RES + GQ_ROOT / 2)
             + gr_li(se) * KE_6X;
 
     ulong at, passed;
@@ -1914,7 +1944,7 @@ static double ja_e2loop(
     t_node *pl, t_act *ca, uint vi, uint x, ulong p, ulong cap, uint *n
 ) {
     t_node *cl = &nodes[ca->level];
-    double total = (gr_li(cap) - gr_li(p) + 1) * gr_apply;
+    double total = (gr_li(cap) - gr_li(p) + 1) * gr_pprice(pl, x);
     if (gr_li(cap) - gr_li(p) <= JA_E2PTS * JA_E2RUN) {
         for (ulong q = next_prime(p); q <= cap; q = next_prime(q)) {
             if (known_prime(pl, q))
