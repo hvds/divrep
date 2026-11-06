@@ -53,9 +53,10 @@ Some costs are measured in the runs themselves. With C<$COST_SAMPLES>
 naming a file, every pcoul run times a sample of what its recursion
 loops do and of its preparations for prime tests, and on exit appends
 them to that file as D rows: by the limbs of the aq of the node a loop
-extends, C<rprime.x2>, C<rprime.x3> and C<rprime.xn> per prime tried
-for p, p^2 and higher powers, and C<rfail> and C<rapply> per call of
-apply_single() by its outcome; and by the limbs of the value,
+extends, per prime tried by where it leaves the checks (C<rearly> if
+known or untested, C<rrej1> if the first stage of reject_single()
+rejects it, else C<rdeep.x>I<x> for p^(x-1)), and C<rfail> and
+C<rapply> per call of apply_single() by its outcome; and by the limbs of the value,
 C<pprep.fail>, C<pprep.prime> and C<pprep.test> per call of
 tau_prime_prep() by its result (trial division found a factor, found
 the value prime, or left a prime test to follow). With C<-S>I<samples>
@@ -658,7 +659,7 @@ sub section_of {
         : /^[SL] / ? 'scan'
         : /^[PR] / ? 'prime'
         : /^D bpsw\./ ? 'bpsw'
-        : /^D (?:r(?:prime|fail|apply)|pprep)\b/ ? 'samp'
+        : /^D (?:r(?:deep|early|rej1|prime|fail|apply)|pprep)\b/ ? 'samp'
         : /^G / ? 'ladder'
         : /^Q / ? 'qs'
         : /^C (?:linsetup|loop0|looptest|sqsetup|sqloop0|sqtest) / ? 'walk'

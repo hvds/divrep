@@ -79,16 +79,16 @@ extern double cm_root_cost(double zb, double rbits, mpz_t **q, uint *t,
  * statistics to that file as D rows (see cs_write()), for multibench-
  * table -S to add to a cost table. The run itself never reads them, so
  * its decisions are the same whether it samples or not.
- * A prime a loop tries is the interval between its counts of
- * cc.rec_prime, or for one that reaches apply_single() up to that call,
- * which is a sample of its own, by its outcome. Since a prime costs much
- * less than reading the clock, primes are timed in windows of up to
- * CS_WINDOW in a row, ending early at such a call, for their mean.
+ * A prime a loop tries is timed from where the loop takes it to where
+ * it leaves the checks (see CR_COUNT), which for one going on to
+ * apply_single() is that call, a sample of its own by its outcome.
  * Samples are by class and by the limbs of the aq of the node the loop
- * extends (see CR_COUNT, cr_limbs()).
+ * extends (see cr_limbs()). The clock is read in user mode with the
+ * cycle counter open (see work_clock()), so that a single prime can be
+ * timed; without it, reading the clock costs more than a prime, and the
+ * samples of primes read high.
  */
-#define CS_EVERY 4096   /* a window of primes begun once in this many */
-#define CS_WINDOW 64    /* primes in a window */
+#define CS_EVERY 1024   /* one prime sampled in this many */
 #define CS_AEVERY 256   /* one apply_single() call sampled in this many */
 #define CS_PPEVERY 256  /* one tau_prime_prep() call sampled in this many */
 extern bool cs_on;
@@ -103,31 +103,6 @@ static inline double cs_start(uint *left, uint every) {
         return 0;
     *left = every;
     return work_clock();
-}
-/* At each count of cc.rec_prime: if a window of primes is open, count
- * the prime it has seen to the end, and close it if full (*t is then
- * 0); else maybe open one, of class c.
- */
-static inline void cs_prime(double *t, uint *k, uint *cls, uint c,
-        uint l) {
-    if (*t) {
-        if (++*k == CS_WINDOW) {
-            cs_add(*cls, l, *t, *k);
-            *t = 0;
-        }
-    } else if ((*t = cs_start(&cs_left, CS_EVERY))) {
-        *k = 0;
-        *cls = c;
-    }
-}
-/* Before a call of apply_single(): close any window of primes, counting
- * the one now reaching the call.
- */
-static inline void cs_close(double *t, uint k, uint cls, uint l) {
-    if (*t) {
-        cs_add(cls, l, *t, k + 1);
-        *t = 0;
-    }
 }
 
 #endif
