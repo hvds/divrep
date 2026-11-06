@@ -671,7 +671,7 @@ sub build_sha {
     my($pcoul) = @_;
     my $out = `'$pcoul' -x1 6 2 2>&1`;
     my($sha) = $out =~ /^001 .* sha=(\S+)/m
-            or die "no sha in the 001 line from $pcoul";
+            or die "no sha in the 001 line from $pcoul, which said:\n$out";
     my($ghz) = $out =~ /^001 .*\*CY([\d.]+)\*/m;
     return ($sha, defined($ghz) ? "CY$ghz" : 'CPU');
 }
