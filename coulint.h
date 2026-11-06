@@ -33,12 +33,16 @@ extern mpz_t zmin, zmax, *wv_o, *wv_qq;
 extern int other_comparator(const void *va, const void *vb);
 
 /* The classes of the costs of the recursion loops, which are sampled in
- * situ (see cs_add()) by the limbs of the aq of the node a loop extends:
- * a prime tried for p^{x-1}, one class for each x up to CR_MAXX (see
- * cr_xclass()), and a call of apply_single() that fails or succeeds.
+ * situ (see cs_add()) by the limbs of the aq of the node a loop extends.
+ * A prime tried is classed by where it leaves the loop's checks: deep if
+ * it reaches the second stage of reject_single() or passes it, one class
+ * for each x of p^{x-1} up to CR_MAXX (see cr_xclass()), since the cost
+ * of that stage grows with x; CR_REJ1 if the first stage rejects it; and
+ * CR_EARLY if it is known, or not tested by reject_single() at all. Then
+ * a call of apply_single() that fails or succeeds.
  */
 #define CR_MAXX 32      /* powers p^{x-1} beyond this x are taken as this */
-enum { CR_FAIL = CR_MAXX - 1, CR_APPLY, CR_COUNT };
+enum { CR_EARLY = CR_MAXX - 1, CR_REJ1, CR_FAIL, CR_APPLY, CR_COUNT };
 #define CR_MAXL 16      /* limbs beyond this are taken as this */
 static inline uint cr_limbs(mpz_t aq) {
     uint l = mpz_size(aq);

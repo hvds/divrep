@@ -4699,6 +4699,20 @@ static inline void reject_prep(t_node *prev, t_act *cur_act);
 static inline bool reject_single(
     t_node *prev, t_act *cur_act, uint vi, ulong p, uint x
 );
+/* the stage at which reject_single() last returned: 1 if the cheap test
+ * mod p rejected the prime, else 2 (see CR_REJ1)
+ */
+static uint rj_stage;
+/* Count a prime a recursion loop tried as of class c (see CR_COUNT), for
+ * a node whose aq has l limbs, ending at *t any sample of it begun.
+ */
+static inline void cr_prime(uint c, uint l, double *t) {
+    ++cc.rec_by[c][l];
+    if (*t) {
+        cs_add(c, l, *t, 1);
+        *t = 0;
+    }
+}
 
 /* Try each way of allocating p^{x-1} at v_i for all p above any selected
  * -W limit, and for even x below any selected -k limit.
@@ -4732,10 +4746,9 @@ void walk_midp(t_node *prev_node, bool recover) {
     reject_prep(prev_node, cur_act);
     /* the limbs of aq, by which the loop's work is counted and sampled */
     uint cr_l = cr_limbs(prev_node->aq);
-    /* the window of primes being sampled, if any (see cs_prime()) */
+    /* the prime being sampled, if any */
     bool cs = cs_on && !prev_node->have_square;
     double cs_t = 0, cs_a;
-    uint cs_k = 0, cs_c = 0;
 
     level_setp(cur_act, midpp[0].maxp);
     /* setp has set to a prime <= target */
@@ -4811,11 +4824,12 @@ void walk_midp(t_node *prev_node, bool recover) {
             }
             /* counted as for a loop of allocations, see cc_work() */
             ++cc.rec_prime;
-            ++cc.rec_by[cr_xclass(mp->x)][cr_l];
             if (cs)
-                cs_prime(&cs_t, &cs_k, &cs_c, cr_xclass(mp->x), cr_l);
-            if (used)
+                cs_t = cs_start(&cs_left, CS_EVERY);
+            if (used) {
+                cr_prime(CR_EARLY, cr_l, &cs_t);
                 continue;
+            }
             vi = mp->vi;
             x = mp->x;
             GS_INC(gs_mp_tried);
@@ -4823,12 +4837,15 @@ void walk_midp(t_node *prev_node, bool recover) {
              * reject_square() under the same conditions as
              * reject_prep_square().
              */
-            if ((cur_act->rj_ok && (p & 1)
-                && reject_single(prev_node, cur_act, vi, p, x)
+            bool rj = cur_act->rj_ok && (p & 1);
+            rj_stage = 2;
+            if ((rj && reject_single(prev_node, cur_act, vi, p, x)
             ) || (sq_ok && vi != sq0 && reject_square(
                 p, (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi),
                 (x == 3) ? endr : 0
             ))) {
+                cr_prime((rj_stage == 1) ? CR_REJ1 : cr_xclass(x), cr_l,
+                        &cs_t);
                 /* as apply_single() would leave it, for the progress line */
                 cur_act->vi = vi;
                 cur_act->p = p;
@@ -4840,11 +4857,8 @@ void walk_midp(t_node *prev_node, bool recover) {
             if (prev_node->have_square)
                 ++cc.rec_sq;
             /* the prime's sample ends here, and the call has its own */
-            cs_a = 0;
-            if (cs) {
-                cs_close(&cs_t, cs_k, cs_c, cr_l);
-                cs_a = cs_start(&cs_aleft, CS_AEVERY);
-            }
+            cr_prime(rj ? cr_xclass(x) : CR_EARLY, cr_l, &cs_t);
+            cs_a = cs ? cs_start(&cs_aleft, CS_AEVERY) : 0;
             if (apply_single(prev_node, cur_node, vi, p, x)) {
                 if (cs_a)
                     cs_add(CR_APPLY, cr_l, cs_a, 1);
@@ -5957,6 +5971,7 @@ static inline bool reject_single(
     t_node *prev, t_act *cur_act, uint vi, ulong p, uint x
 ) {
     ulong off = TYPE_OFFSET(vi), am, rm;
+    rj_stage = 2;
     if (p < (1UL << 31)) {
         reject_mod(prev, cur_act->rj_limb, p, &am, &rm);
         if (am == 0)
@@ -5967,8 +5982,10 @@ static inline bool reject_single(
         if (c)
             c = p - c;
         ulong mult0 = c * inv % p;
-        if (mult0 > cur_act->rj_mult)
+        if (mult0 > cur_act->rj_mult) {
+            rj_stage = 1;
             return 1;
+        }
         if (x == 2)
             return 0;
         if (x == 3) {
@@ -6946,10 +6963,9 @@ bool next_unforced(t_act *cur_act) {
     t_node *cur_node = &nodes[cur_act->level];
     /* the limbs of aq, by which the loop's work is counted and sampled */
     uint cr_l = cr_limbs(prev_node->aq);
-    /* the window of primes being sampled, if any (see cs_prime()) */
+    /* the prime being sampled, if any */
     bool cs = cs_on && !prev_node->have_square;
     double cs_t = 0;
-    uint cs_k = 0, cs_c = 0;
     while (1) {
 #ifdef MOCK
         if (mock_loop_leaf(cur_act))
@@ -6970,20 +6986,23 @@ bool next_unforced(t_act *cur_act) {
         }
         /* note: only valid to use from just below here */
       redo_unforced: ;
+        if (cs)
+            cs_t = cs_start(&cs_left, CS_EVERY);
         ulong p = prime_iterator_next(&cur_act->piter);
         ++cc.rec_prime;
-        ++cc.rec_by[cr_xclass(cur_act->x)][cr_l];
-        if (cs)
-            cs_prime(&cs_t, &cs_k, &cs_c, cr_xclass(cur_act->x), cr_l);
-        if (p > cur_act->limp)
+        if (p > cur_act->limp) {
+            cr_prime(CR_EARLY, cr_l, &cs_t);
             goto end_x;
+        }
 #ifdef MOCK
         switch (mock_loop_prime(prev_node, cur_act, p)) {
           case MOCK_LOOP_GO:
             break;
           case MOCK_LOOP_SKIP:
+            cr_prime(CR_EARLY, cr_l, &cs_t);
             goto redo_unforced;
           case MOCK_LOOP_END:
+            cr_prime(CR_EARLY, cr_l, &cs_t);
             cur_act->p = p;
             goto end_x;
         }
@@ -6992,32 +7011,37 @@ bool next_unforced(t_act *cur_act) {
         if (VB(VB_GATE))
             gs_rec_prime(cur_act->level, p);
 #endif
-        if (known_prime(prev_node, p))
+        if (known_prime(prev_node, p)) {
+            cr_prime(CR_EARLY, cr_l, &cs_t);
             goto redo_unforced;
+        }
         /* p stays the cursor, as when apply_single() fails */
-        if ((cur_act->rj_ok && (p & 1) && reject_single(
+        bool rj = cur_act->rj_ok && (p & 1);
+        rj_stage = 2;
+        if ((rj && reject_single(
             prev_node, cur_act, cur_act->vi, p, cur_act->x
         )) || (cur_act->rs_ok
             && reject_square(p, cur_act->rs_d, cur_act->rs_endr)
         )) {
+            cr_prime((rj_stage == 1) ? CR_REJ1 : cr_xclass(cur_act->x),
+                    cr_l, &cs_t);
             cur_act->p = p;
             if (need_work)
                 diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
             goto redo_unforced;
         }
 #ifdef MOCK
-        if (mock_loop_sq(cur_act, p) == MOCK_LOOP_SKIP)
+        if (mock_loop_sq(cur_act, p) == MOCK_LOOP_SKIP) {
+            cr_prime(CR_EARLY, cr_l, &cs_t);
             goto redo_unforced;
+        }
 #endif
         /* below a fixed square, the roots are extended to each prime */
         if (prev_node->have_square)
             ++cc.rec_sq;
         /* the prime's sample ends here, and the call has its own */
-        double cs_a = 0;
-        if (cs) {
-            cs_close(&cs_t, cs_k, cs_c, cr_l);
-            cs_a = cs_start(&cs_aleft, CS_AEVERY);
-        }
+        cr_prime(rj ? cr_xclass(cur_act->x) : CR_EARLY, cr_l, &cs_t);
+        double cs_a = cs ? cs_start(&cs_aleft, CS_AEVERY) : 0;
         /* note: this returns 0 if t=1 */
         if (!apply_single(prev_node, cur_node, cur_act->vi, p, cur_act->x)) {
             if (cs_a)
@@ -7038,8 +7062,6 @@ bool next_unforced(t_act *cur_act) {
         ++cc.rec_by[CR_APPLY][cr_l];
         return 1;
       end_x:
-        /* a window would take in moving to the next x */
-        cs_t = 0;
         next_x(cur_act);
         if (!find_unforced_x(cur_act))
             return 0;
