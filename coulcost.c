@@ -123,6 +123,17 @@ static t_cmd cm_D[CM_MAXDS];
 static uint cm_nD = 0;
 static int cm_d_bpsw[2] = { -1, -1 };   /* bpsw.comp, bpsw.prime */
 static void cm_rec_fill(void);
+/* The classes of in-situ samples (see cs_add()): those of the recursion
+ * loops (see CR_COUNT), then tau_prime_prep() by its result; and the D
+ * series those of tau_prime_prep() are priced from, or -1.
+ */
+enum { CS_PPREP = CR_COUNT, CS_COUNT = CR_COUNT + 3 };
+static int cm_d_pprep[3] = { -1, -1, -1 };
+/* the names of the D series of the samples of each class */
+static const char *cm_rec_name[CS_COUNT] = {
+    "rprime.x2", "rprime.x3", "rprime.xn", "rfail", "rapply",
+    "pprep.fail", "pprep.prime", "pprep.test"
+};
 /* The "Q bits us fail" rows: QS alone (rung 24), whose cost depends
  * only on the size, stepping with its parameters by decimal digits.
  */
@@ -618,6 +629,8 @@ static void cm_load(void) {
     cm_dthin();
     cm_d_bpsw[0] = cm_dfind("bpsw.comp");
     cm_d_bpsw[1] = cm_dfind("bpsw.prime");
+    for (uint r = 0; r < 3; ++r)
+        cm_d_pprep[r] = cm_dfind(cm_rec_name[CS_PPREP + r]);
     for (uint i = 0; i < CM_COUNT; ++i)
         if (!cm_C[i].seen) {
             if (!cm_C[i].dflt && !cm_C[i].opt)
@@ -775,9 +788,6 @@ static double cm_dprice(int s, uint nbits, bool note) {
  * cfail and capply. cm_rec_d[] is the D series each class is priced
  * from, or -1.
  */
-static const char *cm_rec_name[CR_COUNT] = {
-    "rprime.x2", "rprime.x3", "rprime.xn", "rfail", "rapply"
-};
 static double cm_rec[CR_COUNT][CR_MAXL + 1];
 static int cm_rec_d[CR_COUNT];
 static void cm_rec_fill(void) {
@@ -1638,12 +1648,22 @@ double cm_prep_price(uint nbits, const t_ct_work *w) {
 
 /* The price of tau_prime_prep() for a value of nbits bits, by its
  * result res: 0 if trial division found a factor, 1 if it found the
- * value prime, 2 if a prime test must follow. With K rows, as
- * cm_pp_model() has it for each; else for 0 the mean cost of stopping at
- * a trial prime, for a value without special structure, and for 2 the
- * cost the P rows give with that of the trial division.
+ * value prime, 2 if a prime test must follow. With the D series for that
+ * result that in situ sampling gave (see cs_write()), the mean measured
+ * for values of that many limbs; else with K rows, as cm_pp_model() has
+ * it for each; else for 0 the mean cost of stopping at a trial prime,
+ * for a value without special structure, and for 2 the cost the P rows
+ * give with that of the trial division.
  */
 double cm_pprep_price(uint nbits, int res) {
+    if (!cm_loaded)
+        cm_load();
+    if (cm_d_pprep[res] >= 0) {
+        uint l = (nbits + 63) / 64;
+        if (l < 1)
+            l = 1;
+        return cm_dprice(cm_d_pprep[res], 64 * l, 1);
+    }
     if (cm_K.pseen)
         return (nbits <= CM_PP_MAXB) ? cm_pp[res][nbits]
                 : cm_pp_model(nbits, res);
@@ -2034,8 +2054,24 @@ typedef struct {
     ulong n;
     double mean, ss;
 } t_csstat;
-static t_csstat cs_stat[CR_COUNT][CR_MAXL + 1];
+static t_csstat cs_stat[CS_COUNT][CR_MAXL + 1];
 static const char *cs_file = NULL;
+
+/* a sample of tau_prime_prep() (see ct_pprep_sample), timed dt */
+static void cs_pprep(uint nbits, int res, double dt) {
+    uint l = (nbits + 63) / 64;
+    if (l < 1)
+        l = 1;
+    else if (l > CR_MAXL)
+        l = CR_MAXL;
+    /* as cs_add(), for a time already taken */
+    t_csstat *sp = &cs_stat[CS_PPREP + res][l];
+    dt -= cs_gap;
+    ++sp->n;
+    double d = dt - sp->mean;
+    sp->mean += d / sp->n;
+    sp->ss += d * (dt - sp->mean);
+}
 
 /* Sample if $COST_SAMPLES names a file, finding what reading the clock
  * costs.
@@ -2049,6 +2085,9 @@ void cs_init(void) {
     for (uint i = 0; i < 10000; ++i)
         t1 = work_clock();
     cs_gap = (t1 - t0) / 10000;
+    ct_pprep_sample = &cs_pprep;
+    ct_pp_every = CS_PPEVERY;
+    ct_pp_left = CS_PPEVERY;
 }
 
 /* Add a sample of class which, begun at t0, for a node whose aq has l
@@ -2072,7 +2111,7 @@ void cs_write(void) {
     if (!cs_on)
         return;
     ulong total = 0;
-    for (uint c = 0; c < CR_COUNT; ++c)
+    for (uint c = 0; c < CS_COUNT; ++c)
         for (uint l = 1; l <= CR_MAXL; ++l)
             total += cs_stat[c][l].n;
     if (!total)
@@ -2085,14 +2124,14 @@ void cs_write(void) {
     }
     extern void fprint_sha(FILE *fp);
     extern double work_clock_ghz(void);
-    fprintf(fp, "V rec ");
+    fprintf(fp, "V samp ");
     fprint_sha(fp);
     double ghz = work_clock_ghz();
     if (ghz)
         fprintf(fp, " CY%g\n", ghz);
     else
         fprintf(fp, " CPU\n");
-    for (uint c = 0; c < CR_COUNT; ++c)
+    for (uint c = 0; c < CS_COUNT; ++c)
         for (uint l = 1; l <= CR_MAXL; ++l) {
             t_csstat *sp = &cs_stat[c][l];
             if (!sp->n)

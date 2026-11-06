@@ -78,6 +78,8 @@ extern void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt);
 extern void (*ct_pprep_record)(uint nbits, int res, double dt);
 extern double (*ct_clock)(void);
 extern double (*ct_pprep_price)(uint nbits, int res);
+extern void (*ct_pprep_sample)(uint nbits, int res, double dt);
+extern uint ct_pp_every, ct_pp_left;
 extern double (*ct_ptest_price)(uint nbits, bool prime);
 extern double ct_test_charged;
 extern ulong ct_preps, ct_ppreps;

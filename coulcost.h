@@ -88,6 +88,7 @@ extern double cm_root_cost(double zb, double rbits, mpz_t **q, uint *t,
 #define CS_EVERY 4096   /* a window of primes begun once in this many */
 #define CS_WINDOW 64    /* primes in a window */
 #define CS_AEVERY 256   /* one apply_single() call sampled in this many */
+#define CS_PPEVERY 256  /* one tau_prime_prep() call sampled in this many */
 extern bool cs_on;
 extern uint cs_left, cs_aleft;
 extern double work_clock(void);
