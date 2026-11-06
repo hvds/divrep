@@ -49,16 +49,20 @@ unit. C<-d> gives the sizes of D rows (default 32 to 384 bits, in
 pairs either side of each limb boundary, since costs step up with each
 limb).
 
-The costs of the recursion loops are measured in the runs themselves.
-With C<$COST_SAMPLES> naming a file, every pcoul run times a sample of
-the primes its loops try and of the apply_single() calls they make, and
-on exit appends them to that file as D rows, by the limbs of the aq of
-the node the loop extends: C<rprime.x2>, C<rprime.x3> and C<rprime.xn>
-per prime tried for p, p^2 and higher powers, and C<rfail> and
-C<rapply> per call by its outcome. With C<-S>I<samples> (and C<-u>),
-these are added to the section rec of the table, alone unless C<-s>
-chose sections to make as well. Merging the same samples twice counts
-them twice, so empty the file once its samples are in a table.
+Some costs are measured in the runs themselves. With C<$COST_SAMPLES>
+naming a file, every pcoul run times a sample of what its recursion
+loops do and of its preparations for prime tests, and on exit appends
+them to that file as D rows: by the limbs of the aq of the node a loop
+extends, C<rprime.x2>, C<rprime.x3> and C<rprime.xn> per prime tried
+for p, p^2 and higher powers, and C<rfail> and C<rapply> per call of
+apply_single() by its outcome; and by the limbs of the value,
+C<pprep.fail>, C<pprep.prime> and C<pprep.test> per call of
+tau_prime_prep() by its result (trial division found a factor, found
+the value prime, or left a prime test to follow). With C<-S>I<samples>
+(and C<-u>), these are added to the section samp of the table, alone
+unless C<-s> chose sections to make as well. Merging the same samples
+twice counts them twice, so empty the file once its samples are in a
+table.
 
 The model costs the trial division stage of each test itself, since
 how often the values a walk tests are divisible by each trial prime
@@ -225,9 +229,9 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 my($verbose, $mock, $outfile, $flake, $update, $append, $samples)
         = ('./pcoul', undef, undef, 0, undef, 0, undef);
 my @sections
-        = qw{ scan prime bpsw multi ladder qs walk w1s leaf tail situ rec };
-# (rec is made only from samples, with -S)
-my %want = map +($_ => 1), grep $_ ne 'rec', @sections;
+        = qw{ scan prime bpsw multi ladder qs walk w1s leaf tail situ samp };
+# (samp is made only from samples, with -S)
+my %want = map +($_ => 1), grep $_ ne 'samp', @sections;
 my $chose = 0;  # whether -s, -o or -M chose the sections
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
@@ -259,7 +263,7 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
         next;
     }
     if ($arg eq '-o') {
-        %want = map +($_ => 1), grep $_ ne 'multi' && $_ ne 'rec', @sections;
+        %want = map +($_ => 1), grep $_ ne 'multi' && $_ ne 'samp', @sections;
         $chose = 1;
         next;
     }
@@ -271,17 +275,17 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     die "Unknown option '$arg'";
 }
 # With -S, the samples pcoul runs appended to a file (see cs_write() in
-# coulcost.c) are added to the section rec of the -u table, alone unless
+# coulcost.c) are added to the section samp of the -u table, alone unless
 # -s (or -o or -M) chose sections to make as well.
 my(@sver, @srows);
 if (defined $samples) {
     defined $update or die "-S adds samples to a table, so needs -u";
     %want = () unless $chose;
-    $want{rec} = 1;
+    $want{samp} = 1;
     open my $fh, '<', $samples or die "$samples: $!";
     while (<$fh>) {
         chomp;
-        if (/^V rec /) {
+        if (/^V samp /) {
             push @sver, $_;
         } elsif (/^D /) {
             push @srows, $_;
@@ -292,8 +296,8 @@ if (defined $samples) {
     @sver = grep !$u{$_}++, @sver;
     @srows or die "no samples in $samples";
 }
-!$want{rec} || defined $samples
-        or die "section rec is made only from samples, with -S";
+!$want{samp} || defined $samples
+        or die "section samp is made only from samples, with -S";
 my $need_mock = grep $want{$_}, qw{ leaf tail };
 @ARGV == 0 && ($mock || !$need_mock)
         or die "500 Usage: $0 [-v<verbose>] [-m<mock>] [-b<bits,...>]"
@@ -382,7 +386,7 @@ $| = 1;
 # counter, times are CPU seconds at whatever clock the machine ran.
 # (with only samples to add, there is no pcoul to run, and the unit is
 # theirs)
-my $bench = grep $want{$_} && $_ ne 'rec', @sections;
+my $bench = grep $want{$_} && $_ ne 'samp', @sections;
 my($sha, $clock) = $bench ? build_sha($verbose) : (undef, sample_unit());
 if ($need_mock) {
     my(undef, $mclock) = build_sha($mock);
@@ -430,7 +434,7 @@ $total += @cal_situ if $want{situ};
 
 # the lines built, by section
 my %new;
-$new{rec} = \@srows if defined $samples;
+$new{samp} = \@srows if defined $samples;
 
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
@@ -548,12 +552,12 @@ for (lines_of('V')) {
 for my $sec (@sections) {
     next unless $want{$sec};
     my @keep = (appended($sec) ? @{ $ver{$sec} // [] } : ());
-    if ($sec eq 'rec') {
+    if ($sec eq 'samp') {
         # the builds of the samples, after those of the rows already there
         my %u;
         $ver{$sec} = [ grep !$u{$_}++, @keep, @sver ];
         my %c = map { (/^V \S+ \S+ (\S+)/ ? $1 : 'CPU') => 1 } @{ $ver{$sec} };
-        keys(%c) == 1 or die "multibench-table: section rec would mix"
+        keys(%c) == 1 or die "multibench-table: section samp would mix"
                 . " times in " . join(' and ', sort keys %c) . "\n";
         next;
     }
@@ -578,10 +582,10 @@ print $out "$_\n" for map lines_of($_), @sections;
 thin_report() if defined $samples;
 finish();
 
-# List the rows of section rec still too thin for pcoul to price from
+# List the rows of section samp still too thin for pcoul to price from
 # (see cm_dthin() in coulcost.c), so as to know what needs more samples.
 sub thin_report {
-    for (lines_of('rec')) {
+    for (lines_of('samp')) {
         my($s, $b, $n, $mean, $sd) = /^D (\S+) (\d+) (\S+) (\S+) (\S+)$/
                 or next;
         my $se = ($n > 1) ? $sd / sqrt($n) : 0;
@@ -595,7 +599,7 @@ sub thin_report {
 # (with -a), rather than replacing its lines.
 sub appended {
     my($sec) = @_;
-    return ($append || $sec eq 'rec') && $new{$sec}
+    return ($append || $sec eq 'samp') && $new{$sec}
             && grep /^D /, @{ $old{$sec} // [] };
 }
 
@@ -654,7 +658,7 @@ sub section_of {
         : /^[SL] / ? 'scan'
         : /^[PR] / ? 'prime'
         : /^D bpsw\./ ? 'bpsw'
-        : /^D r(?:prime|fail|apply)\b/ ? 'rec'
+        : /^D (?:r(?:prime|fail|apply)|pprep)\b/ ? 'samp'
         : /^G / ? 'ladder'
         : /^Q / ? 'qs'
         : /^C (?:linsetup|loop0|looptest|sqsetup|sqloop0|sqtest) / ? 'walk'
