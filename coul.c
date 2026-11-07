@@ -727,6 +727,16 @@ void diag_csv(t_node *cur_node) {
     printf("\n");
 }
 
+void report_quiet(char *format, ...) {
+    if (rfp) {
+        va_list ap;
+        va_start(ap, format);
+        gmp_vfprintf(rfp, format, ap);
+        va_end(ap);
+        fflush(rfp);
+    }
+}
+
 void report(char *format, ...) {
     keep_diag();
     va_list ap;
@@ -861,8 +871,11 @@ void disp_batch(void) {
             /* with the batch's modulus, as a guide to its size */
             report("203 %s [aq=%Zu] (%.2fs)\n",
                     diag_buf, np->aq, seconds(utime()));
-        else
+        else if (debugb)
             report("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
+        else
+            /* not asked for: only for the log */
+            report_quiet("203 %s (%.2fs)\n", diag_buf, seconds(utime()));
     }
     memcpy(cur_vlevel, save, k * sizeof(uint));
 }
