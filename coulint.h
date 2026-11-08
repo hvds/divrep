@@ -157,6 +157,11 @@ extern uint kern_keep;
 extern bool kern_auto;
 extern bool kern_keep_given;
 extern uint sweep_choose;
+extern double sweep_form;
+/* true if the bound of -W is chosen for each batch, by -Wa or -Wf */
+static inline bool sweep_chosen(void) {
+    return sweep_choose || sweep_form > 0;
+}
 extern uint maxlevel;
 extern slong batch_alloc;
 extern uint strategy;

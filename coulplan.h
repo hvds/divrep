@@ -15,6 +15,7 @@ extern void kern_tags(char *buf);
 extern void kern_show(void);
 extern void kern_show_total(void);
 #define WA_DEPTH 4      /* the depth for -Wa without one */
+#define WF_CONST 3.0    /* the constant for -Wf without one */
 extern double wa_subtree(t_node *np);
 extern double wa_entry(t_node *np, uint vi, uint x, ulong lo, ulong hi);
 extern void wa_report(void);

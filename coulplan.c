@@ -1481,10 +1481,102 @@ static void wa_plan(t_kern *ks, ulong *cap) {
     wa_time += gr_now() - t0;
 }
 
-/* -Wa: report what it chose, and the time it took to choose */
+/* -Wf: choose the bounds of -W for each power for the current batch,
+ * into ks, by formula rather than estimates. For each power p^{x-1} in
+ * reach of a sweep at all, the bound is A (zmax / aq)^{1/x}, swept if
+ * that is below its reach, where A = c x_0^WF_EXP for the least such
+ * x_0 and the constant c of -Wf, times 2^{m - WF_M0} if m = wf_resid(x_0)
+ * is greater than WF_M0. A batch with a square fixed is not swept, nor
+ * one with m < 0 or m > WF_MMAX. cap is scratch space for the caps.
+ * The formula was fitted to the best bounds for D(4p,k) and D(8p,k), each
+ * with a single dominant power: on such batches it lands within 3.5% of
+ * the best cost found with one A for the whole run.
+ */
+#define WF_EXP -0.35
+
+/* If, at every position, the tau left is a power of 2 once p^{x-1} is
+ * taken out where it fits, the mean log2 of those powers of 2; else -1.
+ * A sweep pays only if they are all powers of 2, and small: across 37
+ * batches of 13 targets, it gained 2-13x where the mean was at most 2.2
+ * and about 1.2x around 3.1, and lost up to 10x where they were not all
+ * powers of 2. From 3.2 to 4.8 the gain ran from +8% to -55%.
+ */
+static double wf_resid(uint x) {
+    uint sum = 0;
+    for (uint vi = 0; vi < k; ++vi) {
+        uint t = value[vi].alloc[cur_vlevel[vi] - 1].t;
+        if (t % x == 0)
+            t /= x;
+        if (!ispow2_u64(t))
+            return -1;
+        sum += __builtin_ctz(t);
+    }
+    return (double)sum / k;
+}
+#define WF_MMAX 3.5     /* no sweep where wf_resid() is above this */
+/* Where wf_resid() is m > WF_M0, A grows by 2^{m - WF_M0}: fitted to
+ * scans of c for 15 batches of 6 targets, it is within 5% of the best
+ * cost on average, 35% at worst, where a fixed c was within 21% and 76%.
+ * Below WF_M0 a smaller A risks much more than a larger one: for D(44,7)
+ * a third less than the best can cost more than no sweep at all.
+ */
+#define WF_M0 1.4
+
+static void wf_plan(t_kern *ks, ulong *cap) {
+    static ulong *top = NULL;
+    uint nx = xsize();
+    /* wa_wx may already exist, from a recovered choice (see kern_plan()) */
+    if (!wa_wx)
+        wa_wx = malloc(nx * sizeof(ulong));
+    if (!top)
+        top = malloc(nx * sizeof(ulong));
+    t_node *np = &nodes[cur_batch_level];
+    if (np->have_square)
+        return;
+    double t0 = gr_now();
+    /* the reach of each power: what a bound of 1 would sweep */
+    for (uint i = 0; i < nx; ++i)
+        wa_wx[i] = 1;
+    wa_caps(wa_wx, cap);
+    sweep_limits(np, cap, top);
+    memset(wa_wx, 0, nx * sizeof(ulong));
+    uint x0 = 0;
+    for (uint i = 0; i < nx; ++i) {
+        uint x = divisors[target_lcm].div[i];
+        if (top[i] > WA_WMIN && (!x0 || x < x0))
+            x0 = x;
+    }
+    double m = x0 ? wf_resid(x0) : -1;
+    if (x0)
+        ++wa_nplan;
+    if (m >= 0 && m <= WF_MMAX) {
+        double a = sweep_form * pow(x0, WF_EXP);
+        if (m > WF_M0)
+            a *= pow(2, m - WF_M0);
+        double room = mpz_get_d(zmax) / mpz_get_d(np->aq);
+        bool swept = 0;
+        for (uint i = 0; i < nx; ++i) {
+            if (top[i] <= WA_WMIN)
+                continue;
+            double w = a * pow(room, 1.0 / divisors[target_lcm].div[i]);
+            if (w < top[i]) {
+                wa_wx[i] = (ulong)w;
+                swept = 1;
+            }
+        }
+        if (swept) {
+            ++wa_nswept;
+            ks->wx = wa_wx;
+        }
+    }
+    wa_time += gr_now() - t0;
+}
+
+/* -Wa or -Wf: report what it chose, and the time it took to choose */
 void wa_report(void) {
-    report("000 -Wa: chose for %lu batches, %lu swept (%.2fs), counted %.3fs\n",
-            wa_nplan, wa_nswept, wa_time, cc.on ? cc_work() : 0.0);
+    report("000 %s: chose for %lu batches, %lu swept (%.2fs), counted %.3fs\n",
+            sweep_form > 0 ? "-Wf" : "-Wa", wa_nplan, wa_nswept, wa_time,
+            cc.on ? cc_work() : 0.0);
 }
 
 /* Under -ka, choose for the current batch (one that fixes exactly one
@@ -1497,8 +1589,8 @@ void wa_report(void) {
  * if the estimates would now differ. A batch that would take less than
  * KE_PLAN_MIN to walk whole is not worth choosing for, and -k does not
  * apply to it.
- * Under -Wa, the bound of -W is then chosen for a batch that -k does not
- * apply to (see wa_plan()), which may be any batch.
+ * Under -Wa or -Wf, the bound of -W is then chosen for a batch that -k
+ * does not apply to (see wa_plan(), wf_plan()), which may be any batch.
  * Sets what is chosen in ks, with the caps below the batch for a bound of
  * -W chosen (see sweep_batch()), and kern_b and kern_keep to match.
  */
@@ -1513,7 +1605,7 @@ void kern_plan(t_kern *ks) {
     ks->wcap = NULL;
     ks->wx = NULL;
     ks->shown = kern_auto && ks->on;
-    if (!ks->on && !sweep_choose)
+    if (!ks->on && !sweep_chosen())
         return;
     ks->planned = 1;
     if (!cap)
@@ -1588,9 +1680,13 @@ void kern_plan(t_kern *ks) {
         /* a batch at level 0 (no forced primes) has no level above it
          * for a sweep, see prep_presquare()
          */
-        if (sweep_choose && cur_batch_level > 0
-                && !(kern_logged.valid && kern_logged.id == ks->id))
-            wa_plan(ks, cap);
+        if (sweep_chosen() && cur_batch_level > 0
+                && !(kern_logged.valid && kern_logged.id == ks->id)) {
+            if (sweep_form > 0)
+                wf_plan(ks, cap);
+            else
+                wa_plan(ks, cap);
+        }
     }
     if (ks->w) {
         ks->shown = 1;
