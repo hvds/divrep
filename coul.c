@@ -1442,10 +1442,15 @@ void init_time(void) {
     sa.sa_handler = &handle_sig;
     sa.sa_flags = SA_RESTART;
     sigemptyset(&sa.sa_mask);
+    /* Install these even with no timer, so that a manual USR1 or USR2
+     * asks for a diag or log line rather than killing the run.
+     */
+    if (sigaction(SIGUSR1, &sa, NULL))
+        fail("Could not set USR1 handler: %s\n", strerror(errno));
+    if (sigaction(SIGUSR2, &sa, NULL))
+        fail("Could not set USR2 handler: %s\n", strerror(errno));
 
     if (diag_delay) {
-        if (sigaction(SIGUSR1, &sa, NULL))
-            fail("Could not set USR1 handler: %s\n", strerror(errno));
         sev.sigev_notify = SIGEV_SIGNAL;
         sev.sigev_signo = SIGUSR1;
         sev.sigev_value.sival_ptr = &diag_timerid;
@@ -1464,8 +1469,6 @@ void init_time(void) {
     }
 
     if (log_delay) {
-        if (sigaction(SIGUSR2, &sa, NULL))
-            fail("Could not set USR2 handler: %s\n", strerror(errno));
         sev.sigev_notify = SIGEV_SIGNAL;
         sev.sigev_signo = SIGUSR2;
         sev.sigev_value.sival_ptr = &log_timerid;
