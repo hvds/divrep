@@ -129,24 +129,16 @@ ifdef TEST_PRIME
     SOAK += test_prime
 endif
 
+TESTS = t/t10init t/t11init-sort t/t20log t/t25time t/t30batch t/t40known \
+	t/t50pell t/t60tau t/t70prime
+
+# The formatter is loaded by prove itself, so needs lib/ in PERL5LIB;
+# -m merges stderr into the TAP stream so that the formatter sees it.
+PROVE = PERL5LIB=lib$${PERL5LIB:+:$$PERL5LIB} prove -m \
+	--formatter TAP::Formatter::HDiag
+
 test: pcoul pcaul pcrul ${SOAK}
-	t/t10init
-	t/t11init-sort
-	t/t20log
-	t/t25time
-	t/t30batch
-	t/t40known
-	t/t50pell
-	t/t60tau
-	t/t70prime
+	${PROVE} ${TESTS}
 
 dtest: dpcoul dpcaul dpcrul ${SOAK}
-	DEBUG=1 t/t10init
-	DEBUG=1 t/t11init-sort
-	DEBUG=1 t/t20log
-	DEBUG=1 t/t25time
-	DEBUG=1 t/t30batch
-	DEBUG=1 t/t40known
-	DEBUG=1 t/t50pell
-	DEBUG=1 t/t60tau
-	DEBUG=1 t/t70prime
+	DEBUG=1 ${PROVE} ${TESTS}
