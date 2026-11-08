@@ -255,6 +255,21 @@ sub test_init {
         is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
                 '1428502133048749', 'f(20,5) candidates to 1.5e15 with -Wa');
     }
+    # -Wa sweeps no power whose range runs beyond a ulong: here p^1 at
+    # v_0 of the first batch (swept at all because of -j4), which it
+    # leaves out of that batch's plan rather than failing
+    {
+        my $fh = temp_log([]);
+        my $lines = run_test($type, [
+            '-r' . $fh->filename,
+            qw{ -dL1 -j4 -Wa -x471509793374671391787109375 792 3 },
+        ], 1);
+        like($lines->{301}[0] // '', qr{debug count exhausted},
+                '-Wa plans a batch with a power out of range');
+        my $b0 = log_203($fh)->[0] // '';
+        ok($b0 =~ /^203 b0: / && $b0 !~ /\[Wx=[^]]*\^1[],]/,
+                '-Wa sweeps no power out of range');
+    }
     # -ka shows what it chose for a batch, here a sweep as well; and the
     # cost per root it estimated with, if that came from the cost table.
     # The batch is one where a sweep is estimated to cost about half as
