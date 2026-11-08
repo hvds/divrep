@@ -233,7 +233,7 @@ sub test_init {
     # below the batch instead of at the batch: nothing is lost
     for my $opts (
         [], [qw{ -W300 }], [qw{ -W300 -Wl1 }], [qw{ -W300 -Wl2 }],
-        [qw{ -W100 -Wl3 }], [qw{ -Wa }],
+        [qw{ -W100 -Wl3 }], [qw{ -Wa }], [qw{ -Wf }],
     ) {
         my $lines = run_test($type, [ @$opts, '-X', '-x1e12', 20, 4 ], 0);
         my %seen;
@@ -254,6 +254,29 @@ sub test_init {
                 '-Wa sweeps some batches of f(20,5)');
         is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
                 '1428502133048749', 'f(20,5) candidates to 1.5e15 with -Wa');
+    }
+    # -Wf chooses them by formula: for b0, which leaves taus 4 2 4 2 2
+    # after p^4 (mean log2 1.4, so no growth), with A = 3 . 5^-0.35 = 1.708
+    # and zmax / aq = 1.5e15 / 96, 1.708 (1.56e13)^{1/5} = 743 for p^4 and
+    # 1.708 (1.56e13)^{1/10} = 35 for p^9; nothing is lost
+    {
+        my $fh = temp_log([]);
+        my $lines = run_test($type, [
+            '-r' . $fh->filename, qw{ -Wf -X -x1500000000000000 20 5 },
+        ], 1);
+        $lines->{203} = log_203($fh);
+        like($lines->{203}[0] // '', qr{^203 b0: .* \[Wx=743\^4,35\^9\] \(},
+                '-Wf bounds for b0 of f(20,5)');
+        is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
+                '1428502133048749', 'f(20,5) candidates to 1.5e15 with -Wf');
+    }
+    # but for n = 60 it sweeps none: p^2 leaves tau 20 at a position with
+    # tau 60, not a power of 2
+    {
+        my $lines = run_test($type, [ qw{ -Wf -X -x1e12 60 4 } ], 0);
+        my ($wf) = grep /^000 -Wf:/, @{ $lines->{'000'} // [] };
+        like($wf // '', qr{^000 -Wf: chose for [1-9]\d* batches, 0 swept },
+                '-Wf sweeps no batch of f(60,4)');
     }
     # -Wa sweeps no power whose range runs beyond a ulong: here p^1 at
     # v_0 of the first batch (swept at all because of -j4), which it
@@ -503,6 +526,24 @@ sub test_recover {
         ], 1);
         is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
                 '1428502133048749', 'recover -Wa, then plan later batches');
+    }
+    # under -Wf likewise: the bound logged, not the formula's, then on;
+    # b1 leaves taus 2 4 4 2 4 after p^4, mean log2 1.6, so its A grows
+    # by 2^0.2 over b0's
+    {
+        my $fh = temp_log([
+            '316 0 0 k1:0,0,0/300^4', '305 b0: . 2^4.3 . 2 3 W(3499,5,3)',
+        ]);
+        my $lines = run_test($type, [
+            '-r' . $fh->filename, qw{ -X -x1500000000000000 -Wf 20 5 },
+        ], 1);
+        my $got = log_203($fh);
+        like($got->[0] // '', qr{^203 b0: .* \[Wx=300\^4\] \(},
+                'recover -Wf: bounds per power as logged');
+        like($got->[1] // '', qr{^203 b1: .* \[Wx=441\^4,29\^9\] \(},
+                'recover -Wf: next batch by formula');
+        is(join(' ', map /^202 Candidate (\d+)/, @{ $lines->{202} // [] }),
+                '1428502133048749', 'recover -Wf, then plan later batches');
     }
     expect_recover_next_batch(
         q{-W: batch numbering survives recovering mid-sweep},
