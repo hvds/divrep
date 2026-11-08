@@ -4655,8 +4655,11 @@ static inline void push_midpp(
  * Where both apply, -W takes the range above its threshold, since
  * that is what justifies its caps below (see sweep_cap()), and -k the
  * rest.
+ * A range for -W alone that runs beyond a ulong cannot be swept: that is
+ * fatal, unless 'reach' is set (see sweep_limits()), when it is entered
+ * with a maxp of 0.
  */
-void prep_midp(t_node *prev_node) {
+void prep_midp(t_node *prev_node, bool reach) {
     ulong *upper = cap_above(prev_node);
     ulong *lower = prev_node->wfloor;
     for (uint vi = 0; vi < k; ++vi) {
@@ -4685,6 +4688,10 @@ void prep_midp(t_node *prev_node) {
                 if (!top || limit < top)
                     top = limit;
             } else if (!top) {
+                if (reach && for_w && !for_k) {
+                    push_midpp(vi, x, lower[xi(x)], 0, 0);
+                    continue;
+                }
                 /* only p^1 for -k can go on, up to the batch's bound */
                 if (for_w || x != 2)
                     fail("prep_midp target %Zu out of range for %u:%u",
@@ -4774,7 +4781,7 @@ void walk_midp(t_node *prev_node, bool recover) {
     double gs_mp_t0 = VB(VB_GATE) ? gs_now() : 0;
     gs_mp_tried = 0;
 #endif
-    prep_midp(prev_node);
+    prep_midp(prev_node, 0);
     if (midppc == 0)
         goto walk_midp_done;
     /* The constant parts needed for reject_square() and reject_single().
@@ -5116,7 +5123,7 @@ double sweep_estimate(t_node *np, ulong *w) {
         dis_batch(np, 1);
         sweep_cap(np, w);
         midppc = 0;
-        prep_midp(np);
+        prep_midp(np, 0);
         for (uint mi = 0; mi < midppc; ++mi) {
             t_midpp *mp = &midpp[mi];
             c += wa_entry(np, mp->vi, mp->x, mp->minp, mp->maxp);
@@ -5133,19 +5140,26 @@ double sweep_estimate(t_node *np, ulong *w) {
  * the sweep of the batch complete at np could try with the caps w for
  * bounds of -W, 0 if it would try none; np is left as it was. A bound at
  * or above it sweeps nothing of that power.
+ * A power whose range at any position it would sweep runs beyond a
+ * ulong cannot be swept with any bound, and also gets 0: its reach
+ * does not depend on the bounds, so the planner never offers one.
  */
 void sweep_limits(t_node *np, ulong *w, ulong *top) {
     ulong *cap = np->cap;
     dis_batch(np, 1);
     sweep_cap(np, w);
     midppc = 0;
-    prep_midp(np);
+    prep_midp(np, 1);
     memset(top, 0, xsize() * sizeof(ulong));
     for (uint mi = 0; mi < midppc; ++mi) {
         ulong *tp = &top[xi(midpp[mi].x)];
         if (midpp[mi].maxp > *tp)
             *tp = midpp[mi].maxp;
     }
+    /* out of range at some position: unsweepable */
+    for (uint mi = 0; mi < midppc; ++mi)
+        if (midpp[mi].maxp == 0)
+            top[xi(midpp[mi].x)] = 0;
     np->cap = cap;
     np->wfloor = NULL;
 }
