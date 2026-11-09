@@ -56,14 +56,29 @@ them to that file as D rows: by the limbs of the aq of the node a loop
 extends, per prime tried by where it leaves the checks (C<rearly> if
 known or untested, C<rrej1> if the first stage of reject_single()
 rejects it, else C<rdeep.x>I<x> for p^(x-1)), and C<rfail> and
-C<rapply> per call of apply_single() by its outcome; and by the limbs of the value,
-C<pprep.fail>, C<pprep.prime> and C<pprep.test> per call of
-tau_prime_prep() by its result (trial division found a factor, found
-the value prime, or left a prime test to follow). With C<-S>I<samples>
-(and C<-u>), these are added to the section samp of the table, alone
-unless C<-s> chose sections to make as well. Merging the same samples
-twice counts them twice, so empty the file once its samples are in a
-table.
+C<rapply> per call of apply_single() by its outcome; and by the limbs
+of the value, C<pprep.fail>, C<pprep.prime> and C<pprep.test> per call
+of tau_prime_prep() by its result (trial division found a factor, found
+the value prime, or left a prime test to follow). The deep primes are
+sampled again by the path they took through reject_single(), which
+decides their cost far better than x, as E rows
+"E rdeep.<path> bits e pbits n mean sd": C<exit> for an exit (x = 2, or
+an early return), C<p2> for one reduction mod p^2 (x = 3), and C<gen>
+for the general path, by the limbs of aq, the power e of p in the
+modulus inverted (0 but on the general path) and the bits of p. With
+C<-S>I<samples> (and C<-u>), these are added to the section samp of the
+table, alone unless C<-s> chose sections to make as well, E rows pooled
+like D rows; and for each path an F row
+"F rdeep.<path> base mbit knee step limb" is fitted afresh to all its
+E rows, for the cost of a prime there as base + mbit.kp
++ knee.max(0, kp - 32) + step.[limbs > 1] + limb.max(0, limbs - 2),
+where kp, k.pbits for k = 1, 2 or e on the exit, p2 or general path,
+is the size of the modulus reduced by: the cost follows that more
+closely than p or e alone, and rises faster beyond 32 bits, where
+division slows (see fit_rdeep()). With the rows of all three paths,
+pcoul prices the deep primes by path, else by x. Merging the same
+samples twice counts them twice, so empty the file once its samples
+are in a table.
 
 The model costs the trial division stage of each test itself, since
 how often the values a walk tests are divisible by each trial prime
@@ -290,7 +305,7 @@ if (defined $samples) {
         chomp;
         if (/^V samp /) {
             push @sver, $_;
-        } elsif (/^D /) {
+        } elsif (/^[DE] /) {
             push @srows, $_;
         }
     }
@@ -621,21 +636,30 @@ sub sample_unit {
 }
 
 # The lines of a section: as built now, else from the table updated;
-# with -a, the D rows of both, pooled (see pool_d()).
+# with -a, the D rows of both, pooled (see pool_d()). Section samp,
+# when samples are added, has its F row fitted afresh (see
+# refit_rdeep()).
 sub lines_of {
     my($sec) = @_;
-    return pool_d(@{ $old{$sec} }, @{ $new{$sec} }) if appended($sec);
-    return pool_d(@{ $new{$sec} // $old{$sec} // [] });
+    my @lines = appended($sec)
+            ? pool_d(@{ $old{$sec} }, @{ $new{$sec} })
+            : pool_d(@{ $new{$sec} // $old{$sec} // [] });
+    @lines = refit_rdeep(@lines) if $sec eq 'samp' && $new{samp};
+    return @lines;
 }
 
 # Pool the D rows "D series bits n mean sd" for the same series and size
 # as pcoul does on loading them (see cm_dadd() in coulcost.c), so that a
-# table that is added to stays one row per size; other lines pass as
-# they are, D rows coming after them in order of series and size.
+# table that is added to stays one row per size; likewise the E rows
+# "E series bits e pbits n mean sd" for the same series, size, e and
+# pbits. Other lines pass as they are, D and then E rows coming after
+# them in order.
 sub pool_d {
     my(@lines) = @_;
     my(@other, %d);
     for (@lines) {
+        # an E row is pooled as a D row of series "series:e:pbits"
+        s/^E (\S+) (\d+) (\d+) (\d+) /D $1:$3:$4 $2 /;
         my($s, $b, $n, $mean, $sd) = /^D (\S+) (\d+) (\S+) (\S+)(?: (\S+))?$/
             or push(@other, $_), next;
         $sd //= 0;
@@ -648,14 +672,90 @@ sub pool_d {
         $p->[1] = $m0 + $dm * $n / $nt;
         $p->[2] += $ss + $dm * $dm * $n0 * $n / $nt;
     }
-    return @other, map {
+    my @pooled = map {
         my $s = $_;
         map {
             my($n, $m, $ss) = @{ $d{$s}{$_} };
             sprintf 'D %s %u %u %.5f %.5f', $s, $_, $n, $m,
                     ($n > 1) ? sqrt($ss / ($n - 1)) : 0;
         } sort { $a <=> $b } keys %{ $d{$s} };
-    } sort keys %d;
+    } sort { ($a =~ /:/) <=> ($b =~ /:/) || by_series($a, $b) } keys %d;
+    s/^D (\S+):(\d+):(\d+) (\d+) /E $1 $4 $2 $3 / for @pooled;
+    return @other, @pooled;
+}
+
+# The order of series in pool_d(): by name, and an E series by e and
+# then pbits.
+sub by_series {
+    my($x, $y) = @_;
+    my($an, @ak) = split /:/, $x;
+    my($bn, @bk) = split /:/, $y;
+    return $an cmp $bn || ($ak[0] // 0) <=> ($bk[0] // 0)
+            || ($ak[1] // 0) <=> ($bk[1] // 0);
+}
+
+# Section samp's lines with its F rdeep rows fitted afresh, one for
+# each path (series) its E rdeep rows have (see fit_rdeep()), replacing
+# any it had; an F row for a path with no E rows is dropped too, since
+# it would have nothing behind it.
+my @rdeep_rows;     # the fits, made once
+sub refit_rdeep {
+    my(@lines) = @_;
+    my %cells;
+    for (@lines) {
+        my($path, @c) = /^E rdeep\.(\w+) (\d+) (\d+) (\d+) (\S+) (\S+)/
+            or next;
+        push @{ $cells{$path} }, \@c;
+    }
+    @rdeep_rows = map fit_rdeep($_, @{ $cells{$_} }), sort keys %cells
+        unless @rdeep_rows;
+    return (grep(!/^F rdeep\./, @lines), @rdeep_rows);
+}
+
+# Fit the F rdeep.<path> row (see cm_F in coulcost.c) to the cells
+# [ bits, e, pbits, n, mean ] of the E rows of that path: the cost of a
+# deep prime there, in microseconds, as base + mbit.kp
+# + knee.max(0, kp - $rd_knee) + step.[limbs > 1]
+# + limb.max(0, limbs - 2), where kp is the size of the modulus, k.pbits
+# for k = 1, 2 or e on the exit, p2 or general path (as rd_kp() in
+# coulint.h); by least squares with no negative costs, weighting each
+# cell by its count over its fitted cost (as lsq_weighted() weights each
+# row by the inverse of its cost, a cell standing for its n samples).
+sub fit_rdeep {
+    my($path, @cells) = @_;
+    my $rd_knee = 32;  # as RD_KNEE in coulint.h
+    my $k = { exit => 1, p2 => 2 }->{$path};
+    my @names = map "F rdeep.$path $_", qw{ base mbit knee step limb };
+    my @rows = map {
+        my($bits, $e, $pb, $n, $mean) = @$_;
+        my $kp = ($k // $e) * $pb;
+        my $l = $bits / 64;
+        [
+            1, $kp, ($kp > $rd_knee) ? $kp - $rd_knee : 0,
+            ($l > 1) ? 1 : 0, ($l > 2) ? $l - 2 : 0, $mean,
+        ];
+    } @cells;
+    my @n = map $_->[3], @cells;
+    # with no samples to fit a term to, it is written as 0
+    warn "multibench-table: no E rdeep.$path samples above one limb,"
+            . " F rdeep.$path step written as 0\n"
+        unless grep $_->[3], @rows;
+    warn "multibench-table: no E rdeep.$path samples above two limbs,"
+            . " F rdeep.$path limb written as 0\n"
+        unless grep $_->[4], @rows;
+    my @y = sort { $a <=> $b } grep $_ > 0, map $_->[-1], @rows;
+    my $floor = @y ? $y[int(@y / 10)] : 1e-9;
+    my @c = lsq_nonneg(undef, \@rows, \@n);
+    for my $round (1 .. 5) {
+        my @w;
+        for my $i (0 .. $#rows) {
+            my $fit = 0;
+            $fit += $c[$_] * $rows[$i][$_] for 0 .. $#c;
+            push @w, $n[$i] / (($fit < $floor) ? $floor : $fit);
+        }
+        @c = lsq_nonneg($round == 5 ? \@names : undef, \@rows, \@w);
+    }
+    return sprintf 'F rdeep.%s %.5f %.5f %.5f %.5f %.5f', $path, @c;
 }
 
 # the section of a table line, if it has one
@@ -667,6 +767,7 @@ sub section_of {
         : /^[PR] / ? 'prime'
         : /^D bpsw\./ ? 'bpsw'
         : /^D (?:r(?:deep|early|rej1|prime|fail|apply)|pprep)\b/ ? 'samp'
+        : /^[EF] rdeep\./ ? 'samp'
         : /^G / ? 'ladder'
         : /^Q / ? 'qs'
         : /^C (?:linsetup|loop0|looptest|sqsetup|sqloop0|sqtest) / ? 'walk'
