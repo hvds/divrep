@@ -1129,10 +1129,13 @@ bool kern_passed(uint vi) {
 
 /* True if no allocation may be made at v_i with tau t left, below a
  * node whose allocations are capped or not: where no x is left that
- * recursion allocates; and when capped, where t is an odd prime. Such
- * a position is a fixed square (or higher power), covered by the walks
- * for every size of root, so an allocation there would only duplicate
- * them, and its cap would need a sweep to justify it.
+ * recursion allocates; and when capped or under -ja, where t is an odd
+ * prime. Such a position is a fixed square (or higher power), covered
+ * by the walks for every size of root, so an allocation there would
+ * only duplicate them, and its cap would need a sweep to justify it.
+ * Under -ja it is disallowed even uncapped: on D(250,3) that saved 34%
+ * under -ja2. Without -ja it made little difference, so there it is left
+ * as it was, keeping earlier logs recoverable.
  * In a batch -k applies to, also at the square, which is left to the
  * walks, and at a position -k passes over.
  * Every strategy keeps to this, as best_v() checks, so a sweep need not
@@ -1141,7 +1144,8 @@ bool kern_passed(uint vi) {
 static inline bool dis_pos(uint vi, uint t, bool capped) {
     if (divisors[t].high <= (kern_highpow() ? 1 : 2))
         return 1;
-    if ((t & 1) && (kern_batch() || (capped && divisors[t].alldiv == 2)))
+    if ((t & 1) && (kern_batch()
+            || ((capped || auto_level) && divisors[t].alldiv == 2)))
         return 1;
     if (kern_passed(vi))
         return 1;
