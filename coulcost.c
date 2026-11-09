@@ -123,9 +123,11 @@ static t_cmd cm_D[CM_MAXDS];
 static uint cm_nD = 0;
 static int cm_d_bpsw[2] = { -1, -1 };   /* bpsw.comp, bpsw.prime */
 static void cm_rec_fill(void);
+static void cm_rd_fill(void);
 /* The classes of in-situ samples (see cs_add()): those of the recursion
  * loops (see CR_COUNT), then tau_prime_prep() by its result; and the D
- * series those of tau_prime_prep() are priced from, or -1.
+ * series those of tau_prime_prep() are priced from, or -1. The deep
+ * primes are also sampled by path (see cs_rd_add()).
  */
 enum { CS_PPREP = CR_COUNT, CS_COUNT = CR_COUNT + 3 };
 static int cm_d_pprep[3] = { -1, -1, -1 };
@@ -255,6 +257,31 @@ static struct {
     bool vseen[CMK_COUNT];
     double bad[CMK_COUNT];  /* as t_cmc.bad */
 } cm_K;
+/* The "F rdeep.<path> <base> <mbit> <knee> <step> <limb>" rows, one for
+ * each path a deep prime takes through reject_single() (see RP_COUNT;
+ * rdeep.exit, rdeep.p2 and rdeep.gen), fitted by multibench-table -S to
+ * the E rows that in-situ sampling gives (see cs_rd_add()): the cost of
+ * a prime there is base, plus mbit per bit of the size kp of its modulus
+ * (see rd_kp()) and knee per bit of kp beyond RD_KNEE, plus step if aq
+ * has more than one limb and limb per limb beyond two. With all three
+ * rows the deep primes are priced by path (see cm_rd_have()), else by x
+ * (the rdeep.x<x> series).
+ */
+enum { CMF_BASE, CMF_MBIT, CMF_KNEE, CMF_STEP, CMF_LIMB, CMF_COUNT };
+static const char *cm_fname[CMF_COUNT] = {
+    "base", "mbit", "knee", "step", "limb"
+};
+static const char *cm_rpname[RP_COUNT] = { "exit", "p2", "gen" };
+static struct {
+    bool seen;
+    double v[CMF_COUNT];
+    double bad[CMF_COUNT];  /* as t_cmc.bad */
+} cm_F[RP_COUNT];
+/* whether deep primes are priced by path, and if so their prices before
+ * any per bit of the modulus (see cm_rd_fill())
+ */
+static bool cm_rd_ok = 0;
+static double cm_rd[RP_COUNT][CR_MAXL + 1];
 /* The prices of a prime test's preparation by result and bits up to
  * CM_PP_MAXB, made from the K rows on loading (see cm_pp_model()).
  */
@@ -491,6 +518,12 @@ static void cm_report_bad(void) {
         if (cm_K.bad[i])
             report("000 cost table: K %s %g negative, taken as 0\n",
                     cm_kname[i], cm_K.bad[i] * 1e6);
+    for (uint rp = 0; rp < RP_COUNT; ++rp)
+        for (uint i = 0; i < CMF_COUNT; ++i)
+            if (cm_F[rp].bad[i])
+                report("000 cost table: F rdeep.%s %s %g negative,"
+                        " taken as 0\n", cm_rpname[rp], cm_fname[i],
+                        cm_F[rp].bad[i] * 1e6);
     if (cm_sq_raised)
         report("000 cost table: C cprimesq %g below cprime, raised to it\n",
                 cm_sq_bad * 1e6);
@@ -556,6 +589,17 @@ static void cm_load(void) {
                         cm_K.pseen = 1;
                     else
                         cm_K.seen = 1;
+                }
+            continue;
+        }
+        /* an older F row of four values is not one of these */
+        if (sscanf(line, "F rdeep.%31s %lf %lf %lf %lf %lf", name, &v[0],
+                &v[1], &v[2], &v[3], &v[4]) == 6) {
+            for (uint rp = 0; rp < RP_COUNT; ++rp)
+                if (strcmp(name, cm_rpname[rp]) == 0) {
+                    for (uint i = 0; i < CMF_COUNT; ++i)
+                        cm_F[rp].v[i] = v[i] * 1e-6;
+                    cm_F[rp].seen = 1;
                 }
             continue;
         }
@@ -674,12 +718,19 @@ static void cm_load(void) {
             cm_K.bad[i] = cm_K.v[i];
             cm_K.v[i] = 0;
         }
+    for (uint rp = 0; rp < RP_COUNT; ++rp)
+        for (uint i = 0; i < CMF_COUNT; ++i)
+            if (cm_F[rp].v[i] < 0) {
+                cm_F[rp].bad[i] = cm_F[rp].v[i];
+                cm_F[rp].v[i] = 0;
+            }
     if (CMC(CM_CPRIMESQ) < CMC(CM_CPRIME)) {
         cm_sq_raised = 1;
         cm_sq_bad = CMC(CM_CPRIMESQ);
         CMC(CM_CPRIMESQ) = CMC(CM_CPRIME);
     }
     cm_rec_fill();
+    cm_rd_fill();
     if (cm_report_due)
         cm_report_bad();
     if (cm_K.pseen)
@@ -835,6 +886,42 @@ double cm_rec_price(uint c, uint l) {
     if (!cm_loaded)
         cm_load();
     return cm_rec[c][l];
+}
+
+/* The prices of the deep primes by path (see cm_F) before any per bit
+ * of the modulus, filled in as the table loads if it has a row for every
+ * path.
+ */
+static void cm_rd_fill(void) {
+    cm_rd_ok = 1;
+    for (uint rp = 0; rp < RP_COUNT; ++rp)
+        if (!cm_F[rp].seen)
+            cm_rd_ok = 0;
+    if (!cm_rd_ok)
+        return;
+    for (uint rp = 0; rp < RP_COUNT; ++rp)
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            cm_rd[rp][l] = cm_F[rp].v[CMF_BASE]
+                    + ((l > 1) ? cm_F[rp].v[CMF_STEP] : 0)
+                    + ((l > 2) ? (l - 2) * cm_F[rp].v[CMF_LIMB] : 0);
+}
+
+bool cm_rd_have(void) {
+    if (!cm_loaded)
+        cm_load();
+    return cm_rd_ok;
+}
+
+double cm_rd_price(uint rp, uint l) {
+    return cm_rd[rp][l];
+}
+
+double cm_rd_mbit(uint rp) {
+    return cm_F[rp].v[CMF_MBIT];
+}
+
+double cm_rd_knee(uint rp) {
+    return cm_F[rp].v[CMF_KNEE];
 }
 
 /* Report each D series priced beyond its data, and how far: these are
@@ -2161,9 +2248,10 @@ void cs_init(void) {
 }
 
 /* Add a sample of class which, begun at t0, for a node whose aq has l
- * limbs: the mean time of k items timed together, weighted by k.
+ * limbs: the mean time of k items timed together, weighted by k, which
+ * is returned.
  */
-void cs_add(uint which, uint l, double t0, uint k) {
+double cs_add(uint which, uint l, double t0, uint k) {
     double dt = (work_clock() - t0 - cs_gap) / k;
     /* Welford's update, weighted */
     t_csstat *sp = &cs_stat[which][l];
@@ -2171,15 +2259,39 @@ void cs_add(uint which, uint l, double t0, uint k) {
     double d = dt - sp->mean;
     sp->mean += d * k / sp->n;
     sp->ss += d * (dt - sp->mean) * k;
+    return dt;
+}
+
+/* The samples of deep primes by path (see RP_COUNT), limbs (more than
+ * CS_GL taken as CS_GL), e (0 but on the general path) and the bits of
+ * p, written as E rows for multibench-table -S to fit the F rows to
+ * (see cm_F). e is at most 38, since p is odd and p^e < 2^61.
+ */
+#define CS_GL 4
+#define CS_GE 38
+static t_csstat cs_rd[RP_COUNT][CS_GL + 1][CS_GE + 1][65];
+
+/* Add a sample dt (as cs_add() found it) of a deep prime of path rp
+ * (see RP_COUNT), for aq of l limbs, p of pbits bits, and e (0 but on
+ * the general path).
+ */
+void cs_rd_add(uint rp, uint l, uint pbits, uint e, double dt) {
+    t_csstat *sp = &cs_rd[rp][(l > CS_GL) ? CS_GL : l][e][pbits];
+    ++sp->n;
+    double d = dt - sp->mean;
+    sp->mean += d / sp->n;
+    sp->ss += d * (dt - sp->mean);
 }
 
 /* Append the samples to $COST_SAMPLES as D rows, sized by limbs (64 bits
- * per limb), after a V line giving the build and the unit of the times,
- * as multibench-table -S expects.
+ * per limb), and E rows for the deep primes by path (see cs_rd), after
+ * a V line giving the build and the unit of the times, as
+ * multibench-table -S expects.
  */
 void cs_write(void) {
     if (!cs_on)
         return;
+    /* the deep primes once: their samples by path are the same ones */
     ulong total = 0;
     for (uint c = 0; c < CS_COUNT; ++c)
         for (uint l = 1; l <= CR_MAXL; ++l)
@@ -2210,6 +2322,19 @@ void cs_write(void) {
                     sp->n, sp->mean * 1e6,
                     (sp->n > 1) ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
         }
+    /* E rdeep.<path> <bits> <e> <pbits> <n> <mean> <sd> */
+    for (uint rp = 0; rp < RP_COUNT; ++rp)
+        for (uint l = 1; l <= CS_GL; ++l)
+            for (uint e = 0; e <= CS_GE; ++e)
+                for (uint pb = 1; pb <= 64; ++pb) {
+                    t_csstat *sp = &cs_rd[rp][l][e][pb];
+                    if (!sp->n)
+                        continue;
+                    fprintf(fp, "E rdeep.%s %u %u %u %lu %.5f %.5f\n",
+                            cm_rpname[rp], 64 * l, e, pb, sp->n,
+                            sp->mean * 1e6, (sp->n > 1)
+                                ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
+                }
     fclose(fp);
     report("000 cost samples: %lu appended to %s\n", total, cs_file);
 }

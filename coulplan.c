@@ -149,12 +149,32 @@ static inline double gr_now(void) {
  * cost (see cm_prep_price(), cm_pprep_price(), cm_price_prime() and
  * cm_ladder_cost()).
  */
+/* the deep primes by path, where the table prices them so (see
+ * cm_rd_have())
+ */
+static double cc_rd_work(void) {
+    double cost = 0;
+    for (uint rp = 0; rp < RP_COUNT; ++rp) {
+        double kp = 0, knee = 0;
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            if (cc.rd_by[rp][l]) {
+                cost += cc.rd_by[rp][l] * cm_rd_price(rp, l);
+                kp += cc.rd_kp[rp][l];
+                knee += cc.rd_knee[rp][l];
+            }
+        cost += kp * cm_rd_mbit(rp) + knee * cm_rd_knee(rp);
+    }
+    return cost;
+}
+
 /* the recursion loops' primes tried and calls of apply_single(), by
- * class and size (see CR_COUNT)
+ * class and size (see CR_COUNT), and the deep primes instead by path
+ * where the table prices them so
  */
 static double cc_rec_work(void) {
-    double cost = 0;
-    for (uint c = 0; c < CR_COUNT; ++c)
+    bool rd = cm_rd_have();
+    double cost = rd ? cc_rd_work() : 0;
+    for (uint c = rd ? CR_EARLY : 0; c < CR_COUNT; ++c)
         for (uint l = 1; l <= CR_MAXL; ++l)
             if (cc.rec_by[c][l])
                 cost += cc.rec_by[c][l] * cm_rec_price(c, l);

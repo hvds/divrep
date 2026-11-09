@@ -52,6 +52,22 @@ static inline uint cr_limbs(mpz_t aq) {
 static inline uint cr_xclass(uint x) {
     return ((x > CR_MAXX) ? CR_MAXX : x) - 2;
 }
+/* The deep primes are also counted by the path they took through
+ * reject_single(), since that, rather than x, decides what they cost:
+ * an exit (x = 2, an early return, or not tested there at all), which
+ * reduces mod p, one reduction mod p^2 (x = 3 for p < 2^31), or the
+ * general path, which inverts mod m = p^e (e from 1 to x - 1). The
+ * cost grows with the size of the modulus, taken as k.pbits for k = 1,
+ * 2 or e (see rd_kp()), faster beyond RD_KNEE bits, where division
+ * slows; and it steps up for aq of more than one limb, growing more
+ * slowly with further limbs (see cm_rd_have()).
+ */
+enum { RP_EXIT, RP_X3, RP_GEN, RP_COUNT };
+#define RD_KNEE 32
+/* the size of the modulus of path rp for p of pbits bits and e */
+static inline uint rd_kp(uint rp, uint pbits, uint e) {
+    return ((rp == RP_GEN) ? e : rp + 1) * pbits;
+}
 
 /* What the run has done, counted for costing it (see cc_work()); tests
  * outside tau_multi_prep(), tau_prime_prep() and tau_multi_run(), which
@@ -72,6 +88,11 @@ typedef struct {
      * CR_COUNT), for pricing them by size
      */
     ulong rec_by[CR_COUNT][CR_MAXL + 1];
+    /* the deep primes again, by path (see RP_COUNT) and limbs, with the
+     * sums of the sizes of their moduli, and of those beyond RD_KNEE
+     */
+    ulong rd_by[RP_COUNT][CR_MAXL + 1];
+    ulong rd_kp[RP_COUNT][CR_MAXL + 1], rd_knee[RP_COUNT][CR_MAXL + 1];
     double test, base;
 } t_cc;
 extern t_cc cc;

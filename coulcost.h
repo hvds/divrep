@@ -30,6 +30,15 @@ extern double cm_ptest_price(uint nbits, bool prime);
 extern void cm_dreport(void);
 /* the price of an item of recursion work of class c, aq of l limbs */
 extern double cm_rec_price(uint c, uint l);
+/* Whether the table prices deep primes by path (see RP_COUNT); if so,
+ * a prime of path rp for aq of l limbs with a modulus of size kp (see
+ * rd_kp()) costs cm_rd_price(rp, l), plus cm_rd_mbit(rp) per bit of kp
+ * and cm_rd_knee(rp) per bit of kp beyond RD_KNEE.
+ */
+extern bool cm_rd_have(void);
+extern double cm_rd_price(uint rp, uint l);
+extern double cm_rd_mbit(uint rp);
+extern double cm_rd_knee(uint rp);
 enum { CM_LOOP0, CM_LOOPTEST, CM_SQSETUP, CM_SQLOOP0, CM_SQTEST,
         CM_CPRIME, CM_CPRIMESQ, CM_W1SITER, CM_W1SCHECK, CM_CTAIL,
         CM_LINSETUP, CM_CAPPLY, CM_LINSETUPINV, CM_SQSETUPRES, CM_W1SCALL,
@@ -76,17 +85,19 @@ extern double cm_root_cost(double zb, double rbits, mpz_t **q, uint *t,
 
 /* In-situ cost samples: with $COST_SAMPLES naming a file, every run
  * times a sample of what the recursion loops do, and on exit appends the
- * statistics to that file as D rows (see cs_write()), for multibench-
- * table -S to add to a cost table. The run itself never reads them, so
- * its decisions are the same whether it samples or not.
+ * statistics to that file as D rows, and E rows for the deep primes by
+ * path (see cs_write()), for multibench-table -S to add to a cost
+ * table. The run itself never reads them, so its decisions are the
+ * same whether it samples or not.
  * A prime a loop tries is timed from where the loop takes it to where
  * it leaves the checks (see CR_COUNT), which for one going on to
  * apply_single() is that call, a sample of its own by its outcome.
  * Samples are by class and by the limbs of the aq of the node the loop
- * extends (see cr_limbs()). The clock is read in user mode with the
- * cycle counter open (see work_clock()), so that a single prime can be
- * timed; without it, reading the clock costs more than a prime, and the
- * samples of primes read high.
+ * extends (see cr_limbs()); those of the deep primes also by path (see
+ * RP_COUNT), the bits of p and, on the general path, e. The clock
+ * is read in user mode with the cycle counter open (see work_clock()),
+ * so that a single prime can be timed; without it, reading the clock
+ * costs more than a prime, and the samples of primes read high.
  */
 #define CS_EVERY 1024   /* one prime sampled in this many */
 #define CS_AEVERY 256   /* one apply_single() call sampled in this many */
@@ -95,7 +106,8 @@ extern bool cs_on;
 extern uint cs_left, cs_aleft;
 extern double work_clock(void);
 extern void cs_init(void);
-extern void cs_add(uint which, uint l, double t0, uint k);
+extern double cs_add(uint which, uint l, double t0, uint k);
+extern void cs_rd_add(uint rp, uint l, uint pbits, uint e, double dt);
 extern void cs_write(void);
 /* the sample to start, if this is the one in every to take, else 0 */
 static inline double cs_start(uint *left, uint every) {

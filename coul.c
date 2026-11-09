@@ -4760,13 +4760,29 @@ static inline bool reject_single(
  * mod p rejected the prime, else 2 (see CR_REJ1)
  */
 static uint rj_stage;
+/* The path the last prime to reach the second stage of reject_single()
+ * took (see RP_COUNT), the bits of its p, and for the general path e.
+ * Callers reset rj_path to RP_EXIT with rj_stage, for a prime rejected
+ * without calling it, and set rj_pbits for each prime.
+ */
+static uint rj_path, rj_pbits, rj_e;
 /* Count a prime a recursion loop tried as of class c (see CR_COUNT), for
  * a node whose aq has l limbs, ending at *t any sample of it begun.
  */
 static inline void cr_prime(uint c, uint l, double *t) {
     ++cc.rec_by[c][l];
+    if (c < CR_EARLY) {
+        uint kp = rd_kp(rj_path, rj_pbits, rj_e);
+        ++cc.rd_by[rj_path][l];
+        cc.rd_kp[rj_path][l] += kp;
+        if (kp > RD_KNEE)
+            cc.rd_knee[rj_path][l] += kp - RD_KNEE;
+    }
     if (*t) {
-        cs_add(c, l, *t, 1);
+        double dt = cs_add(c, l, *t, 1);
+        if (c < CR_EARLY)
+            cs_rd_add(rj_path, l, rj_pbits,
+                    (rj_path == RP_GEN) ? rj_e : 0, dt);
         *t = 0;
     }
 }
@@ -4896,6 +4912,8 @@ void walk_midp(t_node *prev_node, bool recover) {
              */
             bool rj = cur_act->rj_ok && (p & 1);
             rj_stage = 2;
+            rj_path = RP_EXIT;
+            rj_pbits = 64 - leading_zeroes_u64(p);
             if ((rj && reject_single(prev_node, cur_act, vi, p, x)
             ) || (sq_ok && vi != sq0 && reject_square(
                 p, (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi),
@@ -6120,21 +6138,24 @@ static inline bool reject_single(
             if (d >= m)
                 d -= m;
             ulong mult1 = modrecip_u64(divrecip_u64(d, p, pr) * inv, p, pr);
+            rj_path = RP_X3;
             return mult0 + p * mult1 > cur_act->rj_mult;
         }
     }
     /* as update_chinese(): m = p^e < 2^61 for e < x, not dividing aq */
     ulong m = p;
-    for (uint e = 2; e < x; ++e) {
-        if (m >= (1UL << 61) / p)
-            break;
+    uint e = 1;
+    while (e + 1 < x && m < (1UL << 61) / p) {
         m *= p;
+        ++e;
     }
     if (m >= (1UL << 61) || m <= cur_act->rj_mult)
         return 0;
     reject_mod(prev, cur_act->rj_limb, m, recip_u64(m), &am, &rm);
     if (am % p == 0)
         return 0;
+    rj_path = RP_GEN;
+    rj_e = e;
     ulong c = (off % m + rm) % m;
     if (c)
         c = m - c;
@@ -7138,6 +7159,8 @@ bool next_unforced(t_act *cur_act) {
         /* p stays the cursor, as when apply_single() fails */
         bool rj = cur_act->rj_ok && (p & 1);
         rj_stage = 2;
+        rj_path = RP_EXIT;
+        rj_pbits = 64 - leading_zeroes_u64(p);
         if ((rj && reject_single(
             prev_node, cur_act, cur_act->vi, p, cur_act->x
         )) || (cur_act->rs_ok
