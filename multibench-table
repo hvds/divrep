@@ -373,10 +373,15 @@ my @cal_tail = ('-j2', '-f3', '-g60', '-x3068295382408046177023',
 
 # runs whose test preparations price them in situ: small and large
 # values, linear and fixed-power walks, the last two with values of two
-# limbs
+# limbs; then values of four limbs, which prepstep3 prices along with
+# three, from a batch of D(44,7) swept by -W, without and with -h (whose
+# trial division runs to much larger primes)
+my @cal_wide = ('-Wf', '-b8',
+        '-x290774656178555752682281385744071365269288781214635508212890621',
+        44, 7);
 my @cal_situ = (\@cal_lin, \@cal_sq, [ '-j4', '-x1e10', 36, 5 ],
         [ '-j2', '-x1e15', 60, 4 ], \@cal_tail,
-        [ '-j2', '-x1e22', 36, 5 ]);
+        [ '-j2', '-x1e22', 36, 5 ], \@cal_wide, [ '-h11', @cal_wide ]);
 
 my $tmp = "/tmp/multibench-table.$$";
 $| = 1;
@@ -796,6 +801,13 @@ sub fit_prep {
     my @names = qw{ prepcall prepstep1 prepstep2 prepstep3 prepgcd0
             prepgcd1 prepgcd2 prepgcd3 prepgcd4 preppbit preppower
             prepzbit };
+    # a cost no preparation exercised would be written as 0: say so,
+    # since the runs are then missing values of that kind
+    for my $j (0 .. $#names) {
+        next if grep $_->[$j], @rows;
+        warn "multibench-table: no preparations to fit $names[$j],"
+                . " written as 0\n";
+    }
     my @c = lsq_weighted(\@names, \@rows);
     # a slope needs two sizes above PP_SMALL
     for my $res (0 .. 2) {
