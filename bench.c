@@ -64,6 +64,9 @@ static volatile ulong mb_sink;
 static void mb_random(mpz_t m, gmp_randstate_t rs, uint bits, uint F) {
     static mpz_t prim, g;
     static uint primF = 0;
+    /* else every value of these bits is at most F, so none is coprime */
+    if (bits < 64 && (1UL << bits) - 1 <= F)
+        fail("MULTIBENCH: no %u-bit value has no factor up to %u", bits, F);
     if (primF != F) {
         if (!primF) {
             mpz_init(prim);
@@ -166,6 +169,10 @@ static void mb_drow(const char *name, uint bits, double *v, uint count) {
  * bpsw.comp (see mb_drow()). A composite usually fails at the first
  * strong probable prime test, so costs much less than a prime, which
  * pays for the whole test.
+ * Such a composite is at least (F + 1)^2. Where that is not below half
+ * the range there are none, or too few to find in reasonable time (one
+ * draw in tens of thousands at 32 bits, F = 64007), and they are not
+ * representative, so no bpsw.comp row is made for those bits.
  */
 static void mb_bpsw(char *spec) {
     uint bits, count, F;
@@ -191,16 +198,22 @@ static void mb_bpsw(char *spec) {
         v[got++] = mb_now() - t0;
     }
     mb_drow("bpsw.prime", bits, v, count);
-    got = 0;
-    while (got < count) {
-        mb_random(m, rs, bits, F);
-        if (mpz_probab_prime_p(m, 1))
-            continue;
-        double t0 = mb_now();
-        mb_sink ^= tau_bpsw(m);
-        v[got++] = mb_now() - t0;
+    /* the least composite with no factor up to F, against half the range */
+    mpz_set_ui(m, F);
+    mpz_add_ui(m, m, 1);
+    mpz_mul(m, m, m);
+    if (mpz_sizeinbase(m, 2) < bits) {
+        got = 0;
+        while (got < count) {
+            mb_random(m, rs, bits, F);
+            if (mpz_probab_prime_p(m, 1))
+                continue;
+            double t0 = mb_now();
+            mb_sink ^= tau_bpsw(m);
+            v[got++] = mb_now() - t0;
+        }
+        mb_drow("bpsw.comp", bits, v, count);
     }
-    mb_drow("bpsw.comp", bits, v, count);
     free(v);
     mpz_clear(m);
     gmp_randclear(rs);
