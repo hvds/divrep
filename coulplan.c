@@ -72,6 +72,10 @@ static double gq_setup = GQ_SETUP, gq_prime = GQ_PRIME;
  * that succeeds. See gr_init().
  */
 static double gr_rec[CR_COUNT][CR_MAXL + 1];
+/* whether the deep primes among those are priced by path (see
+ * gr_rd_mean())
+ */
+static bool gr_rd = 0;
 /* and the setup per inverse-filter entry of a linear walk, and per root
  * residue of one below a fixed square, 0 without a table
  */
@@ -214,6 +218,7 @@ void gr_init(void) {
                     : (c == CR_APPLY) ? GQ_APPLY : GR_APPLY;
     if (!cc.on)
         return;
+    gr_rd = cm_rd_have();
     gr_setup = cm_const(CM_LINSETUP);
     gq_setup = cm_const(CM_SQSETUP);
     gq_prime = cm_const(CM_CPRIMESQ) - cm_const(CM_CPRIME);
@@ -421,11 +426,41 @@ static double gr_seg(double lo, double hi, double m0, double m1) {
     return sum * h / 3;
 }
 
+/* What a prime p reaching the second stage of reject_single() for
+ * p^{x-1} costs at a node whose aq has l limbs and leaves room zl, where
+ * the table prices those primes by path (see cm_rd_have()): its path
+ * and the size of its modulus follow from p, x and zl as in
+ * reject_single(), taking zl for its rj_mult, and p of lg = log2(p)
+ * having lg + 1/2 bits on average.
+ */
+static double gr_rd_price(double lg, uint x, uint l, double zl) {
+    double kp;
+    uint rp;
+    if (lg < 31 && x <= 3) {
+        rp = (x == 2) ? RP_EXIT : RP_X3;
+        kp = (rp + 1) * (lg + 0.5);
+    } else {
+        /* the most powers of p up to x - 1 whose product is below 2^61 */
+        uint e = 1;
+        while (e + 1 < x && (e + 1) * lg < 61)
+            ++e;
+        /* m = p^e <= rj_mult rejects nothing, so returns early */
+        rp = (e * lg <= log2(zl)) ? RP_EXIT : RP_GEN;
+        kp = ((rp == RP_GEN) ? e : 1) * (lg + 0.5);
+    }
+    return cm_rd_price(rp, l) + kp * cm_rd_mbit(rp)
+            + ((kp > RD_KNEE) ? (kp - RD_KNEE) * cm_rd_knee(rp) : 0);
+}
+
 /* What trying the primes in [a, b] for p^{x-1} costs at a node whose aq
  * has l limbs and leaves room zl = zmax / aq: a prime p passes the first
  * stage of reject_single() with chance min(1, zl / p) and goes on to the
  * second, the rest being rejected at the first (see CR_COUNT); with zl
- * beyond a ulong, reject_single() is not used.
+ * beyond a ulong, reject_single() is not used. Those reaching the second
+ * stage are priced by x, or by path where the table can, at the mean
+ * log p of those (see gr_rd_price()): the price is near enough linear in
+ * log p, and integrating it per prime instead would cost the planner
+ * far more than it could gain, since this is called so often.
  */
 static double gr_ploop_z(double zl, uint l, double a, double b, uint x) {
     if (a < 2)
@@ -435,12 +470,31 @@ static double gr_ploop_z(double zl, uint l, double a, double b, uint x) {
     double np = gr_li(b) - gr_li(a) + 1;
     if (zl >= 0x1p64)
         return np * gr_rec[CR_EARLY][l];
-    double nd = (zl > a) ? gr_li((zl < b) ? zl : b) - gr_li(a) + 1 : 0;
-    if (zl < b)
-        nd += zl * gr_psum((zl > a) ? zl : a, b, 1);
-    if (nd > np)
+    /* those reaching the second stage, nd, and their sum of ln p, sl:
+     * over primes of density 1 / ln p, the integral of ln p is the length
+     * of the range, and of ln p times the chance zl / p is zl.ln(b / c)
+     */
+    double nd = 0, sl = 0;
+    if (zl > a) {
+        double c = (zl < b) ? zl : b;
+        double n1 = gr_li(c) - gr_li(a) + 1;
+        nd += n1;
+        sl += n1 * ((c > a && gr_li(c) - gr_li(a) >= 1)
+                ? (c - a) / (gr_li(c) - gr_li(a)) : log(a));
+    }
+    if (zl < b) {
+        double c = (zl > a) ? zl : a;
+        double n2 = zl * gr_psum(c, b, 1);
+        nd += n2;
+        sl += n2 * ((b > c) ? log(b / c) / log(log(b) / log(c)) : log(c));
+    }
+    if (nd > np) {
+        sl *= np / nd;
         nd = np;
-    return nd * gr_rec[cr_xclass(x)][l] + (np - nd) * gr_rec[CR_REJ1][l];
+    }
+    double pd = (gr_rd && nd > 0) ? gr_rd_price(sl / nd / M_LN2, x, l, zl)
+            : gr_rec[cr_xclass(x)][l];
+    return nd * pd + (np - nd) * gr_rec[CR_REJ1][l];
 }
 
 /* likewise below the node at lv */
