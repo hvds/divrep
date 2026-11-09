@@ -47,7 +47,7 @@ example C<-sbpsw -d448,449,512 -utimings -a>. The section keeps a V
 line for each build that measured it, and must be timed in the same
 unit. C<-d> gives the sizes of D rows (default 32 to 384 bits, in
 pairs either side of each limb boundary, since costs step up with each
-limb).
+limb, and also 40 and 48 bits).
 
 Some costs are measured in the runs themselves. With C<$COST_SAMPLES>
 naming a file, every pcoul run times a sample of what its recursion
@@ -239,8 +239,10 @@ my $chose = 0;  # whether -s, -o or -M chose the sections
 my @bits = (16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 65, 72, 80,
         96, 112, 128, 129);
 # the sizes of the D rows (section bpsw), likewise in pairs either side
-# of each limb boundary
-my @d_bits = (32, 64, 65, 128, 129, 192, 193, 256, 257, 320, 321, 384);
+# of each limb boundary, and more within the first limb, where the cost
+# of a composite is far from geometric in the size
+my @d_bits = (32, 40, 48, 64, 65, 128, 129, 192, 193, 256, 257, 320, 321,
+        384);
 while (@ARGV && $ARGV[0] =~ /^-/) {
     my $arg = shift @ARGV;
     last if $arg eq '--';
