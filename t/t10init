@@ -1008,18 +1008,20 @@ sub test_recover_ja {
     # Recovery honours the recursion the recovery line shows, rather than
     # asking the gate again, so -ja1 can be turned on or off mid-run (it
     # learns its costs during the run, so its decisions would differ).
+    # Under -ja v_0 here, with tau 3 left, takes no allocation (see
+    # dis_pos()), so the line ends in a walk.
     local $type = 'o';
     my $args245 = [qw{ -x1e12 24 5 }];
     expect_recover(q{recover a recursion, turning -ja1 on},
         [ '-ja1', @$args245 ],
-        ['305 b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2'],
-        'b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2',
+        ['305 b26: 2^3.3 5^2 2.97^2 3^2 2^2'],
+        'b26: 2^3.3 5^2 2.97^2 3^2 2^2: 563 / 29522',
     );
     expect_recover(q{recover -ja1 after a candidate},
         [ '-ja1', @$args245 ],
         ['202 Candidate 15537948 (0.10s)',
-         '305 b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2'],
-        'b26: 2^3.3.317^2 5^2 2.97^2 3^2 2^2',
+         '305 b26: 2^3.3 5^2 2.97^2 3^2 2^2'],
+        'b26: 2^3.3 5^2 2.101^2 3^2 2^2',
     );
     # -ja2 marks in a 315 line only the levels whose position it chose
     # against the strategy's, and the others are replayed by the strategy.
