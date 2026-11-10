@@ -1155,6 +1155,36 @@ static void ke_root_node(t_kenode *root, ulong at, double b) {
     }
 }
 
+/* The least that can supply tau u, taken at the least prime (as
+ * ke_limit()).
+ */
+static double ke_rest(uint u) {
+    double rest = 1;
+    for (; u > 1; u /= divisors[u].high)
+        rest *= pow(ke_pmin, divisors[u].high - 1);
+    return rest;
+}
+
+/* The primes of the pass of -k at the position of kp, with b its bound:
+ * for each even x | t_i, those as far as p^{x-1} fits, and no further
+ * than b for x = 2, or for x > 2 than the bound that matches it (see
+ * kern_xbounds()), the rest of t_i taken at the least prime.
+ */
+static double ke_npass(t_kepos *kp, double b) {
+    uint t = kern_tau(kp->vi);
+    double zq = kp->Z * b, np = 0;
+    double need = b * ke_rest(t / 2);
+    t_divisors *dp = &divisors[t >> 1];
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint x = 2 * dp->div[di];
+        double rest = ke_rest(t / x);
+        double L = pow(zq / rest, 1.0 / (x - 1));
+        double P = (x == 2) ? b : pow(need / rest, 1.0 / (x - 1));
+        np += gr_li((L < P) ? L : P);
+    }
+    return np;
+}
+
 /* The estimated cost of the current batch under -k with the positions of
  * at, including its pass and any sweep, for the bounds of ke_b, ke_cap[]
  * and ke_sweep; HUGE_VAL once past budget.
@@ -1181,9 +1211,10 @@ static double ke_batch(ulong at, double budget) {
     for (uint j = 0; j < root.np; ++j) {
         t_kepos *kp = &root.pos[j];
         /* the pass, and the sweep of each power in turn */
-        cost += KE_PELL * gr_li(ke_b);
+        double pass = KE_PELL * ke_npass(kp, ke_b);
+        cost += pass;
         if (ke_parts)
-            ke_parts->pass += KE_PELL * gr_li(ke_b);
+            ke_parts->pass += pass;
         for (uint i = 0; ke_sweep && i < kp->ns; ++i) {
             uint e = kp->e[i];
             ulong cap = ke_cap[xi(e + 1)];
