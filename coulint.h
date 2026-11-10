@@ -198,6 +198,7 @@ extern void kern_sets(uint keep, ulong *atp, ulong *passedp);
 extern t_kern *kern_state(t_node *np);
 extern bool kern_at(uint vi);
 extern bool kern_passed(uint vi);
+extern void done_kern(void);
 extern ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt);
 extern e_xr classify_x(
     t_node *prev_node, uint vi, uint x, ulong p, ulong limp

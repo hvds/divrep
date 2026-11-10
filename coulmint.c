@@ -14,6 +14,8 @@ static uint target_lcm;
 
 /* additional arrays of mpz_t initialized once at start */
 mpz_t *mint_best, *mint_px; /* size mint_maxdepth */
+/* for mintau_kern() */
+static mpz_t kern_px, kern_mint;
 
 /* If .valid, this mintau is .v as long as the index of the next available
  * prime is >= .from
@@ -106,8 +108,8 @@ void mint_init_base(t_mint ***p) {
 /* mintau() may be asked for t = t_i / x for any x > 1 dividing t_i, so
  * for any t | n/p with p the least prime dividing n: prep_midp() sweeps
  * powers that need not be a multiple of h(t_i). Under -k, mintau_at()
- * may halve such a t, which keeps to the same bound. Returns the depth
- * that needs, sumpm(n/p).
+ * may divide such a t by an even x | t, which keeps to the same bound.
+ * Returns the depth that needs, sumpm(n/p).
  */
 static uint mint_depth(void) {
     uint p = 2;
@@ -146,6 +148,8 @@ void prep_mintau(uint lcm) {
         mpz_init(mint_best[i]);
         mpz_init(mint_px[i]);
     }
+    mpz_init(kern_px);
+    mpz_init(kern_mint);
 }
 
 void free_mint(t_mint *mtp) {
@@ -193,6 +197,8 @@ void done_mintau(void) {
     }
     free(mint_best);
     free(mint_px);
+    mpz_clear(kern_px);
+    mpz_clear(kern_mint);
 }
 
 void track_mintau(mpz_t mint, uint t, uint depth0) {
@@ -448,20 +454,58 @@ void mintau_restricted(t_node *cur_node, mpz_t mint, uint t, uint r) {
     mintau_restricted_r(0, mint, t, r, ri);
 }
 
+/* The least that can supply tau t at v_i, a position -k applies to:
+ * there walk_midp() has tried every p^{x-1}, x even, with p up to its
+ * bound P_x (see kern_xbound()), so the prime taking the odd power
+ * exceeds that. That gives the least over even x | t of P_x^{x-1} .
+ * mintau(t/x), or of mintau_restricted() if r is nonzero, passing over
+ * any x swept in full. With the bounds kern_xbounds() sets that is never
+ * less than B . mintau(t/2), as if every higher power were swept in
+ * full; below the batch, with less of t left, it may differ.
+ * Sets mint to zero if no x gives a value.
+ */
+static void mintau_kern(t_node *cur_node, mpz_t mint, uint t, uint r,
+        uint vi) {
+    bool have = 0;
+    t_divisors *dp = &divisors[t >> 1];
+    for (uint di = 0; di < dp->alldiv; ++di) {
+        uint x = 2 * dp->div[di];
+        ulong b = kern_xbound(vi, x);
+        if (b == 0)
+            continue;   /* swept in full */
+        /* b^{x-1} >= 2^{(x-1).floor(log2(b))}, cheaply ruled out if more */
+        uint bbits = 63 - leading_zeroes_u64(b);
+        if (have && (ulong)(x - 1) * bbits >= mpz_sizeinbase(mint, 2))
+            continue;
+        mpz_ui_pow_ui(kern_px, b, (ulong)x - 1);
+        if (have && mpz_cmp(kern_px, mint) >= 0)
+            continue;
+        if (r)
+            mintau_restricted(cur_node, kern_mint, t / x, r);
+        else
+            mintau(cur_node, kern_mint, t / x);
+        if (mpz_sgn(kern_mint) == 0)
+            continue;
+        mpz_mul(kern_mint, kern_mint, kern_px);
+        if (!have || mpz_cmp(kern_mint, mint) < 0) {
+            mpz_set(mint, kern_mint);
+            have = 1;
+        }
+    }
+    if (!have)
+        mpz_set_ui(mint, 0);
+}
+
 /* As mintau() for the given tau as left at v_i, as potentially modified
  * by the action of -k. Where -k has not acted, the answer is the same;
- * where it has acted (which happens only if t == 2 (mod 4)), we have
- * already tested every p^x with p <= B, x = 2 and for all other even x
- * across the full range. It is assumed B is chosen high enough that
- * B . mintau(t/2) is the correct minimal answer, but if not we only risk
- * giving too low an answer (which is safe).
+ * where it has acted (which happens only if t == 2 (mod 4)), see
+ * mintau_kern().
  * This may be called when -k is enabled for any t | n/2.
  */
 void mintau_at(t_node *cur_node, mpz_t mint, uint t, uint vi) {
-    if ((t & 3) == 2 && kern_at(vi)) {
-        mintau(cur_node, mint, t >> 1);
-        mpz_mul_ui(mint, mint, kern_cur()->b);
-    } else
+    if ((t & 3) == 2 && kern_at(vi))
+        mintau_kern(cur_node, mint, t, 0, vi);
+    else
         mintau(cur_node, mint, t);
 }
 
@@ -469,9 +513,8 @@ void mintau_at(t_node *cur_node, mpz_t mint, uint t, uint vi) {
 void mintau_restricted_at(
     t_node *cur_node, mpz_t mint, uint t, uint r, uint vi
 ) {
-    if ((t & 3) == 2 && kern_at(vi)) {
-        mintau_restricted(cur_node, mint, t >> 1, r);
-        mpz_mul_ui(mint, mint, kern_cur()->b);
-    } else
+    if ((t & 3) == 2 && kern_at(vi))
+        mintau_kern(cur_node, mint, t, r, vi);
+    else
         mintau_restricted(cur_node, mint, t, r);
 }

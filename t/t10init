@@ -451,11 +451,12 @@ sub test_recover {
         'b0: . 2 3^2 2^2 5^2 W(769,2,0)',
     );
     # p^1 at v_0 is swept by -W above 100 and by -k up to 100: 97 resumes
-    # the entry for -k, and is not tried again for -W
+    # the entry for -k, and is not tried again for -W; -k takes p^5 there
+    # only as far as its floor needs, so the next entries are p^1
     expect_recover(q{recover -k pass below the -W threshold},
         [qw{ -j4 -x1e15 -f3 -k1000 -W100 6 5 }],
         ['305 b0: . 2 3^2 2^2 5^2 W(97,2,0)'],
-        'b0: . 2 3^2 2^2 5^2 W(83,6,0)', 3,
+        'b0: . 2 3^2 2^2 5^2 W(79,2,0)', 3,
     );
     # under -Wl a sweep below the batch resumes there, and the caps it
     # sets below it are restored: 31^4 is above the cap at v_3

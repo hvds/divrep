@@ -91,6 +91,7 @@ typedef enum {
     np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
     j4a, j4b, j4m, j4p, j4q,    /* best_6x() */
+    kx_need, kx_m, kx_p,        /* kern_xbounds() */
 
     MAX_ZSTASH
 } t_zstash;
@@ -1341,6 +1342,7 @@ void done(void) {
     free(maxp);
     free(midp);
     free(midpp);
+    done_kern();
     free(sqg);
     free(fixed_v);
     free_value();
@@ -4540,7 +4542,11 @@ void kern_sets(uint keep, ulong *atp, ulong *passedp) {
  * afresh. Only one batch is complete at a time, so one plan is enough.
  * Returns NULL unless -k, -ka or -ap needs a plan.
  */
+static void kern_xbounds(t_node *np, t_kern *ks);
 t_kern kern_ks;
+void done_kern(void) {
+    free(kern_ks.xb);
+}
 t_kern *kern_state(t_node *np) {
     if (np->kern)
         return np->kern;
@@ -4562,6 +4568,8 @@ t_kern *kern_state(t_node *np) {
         kern_plan(ks);
     if (ks->on) {
         kern_sets(ks->keep, &ks->at, &ks->passed);
+        if (ks->b)
+            kern_xbounds(np, ks);
         /* A batch that STRATEGY_6X can take is left to it unless that is
          * estimated to cost more; kern_plan() has seen to that already.
          */
@@ -4595,6 +4603,65 @@ int midpp_comparator(const void *va, const void *vb) {
 /* The caps that np's own allocation kept to, before any sweep at np. */
 static inline ulong *cap_above(t_node *np) {
     return nodes[np->level - 1].cap;
+}
+
+/* Sets m to the greatest p for which p^{x-1} at v_i, leaving tau t/x
+ * there, can fit within zmax below np, the batch complete; returns 0 if
+ * that is 2^64 or more. Does not apply any cap.
+ */
+static ulong kern_xtop(t_node *np, mpz_t m, uint vi, uint t, uint x) {
+    t_allocation *ap = &value[vi].alloc[cur_vlevel[vi] - 1];
+    mintau(np, m, t / x);
+    mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
+    mpz_fdiv_q(Z(temp), Z(temp), m);
+    mpz_fdiv_q(Z(temp), Z(temp), ap->q);
+    mpz_root(Z(temp), Z(temp), x - 1);
+    return mpz_fits_ulong_p(Z(temp)) ? mpz_get_ui(Z(temp)) : 0;
+}
+
+/* For each position -k applies to in the batch complete at np, the bound
+ * P to which it sweeps each p^{x-1}, x even and x > 2: the least with
+ * P^{x-1} . mintau(t/x) >= B . mintau(t/2), so that values left with
+ * p^{x-1} for p > P need at least as much as those left with p^1 for
+ * p > B; or 0 if that reaches the whole range of p^{x-1}. Then each
+ * position needs at least B . mintau(t/2) beyond what is allocated
+ * there, as if every higher power had been swept in full, while the
+ * sweep goes no further than that needs (see mintau_kern()).
+ * For x = 2 the bound is B itself, see kern_xbound().
+ */
+static void kern_xbounds(t_node *np, t_kern *ks) {
+    if (!ks->xb)
+        ks->xb = malloc(cap_size() * sizeof(ulong));
+    memset(ks->xb, 0, cap_size() * sizeof(ulong));
+    ulong *upper = cap_above(np);
+    for (uint vi = 0; vi < k; ++vi) {
+        if (!((ks->at >> vi) & 1))
+            continue;
+        uint t = value[vi].alloc[cur_vlevel[vi] - 1].t;
+        /* the need left by p^1 for p > B */
+        mintau(np, Z(kx_need), t / 2);
+        mpz_mul_ui(Z(kx_need), Z(kx_need), ks->b);
+        t_divisors *dp = &divisors[t];
+        for (uint di = 0; di < dp->alldiv; ++di) {
+            uint x = dp->div[di];
+            if ((x & 1) || x == 2)
+                continue;
+            ulong top = kern_xtop(np, Z(kx_m), vi, t, x);
+            ulong cap = cap_at(upper, vi, x);
+            if (cap && (!top || cap < top))
+                top = cap;
+            if (mpz_sgn(Z(kx_m)) == 0)
+                continue;   /* p^{x-1} cannot complete v_i at all */
+            /* least P with P^{x-1} >= need / mintau(t/x) */
+            mpz_cdiv_q(Z(kx_p), Z(kx_need), Z(kx_m));
+            if (mpz_root(Z(kx_p), Z(kx_p), x - 1) == 0)
+                mpz_add_ui(Z(kx_p), Z(kx_p), 1);
+            if (top && mpz_cmp_ui(Z(kx_p), top) >= 0)
+                continue;   /* the whole range */
+            ks->xb[cap_ix(vi, x)] = mpz_fits_ulong_p(Z(kx_p))
+                    ? mpz_get_ui(Z(kx_p)) : ~0UL;
+        }
+    }
 }
 
 /* True if a sweep at np above the -W threshold w covers p^{x-1} at v_i.
@@ -4658,13 +4725,10 @@ static inline void push_midpp(
 /* Populate midpp[] with the capped min and max p for each allocation of
  * p^{x-1} at each v_i that the sweep at prev_node tries: for -W, each
  * that w_sweeps() gives, above the threshold; for -k, each odd power at
- * each position kern_at() gives, but p^1 only as far as the batch's
- * bound. (It is assumed that only p^1 has a range too large to sweep
- * in full; the higher powers' ranges are roots of it, and sweeping them
- * in full makes mintau_at() a fast and easily provable extension of mintau().)
- * Where both apply, -W takes the range above its threshold, since
- * that is what justifies its caps below (see sweep_cap()), and -k the
- * rest.
+ * each position kern_at() gives, as far as the batch's bound (see
+ * mintau_kern()). Where both apply, -W takes the range above its
+ * threshold, since that is what justifies its caps below (see
+ * sweep_cap()), and -k the rest.
  * A range for -W alone that runs beyond a ulong cannot be swept: that is
  * fatal, unless 'reach' is set (see sweep_limits()), when it is entered
  * with a maxp of 0.
@@ -4702,11 +4766,14 @@ void prep_midp(t_node *prev_node, bool reach) {
                     push_midpp(vi, x, lower[xi(x)], 0, 0);
                     continue;
                 }
-                /* only p^1 for -k can go on, up to the batch's bound */
-                if (for_w || x != 2)
+                /* only -k can go on, up to its bound */
+                if (for_w)
                     fail("prep_midp target %Zu out of range for %u:%u",
                             Z(temp), vi, x - 1);
-                top = kern_cur()->b;
+                top = kern_xbound(vi, x);
+                if (top == 0)
+                    fail("prep_midp -k target %Zu out of range for %u:%u",
+                            Z(temp), vi, x - 1);
             }
 
             /* for -W, lower[] < p <= top */
@@ -4716,8 +4783,9 @@ void prep_midp(t_node *prev_node, bool reach) {
             /* for -k, maxforce < p <= top, less what -W takes */
             if (for_k) {
                 ulong ktop = top;
-                if (x == 2 && kern_cur()->b < ktop)
-                    ktop = kern_cur()->b;
+                ulong kb = kern_xbound(vi, x);
+                if (kb && kb < ktop)
+                    ktop = kb;
                 if (for_w && low < ktop)
                     ktop = low;
                 if (ktop > maxforce[vi])
@@ -5919,7 +5987,9 @@ static inline void flip_withdraw(t_act *cur_act) {
 e_xr classify_x(t_node *prev_node, uint vi, uint x, ulong p, ulong limp) {
     uint nextt = value[vi].alloc[cur_vlevel[vi] - 1].t / x;
 
-    /* under -k walk_midp() has tried every such power that can apply */
+    /* under -k walk_midp() has tried every such power with p up to the
+     * bound, and the walks cover the rest (see mintau_kern())
+     */
     if (!(x & 1) && kern_at(vi))
         return XR_SKIP;
     if (limp == 0)

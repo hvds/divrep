@@ -151,6 +151,11 @@ typedef struct s_kern {
      * is made for every batch, but most often to leave it unswept
      */
     bool shown;
+    /* For p^{x-1} with x even and x > 2 at a position -k applies to, at
+     * vi * xsize() + xi(x), the bound to which -k sweeps it, or 0 where
+     * it sweeps the whole range; see kern_xbounds().
+     */
+    ulong *xb;
 } t_kern;
 
 /* the plan of -k for the current batch, if any */
@@ -169,6 +174,14 @@ static inline bool kern_batch(void) {
  */
 static inline bool kern_at(uint vi) {
     return kern_batch() && ((kern_cur()->at >> vi) & 1);
+}
+
+/* The bound to which -k sweeps p^{x-1} at v_i, x even, where kern_at(vi);
+ * 0 if the whole range is swept.
+ */
+static inline ulong kern_xbound(uint vi, uint x) {
+    t_kern *ks = kern_cur();
+    return (x == 2) ? ks->b : ks->xb[vi * xsize() + xi(x)];
 }
 
 typedef struct s_act {
