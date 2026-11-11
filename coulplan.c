@@ -2446,10 +2446,13 @@ void ja_unwind(t_act *lp) {
 /* True if a loop of allocations at v_i can be costed below one fixed
  * square: only at a position that -k applies to. There the loop leaves
  * no second square, when each child would be a Pell equation, and its
- * children cannot flip; and in such a batch no strategy allocates at the
- * square, so that every child can indeed walk it. Elsewhere a child may
- * go on to walk_1_set() over every prime at the square, which the gate
- * never sees: D(6,4) -X -x1e13 ran for over 20s that way, not 0.1s.
+ * children cannot flip; and in such a batch nothing is allocated at the
+ * square while its tau is an odd prime, so that every child can walk it.
+ * Elsewhere a child may go on to walk_1_set() over every prime at the
+ * square, which the gate never sees: D(6,4) -X -x1e13 ran for over 20s
+ * that way, not 0.1s. A child may still allocate at a square with
+ * composite tau, which the gate also does not see, but there each power
+ * leaves the square a smaller root to walk, and p^{t-1} has a small range.
  */
 static inline bool gq_costable(uint vi) {
     return kern_at(vi);

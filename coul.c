@@ -1137,16 +1137,19 @@ bool kern_passed(uint vi) {
  * Under -ja it is disallowed even uncapped: on D(250,3) that saved 34%
  * under -ja2. Without -ja it made little difference, so there it is left
  * as it was, keeping earlier logs recoverable.
- * In a batch -k applies to, also at the square, which is left to the
- * walks, and at a position -k passes over.
+ * In a batch -k applies to, likewise where t is an odd prime, capped or
+ * not; and at a position -k passes over. Allocations at a square with
+ * composite t only split what the sweep of -k left into sub-cases of the
+ * batch, so its bound holds below them; allowing them made -k on D(66,4)
+ * b5 at its real bound 1.4-1.8x faster than without -k, not far slower.
  * Every strategy keeps to this, as best_v() checks, so a sweep need not
  * cover such a position (see w_sweeps()).
  */
 static inline bool dis_pos(uint vi, uint t, bool capped) {
     if (divisors[t].high <= (kern_highpow() ? 1 : 2))
         return 1;
-    if ((t & 1) && (kern_batch()
-            || ((capped || auto_level) && divisors[t].alldiv == 2)))
+    if ((t & 1) && divisors[t].alldiv == 2
+            && (kern_batch() || capped || auto_level))
         return 1;
     if (kern_passed(vi))
         return 1;
@@ -4668,7 +4671,10 @@ static void kern_xbounds(t_node *np, t_kern *ks) {
  * Only the powers recursion itself would allocate are swept, only where
  * w gives a threshold for them, and not at a position disallowed below
  * np (see dis_pos()): nothing is allocated there below the sweep, so the
- * walks cover it.
+ * walks cover it. Nor in a batch -k applies to at the square, though its
+ * tau may be composite: there a sweep from the root of what is left down
+ * to the threshold is rarely worth its cost, and recursion at the square
+ * is then uncapped, so still covers all of it.
  * A position and power not swept keeps the cap from above the sweep, see
  * sweep_cap().
  */
@@ -4676,6 +4682,9 @@ static inline bool w_sweeps(t_node *np, ulong *w, uint vi, uint x) {
     if (highpow ? x == 1 : ispow2_u64(x))
         return 0;
     if (dis_at(np, vi))
+        return 0;
+    /* nor, where -k applies, at a square: that is left to the walks */
+    if (kern_batch() && (value[vi].alloc[cur_vlevel[vi] - 1].t & 1))
         return 0;
     if (sweep_only_vi >= 0 && vi != (uint)sweep_only_vi)
         return 0;
