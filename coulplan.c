@@ -797,6 +797,9 @@ static bool gq_walk(
  * rest in bins. Costs are as for gq_recurse(), with a fixed cost per
  * root, and all is taken from zmax as given, so that a recovered run
  * chooses the same.
+ * The positions are those -k applies to and the square: allocations at
+ * the square, while its tau is composite (see dis_pos()), make its walk
+ * shorter, or of a higher power once its tau is prime.
  */
 #define KE_MAXPOS 8
 #define KE_MAXSLOT 8
@@ -808,6 +811,7 @@ static bool gq_walk(
 #define KE_PLAN_MIN 0.01    /* -ka leaves alone a batch cheaper to walk */
 typedef struct {
     uint vi;        /* the position */
+    bool sq;        /* the square, else a position -k applies to */
     double Z;       /* zmax over what is allocated, and the bound of -k */
     long d;         /* offset of the square less that of this position */
     uint ns;        /* powers still to allocate, as exponents in order */
@@ -883,7 +887,9 @@ static ulong cost_start(t_node *lp, ulong p) {
     }
 }
 
-/* the range (lo, hi] and exponent of the next allocation at a position */
+/* The range (lo, hi] and exponent of the next allocation at a position.
+ * Under -k the square is not swept, so has no caps (see w_sweeps()).
+ */
 static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
     uint e = kp->e[0], same = 1;
     double other = 1;
@@ -893,7 +899,7 @@ static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
         else
             other *= pow(ke_pmin, kp->e[i]);
     double L = pow(kp->Z / other, 1.0 / (e * same));
-    ulong cap = ke_cap[xi(e + 1)];
+    ulong cap = kp->sq ? 0 : ke_cap[xi(e + 1)];
     if (cap && L > cap)
         L = cap;
     *hi = L;
@@ -901,12 +907,17 @@ static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
     return e;
 }
 
-/* tau left at a position, and its highest prime */
+/* tau left at a position: at one -k applies to, with the odd power */
 static inline uint ke_tau(t_kepos *kp) {
-    uint t = 2;
+    uint t = kp->sq ? 1 : 2;
     for (uint i = 0; i < kp->ns; ++i)
         t *= kp->e[i] + 1;
     return t;
+}
+
+/* the power walked at the square at a node, by the tau left there */
+static inline uint ke_sqg(t_kepos *kp) {
+    return divisors[ke_tau(kp)].gcddm;
 }
 
 static double ke_cost(t_kenode *node, double budget);
@@ -935,6 +946,24 @@ static double ke_price(t_kenode *node) {
         ke_prices[ke_nprice++].price = price;
     }
     return price;
+}
+
+/* The square at a node, NULL if it is not one of the positions: if
+ * nothing can be allocated there.
+ */
+static inline t_kepos *ke_sqpos(t_kenode *node) {
+    for (uint j = 0; j < node->np; ++j)
+        if (node->pos[j].sq)
+            return &node->pos[j];
+    return NULL;
+}
+
+/* the greatest root of the walk at a node if of squares, else 0 */
+static inline double ke_endr_at(t_kenode *node) {
+    t_kepos *sp = ke_sqpos(node);
+    if (!sp)
+        return ke_endr;
+    return (ke_sqg(sp) == 2) ? sqrt(sp->Z) : 0;
 }
 
 /* the cost of walking a node */
@@ -967,10 +996,16 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
     double ap = gr_rec[CR_APPLY][kl];
     ulong qm = 0;
     mpz_t *q = kern_q(sq0);
-    bool sq = (e == 2 && ke_endr > 0);
-    uint g = divisors[kern_tau(sq0)].gcddm;
-    /* the test mod p of reject_square(), and the fraction passing it */
-    double ct = (g > 1) ? GQ_RES : 0, fg = gq_resfrac(g);
+    double endr = ke_endr_at(node);
+    bool sq = (e == 2 && endr > 0 && !kp->sq);
+    t_kepos *sp = ke_sqpos(node);
+    uint g = sp ? ke_sqg(sp) : divisors[kern_tau(sq0)].gcddm;
+    /* The test mod p of reject_square(), and the fraction passing it; not
+     * made at the square itself. The residues are those of the square as
+     * the batch left it, not as the node has it.
+     */
+    double ct = (g > 1 && !kp->sq) ? GQ_RES : 0;
+    double fg = kp->sq ? 1 : gq_resfrac(g);
     double a = lo;
     while (a < hi) {
         /* m: the roots mod p of each passing, as a multiple of those
@@ -992,13 +1027,18 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
                     skip = 1;
             if (skip || mpz_fdiv_ui(nodes[cur_batch_level].aq, pi) == 0)
                 continue;
-            qm = mpz_fdiv_ui(*q, pi);
-            ulong dm = (kp->d < 0) ? pi - (ulong)(-kp->d) % pi
-                    : (ulong)kp->d % pi;
             p = pi;
             c = 1;
-            m = gq_resroots(dm, qm, g, pi);
-            f = (m > 0) ? 1 : 0;
+            if (kp->sq) {
+                m = 1;
+                f = 1;
+            } else {
+                qm = mpz_fdiv_ui(*q, pi);
+                ulong dm = (kp->d < 0) ? pi - (ulong)(-kp->d) % pi
+                        : (ulong)kp->d % pi;
+                m = gq_resroots(dm, qm, g, pi);
+                f = (m > 0) ? 1 : 0;
+            }
         } else {
             b = a * KE_BIN;
             if (b > hi)
@@ -1020,10 +1060,10 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
             cost += c * (pp + s * ct);
             if (f == 0)
                 continue;
-            if (pe > ke_endr) {
+            if (pe > endr) {
                 cost += c * s * f * GQ_ROOT;
-                if (2 * ke_endr < pe)
-                    r = 2 * ke_endr / pe;
+                if (2 * endr < pe)
+                    r = 2 * endr / pe;
             }
             cost += c * s * f * r * gq_prime;
         } else {
@@ -1032,12 +1072,15 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
                 continue;
         }
         t_kenode ch = *node;
-        ch.roots = node->roots * m / pe / r;
         ch.zl = node->zl / pe;
         t_kepos *cp = &ch.pos[j];
+        /* at the square, the walk is of what is left of it */
+        double was = cp->sq ? pow(cp->Z, 1.0 / ke_sqg(cp)) : 0;
         cp->Z /= pe;
         --cp->ns;
         memmove(cp->e, cp->e + 1, cp->ns * sizeof(cp->e[0]));
+        ch.roots = cp->sq ? node->roots * pow(cp->Z, 1.0 / ke_sqg(cp)) / was
+                : node->roots * m / pe / r;
         cp->laste = e;
         cp->lastp = p;
         if (c == 1 && p < KE_SMALL)
@@ -1064,12 +1107,14 @@ static inline double ke_walked(t_kenode *node, double w) {
     return w;
 }
 
-/* the position the default strategy would take at a node, KE_MAXPOS if none */
+/* The position the default strategy would take at a node, KE_MAXPOS if
+ * none: not the square once its tau is prime (see dis_pos()).
+ */
 static uint ke_best(t_kenode *node) {
     uint best = KE_MAXPOS;
     for (uint j = 0; j < node->np; ++j) {
         t_kepos *kp = &node->pos[j];
-        if (!kp->ns)
+        if (kp->ns < (kp->sq ? 2 : 1))
             continue;
         if (best == KE_MAXPOS) {
             best = j;
@@ -1112,8 +1157,9 @@ static double ke_cost(t_kenode *node, double budget) {
 
 /* Set up the root of the estimate for the current batch: the node as
  * the batch leaves it, with the positions of at, each with the odd
- * power known to exceed b (1 if not known). Sets ke_endr, ke_root,
- * ke_pmin and ke_high to match.
+ * power known to exceed b (1 if not known), and the square if anything
+ * can be allocated there. Sets ke_endr, ke_root, ke_pmin and ke_high to
+ * match.
  */
 static void ke_root_node(t_kenode *root, ulong at, double b) {
     t_node *lv = &nodes[cur_batch_level];
@@ -1142,12 +1188,28 @@ static void ke_root_node(t_kenode *root, ulong at, double b) {
         kp->vi = vi;
         kp->Z = z / mpz_get_d(*kern_q(vi)) / b;
         kp->d = (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi);
+        kp->sq = 0;
         kp->laste = 0;
         kp->lastp = 0;
         kp->ns = 0;
         /* the powers of the highest prime of tau come first */
         uint u = kern_tau(vi) / 2;
         while (u > 1 && kp->ns < KE_MAXSLOT) {
+            uint h = divisors[u].high;
+            kp->e[kp->ns++] = h - 1;
+            u /= h;
+        }
+    }
+    if (divisors[ts].alldiv > 2 && root->np < KE_MAXPOS) {
+        t_kepos *kp = &root->pos[root->np++];
+        kp->vi = sq0;
+        kp->sq = 1;
+        kp->Z = z / mpz_get_d(*kern_q(sq0));
+        kp->d = 0;
+        kp->laste = 0;
+        kp->lastp = 0;
+        kp->ns = 0;
+        for (uint u = ts; u > 1 && kp->ns < KE_MAXSLOT; ) {
             uint h = divisors[u].high;
             kp->e[kp->ns++] = h - 1;
             u /= h;
@@ -1210,6 +1272,8 @@ static double ke_batch(ulong at, double budget) {
 #endif
     for (uint j = 0; j < root.np; ++j) {
         t_kepos *kp = &root.pos[j];
+        if (kp->sq)
+            continue;   /* neither passed nor swept */
         /* the pass, and the sweep of each power in turn */
         double pass = KE_PELL * ke_npass(kp, ke_b);
         cost += pass;
