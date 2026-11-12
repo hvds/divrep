@@ -133,8 +133,8 @@ enum { CS_PPREP = CR_COUNT, CS_COUNT = CR_COUNT + 3 };
 static int cm_d_pprep[3] = { -1, -1, -1 };
 /* The names of the D series of the samples of each class: rdeep.x<x>
  * for a prime reaching the second stage of reject_single() for p^{x-1}
- * (rdeep.x32+ for the last), rearly, rrej1, rfail and rapply (see
- * CR_COUNT), then pprep.fail, pprep.prime and pprep.test (see
+ * (rdeep.x32+ for the last), rearly, rrej1, rfail, rapply, rsqfail and
+ * rsqapply (see CR_COUNT), then pprep.fail, pprep.prime and pprep.test (see
  * cs_name()).
  */
 static char cs_names[CS_COUNT][16];
@@ -144,7 +144,7 @@ static const char *cs_name(uint c) {
             snprintf(cs_names[cr_xclass(x)], 16, "rdeep.x%u%s", x,
                     (x == CR_MAXX) ? "+" : "");
         static const char *rest[] = {
-            "rearly", "rrej1", "rfail", "rapply",
+            "rearly", "rrej1", "rfail", "rapply", "rsqfail", "rsqapply",
             "pprep.fail", "pprep.prime", "pprep.test"
         };
         for (uint i = 0; i < CS_COUNT - CR_EARLY; ++i)
@@ -852,9 +852,10 @@ static double cm_dprice(int s, uint nbits, bool note) {
  * CR_COUNT), filled in as the table loads: from the D rows in situ
  * sampling gave (see cs_write()), a power not yet sampled taking the
  * nearest that is; else from the C constants cprime (for each class of
- * prime),
- * cfail and capply. cm_rec_d[] is the D series each class is priced
- * from, or -1.
+ * prime), cfail and capply, and below a fixed square cprimesq less
+ * cprime for a call that fails, and that more than an apply elsewhere
+ * for one that succeeds. cm_rec_d[] is the D series each class is
+ * priced from, or -1.
  */
 static double cm_rec[CR_COUNT][CR_MAXL + 1];
 static int cm_rec_d[CR_COUNT];
@@ -871,11 +872,13 @@ static void cm_rec_fill(void) {
                     s = cm_dfind(cs_name(c + d));
             }
         }
-        dflt = CMC((c == CR_FAIL) ? CM_CFAIL : (c == CR_APPLY) ? CM_CAPPLY
-                : CM_CPRIME);
+        double sq = CMC(CM_CPRIMESQ) - CMC(CM_CPRIME);
+        dflt = (c == CR_SQFAIL) ? sq : CMC((c == CR_FAIL) ? CM_CFAIL
+                : (c == CR_APPLY) ? CM_CAPPLY : CM_CPRIME);
         cm_rec_d[c] = s;
         for (uint l = 1; l <= CR_MAXL; ++l)
-            cm_rec[c][l] = (s >= 0) ? cm_dprice(s, 64 * l, 0) : dflt;
+            cm_rec[c][l] = (s >= 0) ? cm_dprice(s, 64 * l, 0)
+                    : (c == CR_SQAPPLY) ? cm_rec[CR_APPLY][l] + sq : dflt;
     }
 }
 
