@@ -33,6 +33,7 @@ static inline bool ja_pending(t_act *lp) {
     return lp->ja_t0 > 0 || lp->ja_on;
 }
 extern uint ja_choose(t_node *prev_node, t_act *cur_act, uint sv);
+extern bool kern_sq_open(t_node *np);
 extern bool ja_gate(
     t_node *prev_node, t_act *cur_act, ulong p, ulong cap, bool do_walk
 );

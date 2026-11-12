@@ -346,10 +346,15 @@ static double gr_cit(uint L) {
     return (c < 0) ? GR_DEFIT : c;
 }
 
+/* Set while kern_sq_open() decides, so that it uses nothing learnt. */
+static bool gq_fixed = 0;
+
 /* likewise the cost per root of a walk at level L below a fixed square,
  * its walks expected to visit GR_MINI roots between them
  */
 static double gq_cit(uint L) {
+    if (gq_fixed)
+        return GQ_DEFIT;
     for (uint d = 0; d < GR_MAXL; ++d) {
         uint l = L + d;
         if (l < GR_MAXL && gq_n[l] >= GR_SAMPLE && gq_i[l] >= GR_MINI)
@@ -699,9 +704,10 @@ static ulong gq_resroots(ulong dm, ulong qm, uint g, ulong q) {
     return (powmod_u64(a, (q - 1) / h, q) == 1) ? h : 0;
 }
 
-/* A loop below one fixed value v_j = q_j.z^g, at a position that -k
- * applies to (see gq_costable()), over p^{x-1} for p in [p, cap] below
- * the node at prev_node: its own cost, and the children it walks.
+/* A loop below one fixed value v_j = q_j.z^g, at a position v_i that -k
+ * applies to or at the square itself (see gq_costable()), over p^{x-1}
+ * for p in [p, cap] below the node at prev_node: its own cost, and the
+ * children it walks.
  * Primes giving a least v_0 within zmax (all up
  * to the root of zl = zmax / aq, and above it each with chance
  * zl / q^{x-1}) go on to the test mod q of reject_square(), and only the
@@ -709,6 +715,8 @@ static ulong gq_resroots(ulong dm, ulong qm, uint g, ulong q) {
  * their roots extended, and are walked. Where zl does not fit in a limb
  * reject_single() is not made (see reject_prep()), so every prime goes
  * on to those tests, and those not within zmax fail in apply_single().
+ * At the square no reject_square() is made: every prime goes on to
+ * apply_single().
  * For q^2 against a square, once q^2 passes the greatest root endr
  * reject_square() also lets through only those with a root in range,
  * each with chance 2.endr / q^2, at the cost of a root mod q for those
@@ -718,7 +726,9 @@ typedef struct {
     double own;     /* the loop's own cost */
     double nw;      /* the children it walks */
 } t_gqloop;
-static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
+static t_gqloop gq_loop(
+    t_node *prev_node, uint vi, ulong p, ulong cap, uint x
+) {
     double zl = mpz_get_d(zmax) / mpz_get_d(prev_node->aq);
     double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
     double np = gr_li(b) - gr_li(a) + 1;
@@ -737,6 +747,13 @@ static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
 #endif
     if (nr < nv)
         nr = nv;
+    if (vi == sq0) {
+        t_gqloop r = {
+            .own = gr_ploop(prev_node, a, b, x) + nr * gq_prime + nv * ap,
+            .nw = nv,
+        };
+        return r;
+    }
     double ct = (g > 1) ? nr * GQ_RES : 0;
     if (x == 3 && g == 2) {
         double endr = sqrt(mpz_get_d(zmax)
@@ -773,13 +790,29 @@ static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
  * it, and the walks of its children. A prime q has d roots of the fixed
  * power with chance 1/d, so a child expects the node's roots over
  * q^{x-1}, and the walks sum as in gr_recurse().
+ * At the square itself a child walks what is left of it: up to the
+ * g'-th root of zmax / (q_j.q^{x-1}), g' the power left there, so the
+ * node's roots times Z^{1/g' - 1/g} . q^{-(x-1)/g'} with Z = zmax / q_j
+ * (see gq_roots()). Taking q^2 where the square is still walked as
+ * squares then saves nothing, summed over q, while a higher power or
+ * one that raises g' can save much.
  */
-static double gq_recurse(t_node *prev_node, ulong p, ulong cap, uint x) {
-    t_gqloop l = gq_loop(prev_node, p, cap, x);
+static double gq_recurse(
+    t_node *prev_node, uint vi, ulong p, ulong cap, uint x
+) {
+    t_gqloop l = gq_loop(prev_node, vi, p, cap, x);
     double s = x - 1, a = (p < 2) ? 2 : p, b = cap;
+    double walks = gq_roots(prev_node);
+    if (vi == sq0) {
+        uint sql = cur_vlevel[sq0];
+        t_allocation *ap = &value[sq0].alloc[sql - 1];
+        double g = sqg[sql - 1], g2 = divisors[ap->t / x].gcddm;
+        double Z = mpz_get_d(zmax) / mpz_get_d(ap->q);
+        walks *= pow(Z, 1 / g2 - 1 / g) * gr_psum(a, b, s / g2);
+    } else
+        walks *= gr_psum(a, b, s);
     return l.own + l.nw * gq_wsetup(prev_node)
-            + gq_cit(prev_node->level + 1) * gq_roots(prev_node)
-            * gr_psum(a, b, s);
+            + gq_cit(prev_node->level + 1) * walks;
 }
 
 /* the estimated cost of walking the node at lv now, likewise */
@@ -789,15 +822,43 @@ static inline double gq_wcost(t_node *lv) {
 
 /* as gr_walk() below one fixed square */
 static bool gq_walk(
-    t_node *prev_node, ulong p, ulong cap, uint x, double w0, double rw,
-    double rr
+    t_node *prev_node, uint vi, ulong p, ulong cap, uint x, double w0,
+    double rw, double rr
 ) {
     if (cap < p)
         return 0;
     double W = w0 * rw;
     if (W < gr_ploop(prev_node, p, cap, x))
         return 1;
-    return W < gq_recurse(prev_node, p, cap, x) * rr;
+    return W < gq_recurse(prev_node, vi, p, cap, x) * rr;
+}
+
+/* Under -k, with one square fixed, true if the square should be left
+ * open to allocation below np, the node now complete: if the gate would
+ * recurse at it over its next power rather than walk np, priced from
+ * the cost table and fixed costs alone, nothing learnt, so that a
+ * recovered run decides the same. Where it is closed the walks cover
+ * it, as for a square whose tau is prime (see dis_pos()), and where
+ * open the strategy may allocate there; either way all is covered.
+ * Taking q^2 at a square still walked as squares saves nothing summed
+ * over q (see gq_recurse()), so f(18,3) walks its squares of tau 9, but
+ * at D(66,4)'s bound a square of tau 33 pays to take q^10.
+ */
+bool kern_sq_open(t_node *np) {
+    t_allocation *ap = &value[sq0].alloc[cur_vlevel[sq0] - 1];
+    uint t = ap->t;
+    if (!(t & 1) || divisors[t].alldiv <= 2 || np->level + 1 >= maxlevel)
+        return 0;
+    /* the first power a loop there takes, see find_unforced_x() */
+    uint x = divisors[t].div[0];
+    ulong limp = limit_p(&acts[np->level + 1], sq0, x, t / x);
+    if (limp == 1)
+        return 0;
+    ulong cap = limp ? limp : ~0UL;
+    gq_fixed = 1;
+    bool walk = gq_walk(np, sq0, 2, cap, x, gq_wcost(np), 1, GQ_RSCALE);
+    gq_fixed = 0;
+    return !walk;
 }
 
 /* The estimated cost of the whole search of a batch that -k applies to,
@@ -1101,7 +1162,13 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
         cp->Z /= pe;
         --cp->ns;
         memmove(cp->e, cp->e + 1, cp->ns * sizeof(cp->e[0]));
-        ch.roots = cp->sq ? node->roots * pow(cp->Z, 1.0 / ke_sqg(cp)) / was
+        /* At the square every child's walk is a share of the node's, so
+         * those children that fit, chance s, carry all of it: the walks
+         * sum to the node's roots times sum q^{-(x-1)/g'} (as in
+         * gq_recurse()), the setups only for those that fit.
+         */
+        ch.roots = cp->sq
+                ? node->roots * pow(cp->Z, 1.0 / ke_sqg(cp)) / was / s
                 : node->roots * m / pe / r;
         cp->laste = e;
         cp->lastp = p;
@@ -1130,13 +1197,14 @@ static inline double ke_walked(t_kenode *node, double w) {
 }
 
 /* The position the default strategy would take at a node, KE_MAXPOS if
- * none: not the square once its tau is prime (see dis_pos()).
+ * none: not the square once its tau is prime (see dis_pos()), nor if
+ * nosq, where it is closed (see kern_sq_open()).
  */
-static uint ke_best(t_kenode *node) {
+static uint ke_best(t_kenode *node, bool nosq) {
     uint best = KE_MAXPOS;
     for (uint j = 0; j < node->np; ++j) {
         t_kepos *kp = &node->pos[j];
-        if (kp->ns < (kp->sq ? 2 : 1))
+        if (kp->ns < (kp->sq ? 2 : 1) || (kp->sq && nosq))
             continue;
         if (best == KE_MAXPOS) {
             best = j;
@@ -1158,12 +1226,57 @@ static uint ke_best(t_kenode *node) {
     return best;
 }
 
-/* the cost of the subtree at a node; HUGE_VAL once past budget */
+/* True if the square, the position of kp at a node, is open there: as
+ * kern_sq_open() decides it in the search, by the gate's estimates with
+ * the same fixed costs (see gq_loop() and gq_recurse()), so that the
+ * estimate takes the square where and only where the search will.
+ */
+static bool ke_sqopen(t_kenode *node, t_kepos *kp) {
+    double lo, hi;
+    uint e = ke_limit(kp, &lo, &hi);
+    if (hi <= lo)
+        return 0;
+    double zl = node->zl;
+    uint kl = ke_limbs(zl);
+    double W = ke_setup + GQ_DEFIT * node->roots;
+    double pl = gr_ploop_z(zl, kl, lo, hi, e + 1);
+    if (W < pl)
+        return 0;
+    double np = gr_li(hi) - gr_li(lo) + 1;
+    double ql = pow(zl, 1.0 / e);
+    double mA = (ql < hi) ? ql : hi, mB = (ql > lo) ? ql : lo;
+    double nv = ((mA > lo) ? gr_li(mA) - gr_li(lo) : 0)
+            + zl * gr_psum(mB, hi, e);
+#ifdef CHECK_OVERFLOW
+    double nr = (zl >= 0x1p64) ? np : nv;
+#else
+    double nr = np;
+#endif
+    if (nr < nv)
+        nr = nv;
+    double g = ke_sqg(kp), g2 = divisors[ke_tau(kp) / (e + 1)].gcddm;
+    double walks = node->roots * pow(kp->Z, 1 / g2 - 1 / g)
+            * gr_psum(lo, hi, e / g2);
+    double rec = pl + nr * gq_prime + nv * gr_rec[CR_APPLY][kl]
+            + nv * ke_setup + GQ_DEFIT * walks;
+    return !(W < rec * GQ_RSCALE);
+}
+
+/* The cost of the subtree at a node; HUGE_VAL once past budget. As in
+ * the search, the square is open to the strategy only where ke_sqopen()
+ * says.
+ */
 static double ke_cost(t_kenode *node, double budget) {
     double w = ke_walk(node);
     if (ke_parts)
         ke_parts->nodes += ke_wt;
-    uint best = ke_best(node);
+    bool nosq = 1;
+    for (uint j = 0; j < node->np; ++j)
+        if (node->pos[j].sq && node->pos[j].ns >= 2) {
+            nosq = !ke_sqopen(node, &node->pos[j]);
+            break;
+        }
+    uint best = ke_best(node, nosq);
     if (best == KE_MAXPOS)
         return ke_walked(node, w);
     double lo, hi;
@@ -1395,7 +1508,7 @@ static double ke_6x(void) {
     ke_parts = NULL;
     t_kenode root;
     ke_root_node(&root, at & ~(1UL << vi), 1);
-    uint j = ke_best(&root);
+    uint j = ke_best(&root, 1);
     if (j < KE_MAXPOS) {
         double lo, hi;
         ke_limit(&root.pos[j], &lo, &hi);
@@ -2090,7 +2203,7 @@ static double wa_loop(
     t_node *pl, uint vi, uint x, ulong p, ulong cap, uint d
 ) {
     t_node *cl = &nodes[pl->level + 1];
-    double total = pl->have_square ? gq_loop(pl, p, cap, x).own
+    double total = pl->have_square ? gq_loop(pl, vi, p, cap, x).own
             : gr_own(pl, p, cap, x);
     /* the children's costs fall steeply with q: the first carry most */
     for (uint m = 0; m < wa_sample.exact; ) {
@@ -2202,7 +2315,7 @@ double wa_subtree(t_node *np) {
  */
 double wa_entry(t_node *np, uint vi, uint x, ulong lo, ulong hi) {
     if (np->have_square)
-        return gq_recurse(np, lo, hi, x);
+        return gq_recurse(np, vi, lo, hi, x);
     return wa_loop(np, vi, x, lo, hi, 0);
 }
 
@@ -2539,9 +2652,10 @@ void ja_unwind(t_act *lp) {
  * that way, not 0.1s. A child may still allocate at a square with
  * composite tau, which the gate also does not see, but there each power
  * leaves the square a smaller root to walk, and p^{t-1} has a small range.
+ * Also at the square itself, where it is open (see kern_sq_open()).
  */
 static inline bool gq_costable(uint vi) {
-    return kern_at(vi);
+    return kern_at(vi) || (vi == sq0 && kern_batch());
 }
 
 /* -ja2: the corrected estimate c of recursing over every prime in
@@ -2622,7 +2736,7 @@ static double ja_cost(
                     return 0;
                 }
                 if (cap > p) {
-                    double cr = gq_recurse(prev_node, p, cap, x);
+                    double cr = gq_recurse(prev_node, vi, p, cap, x);
                     ja_cx[di] = cr;
                     ja_cp[di] = JA_QREC;
                     total += cr * ja_rx[JA_QREC - JA_LPARTS];
@@ -3097,7 +3211,7 @@ bool ja_gate(
         double w0 = gq_wcost(prev_node);
         double rw = (auto_level >= 2) ? ja_ratio(L, JA_QWALK) : 1;
         double rr = (auto_level >= 2) ? ja_rsize(JA_QREC, w0) : GQ_RSCALE;
-        do_walk = gq_walk(prev_node, cost_start(prev_node, p), cap, x,
+        do_walk = gq_walk(prev_node, vi, cost_start(prev_node, p), cap, x,
                 w0, rw, rr);
     }
     return do_walk;

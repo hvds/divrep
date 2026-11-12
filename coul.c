@@ -1140,8 +1140,8 @@ bool kern_passed(uint vi) {
  * In a batch -k applies to, likewise where t is an odd prime, capped or
  * not; and at a position -k passes over. Allocations at a square with
  * composite t only split what the sweep of -k left into sub-cases of the
- * batch, so its bound holds below them; allowing them made -k on D(66,4)
- * b5 at its real bound 1.4-1.8x faster than without -k, not far slower.
+ * batch, so its bound holds below them; whether they pay is decided at
+ * each node by cost (see dis_square()).
  * Every strategy keeps to this, as best_v() checks, so a sweep need not
  * cover such a position (see w_sweeps()).
  */
@@ -1158,6 +1158,27 @@ static inline bool dis_pos(uint vi, uint t, bool capped) {
 
 ulong dis_gen = 0;
 
+/* Under -k, close or open the square below np, the node now complete,
+ * as kern_sq_open() decides: it may change at any node, since what an
+ * allocation there saves depends on what is left to walk. The result is
+ * held by the act that reaches np, apart from what dis_apply() keeps.
+ */
+static void dis_square(t_node *np) {
+    if (!np->dis || np->have_square != 1 || !kern_batch())
+        return;
+    bool closed = !kern_sq_open(np);
+    if (closed == dis_bit(np->dis, sq0))
+        return;
+    t_act *ap = &acts[np->level];
+    t_dis *dp = &ap->dis;
+    if (np->dis != dp)
+        *dp = *np->dis;
+    dp->v[sq0 >> 6] ^= 1UL << (sq0 & 63);
+    dp->gen = ++dis_gen;
+    ap->dis_from = NULL;
+    np->dis = dp;
+}
+
 /* Set the positions disallowed below np, at which a batch is complete.
  * They are held by the act that reaches np.
  */
@@ -1171,6 +1192,7 @@ static void dis_batch(t_node *np, bool capped) {
     dp->gen = ++dis_gen;
     ap->dis_from = NULL;
     np->dis = dp;
+    dis_square(np);
 }
 
 /* Set the positions disallowed below cur, reached from prev by an
@@ -4444,6 +4466,7 @@ bool apply_single(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
         }
     }
     cur->vi_depth = cur_vlevel[vi];
+    dis_square(cur);
     return 1;
 }
 
@@ -6355,7 +6378,12 @@ bool gate_walk(t_node *prev_node, t_act *cur_act, ulong p, ulong limp) {
         gs_gate(cur_act->level, vi, x, ti, p, cap, mpz_get_d(Z(r_walk)),
                 prev_node->have_square, do_walk);
 #endif
-    if (auto_level)
+    /* Under -ja by cost; and under -k by cost at the square, whose tau
+     * may be composite, since what an allocation there saves depends on
+     * the power and the bound more than any gain allows for.
+     */
+    if (auto_level || (vi == sq0 && prev_node->have_square == 1
+            && kern_batch()))
         do_walk = ja_gate(prev_node, cur_act, p, cap, do_walk);
     return do_walk;
 }
