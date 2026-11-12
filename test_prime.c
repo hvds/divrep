@@ -1,9 +1,10 @@
-/* Check bpsw_u64() against _GMP_BPSW(), which it must match exactly:
- * every n below 2^22 (or 2^<arg>), squares, cubes and near-squares,
- * random values of every size, semiprimes, the ends of the range, and
- * some known pseudoprimes.
- * Shows up to 10 values on which they differ, as "<n> <ours> <theirs>",
- * then "tried <count> differ <count>". See t/t70prime.
+/* Check bpsw_u64() against _GMP_BPSW() and pretest_u64() against
+ * primality_pretest(), which they must match exactly: every n below 2^22
+ * (or 2^<arg>), squares, cubes and near-squares, random values of every
+ * size, multiples of each small prime, semiprimes, the ends of the range,
+ * and some known pseudoprimes.
+ * Shows up to 10 values on which they differ, as "<n> <test> <ours>
+ * <theirs>", then "tried <count> differ <count>". See t/t70prime.
  */
 #include <stdlib.h>
 #include <stdio.h>
@@ -20,7 +21,10 @@ static void check(ulong n) {
     bool mine = bpsw_u64(n), theirs = _GMP_BPSW(z) != 0;
     ++tried;
     if (mine != theirs && ++bad <= 10)
-        printf("%lu %d %d\n", n, mine, theirs);
+        printf("%lu bpsw %d %d\n", n, mine, theirs);
+    uint pmine = pretest_u64(n), ptheirs = primality_pretest(z);
+    if (pmine != ptheirs && ++bad <= 10)
+        printf("%lu pretest %u %u\n", n, pmine, ptheirs);
 }
 
 int main(int argc, char **argv) {
@@ -43,6 +47,11 @@ int main(int argc, char **argv) {
             mpz_urandomb(z, rs, bits);
             ulong n = mpz_get_ui(z) | 1;
             check((bits == 64) ? n | (1UL << 63) : n);
+        }
+    for (ulong p = 3; p < 1100; p += 2)
+        for (uint i = 0; i < 200; ++i) {
+            mpz_urandomb(z, rs, 10 + i % 44);
+            check(p * (mpz_get_ui(z) | 1));
         }
     for (ulong i = 0; i < 100000; ++i) {
         check(~0UL - 2 * i);

@@ -387,6 +387,60 @@ bool bpsw_u64(ulong n) {
 
 #endif
 
+/* The odd primes p below PRETEST_NEXT, each as inv = 1/p (mod 2^64) and
+ * lim = (2^64 - 1)/p rounded down: p divides n just when n.inv (mod 2^64)
+ * is at most lim, and then that is n/p. The inverse comes from Newton's
+ * iteration x -> x(2 - px), which doubles the bits correct, starting
+ * from x = p, correct to 3 bits.
+ */
+#define PRETEST_NEXT 1009
+#define PT_STEP(p, x) ((x) * (2 - (p) * (x)))
+#define PT_INV(p) \
+    PT_STEP(p, PT_STEP(p, PT_STEP(p, PT_STEP(p, PT_STEP(p, p)))))
+#define PT(p) { PT_INV((ulong)(p)), ~(ulong)0 / (p) }
+static const struct {
+    ulong inv;
+    ulong lim;
+} pretest_div[] = {
+    PT(3), PT(5), PT(7), PT(11), PT(13), PT(17), PT(19), PT(23), PT(29),
+    PT(31), PT(37), PT(41), PT(43), PT(47), PT(53), PT(59), PT(61), PT(67),
+    PT(71), PT(73), PT(79), PT(83), PT(89), PT(97), PT(101), PT(103), PT(107),
+    PT(109), PT(113), PT(127), PT(131), PT(137), PT(139), PT(149), PT(151),
+    PT(157), PT(163), PT(167), PT(173), PT(179), PT(181), PT(191), PT(193),
+    PT(197), PT(199), PT(211), PT(223), PT(227), PT(229), PT(233), PT(239),
+    PT(241), PT(251), PT(257), PT(263), PT(269), PT(271), PT(277), PT(281),
+    PT(283), PT(293), PT(307), PT(311), PT(313), PT(317), PT(331), PT(337),
+    PT(347), PT(349), PT(353), PT(359), PT(367), PT(373), PT(379), PT(383),
+    PT(389), PT(397), PT(401), PT(409), PT(419), PT(421), PT(431), PT(433),
+    PT(439), PT(443), PT(449), PT(457), PT(461), PT(463), PT(467), PT(479),
+    PT(487), PT(491), PT(499), PT(503), PT(509), PT(521), PT(523), PT(541),
+    PT(547), PT(557), PT(563), PT(569), PT(571), PT(577), PT(587), PT(593),
+    PT(599), PT(601), PT(607), PT(613), PT(617), PT(619), PT(631), PT(641),
+    PT(643), PT(647), PT(653), PT(659), PT(661), PT(673), PT(677), PT(683),
+    PT(691), PT(701), PT(709), PT(719), PT(727), PT(733), PT(739), PT(743),
+    PT(751), PT(757), PT(761), PT(769), PT(773), PT(787), PT(797), PT(809),
+    PT(811), PT(821), PT(823), PT(827), PT(829), PT(839), PT(853), PT(857),
+    PT(859), PT(863), PT(877), PT(881), PT(883), PT(887), PT(907), PT(911),
+    PT(919), PT(929), PT(937), PT(941), PT(947), PT(953), PT(967), PT(971),
+    PT(977), PT(983), PT(991), PT(997)
+};
+#define PRETEST_COUNT (sizeof(pretest_div) / sizeof(pretest_div[0]))
+
+/* As MPU::GMP's primality_pretest() for a single limb, with the same
+ * result: 0 if n is not prime, 2 if it is, else 1 if it has no prime
+ * factor below PRETEST_NEXT.
+ */
+uint pretest_u64(ulong n) {
+    if (!(n & 1) || n == 1)
+        return (n == 2) ? 2 : 0;
+    for (uint i = 0; i < PRETEST_COUNT; ++i) {
+        ulong q = n * pretest_div[i].inv;
+        if (q <= pretest_div[i].lim)
+            return (q == 1) ? 2 : 0;
+    }
+    return (n < PRETEST_NEXT * PRETEST_NEXT) ? 2 : 1;
+}
+
 /* CRT for a prime power: chinese_ppow() where it is known p | a.
  * If p^e divides a, v == s (mod m) is implied by v == r (mod a) or
  * contradicts it; else a = a'.p^f with 0 < f < e and p not dividing a',

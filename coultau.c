@@ -49,7 +49,7 @@ static inline ulong cgdiff(struct timespec *t0) {
 #endif
 
 /* Primality: a value of a single limb is tested in single limbs, with
- * the same result (see bpsw_u64()).
+ * the same result (see bpsw_u64(), pretest_u64()).
  */
 static inline bool ct_isprime(mpz_t n) {
     return (mpz_size(n) <= 1) ? bpsw_u64(mpz_get_ui(n))
@@ -57,6 +57,10 @@ static inline bool ct_isprime(mpz_t n) {
 }
 static inline bool ct_isbpsw(mpz_t n) {
     return (mpz_size(n) <= 1) ? bpsw_u64(mpz_get_ui(n)) : _GMP_BPSW(n) != 0;
+}
+static inline uint ct_ispretest(mpz_t n) {
+    return (mpz_size(n) <= 1) ? pretest_u64(mpz_get_ui(n))
+            : primality_pretest(n);
 }
 
 #ifdef VERBOSE
@@ -779,7 +783,7 @@ static inline bool prep_abort(t_tm *tm, bool result) {
 
 bool tau_prime_prep(uint i) {
     /* FIXME: break this out further */
-    int res = primality_pretest(taum[i].n);
+    uint res = ct_ispretest(taum[i].n);
     if (res == 0)
         return 0;
     taum[i].state = (res == 1) ? 1 : 0;

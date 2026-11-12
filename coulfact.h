@@ -45,6 +45,7 @@ extern uint invert_u32(uint d, uint m);
 extern ulong invert_u64(ulong d, ulong m);
 extern ulong ppow_invert(ulong d, ulong p, ulong m);
 extern bool bpsw_u64(ulong n);
+extern uint pretest_u64(ulong n);
 extern bool chinese_ppow_shared(mpz_t rp, mpz_t ap, mpz_t r, mpz_t a,
         ulong p, ulong m, ulong s, ulong am);
 extern void chinese_ppow_zai(mpz_t rp, mpz_t r, mpz_t a, mpz_t m, mpz_t s,

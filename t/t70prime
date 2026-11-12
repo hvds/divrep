@@ -10,16 +10,17 @@ plan skip_all => 'set TEST_PRIME to run this' unless $ENV{TEST_PRIME};
 my $prog = './test_prime';
 
 # bpsw_u64() must give the answer of _GMP_BPSW() for every value of a
-# single limb. test_prime compares them over a few million values, and
-# shows those on which they differ.
+# single limb, and pretest_u64() that of primality_pretest(). test_prime
+# compares them over a few million values, and shows those on which they
+# differ.
 my @out = `$prog`;
 is($?, 0, 'test_prime found no difference');
 my $last = pop(@out) // '';
 my($tried, $differ) = $last =~ /^tried (\d+) differ (\d+)$/;
 ok(defined($tried) && $tried > 1e6, 'it tried more than a million values')
         or diag("last line: $last");
-is($differ, 0, "bpsw_u64() matches _GMP_BPSW() on $tried values")
+is($differ, 0, "one-limb tests match MPU::GMP's on $tried values")
         if defined $differ;
-diag("differ (n, ours, theirs): $_") for @out;
+diag("differ (n, test, ours, theirs): $_") for @out;
 
 done_testing();
