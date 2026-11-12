@@ -5581,7 +5581,9 @@ static inline bool reject_single(
             return 0;
         ulong inv = invert_u32(am, p);
         /* -(i + rq) mod p */
-        ulong c = ((off < p ? off : off % p) + rm) % p;
+        ulong c = (off < p ? off : off % p) + rm;
+        if (c >= p)
+            c -= p;
         if (c)
             c = p - c;
         ulong mult0 = c * inv % p;
@@ -5595,7 +5597,9 @@ static inline bool reject_single(
              */
             ulong m = p * p;
             reject_mod(prev, cur_act->rj_limb, m, &am, &rm);
-            c = (off % m + rm) % m;
+            c = (off < m ? off : off % m) + rm;
+            if (c >= m)
+                c -= m;
             if (c)
                 c = m - c;
             ulong d = c + m - mulmod_u64(am, mult0, m);
