@@ -84,10 +84,8 @@ static void mock_clock_init(void) {
  * reject_single(), reject_square()) runs normally, and each of the others
  * passing them is charged c_prime_sq less c_prime plus the walk cost of
  * the last prime run; those rejected run for real, as do the iteration
- * and the rejection tests of every prime. That matches what pcoul
- * counts, cprime for each prime and the difference for those reaching
- * apply_single() (rec_sq). If a sampled child recurses, the loop reverts
- * to running normally.
+ * and the rejection tests of every prime. If a sampled child recurses,
+ * the loop reverts to running normally.
  * Loops above the leaves (ML_NOT) are strided likewise above ML_SQ_PMIN:
  * of each ML_STRIDE * ML_BLOCK primes the first ML_BLOCK run normally,
  * timed together (real time, and mock cost charged within them), and
