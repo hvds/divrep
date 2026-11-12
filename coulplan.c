@@ -1052,22 +1052,32 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
                 continue;
         }
         double pe = pow(p, e);
-        /* those giving a least v_0 within the bound, see reject_single() */
+        /* those giving a least v_0 within the bound */
         double s = (node->zl < pe) ? node->zl / pe : 1;
+        /* Those that reject_single() lets through: it is not made if the
+         * bound does not fit in a limb (see reject_prep()), and
+         * the rest then reach apply_single(), which fails where no v_0
+         * fits (as gr_nreach()).
+         */
+#ifdef CHECK_OVERFLOW
+        double sr = (node->zl >= 0x1p64) ? 1 : s;
+#else
+        double sr = 1;
+#endif
         /* those that divide with a root in range, see reject_square() */
         double r = 1;
         if (sq) {
-            cost += c * (pp + s * ct);
+            cost += c * (pp + sr * ct);
             if (f == 0)
                 continue;
             if (pe > endr) {
-                cost += c * s * f * GQ_ROOT;
+                cost += c * sr * f * GQ_ROOT;
                 if (2 * endr < pe)
                     r = 2 * endr / pe;
             }
-            cost += c * s * f * r * gq_prime;
+            cost += c * sr * f * r * gq_prime;
         } else {
-            cost += c * (pp + s * (ct + f * gq_prime));
+            cost += c * (pp + sr * (ct + f * gq_prime));
             if (f == 0)
                 continue;
         }
