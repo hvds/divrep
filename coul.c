@@ -4919,8 +4919,13 @@ void walk_midp(t_node *prev_node, bool recover) {
     reject_prep(prev_node, cur_act);
     /* the limbs of aq, by which the loop's work is counted and sampled */
     uint cr_l = cr_limbs(prev_node->aq);
-    /* the prime being sampled, if any */
+    /* the prime being sampled, if any: not below a fixed square, where
+     * reject_square() is also made; but the calls of apply_single() are
+     * sampled there too, in classes of their own
+     */
     bool cs = cs_on && !prev_node->have_square;
+    uint cr_fail = prev_node->have_square ? CR_SQFAIL : CR_FAIL;
+    uint cr_apply = prev_node->have_square ? CR_SQAPPLY : CR_APPLY;
     double cs_t = 0, cs_a;
 
     level_setp(cur_act, midpp[0].maxp);
@@ -5029,16 +5034,14 @@ void walk_midp(t_node *prev_node, bool recover) {
                     diag_attempt(cur_node, vi, p, x);
                 continue;
             }
-            if (prev_node->have_square)
-                ++cc.rec_sq;
             /* the prime's sample ends here, and the call has its own */
             cr_prime(rj ? cr_xclass(x) : CR_EARLY, cr_l, &cs_t);
-            cs_a = cs ? cs_start(&cs_aleft, CS_AEVERY) : 0;
+            cs_a = cs_on ? cs_start(&cs_aleft, CS_AEVERY) : 0;
             if (apply_single(prev_node, cur_node, vi, p, x)) {
                 if (cs_a)
-                    cs_add(CR_APPLY, cr_l, cs_a, 1);
+                    cs_add(cr_apply, cr_l, cs_a, 1);
                 ++cc.rec_applied;
-                ++cc.rec_by[CR_APPLY][cr_l];
+                ++cc.rec_by[cr_apply][cr_l];
                 if (need_work)
                     diag_plain(cur_node);
                 GS_ORIGIN('M');
@@ -5046,12 +5049,9 @@ void walk_midp(t_node *prev_node, bool recover) {
                 --cur_vlevel[vi];   /* unallocate */
             } else {
                 if (cs_a)
-                    cs_add(CR_FAIL, cr_l, cs_a, 1);
-                /* below a fixed square, priced with the roots */
-                if (!prev_node->have_square) {
-                    ++cc.rec_fail;
-                    ++cc.rec_by[CR_FAIL][cr_l];
-                }
+                    cs_add(cr_fail, cr_l, cs_a, 1);
+                ++cc.rec_fail;
+                ++cc.rec_by[cr_fail][cr_l];
                 if (need_work)
                     diag_attempt(cur_node, vi, p, x);
             }
@@ -7211,8 +7211,13 @@ bool next_unforced(t_act *cur_act) {
     t_node *cur_node = &nodes[cur_act->level];
     /* the limbs of aq, by which the loop's work is counted and sampled */
     uint cr_l = cr_limbs(prev_node->aq);
-    /* the prime being sampled, if any */
+    /* the prime being sampled, if any: not below a fixed square, where
+     * reject_square() is also made; but the calls of apply_single() are
+     * sampled there too, in classes of their own
+     */
     bool cs = cs_on && !prev_node->have_square;
+    uint cr_fail = prev_node->have_square ? CR_SQFAIL : CR_FAIL;
+    uint cr_apply = prev_node->have_square ? CR_SQAPPLY : CR_APPLY;
     double cs_t = 0;
     while (1) {
 #ifdef MOCK
@@ -7286,30 +7291,24 @@ bool next_unforced(t_act *cur_act) {
             goto redo_unforced;
         }
 #endif
-        /* below a fixed square, the roots are extended to each prime */
-        if (prev_node->have_square)
-            ++cc.rec_sq;
         /* the prime's sample ends here, and the call has its own */
         cr_prime(rj ? cr_xclass(cur_act->x) : CR_EARLY, cr_l, &cs_t);
-        double cs_a = cs ? cs_start(&cs_aleft, CS_AEVERY) : 0;
+        double cs_a = cs_on ? cs_start(&cs_aleft, CS_AEVERY) : 0;
         /* note: this returns 0 if t=1 */
         if (!apply_single(prev_node, cur_node, cur_act->vi, p, cur_act->x)) {
             if (cs_a)
-                cs_add(CR_FAIL, cr_l, cs_a, 1);
-            /* below a fixed square, priced with the roots */
-            if (!prev_node->have_square) {
-                ++cc.rec_fail;
-                ++cc.rec_by[CR_FAIL][cr_l];
-            }
+                cs_add(cr_fail, cr_l, cs_a, 1);
+            ++cc.rec_fail;
+            ++cc.rec_by[cr_fail][cr_l];
             if (need_work)
                 diag_attempt(cur_node, cur_act->vi, p, cur_act->x);
             /* not redo_unforced, we may have improved zmax */
             continue;
         }
         if (cs_a)
-            cs_add(CR_APPLY, cr_l, cs_a, 1);
+            cs_add(cr_apply, cr_l, cs_a, 1);
         ++cc.rec_applied;
-        ++cc.rec_by[CR_APPLY][cr_l];
+        ++cc.rec_by[cr_apply][cr_l];
         return 1;
       end_x:
         next_x(cur_act);

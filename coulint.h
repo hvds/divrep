@@ -39,10 +39,15 @@ extern int other_comparator(const void *va, const void *vb);
  * for each x of p^{x-1} up to CR_MAXX (see cr_xclass()), since the cost
  * of that stage grows with x; CR_REJ1 if the first stage rejects it; and
  * CR_EARLY if it is known, or not tested by reject_single() at all. Then
- * a call of apply_single() that fails or succeeds.
+ * a call of apply_single() that fails or succeeds; and likewise below a
+ * fixed square, where the roots are extended (update_residues()), which
+ * makes a call cost quite differently.
  */
 #define CR_MAXX 32      /* powers p^{x-1} beyond this x are taken as this */
-enum { CR_EARLY = CR_MAXX - 1, CR_REJ1, CR_FAIL, CR_APPLY, CR_COUNT };
+enum {
+    CR_EARLY = CR_MAXX - 1, CR_REJ1, CR_FAIL, CR_APPLY, CR_SQFAIL,
+    CR_SQAPPLY, CR_COUNT
+};
 #define CR_MAXL 16      /* limbs beyond this are taken as this */
 static inline uint cr_limbs(mpz_t aq) {
     uint l = mpz_size(aq);
@@ -78,7 +83,7 @@ typedef struct {
     bool on;
     ulong lin_walks, lin_iter, lin_inv, sq_walks, sq_iter, sq_inv,
             pell_iter, w1s_prime, w1s_check, rec_prime, rec_applied,
-            rec_sq, rec_res, rec_root, rec_fail;
+            rec_res, rec_root, rec_fail;
     /* inverse-filter entries set up by linear walks, and root residues
      * walked by those below a fixed power, for the cost of their setup
      */
