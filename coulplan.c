@@ -207,6 +207,96 @@ double cc_work(void) {
             + cc.test + ct_test_charged + ct_ladder_charged + cc.base;
 }
 
+/* Local: under CCBREAK, each term of cc_work() as count, unit price and
+ * charge, as 000 lines.
+ */
+void cc_breakdown(void) {
+    if (!getenv("CCBREAK"))
+        return;
+    struct { const char *name; double count, price; } t[] = {
+        { "lin_walks", cc.lin_walks, cm_const(CM_LINSETUP) },
+        { "lin_setinv", cc.lin_setinv, cm_const(CM_LINSETUPINV) },
+        { "lin+pell_iter", cc.lin_iter + cc.pell_iter, cm_const(CM_LOOP0) },
+        { "lin_inv", cc.lin_inv, cm_const(CM_LOOPTEST) },
+        { "sq_walks", cc.sq_walks, cm_const(CM_SQSETUP) },
+        { "sq_setres", cc.sq_setres, cm_const(CM_SQSETUPRES) },
+        { "sq_iter", cc.sq_iter, cm_const(CM_SQLOOP0) },
+        { "sq_inv", cc.sq_inv, cm_const(CM_SQTEST) },
+        { "w1s_prime", cc.w1s_prime, cm_const(CM_W1SITER) },
+        { "w1s_check", cc.w1s_check, cm_const(CM_W1SCHECK) },
+        { "w1s_calls", cc.w1s_calls, cm_const(CM_W1SCALL) },
+        { "rec_res", cc.rec_res, GQ_RES },
+        { "rec_root", cc.rec_root, GQ_ROOT },
+    };
+    for (uint i = 0; i < sizeof(t) / sizeof(t[0]); ++i)
+        report("000 cc %-14s %14.0f x %10.4gus = %10.4fs\n", t[i].name,
+                t[i].count, t[i].price * 1e6, t[i].count * t[i].price);
+    {
+        for (uint c = 0; c < CR_COUNT; ++c) {
+            char rn[CR_COUNT][16];
+            static const char *rest[] = {
+                "rec_early", "rec_rej1", "rec_fail", "rec_applied",
+                "rec_sqfail", "rec_sqapplied"
+            };
+            if (c < CR_EARLY)
+                snprintf(rn[c], 16, "rec_deep.x%u", c + 2);
+            else
+                snprintf(rn[c], 16, "%s", rest[c - CR_EARLY]);
+            ulong n = 0;
+            double ch = 0;
+            for (uint l = 1; l <= CR_MAXL; ++l) {
+                if (!cc.rec_by[c][l])
+                    continue;
+                n += cc.rec_by[c][l];
+                ch += cc.rec_by[c][l] * cm_rec_price(c, l);
+                report("000 cc %-12s L%u %14lu x %10.4gus = %10.4fs\n",
+                        rn[c], l, cc.rec_by[c][l], cm_rec_price(c, l) * 1e6,
+                        cc.rec_by[c][l] * cm_rec_price(c, l));
+            }
+            if (n)
+                report("000 cc %-14s %14lu x %10.4gus = %10.4fs\n", rn[c], n,
+                        ch / n * 1e6, ch);
+        }
+    }
+    /* the deep primes by path, where those are what is counted rather
+     * than the rec_deep.x lines
+     */
+    if (cm_rd_have()) {
+        static const char *pn[RP_COUNT] = {
+            "rdeep.exit", "rdeep.p2", "rdeep.gen"
+        };
+        report("000 cc deep primes priced by path, not by x:\n");
+        for (uint rp = 0; rp < RP_COUNT; ++rp)
+            for (uint l = 1; l <= CR_MAXL; ++l) {
+                ulong n = cc.rd_by[rp][l];
+                if (!n)
+                    continue;
+                double kp = (double)cc.rd_kp[rp][l] / n;
+                double knee = (double)cc.rd_knee[rp][l] / n;
+                double price = cm_rd_price(rp, l) + kp * cm_rd_mbit(rp)
+                        + knee * cm_rd_knee(rp);
+                report("000 cc %-12s L%u mean kp %.2f, beyond knee %.2f\n",
+                        pn[rp], l, kp, knee);
+                report("000 cc %-12s L%u %14lu x %10.4gus = %10.4fs\n",
+                        pn[rp], l, n, price * 1e6, n * price);
+            }
+    }
+    report("000 cc %-14s %39.4fs\n", "test", cc.test);
+    report("000 cc %-14s %39.4fs\n", "test_charged", ct_test_charged);
+    {
+        extern double ct_split_charge[3][6];
+        extern ulong ct_split_count[3][6];
+        static const char *kn[3] = { "pprep", "prep", "ptest" };
+        for (uint k = 0; k < 3; ++k)
+            for (uint l = 0; l < 6; ++l)
+                if (ct_split_count[k][l])
+                    report("000 cc %-8s L%u %14lu = %10.4fs\n", kn[k], l,
+                            ct_split_count[k][l], ct_split_charge[k][l]);
+    }
+    report("000 cc %-14s %39.4fs\n", "ladder", ct_ladder_charged);
+    report("000 cc %-14s %39.4fs\n", "base", cc.base);
+}
+
 /* Settle the costs the gates share with the cost table, once it is
  * known whether costs are counted.
  */

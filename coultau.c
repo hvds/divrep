@@ -890,6 +890,16 @@ double (*ct_ptest_price)(uint nbits, bool prime) = NULL;
 void (*ct_prep_record)(uint nbits, const t_ct_work *w, double dt) = NULL;
 void (*ct_pprep_record)(uint nbits, int res, double dt) = NULL;
 double ct_test_charged = 0;
+/* Local: test charges split by kind (pprep, prep, ptest) and limbs. */
+double ct_split_charge[3][6];
+ulong ct_split_count[3][6];
+static inline void ct_split(uint k, uint nbits, double c) {
+    uint l = (nbits + 63) / 64;
+    if (l > 5)
+        l = 5;
+    ct_split_charge[k][l] += c;
+    ++ct_split_count[k][l];
+}
 ulong ct_preps = 0, ct_ppreps = 0;  /* the calls of each that are priced */
 /* If set, one call of tau_prime_prep() in ct_pp_every is timed and given
  * to it with its size and result, for in-situ cost samples (see cs_init()
@@ -931,7 +941,9 @@ bool tau_prime_prep(uint i) {
         r = tau_prime_prep_inner(i);
     if (ct_pprep_price) {
         ++ct_ppreps;
-        ct_test_charged += (*ct_pprep_price)(nbits, r ? 1 + taum[i].state : 0);
+        double c = (*ct_pprep_price)(nbits, r ? 1 + taum[i].state : 0);
+        ct_test_charged += c;
+        ct_split(0, nbits, c);
     }
     return r;
 }
@@ -949,11 +961,11 @@ bool tau_multi_prep(uint i) {
         bool r = tau_multi_prep_inner(i);
         double t1 = (*ct_clock)();
         (*ct_prep_record)(nbits, &ct_w, t1 - t0);
-        ct_test_charged += (*ct_prep_price)(nbits, &ct_w);
+        { double c = (*ct_prep_price)(nbits, &ct_w); ct_test_charged += c; ct_split(1, nbits, c); }
         return r;
     }
     bool r = tau_multi_prep_inner(i);
-    ct_test_charged += (*ct_prep_price)(nbits, &ct_w);
+    { double c = (*ct_prep_price)(nbits, &ct_w); ct_test_charged += c; ct_split(1, nbits, c); }
     return r;
 }
 
@@ -1504,8 +1516,7 @@ uint tau_prime_run(uint first, uint count) {
     for (i = first; i < count; ++i) {
         bool prime = ct_bpsw(taum[i].n);
         if (ct_ptest_price)
-            ct_test_charged += (*ct_ptest_price)(
-                    mpz_sizeinbase(taum[i].n, 2), prime);
+            { uint nb = mpz_sizeinbase(taum[i].n, 2); double c = (*ct_ptest_price)(nb, prime); ct_test_charged += c; ct_split(2, nb, c); }
         if (!prime) {
             taum[first].vi = taum[i].vi;
             return count - i;
