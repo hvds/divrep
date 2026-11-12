@@ -5545,13 +5545,13 @@ static inline bool reject_square(ulong p, long d, ulong endr) {
 #endif
 }
 
-/* aq and rq of prev, mod m */
+/* aq and rq of prev, mod m, given mr = recip_u64(m) */
 static inline void reject_mod(
-    t_node *prev, bool limb, ulong m, ulong *am, ulong *rm
+    t_node *prev, bool limb, ulong m, ulong mr, ulong *am, ulong *rm
 ) {
     if (limb) {
-        *am = mpz_getlimbn(prev->aq, 0) % m;
-        *rm = mpz_get_ui(prev->rq) % m;
+        *am = modrecip_u64(mpz_getlimbn(prev->aq, 0), m, mr);
+        *rm = modrecip_u64(mpz_get_ui(prev->rq), m, mr);
     } else {
         *am = mpz_fdiv_ui(prev->aq, m);
         *rm = mpz_fdiv_ui(prev->rq, m);
@@ -5576,7 +5576,8 @@ static inline bool reject_single(
 ) {
     ulong off = TYPE_OFFSET(vi), am, rm;
     if (p < (1UL << 31)) {
-        reject_mod(prev, cur_act->rj_limb, p, &am, &rm);
+        ulong pr = recip_u64(p);
+        reject_mod(prev, cur_act->rj_limb, p, pr, &am, &rm);
         if (am == 0)
             return 0;
         ulong inv = invert_u32(am, p);
@@ -5586,7 +5587,7 @@ static inline bool reject_single(
             c -= p;
         if (c)
             c = p - c;
-        ulong mult0 = c * inv % p;
+        ulong mult0 = modrecip_u64(c * inv, p, pr);
         if (mult0 > cur_act->rj_mult)
             return 1;
         if (x == 2)
@@ -5595,17 +5596,23 @@ static inline bool reject_single(
             /* aq.(mult0 + p.mult1) == c (mod p^2), so
              * mult1 == ((c - aq.mult0) / p) / aq (mod p).
              */
-            ulong m = p * p;
-            reject_mod(prev, cur_act->rj_limb, m, &am, &rm);
+            ulong m = p * p, am0 = am;
+            reject_mod(prev, cur_act->rj_limb, m, recip_u64(m), &am, &rm);
             c = (off < m ? off : off % m) + rm;
             if (c >= m)
                 c -= m;
             if (c)
                 c = m - c;
-            ulong d = c + m - mulmod_u64(am, mult0, m);
+            /* aq.mult0 (mod m) from aq == am1.p + am0: both terms < m */
+            ulong am1 = divrecip_u64(am - am0, p, pr);
+            ulong d = modrecip_u64(am1 * mult0, p, pr) * p + am0 * mult0;
             if (d >= m)
                 d -= m;
-            return mult0 + p * (d / p * inv % p) > cur_act->rj_mult;
+            d = c + m - d;
+            if (d >= m)
+                d -= m;
+            ulong mult1 = modrecip_u64(divrecip_u64(d, p, pr) * inv, p, pr);
+            return mult0 + p * mult1 > cur_act->rj_mult;
         }
     }
     /* as update_chinese(): m = p^e < 2^61 for e < x, not dividing aq */
@@ -5617,7 +5624,7 @@ static inline bool reject_single(
     }
     if (m >= (1UL << 61) || m <= cur_act->rj_mult)
         return 0;
-    reject_mod(prev, cur_act->rj_limb, m, &am, &rm);
+    reject_mod(prev, cur_act->rj_limb, m, recip_u64(m), &am, &rm);
     if (am % p == 0)
         return 0;
     ulong c = (off % m + rm) % m;

@@ -75,6 +75,31 @@ static inline ulong mulmod_u64(ulong a, ulong b, ulong m) {
 }
 #endif
 
+/* x / m and x % m for m < 2^63, by multiplication given mr = recip_u64(m):
+ * the high limb of x.mr is the quotient or one less. Without a 128-bit
+ * type they simply divide.
+ */
+static inline ulong recip_u64(ulong m) {
+    return ~0UL / m;
+}
+#ifdef HAVE_UINT128
+static inline ulong divrecip_u64(ulong x, ulong m, ulong mr) {
+    ulong q = (ulong)(((uint128)x * mr) >> 64);
+    return (x - q * m >= m) ? q + 1 : q;
+}
+static inline ulong modrecip_u64(ulong x, ulong m, ulong mr) {
+    ulong r = x - (ulong)(((uint128)x * mr) >> 64) * m;
+    return (r >= m) ? r - m : r;
+}
+#else
+static inline ulong divrecip_u64(ulong x, ulong m, ulong mr) {
+    return x / m;
+}
+static inline ulong modrecip_u64(ulong x, ulong m, ulong mr) {
+    return x % m;
+}
+#endif
+
 /* a^e mod m */
 static inline ulong powmod_u64(ulong a, ulong e, ulong m) {
     ulong r = 1;
