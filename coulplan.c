@@ -706,7 +706,9 @@ static ulong gq_resroots(ulong dm, ulong qm, uint g, ulong q) {
  * to the root of zl = zmax / aq, and above it each with chance
  * zl / q^{x-1}) go on to the test mod q of reject_square(), and only the
  * fraction f that pass it (see gq_resfrac()) reach apply_single(), have
- * their roots extended, and are walked.
+ * their roots extended, and are walked. Where zl does not fit in a limb
+ * reject_single() is not made (see reject_prep()), so every prime goes
+ * on to those tests, and those not within zmax fail in apply_single().
  * For q^2 against a square, once q^2 passes the greatest root endr
  * reject_square() also lets through only those with a root in range,
  * each with chance 2.endr / q^2, at the cost of a root mod q for those
@@ -728,7 +730,14 @@ static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
     double mA = (ql < b) ? ql : b, mB = (ql > a) ? ql : a;
     double nv = ((mA > a) ? gr_li(mA) - gr_li(a) : 0)
             + zl * gr_psum(mB, b, s);
-    double ct = (g > 1) ? nv * GQ_RES : 0;
+#ifdef CHECK_OVERFLOW
+    double nr = (zl >= 0x1p64) ? np : nv;
+#else
+    double nr = np;
+#endif
+    if (nr < nv)
+        nr = nv;
+    double ct = (g > 1) ? nr * GQ_RES : 0;
     if (x == 3 && g == 2) {
         double endr = sqrt(mpz_get_d(zmax)
                 / mpz_get_d(value[sq0].alloc[sql - 1].q));
@@ -740,18 +749,21 @@ static t_gqloop gq_loop(t_node *prev_node, ulong p, ulong cap, uint x) {
         /* of those passing the test mod q, beyond se */
         double se = sqrt(endr), mR = (se > a) ? se : a;
         double mE = (ql > mR) ? ql : mR;
-        double nr = (b > mR) ? (((ql > mR) ? gr_li((ql < b) ? ql : b)
+        double nroot = (b > mR) ? (((ql > mR) ? gr_li((ql < b) ? ql : b)
                 - gr_li(mR) : 0) + zl * gr_psum(mE, b, s)) / 2 : 0;
+        /* and those not within zmax: half pass mod q, and take a root */
+        nroot += (nr - nv) / 2;
         t_gqloop r = {
-            .own = gr_ploop(prev_node, a, b, x) + ct + nr * GQ_ROOT
+            .own = gr_ploop(prev_node, a, b, x) + ct + nroot * GQ_ROOT
                     + ns * (gq_prime + ap),
             .nw = ns,
         };
         return r;
     }
-    double nw = nv * gq_resfrac(g);
+    double f = gq_resfrac(g), nw = nv * f;
     t_gqloop r = {
-        .own = gr_ploop(prev_node, a, b, x) + ct + nw * (gq_prime + ap),
+        .own = gr_ploop(prev_node, a, b, x) + ct + nr * f * gq_prime
+                + nw * ap,
         .nw = nw,
     };
     return r;
