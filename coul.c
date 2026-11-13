@@ -4617,7 +4617,7 @@ bool apply_batch(
         if (mpz_sgn(zmin)) {
             vp = &value[terminal];
             uint vlevel = cur_vlevel[terminal];
-            mpz_sub_ui(Z(temp), vp->alloc[vlevel - 1].q, terminal);
+            mpz_sub_ui(Z(temp), vp->alloc[vlevel - 1].q, TYPE_OFFSET(terminal));
             if (mpz_cmp(Z(temp), zmin) <= 0)
                 valid = 0;
         }
