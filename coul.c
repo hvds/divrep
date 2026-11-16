@@ -72,11 +72,11 @@ typedef enum {
     tfp_v,                      /* test_forcep */
     sqm_t, sqm_q, sqm_b, sqm_z, sqm_x,  /* sqrtmod_t */
     uc_minusvi, uc_px,          /* update_chinese */
-    ur_a, ur_m, ur_ipg,         /* update_residues */
+    ur_a, ur_m, ur_ipg, ur_q,   /* update_residues */
     asq_o, asq_qq, asq_m,       /* alloc_square */
     wv_ati, wv_end, wv_cand,    /* walk_v */
     wv_startr, wv_endr, wv_qqr, wv_qqnext, wv_r, wv_rx, wv_temp,
-    wv_x, wv_y, wv_x2, wv_y2,
+    wv_x, wv_y, wv_x2, wv_y2, wv_pa, wv_pb,
     w1_v, w1_j, w1_r,           /* walk_1 */
     w1_m, w1_mr,
     lp_x, lp_mint, lp_mint2,    /* limit_p */
@@ -3279,14 +3279,22 @@ void walk_v(t_node *cur_node, mpz_t start) {
             mpz_t *qqj = &wv_qq[sqj];
             uint tj = t[sqj];
 
-            mpz_add_ui(Z(wv_endr), zmax, TYPE_OFFSET(sqi));
+            dtov(Z(wv_endr), sqi, zmax);
             mpz_fdiv_q(Z(wv_endr), Z(wv_endr), *qi);
             mpz_root(Z(wv_endr), Z(wv_endr), 2);
-            /* solve Ax^2 - By^2 = C with x <= D */
-            int sqoff = (sqi < sqj)
-                ? -(int)TYPE_OFFSET(sqj - sqi)
-                : (int)TYPE_OFFSET(sqi - sqj);
-            new_pell(*qi, *qj, sqoff, Z(wv_endr));
+            /* solve Ax^2 - By^2 = C with x <= D: from the resultant,
+             * A = TYPE_MULT(j).q_i, B = TYPE_MULT(i).q_j, C = TYPE_RES(j, i)
+             */
+            mpz_t *pa = qi, *pb = qj;
+            if (TYPE_MULT(sqj) != 1) {
+                mpz_mul_ui(Z(wv_pa), *qi, TYPE_MULT(sqj));
+                pa = ZP(wv_pa);
+            }
+            if (TYPE_MULT(sqi) != 1) {
+                mpz_mul_ui(Z(wv_pb), *qj, TYPE_MULT(sqi));
+                pb = ZP(wv_pb);
+            }
+            new_pell(*pa, *pb, TYPE_RES(sqj, sqi), Z(wv_endr));
             uint pc = 0;
 
             mpz_t *pellx[2];
@@ -3870,10 +3878,8 @@ bool update_residues(t_node *old, t_node *new,
 
     /* propagate the existing roots */
     uint g = sqg[jlevel];
-    int off = (vj < vi)
-        ? -(int)TYPE_OFFSET(vi - vj)
-        : (int)TYPE_OFFSET(vj - vi);
-    mpz_set_si(Z(ur_a), off);
+    /* TYPE_MULT(i).v_j == TYPE_RES(i, j) + TYPE_MULT(j).v_i */
+    mpz_set_si(Z(ur_a), (slong)TYPE_RES(vi, vj));
     mpz_t *ppx;
     if (fold) {
         /* v_i == fold.p^e (mod p^{e+1}) for its whole power p^e,
@@ -3882,23 +3888,28 @@ bool update_residues(t_node *old, t_node *new,
         ++x;
         mpz_ui_pow_ui(Z(ur_ipg), p, retry);
         mpz_mul(Z(ur_ipg), Z(ur_ipg), px);
-        mpz_addmul_ui(Z(ur_a), Z(ur_ipg), fold);
+        mpz_addmul_ui(Z(ur_a), Z(ur_ipg), fold * TYPE_MULT(vj));
         mpz_mul_ui(Z(ur_ipg), px, p);
         ppx = ZP(ur_ipg);
     } else {
         ppx = PARAM_TO_PTR(px);
     }
 
-    /* in the non-retry case, m = old->aq / q_j; in the retry case, we
-     * need to take the previous value of q_j */
+    /* in the non-retry case, m = qq_j from old->aq; in the retry case,
+     * we need to take the previous value of q_j */
     uint mlevel = retry ? jlevel - 1 : jlevel;
     if (retry) {
         mpz_ui_pow_ui(Z(ur_m), p, retry);
         mpz_divexact(Z(ur_a), Z(ur_a), Z(ur_m));
     }
-    if (!divmod(Z(ur_a), Z(ur_a), vjp->alloc[mlevel].q, *ppx))
+    mpz_t *qj = &vjp->alloc[mlevel].q;
+    if (TYPE_MULT(vi) != 1) {
+        mpz_mul_ui(Z(ur_q), *qj, TYPE_MULT(vi));
+        qj = ZP(ur_q);
+    }
+    if (!divmod(Z(ur_a), Z(ur_a), *qj, *ppx))
         return 0;
-    mpz_divexact(Z(ur_m), old->aq, vjp->alloc[mlevel].q);
+    calc_qq(Z(ur_m), vj, old->aq, vjp->alloc[mlevel].q);
 
     /* on retry, residues to update are already at new */
     uint from = retry ? new->level : old->level;
@@ -4405,7 +4416,7 @@ char *parse_midp(char *s) {
 
 static ulong square_endr(t_node *np);
 static inline bool square_applies(t_node *np);
-static inline bool reject_square(ulong p, long d, ulong endr);
+static inline bool reject_square(uint vi, ulong p, sint d, ulong endr);
 static inline void reject_prep(t_node *prev, t_act *cur_act);
 static inline bool reject_single(
     t_node *prev, t_act *cur_act, uint vi, ulong p, uint x
@@ -4521,8 +4532,7 @@ void walk_midp(t_node *prev_node, bool recover) {
             if ((cur_act->rj_ok && (p & 1)
                 && reject_single(prev_node, cur_act, vi, p, x)
             ) || (sq_ok && vi != sq0 && reject_square(
-                p, (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi),
-                (x == 3) ? endr : 0
+                vi, p, TYPE_RES(vi, sq0), (x == 3) ? endr : 0
             ))) {
                 /* as apply_single() would leave it, for the progress line */
                 cur_act->vi = vi;
@@ -5477,20 +5487,20 @@ static inline void reject_prep_square(
         return;
     /* the lift applies only to p^2 */
     cur->rs_endr = (x == 3) ? square_endr(prev) : 0;
-    cur->rs_d = (long)TYPE_OFFSET(sq0) - (long)TYPE_OFFSET(vi);
+    cur->rs_d = TYPE_RES(vi, sq0);
     cur->rs_ok = 1;
 }
 
-/* True if allocating p^{x-1} at a position d places before the fixed
- * value v_j = q.z^g is certain to be rejected for having no root z, false
- * if uncertain. Any such z must satisfy q.z^g == d (mod p), so d/q must
- * be a g-th power residue mod p; with h = gcd(g, p - 1), that is so for
- * only 1/h of the primes. For h = 2 the Jacobi symbol shows it, else a
- * power of d.q^{h-1} mod p.
+/* True if allocating p^{x-1} at v_i below the fixed value v_j = q.z^g is
+ * certain to be rejected for having no root z, false if uncertain. With
+ * d = TYPE_RES(i, j) and Q = TYPE_MULT(i).q, any such z must satisfy
+ * Q.z^g == d (mod p), so d/Q must be a g-th power residue mod p; with
+ * h = gcd(g, p - 1), that is so for only 1/h of the primes. For h = 2
+ * the Jacobi symbol shows it, else a power of d.Q^{h-1} mod p.
  * If endr is non-zero, we are allocating p^2 below a square (g = 2), and
  * endr is the greatest z with v_j within zmax. Any z must then satisfy
- * q.z^2 == d (mod p^2): since p does not divide q.d, the solutions are
- * two classes +/-r (mod p^2), where r is a square root of d/q mod p
+ * Q.z^2 == d (mod p^2): since p does not divide Q.d, the solutions are
+ * two classes +/-r (mod p^2), where r is a square root of d/Q mod p
  * lifted to p^2. Once p^2 > endr each class holds at most one z up to
  * endr, its least residue, so p is rejected unless r or p^2 - r is at
  * most endr.
@@ -5503,12 +5513,14 @@ static inline void reject_prep_square(
  * leave no residue in range, but nearly always at the leaf (see
  * update_residues()).
  */
-static inline bool reject_square(ulong p, long d, ulong endr) {
+static inline bool reject_square(uint vi, ulong p, sint d, ulong endr) {
     if (!(p & 1))
         return 0;
     uint sql = cur_vlevel[sq0];
     mpz_t *q = &value[sq0].alloc[sql - 1].q;
     ulong qm = mpz_fdiv_ui(*q, p);
+    if (TYPE_MULT(vi) != 1)
+        qm = mulmod_u64(qm, TYPE_MULT(vi) % p, p);
     ulong dm = (d < 0) ? (ulong)(-d) % p : (ulong)d % p;
     assert(qm != 0 && dm != 0);     /* required since p is an unforced prime */
     if (d < 0)
@@ -5529,11 +5541,13 @@ static inline bool reject_square(ulong p, long d, ulong endr) {
 #else
     if (!endr || p <= endr / p)
         return 0;
-    /* r == sqrt(d/q) (mod p) */
+    /* r == sqrt(d/Q) (mod p) */
     ulong r = sqrtmod_u64(mulmod_u64(dm, invert_u64(qm, p), p), p);
-    /* We need z == r + pt (mod p^2), with 2qrt == (d - qr^2) / p (mod p) */
+    /* We need z == r + pt (mod p^2), with 2Qrt == (d - Qr^2) / p (mod p) */
     mpz_mul_ui(Z(temp), *q, r);
     mpz_mul_ui(Z(temp), Z(temp), r);
+    if (TYPE_MULT(vi) != 1)
+        mpz_mul_ui(Z(temp), Z(temp), TYPE_MULT(vi));
     if (d < 0)
         mpz_add_ui(Z(temp), Z(temp), (ulong)(-d));
     else
@@ -6461,7 +6475,7 @@ bool next_unforced(t_act *cur_act) {
         if ((cur_act->rj_ok && (p & 1) && reject_single(
             prev_node, cur_act, cur_act->vi, p, cur_act->x
         )) || (cur_act->rs_ok
-            && reject_square(p, cur_act->rs_d, cur_act->rs_endr)
+            && reject_square(cur_act->vi, p, cur_act->rs_d, cur_act->rs_endr)
         )) {
             cur_act->p = p;
             if (need_work)

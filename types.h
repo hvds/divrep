@@ -3,8 +3,9 @@
 typedef unsigned char uchar;
 typedef unsigned short ushort;
 typedef unsigned int uint;
+typedef signed int sint;
 typedef unsigned long ulong;
-typedef long slong;
+typedef signed long slong;
 typedef unsigned char bool;
 
 /* An unsigned 128-bit type, where the compiler has one: gcc and clang

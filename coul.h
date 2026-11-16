@@ -46,6 +46,17 @@ extern uint n;
 #   error "No type defined"
 #endif
 
+/* The resultant of v_i and v_j as linear polynomials in d: with
+ * a_i = TYPE_MULT(i), c_i = TYPE_OFFSET(i),
+ *   a_i.v_j - a_j.v_i = a_i.c_j - a_j.c_i
+ * for every d. So a fact about v_j is a fact about a_j.v_i, and any
+ * common factor of v_i and v_j divides it.
+ */
+static inline sint TYPE_RES(uint i, uint j) {
+    return (sint)TYPE_MULT(i) * TYPE_OFFSET(j)
+            - (sint)TYPE_MULT(j) * TYPE_OFFSET(i);
+}
+
 /* 'divisors[i].div' is a list of divisors of 'i' in descending order of
  * highest prime factor, then ascending. 'high' is the highest prime
  * factor of 'i'; 'alldiv' is the number of factors; 'highdiv' is the
@@ -203,12 +214,12 @@ typedef struct s_act {
     bool rj_ok, rj_limb;
     ulong rj_mult;
     /* Likewise for reject_square(), below a fixed value v_j = q.z^g:
-     * rs_ok if it applies to this loop, rs_d the difference of offsets
-     * j - i, and rs_endr for p^2 below a square the greatest z for which
-     * v_j is within zmax, else 0.
+     * rs_ok if it applies to this loop, rs_d the resultant TYPE_RES(i, j),
+     * and rs_endr for p^2 below a square the greatest z for which v_j
+     * is within zmax, else 0.
      */
     bool rs_ok;
-    long rs_d;
+    sint rs_d;
     ulong rs_endr;
     uint vi;        /* allocation of p^x into v_i */
     prime_iterator piter;
