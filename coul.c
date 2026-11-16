@@ -777,7 +777,7 @@ uint write_fact(t_sizedstr *bufp, mpz_t v, uint target) {
 
 bool report_211(uint vi, t_sizedstr *bufp) {
     /* 211 Sequence  0:  4 = tau(1248619267217398415 = 5.249723853443479683) */
-    mpz_add_ui(Z(temp), best, vi);
+    mpz_add_ui(Z(temp), best, TYPE_OFFSET(vi));
     uint target = know_target(vi);
     uint t = write_fact(bufp, Z(temp), target);
     report("211 Sequence %d: %d = tau(%Zu = %s)\n",
