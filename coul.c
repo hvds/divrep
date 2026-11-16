@@ -97,7 +97,7 @@ static inline mpz_t *ZP(t_zstash e) { return &zstash[e]; }
 /* additional arrays of mpz_t initialized once at start */
 mpz_t *wv_o, *wv_qq;        /* size [k] */
 /* for failure diagnostics */
-mpz_t *g_q0;
+t_node *g_node;
 ulong g_ati;
 
 /* used to store disallowed inverses in walk_v() */
@@ -2933,15 +2933,13 @@ uint walk_1_failure(uint count, t_tm *tm) {
     return taum_fail("walk_1", Z(w1_v), count, tm);
 }
 uint walk_v_failure(uint count, t_tm *tm) {
-    mpz_mul_ui(Z(wv_cand), wv_qq[0], g_ati);
-    mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
-    mpz_mul(Z(wv_cand), Z(wv_cand), *g_q0);
+    mpz_mul_ui(Z(wv_cand), g_node->aq, g_ati);
+    mpz_add(Z(wv_cand), Z(wv_cand), g_node->rq);
     return taum_fail("walk_v", Z(wv_cand), count, tm);
 }
 uint walk_zv_failure(uint count, t_tm *tm) {
-    mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
-    mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
-    mpz_mul(Z(wv_cand), Z(wv_cand), *g_q0);
+    mpz_mul(Z(wv_cand), g_node->aq, Z(wv_ati));
+    mpz_add(Z(wv_cand), Z(wv_cand), g_node->rq);
     return taum_fail("walk_v", Z(wv_cand), count, tm);
 }
 
@@ -3221,7 +3219,7 @@ void walk_v(t_node *cur_node, mpz_t start) {
         else
             need_other[noc++] = vi;
     }
-    g_q0 = q[0];
+    g_node = cur_node;
 
 #if 0
     qsort(inv, inv_count, sizeof(t_mod), &inv_comparator);
