@@ -72,6 +72,7 @@ typedef enum {
     tfp_v,                      /* test_forcep */
     sqm_t, sqm_q, sqm_b, sqm_z, sqm_x,  /* sqrtmod_t */
     uc_minusvi, uc_px, uc_inv,  /* update_chinese */
+    br_res, br_mod,             /* batch_resclass */
     ur_a, ur_m, ur_ipg, ur_q,   /* update_residues */
     asq_o, asq_qq, asq_m,       /* alloc_square */
     wv_ati, wv_end, wv_cand,    /* walk_v */
@@ -3955,13 +3956,19 @@ bool update_residues(t_node *old, t_node *new,
     return 1;
 }
 
-/* Combine v_i == 0 (mod px) for the allocation of px = p^{x-1} at v_i
- * with old->rq, old->aq into new->rq, new->aq; returns FALSE if they
- * are inconsistent. p usually does not divide old->aq, but it may via
- * a modfix, a 2^0 tail (apply_null()) or a clashing -I pattern.
- * If fold is non-zero, v_i / px == fold (mod p), so we can combine
- * instead v_i == fold.px (mod p.px): see t_forcebatch.
- * p must not divide TYPE_MULT(i).
+/* Combine v_i == 0 (mod px) for an unforced allocation of px = p^{x-1}
+ * at v_i with old->rq, old->aq into new->rq, new->aq; returns FALSE if
+ * they are inconsistent. A forced batch gives its residue class via
+ * batch_resclass() instead.
+ * If fold is non-zero, it asserts that v_i / px == fold (mod p), so we can
+ * combine instead v_i == fold.px (mod p.px): see t_forcebatch.
+ * p usually does not divide old->aq, but it may via a modfix, a 2^0 tail
+ * (apply_null()) or a clashing -I pattern.
+ * We also require that p does not divide TYPE_MULT(i); for an unforced p
+ * that is guaranteed only as long as TYPE_t has no tails.
+ * A chunk of this code is essentially apply_resclass(), but since unforced
+ * primes are on the critical path during recursion there is value in doing
+ * more of the arithmetic in ulong for small moduli.
  */
 bool update_chinese(
     t_node *old, t_node *new, uint vi, ulong p, mpz_t px, uint fold
@@ -3996,6 +4003,38 @@ bool update_chinese(
     }
     return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p,
             *m, Z(uc_minusvi));
+}
+
+/* Combine d == res (mod m), m a power of p, with old->rq, old->aq into
+ * new->rq, new->aq; returns FALSE if they are inconsistent.
+ */
+static inline bool apply_resclass(
+    t_node *old, t_node *new, ulong p, mpz_t res, mpz_t m
+) {
+    /* chinese_ppow() needs m < 2^62 for invert_u64() */
+    if (mpz_cmp_ui(m, 1UL << 62) < 0)
+        return chinese_ppow(new->rq, new->aq, old->rq, old->aq, p,
+                mpz_get_ui(m), mpz_get_ui(res));
+    return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p, m, res);
+}
+
+/* Set (res, m) to the residue class of d that batch bi of forced prime
+ * fpi fixes: d == res (mod m), m a power of p. With p^e at the primary
+ * v_i, that is v_i == 0 (mod p^e), or v_i == fold.p^e (mod p^{e+1}) if
+ * it has a fold: see t_forcebatch. This derivation needs TYPE_MULT(i)
+ * to be 1; under TYPE_t the builder will record the class instead.
+ */
+void batch_resclass(mpz_t res, mpz_t m, uint fpi, uint bi) {
+    t_forcep *fp = &forcep[fpi];
+    t_forcebatch *bp = forcebatch_p(fp, bi);
+    uint vi = bp->primary;
+    assert(TYPE_MULT(vi) == 1);
+    mpz_ui_pow_ui(m, fp->p, bp->x[vi] - 1);
+    mpz_mul_ui(res, m, bp->fold);
+    if (bp->fold)
+        mpz_mul_ui(m, m, fp->p);
+    mpz_sub_ui(res, res, TYPE_OFFSET(vi));
+    mpz_mod(res, res, m);
 }
 
 /* An unforced allocation of p^e at one v_i fixes v_i / p^e (mod p)
@@ -4169,14 +4208,18 @@ bool apply_secondary(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     return 1;
 }
 
-bool apply_primary(
-    t_node *prev, t_node *cur, uint vi, ulong p, uint x, uint fold
-) {
+bool apply_primary(t_node *prev, t_node *cur, uint fpi, uint bi) {
+    t_forcep *fp = &forcep[fpi];
+    t_forcebatch *bp = forcebatch_p(fp, bi);
+    uint vi = bp->primary;
+    ulong p = fp->p;
+    uint x = bp->x[vi];
     apply_level(prev, cur, vi, p, x);
     mpz_ui_pow_ui(px, p, x - 1);
     /* this is wasted effort if x does not divide v_i.t, but we need it
      * for the alloc_square() calculation */
-    if (!update_chinese(prev, cur, vi, p, px, fold))
+    batch_resclass(Z(br_res), Z(br_mod), fpi, bi);
+    if (!apply_resclass(prev, cur, p, Z(br_res), Z(br_mod)))
         return 0;
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
@@ -4612,7 +4655,7 @@ bool apply_batch(
     cur_node->have_min = prev_node->have_min;
 
     uint ep = bp->x[vi] - 1;
-    if (!apply_primary(prev_node, cur_node, vi, fp->p, ep + 1, bp->fold))
+    if (!apply_primary(prev_node, cur_node, fpi, bi))
         return 0;
     vp = &value[vi];
     if (vp->alloc[ cur_vlevel[vi] - 1 ].t == 1)
@@ -5897,14 +5940,21 @@ void stack_drop(t_fact *s) {
  * range while that candidate was, but the maximum is now one less, which
  * can rule an allocation out along with everything beneath it. This and
  * limit_was_best() recognise the two ways that can happen.
+ * batch_is_best() is the same for batch bi of forced prime fpi.
  */
-bool least_is_best(
-    t_node *prev, t_node *cur, uint vi, ulong p, uint x, uint fold
-) {
+bool least_is_best(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     if (!improve_max || !seen_best)
         return 0;
     mpz_ui_pow_ui(px, p, x - 1);
-    return update_chinese(prev, cur, vi, p, px, fold)
+    return update_chinese(prev, cur, vi, p, px, single_fold(p))
+            && mpz_cmp(cur->rq, best) == 0;
+}
+
+bool batch_is_best(t_node *prev, t_node *cur, uint fpi, uint bi) {
+    if (!improve_max || !seen_best)
+        return 0;
+    batch_resclass(Z(br_res), Z(br_mod), fpi, bi);
+    return apply_resclass(prev, cur, forcep[fpi].p, Z(br_res), Z(br_mod))
             && mpz_cmp(cur->rq, best) == 0;
 }
 
@@ -6005,9 +6055,8 @@ bool insert_forced(
         else {
             *jump = IS_NEXT;
             applied = 0;
-            ruled_out = (!init && maxx && least_is_best(
-                prev_node, cur_node, mini, p, maxx, bp->fold
-            ));
+            ruled_out = (!init && maxx
+                    && batch_is_best(prev_node, cur_node, fpi, bi));
         }
     }
 
@@ -6102,9 +6151,7 @@ static inline bool insert_float(
     /* progress is shown just before we apply, so on recovery it is
      * legitimate for the last one to fail */
     if (!apply_single(prev_node, cur_node, vi, p, x)) {
-        if (!init && least_is_best(
-            prev_node, cur_node, vi, p, x, single_fold(p)
-        ))
+        if (!init && least_is_best(prev_node, cur_node, vi, p, x))
             stack_drop(stack);
         *jump = IS_NEXT;
         return 0;
