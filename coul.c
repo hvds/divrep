@@ -5932,7 +5932,11 @@ void stack_drop(t_fact *s) {
 }
 
 /* On recovery, true if p^{x-1} at v_i is out of range below prev only
- * because the least value it allows is the best candidate.
+ * because the least value it allows is the best candidate. To find that
+ * value it combines the allocation with prev's CRT into cur, which the
+ * caller has just failed to apply to and so serves as workspace: cur's
+ * rq and aq are left changed, and nothing may read them before a later
+ * apply sets them.
  *
  * A run finds a candidate beneath the allocations then in place, and stays
  * committed to them until it returns to each: the progress lines written
