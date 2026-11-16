@@ -3244,7 +3244,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
             mpz_t *qqj = &wv_qq[sqj];
             uint tj = t[sqj];
 
-            mpz_fdiv_q(Z(wv_endr), zmax, *qi);
+            mpz_add_ui(Z(wv_endr), zmax, TYPE_OFFSET(sqi));
+            mpz_fdiv_q(Z(wv_endr), Z(wv_endr), *qi);
             mpz_root(Z(wv_endr), Z(wv_endr), 2);
             /* solve Ax^2 - By^2 = C with x <= D */
             int sqoff = (sqi < sqj)
