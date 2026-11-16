@@ -5752,7 +5752,6 @@ static inline void gate_span(mpz_t r, uint vi) {
  * than recurse by allocating at v_i each prime after p up to limp.
  */
 bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
-    gate_span(Z(r_walk), vi);
     if (prev_node->have_square) {
         if (prev_node->have_square == 1) {
             /* Let rc be the number of residues. If we fix a square v_j, we
@@ -5763,6 +5762,7 @@ bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
             uint g = sqg[sql - 1];
             t_value *vp = &value[sq0];
             t_allocation *ap = &vp->alloc[sql - 1];
+            gate_span(Z(r_walk), sq0);
             mpz_fdiv_q(Z(r_walk), Z(r_walk), ap->q);
             mpz_root(Z(r_walk), Z(r_walk), g);
             mpz_mul_ui(Z(r_walk), Z(r_walk),
@@ -5780,6 +5780,7 @@ bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain2);
     } else {
         /* a step for each d in the range, that is mod aq */
+        gate_span(Z(r_walk), vi);
         mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_node->aq);
         if (TYPE_MULT(vi) != 1)
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), TYPE_MULT(vi));
