@@ -80,7 +80,7 @@ typedef enum {
     w1_v, w1_j, w1_r,           /* walk_1 */
     w1_m, w1_mr,
     lp_x, lp_mint, lp_mint2,    /* limit_p */
-    r_walk,                     /* recurse */
+    r_walk, gw_qq,              /* gate_walk */
     rec_cand, rec_lead, rec_trail,  /* recover */
     p3_base,                    /* parse_305 */
 
@@ -5734,19 +5734,29 @@ e_pux limit_unforced_x(
     return PUX_DO_THIS_X;
 }
 
+/* Set r to the span of v_i over the range searched: its greatest value,
+ * less (under LARGE_MIN) TYPE_MULT(i).zmin.
+ */
+static inline void gate_span(mpz_t r, uint vi) {
+    dtov(r, vi, zmax);
+#ifdef LARGE_MIN
+    /* needs zmin <= zmax */
+    if (TYPE_MULT(vi) != 1)
+        mpz_submul_ui(r, zmin, TYPE_MULT(vi));
+    else
+        mpz_sub(r, r, zmin);
+#endif
+}
+
 /* The gate: true if the gain heuristics say to walk prev_node, rather
  * than recurse by allocating at v_i each prime after p up to limp.
  */
 bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
-    mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
-#ifdef LARGE_MIN
-    /* needs zmin <= zmax */
-    mpz_sub(Z(r_walk), Z(r_walk), zmin);
-#endif
+    gate_span(Z(r_walk), vi);
     if (prev_node->have_square) {
         if (prev_node->have_square == 1) {
-            /* Let rc be the number of residues. If we fix a square, we will
-             * test rc of each a_q / q_i window up to (zmax / q_i)^{1/g};
+            /* Let rc be the number of residues. If we fix a square v_j, we
+             * will test rc of each qq_j window up to (v_j / q_j)^{1/g};
              * that's a lot of operations, but it does not obviously simplify.
              */
             uint sql = cur_vlevel[sq0];
@@ -5755,10 +5765,10 @@ bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
             t_allocation *ap = &vp->alloc[sql - 1];
             mpz_fdiv_q(Z(r_walk), Z(r_walk), ap->q);
             mpz_root(Z(r_walk), Z(r_walk), g);
-            mpz_mul(Z(r_walk), Z(r_walk), ap->q);
             mpz_mul_ui(Z(r_walk), Z(r_walk),
                     res_array(prev_node->level)->count);
-            mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_node->aq);
+            calc_qq(Z(gw_qq), sq0, prev_node->aq, ap->q);
+            mpz_fdiv_q(Z(r_walk), Z(r_walk), Z(gw_qq));
         } else {
             /* if we fix multiple squares, we'll solve a Pell equation;
              * treat that as effectively free */
@@ -5769,7 +5779,10 @@ bool gate_walk(t_node *prev_node, uint vi, ulong p, ulong limp) {
         if (antigain2 > 1)
             mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), antigain2);
     } else {
+        /* a step for each d in the range, that is mod aq */
         mpz_fdiv_q(Z(r_walk), Z(r_walk), prev_node->aq);
+        if (TYPE_MULT(vi) != 1)
+            mpz_fdiv_q_ui(Z(r_walk), Z(r_walk), TYPE_MULT(vi));
         if (gain > 1)
             mpz_mul_ui(Z(r_walk), Z(r_walk), gain);
         if (antigain > 1)
