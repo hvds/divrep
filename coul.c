@@ -4537,13 +4537,6 @@ void walk_midp(t_node *prev_node, bool recover) {
     cur_act->action = A_UNFORCED;
 }
 
-uint relative_valuation(uint i, ulong p, uint e) {
-    uint re = simple_valuation(TYPE_OFFSET(i), p);
-    if (re < e)
-        return re;
-    return e;
-}
-
 /* Unapply a fully or partially applied batch by decrementing the
  * relevant vlevels. 'count' should be k for a fully applied batch.
  */
@@ -5965,21 +5958,10 @@ bool insert_forced(
     }
 
     /* remove from stack */
-    if (maxx) {
-        stack_remove(stack, stack2, mini, p, maxx - 1);
-        for (uint j = 1; j <= mini; ++j) {
-            uint vj = mini - j;
-            uint e = relative_valuation(j, p, maxx - 1);
-            if (e)
-                stack_remove(stack, stack2, vj, p, e);
-        }
-        for (uint j = 1; mini + j < k; ++j) {
-            uint vj = mini + j;
-            uint e = relative_valuation(j, p, maxx - 1);
-            if (e)
-                stack_remove(stack, stack2, vj, p, e);
-        }
-    }
+    if (maxx)
+        for (uint vj = 0; vj < k; ++vj)
+            if (bp->x[vj])
+                stack_remove(stack, stack2, vj, p, bp->x[vj] - 1);
     if (ruled_out)
         stack_drop(stack);
     return applied;
