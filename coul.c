@@ -71,7 +71,7 @@ typedef enum {
     temp,
     tfp_v,                      /* test_forcep */
     sqm_t, sqm_q, sqm_b, sqm_z, sqm_x,  /* sqrtmod_t */
-    uc_minusvi, uc_px,          /* update_chinese */
+    uc_minusvi, uc_px, uc_inv,  /* update_chinese */
     ur_a, ur_m, ur_ipg, ur_q,   /* update_residues */
     asq_o, asq_qq, asq_m,       /* alloc_square */
     wv_ati, wv_end, wv_cand,    /* walk_v */
@@ -3955,17 +3955,20 @@ bool update_residues(t_node *old, t_node *new,
     return 1;
 }
 
-/* Combine v_0 == -i (mod px) for the allocation of px = p^{x-1} at v_i
+/* Combine v_i == 0 (mod px) for the allocation of px = p^{x-1} at v_i
  * with old->rq, old->aq into new->rq, new->aq; returns FALSE if they
  * are inconsistent. p usually does not divide old->aq, but it may via
  * a modfix, a 2^0 tail (apply_null()) or a clashing -I pattern.
  * If fold is non-zero, v_i / px == fold (mod p), so we can combine
- * instead v_0 == fold.px - i (mod p.px): see t_forcebatch.
+ * instead v_i == fold.px (mod p.px): see t_forcebatch.
+ * p must not divide TYPE_MULT(i).
  */
 bool update_chinese(
     t_node *old, t_node *new, uint vi, ulong p, mpz_t px, uint fold
 ) {
     ulong off = TYPE_OFFSET(vi);
+    if (TYPE_MULT(vi) != 1)
+        assert(TYPE_MULT(vi) % p);
     /* chinese_ppow() needs m < 2^62 for invert_u64() */
     if (mpz_cmp_ui(px, (1UL << 62) / p) < 0) {
         ulong m = mpz_get_ui(px);
@@ -3973,18 +3976,26 @@ bool update_chinese(
         if (fold)
             m *= p;
         s = (s + m - off % m) % m;
+        if (TYPE_MULT(vi) != 1)
+            s = mulmod_u64(s, ppow_invert(TYPE_MULT(vi), p, m), m);
         return chinese_ppow(new->rq, new->aq, old->rq, old->aq, p, m, s);
     }
     /* px > off, so fold.px - off is a valid residue, or px - off */
     mpz_mul_ui(Z(uc_minusvi), px, fold ? fold : 1);
     mpz_sub_ui(Z(uc_minusvi), Z(uc_minusvi), off);
+    mpz_t *m = PARAM_TO_PTR(px);
     if (fold) {
         mpz_mul_ui(Z(uc_px), px, p);
-        return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p,
-                Z(uc_px), Z(uc_minusvi));
+        m = ZP(uc_px);
+    }
+    if (TYPE_MULT(vi) != 1) {
+        mpz_set_ui(Z(uc_inv), TYPE_MULT(vi));
+        mpz_invert(Z(uc_inv), Z(uc_inv), *m);
+        mpz_mul(Z(uc_minusvi), Z(uc_minusvi), Z(uc_inv));
+        mpz_mod(Z(uc_minusvi), Z(uc_minusvi), *m);
     }
     return chinese_ppow_z(new->rq, new->aq, old->rq, old->aq, p,
-            px, Z(uc_minusvi));
+            *m, Z(uc_minusvi));
 }
 
 /* An unforced allocation of p^e at one v_i fixes v_i / p^e (mod p)
@@ -5562,9 +5573,9 @@ static inline bool reject_square(uint vi, ulong p, sint d, ulong endr) {
 #endif
 }
 
-/* aq and rq of prev, mod m, given mr = recip_u64(m) */
+/* aq and rq of prev times TYPE_MULT(i), mod m, given mr = recip_u64(m) */
 static inline void reject_mod(
-    t_node *prev, bool limb, ulong m, ulong mr, ulong *am, ulong *rm
+    t_node *prev, bool limb, uint vi, ulong m, ulong mr, ulong *am, ulong *rm
 ) {
     if (limb) {
         *am = modrecip_u64(mpz_getlimbn(prev->aq, 0), m, mr);
@@ -5573,13 +5584,18 @@ static inline void reject_mod(
         *am = mpz_fdiv_ui(prev->aq, m);
         *rm = mpz_fdiv_ui(prev->rq, m);
     }
+    if (TYPE_MULT(vi) != 1) {
+        *am = mulmod_u64(*am, TYPE_MULT(vi), m);
+        *rm = mulmod_u64(*rm, TYPE_MULT(vi), m);
+    }
 }
 
 /* Returns true if allocating p^{x-1} at v_i over prev is sure to be
- * rejected for v_0 > zmax, or false if uncertain. The caller checks
+ * rejected for d > zmax, or false if uncertain. The caller checks
  * that p is odd, and that reject_prep() set cur_act->rj_ok.
- * The CRT gives v_0 = rq + mult.aq, where 0 <= mult < p^{x-1} and
- *   mult == -(rq + i) / aq (mod p^{x-1}).
+ * The CRT gives d = rq + mult.aq, where 0 <= mult < p^{x-1} and, with
+ * a = TYPE_MULT(i) and c = TYPE_OFFSET(i),
+ *   mult == -(c + a.rq) / a.aq (mod p^{x-1}).
  * Taken mod p, that gives mult0 = mult % p from an inverse mod p alone;
  * mult >= mult0, so mult0 > rj_mult is enough to reject. Otherwise
  * we need more of mult: for p^2 its other digit base p comes from the
@@ -5594,7 +5610,7 @@ static inline bool reject_single(
     ulong off = TYPE_OFFSET(vi), am, rm;
     if (p < (1UL << 31)) {
         ulong pr = recip_u64(p);
-        reject_mod(prev, cur_act->rj_limb, p, pr, &am, &rm);
+        reject_mod(prev, cur_act->rj_limb, vi, p, pr, &am, &rm);
         if (am == 0)
             return 0;
         ulong inv = invert_u32(am, p);
@@ -5614,7 +5630,7 @@ static inline bool reject_single(
              * mult1 == ((c - aq.mult0) / p) / aq (mod p).
              */
             ulong m = p * p, am0 = am;
-            reject_mod(prev, cur_act->rj_limb, m, recip_u64(m), &am, &rm);
+            reject_mod(prev, cur_act->rj_limb, vi, m, recip_u64(m), &am, &rm);
             c = (off < m ? off : off % m) + rm;
             if (c >= m)
                 c -= m;
@@ -5641,7 +5657,7 @@ static inline bool reject_single(
     }
     if (m >= (1UL << 61) || m <= cur_act->rj_mult)
         return 0;
-    reject_mod(prev, cur_act->rj_limb, m, recip_u64(m), &am, &rm);
+    reject_mod(prev, cur_act->rj_limb, vi, m, recip_u64(m), &am, &rm);
     if (am % p == 0)
         return 0;
     ulong c = (off % m + rm) % m;

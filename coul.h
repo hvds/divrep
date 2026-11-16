@@ -155,7 +155,7 @@ typedef struct s_node {
     uint *pfreev;   /* bit vector of available primes */
     uint fp_need;   /* bitvector of forcedp still to apply */
     mpz_t aq;       /* running LCM of allocated p^x */
-    mpz_t rq;       /* running CRT of (-i) % p^x */
+    mpz_t rq;       /* d == rq (mod aq), from the allocations */
 } t_node;
 extern t_node *nodes;
 extern uint cur_batch_level;
