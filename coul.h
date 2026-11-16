@@ -18,18 +18,20 @@ void report(char *format, ...);
  *   (if compiled with TYPE_r): tau(d + i) = tau(n + i), d <> n
  *   (if compiled with TYPE_t): tau(n + di) = tau(n)
  * (TYPE_t not yet supported.)
- * For each type, v_i = d + TYPE_OFFSET(i) is the value at position i,
- * target_t(i) is the tau it must have, and target_lcm is the lcm of
- * those targets.
+ * For each type, v_i = TYPE_MULT(i).d + TYPE_OFFSET(i) is the value at
+ * position i, target_t(i) is the tau it must have, and target_lcm is
+ * the lcm of those targets.
  */
 extern uint n;
 #if defined(TYPE_o)
     static inline char typename(void) { return 'o'; }
+    static inline uint TYPE_MULT(uint i) { return 1; }
     static inline uint TYPE_OFFSET(uint i) { return i; }
     static inline uint target_t(uint vi) { return n; }
 #   define target_lcm (n)
 #elif defined(TYPE_a)
     static inline char typename(void) { return 'a'; }
+    static inline uint TYPE_MULT(uint i) { return 1; }
     static inline uint TYPE_OFFSET(uint i) { return i * n; }
     static inline uint target_t(uint vi) { return n; }
 #   define target_lcm (n)
@@ -37,6 +39,7 @@ extern uint n;
     extern uint *target_tau;
     extern uint target_lcm;
     static inline char typename(void) { return 'r'; }
+    static inline uint TYPE_MULT(uint i) { return 1; }
     static inline uint TYPE_OFFSET(uint i) { return i; }
     static inline uint target_t(uint vi) { return target_tau[vi]; }
 #else

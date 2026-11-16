@@ -527,6 +527,47 @@ static inline uint test_multi_run(tau_failure_handler tfh) {
     return tau_multi_run(tm_count, tfh);
 }
 
+/* Set v to v_i for the given d. */
+static inline void dtov(mpz_t v, uint vi, mpz_t d) {
+    if (TYPE_MULT(vi) == 1)
+        mpz_add_ui(v, d, TYPE_OFFSET(vi));
+    else {
+        mpz_mul_ui(v, d, TYPE_MULT(vi));
+        mpz_add_ui(v, v, TYPE_OFFSET(vi));
+    }
+}
+
+/* Set d to the greatest d with v_i <= v. Returns TRUE if v_i is v for
+ * that d, so that a caller can test d against a bound before rejecting
+ * a v that no d gives.
+ */
+static inline bool vtod(mpz_t d, uint vi, mpz_t v) {
+    mpz_sub_ui(d, v, TYPE_OFFSET(vi));
+    if (TYPE_MULT(vi) == 1)
+        return 1;
+    return mpz_fdiv_q_ui(d, d, TYPE_MULT(vi)) == 0;
+}
+
+/* Given d == rq (mod aq) and q_i dividing v_i, v_i / q_i == o (mod qq):
+ * calc_o() sets o, calc_qq() sets qq = TYPE_MULT(i).aq / q_i. That q_i
+ * divides both follows from the allocations; it is checked where
+ * TYPE_MULT(i) > 1.
+ */
+static inline void calc_o(mpz_t o, uint vi, mpz_t rq, mpz_t q) {
+    dtov(o, vi, rq);
+    if (TYPE_MULT(vi) != 1)
+        assert(mpz_divisible_p(o, q));
+    mpz_divexact(o, o, q);
+}
+static inline void calc_qq(mpz_t qq, uint vi, mpz_t aq, mpz_t q) {
+    if (TYPE_MULT(vi) != 1) {
+        mpz_mul_ui(qq, aq, TYPE_MULT(vi));
+        assert(mpz_divisible_p(qq, q));
+        mpz_divexact(qq, qq, q);
+    } else
+        mpz_divexact(qq, aq, q);
+}
+
 uint know_target(uint vi) {
 #if defined(TYPE_r)
     t_fact f;
@@ -777,7 +818,7 @@ uint write_fact(t_sizedstr *bufp, mpz_t v, uint target) {
 
 bool report_211(uint vi, t_sizedstr *bufp) {
     /* 211 Sequence  0:  4 = tau(1248619267217398415 = 5.249723853443479683) */
-    mpz_add_ui(Z(temp), best, TYPE_OFFSET(vi));
+    dtov(Z(temp), vi, best);
     uint target = know_target(vi);
     uint t = write_fact(bufp, Z(temp), target);
     report("211 Sequence %d: %d = tau(%Zu = %s)\n",
@@ -1015,7 +1056,7 @@ void updated_zmax(void) {
                     t_allocation *ap = &v->alloc[ai];
                     if (!ispow2_u64(ap->t))
                         continue;
-                    mpz_add_ui(ap->lim, zmax, TYPE_OFFSET(vi));
+                    dtov(ap->lim, vi, zmax);
                     if (ap->t > 1) {
                         mpz_fdiv_q(ap->lim, ap->lim, ap->q);
                         mpz_root(ap->lim, ap->lim, divisors[ap->t].sumpm);
@@ -2423,11 +2464,8 @@ bool alloc_square(t_node *cur, uint vi) {
     /* if this is first square, store in the level for further propagation;
      * else use level 0 as temporary */
     uint stash_level = (sqi == 0) ? cur->level : 0;
-    /* o = (rq + i) / q */
-    mpz_add_ui(Z(asq_o), cur->rq, TYPE_OFFSET(vi));
-    mpz_divexact(Z(asq_o), Z(asq_o), ap->q);
-    /* qq = aq / q */
-    mpz_divexact(Z(asq_qq), cur->aq, ap->q);
+    calc_o(Z(asq_o), vi, cur->rq, ap->q);
+    calc_qq(Z(asq_qq), vi, cur->aq, ap->q);
 
     allzrootmod(stash_level, Z(asq_o), g, Z(asq_qq));
     t_results *rp = res_array(stash_level);
@@ -3197,9 +3235,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
         uint vlevel = cur_vlevel[vi];
         q[vi] = &vp->alloc[vlevel - 1].q;
         t[vi] = vp->alloc[vlevel - 1].t;
-        mpz_divexact(wv_qq[vi], *aq, *q[vi]);
-        mpz_add_ui(wv_o[vi], *m, TYPE_OFFSET(vi));
-        mpz_divexact(wv_o[vi], wv_o[vi], *q[vi]);
+        calc_o(wv_o[vi], vi, *m, *q[vi]);
+        calc_qq(wv_qq[vi], vi, *aq, *q[vi]);
         for (uint ai = 1; ai < vlevel; ++ai) {
             t_allocation *ap = &vp->alloc[ai];
             /* No inverse exists if p | aq / q_i, when the CRT has already
@@ -3268,8 +3305,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
 
             /* FIXME: handle recovery too */
             if (mpz_cmp_ui(zmin, 0) > 0) {
-                /* v_0 > zmin needs x^2 > (zmin + i) / q_i, rounded down */
-                mpz_add_ui(Z(temp), zmin, TYPE_OFFSET(sqi));
+                /* d > zmin needs x^2 > v_i(zmin) / q_i, rounded down */
+                dtov(Z(temp), sqi, zmin);
                 mpz_fdiv_q(Z(temp), Z(temp), *qi);
                 mpz_sqrt(Z(temp), Z(temp));
                 while (next_pell(Z(wv_x), Z(wv_y))) {
@@ -3287,9 +3324,11 @@ void walk_v(t_node *cur_node, mpz_t start) {
 
                 /* verify limit */
                 mpz_mul(Z(wv_temp), Z(wv_x2), *qi);
-                mpz_sub_ui(Z(wv_temp), Z(wv_temp), TYPE_OFFSET(sqi));
+                bool exact = vtod(Z(wv_temp), sqi, Z(wv_temp));
                 if (mpz_cmp(Z(wv_temp), zmax) > 0)
                     break;  /* CHECKME: should this be an error? */
+                if (!exact)
+                    continue;
 
                 ++countwi;
                 ++pc;
@@ -3352,9 +3391,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
                 if (!test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure))
                     goto next_pell;
                 /* have candidate: calculate and apply it */
-                mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
-                mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
-                mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
+                mpz_mul(Z(wv_cand), *aq, Z(wv_ati));
+                mpz_add(Z(wv_cand), Z(wv_cand), *m);
                 if (candidate(Z(wv_cand)))
                     break;
 
@@ -3413,7 +3451,7 @@ void walk_v(t_node *cur_node, mpz_t start) {
         }
         mpz_sub(Z(wv_end), zmax, *m);
         mpz_fdiv_q(Z(wv_end), Z(wv_end), *aq);
-        mpz_add_ui(Z(wv_endr), zmax, TYPE_OFFSET(sqi));
+        dtov(Z(wv_endr), sqi, zmax);
         mpz_fdiv_q(Z(wv_endr), Z(wv_endr), *qi);
         mpz_root(Z(wv_endr), Z(wv_endr), xi);
 
@@ -3461,9 +3499,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
             if (!test_zmulti(need_other, noc, Z(wv_ati), t, walk_zv_failure))
                 goto next_sqati;
             /* have candidate: calculate and apply it */
-            mpz_mul(Z(wv_cand), wv_qq[0], Z(wv_ati));
-            mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
-            mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
+            mpz_mul(Z(wv_cand), *aq, Z(wv_ati));
+            mpz_add(Z(wv_cand), Z(wv_cand), *m);
             if (candidate(Z(wv_cand)))
                 return;
           next_sqati:
@@ -3503,9 +3540,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
                 goto next_ati;
         }
 #ifdef DEBUG_ALL
-        mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
-        mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
-        mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
+        mpz_mul_ui(Z(wv_cand), *aq, ati);
+        mpz_add(Z(wv_cand), Z(wv_cand), *m);
         gmp_fprintf(rfp, "D %Zu\n", Z(wv_cand));
         fflush(rfp);
 #endif
@@ -3517,9 +3553,8 @@ void walk_v(t_node *cur_node, mpz_t start) {
         if (!test_multi(need_other, noc, ati, t, walk_v_failure))
             goto next_ati;
         /* have candidate: calculate and apply it */
-        mpz_mul_ui(Z(wv_cand), wv_qq[0], ati);
-        mpz_add(Z(wv_cand), Z(wv_cand), wv_o[0]);
-        mpz_mul(Z(wv_cand), Z(wv_cand), *q[0]);
+        mpz_mul_ui(Z(wv_cand), *aq, ati);
+        mpz_add(Z(wv_cand), Z(wv_cand), *m);
         if (candidate(Z(wv_cand)))
             return;
       next_ati:
@@ -3544,10 +3579,11 @@ void walk_1(t_node *cur_node, uint vi) {
     }
 
     {
-        /* calculate v_0 */
+        /* calculate d */
         t_value *vip = &value[vi];
         t_allocation *aip = &vip->alloc[cur_vlevel[vi] - 1];
-        mpz_sub_ui(Z(w1_v), aip->q, TYPE_OFFSET(vi));
+        if (!vtod(Z(w1_v), vi, aip->q))
+            return;
     }
 
     if (mpz_cmp(Z(w1_v), zmin) <= 0)
@@ -3573,7 +3609,7 @@ void walk_1(t_node *cur_node, uint vi) {
         t_value *vjp = &value[vj];
         uint vjl = cur_vlevel[vj];
         t_allocation *ajp = &vjp->alloc[vjl - 1];
-        mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
+        dtov(Z(w1_j), vj, Z(w1_v));
         if (vjl > 1) {
             mpz_divexact(Z(w1_j), Z(w1_j), ajp->q);
             /* verify we don't double up on any allocated primes */
@@ -3627,8 +3663,8 @@ void walk_1_set(
     uint vil = cur_vlevel[vi];
     t_allocation *aip = &vip->alloc[vil - 1];
     if (mpz_sgn(zmin) > 0) {
-        /* v_0 > zmin needs p^{x-1} > (zmin + i) / q_i, rounded down */
-        mpz_add_ui(Z(temp), zmin, TYPE_OFFSET(vi));
+        /* d > zmin needs p^{x-1} > v_i(zmin) / q_i, rounded down */
+        dtov(Z(temp), vi, zmin);
         mpz_fdiv_q(Z(temp), Z(temp), aip->q);
         mpz_root(Z(temp), Z(temp), x - 1);
         if (!mpz_fits_ulong_p(Z(temp)))
@@ -3638,12 +3674,11 @@ void walk_1_set(
             plow = pmin;
     }
 
-    mpz_divexact(Z(w1_m), prev_node->aq, aip->q);
+    calc_qq(Z(w1_m), vi, prev_node->aq, aip->q);
     bool need_mod = (mpz_cmp_ui(Z(w1_m), 1) == 0) ? 0 : 1;
     if (need_mod) {
-        /* we need p == (rq + TYPE_OFFSET(vi)) / aip->q (mod aq / aip->q) */
-        mpz_add_ui(Z(w1_mr), prev_node->rq, TYPE_OFFSET(vi));
-        mpz_divexact(Z(w1_mr), Z(w1_mr), aip->q);
+        /* we need p^{x-1} == o_i (mod qq_i), see calc_o() */
+        calc_o(Z(w1_mr), vi, prev_node->rq, aip->q);
         mpz_fdiv_r(Z(w1_mr), Z(w1_mr), Z(w1_m));
     }
 
@@ -3690,7 +3725,8 @@ void walk_1_set(
                 continue;
         }
         mpz_mul(Z(w1_v), Z(w1_v), aip->q);
-        mpz_sub_ui(Z(w1_v), Z(w1_v), TYPE_OFFSET(vi));
+        if (!vtod(Z(w1_v), vi, Z(w1_v)))
+            continue;
         ++countw;
         if (check && !cvec_testv(cx0, Z(w1_v)))
             continue;
@@ -3699,7 +3735,7 @@ void walk_1_set(
             t_value *vjp = &value[vj];
             uint vjl = cur_vlevel[vj];
             t_allocation *ajp = &vjp->alloc[vjl - 1];
-            mpz_add_ui(Z(w1_j), Z(w1_v), TYPE_OFFSET(vj));
+            dtov(Z(w1_j), vj, Z(w1_v));
             mpz_fdiv_qr(Z(w1_j), Z(w1_r), Z(w1_j), ajp->q);
             if (mpz_sgn(Z(w1_r)) != 0)
                 goto reject_this_one;
@@ -3725,7 +3761,7 @@ void walk_1_set(
 }
 
 /* When some v_j is known to be of the form m.z^g, we keep a running set
- * of possible values of z: z == ((rq + i)/q_j)^{ 1/g } mod aq/q_j.
+ * of possible values of z: z == o_j^{1/g} (mod qq_j), see calc_o().
  * If no such residues exist, this returns FALSE to signal that this
  * case cannot lead to a solution.
  * For a batch allocation where we apply p^x at v_i and a secondary
@@ -3771,7 +3807,7 @@ bool update_residues(t_node *old, t_node *new,
 
         /* note: if this is the secondary of a batch, new may have
          * inappropriate values for this stage */
-        mpz_divexact(Z(ur_m), old->aq, vjp->alloc[jlevel - 1].q);
+        calc_qq(Z(ur_m), vj, old->aq, vjp->alloc[jlevel - 1].q);
         /* if this prime was already represented in the modulus,
          * get a downgraded copy of the residues and rebuild */
         uint aqe = 0;
@@ -3971,7 +4007,7 @@ bool apply_allocv(t_node *prev_node, t_node *cur_node,
     mpz_mul(cur->q, prev->q, px);
 
     if (highpow && ispow2_u64(cur->t)) {
-        mpz_add_ui(cur->lim, zmax, TYPE_OFFSET(vi));
+        dtov(cur->lim, vi, zmax);
         if (cur->t > 1) {
             mpz_fdiv_q(cur->lim, cur->lim, cur->q);
             mpz_root(cur->lim, cur->lim, divisors[cur->t].sumpm);
@@ -4309,7 +4345,7 @@ void prep_midp(t_node *prev_node) {
                 continue;
 
             /* find the limit of p for allocating p^{x-1} at v_i */
-            mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
+            dtov(Z(temp), vi, zmax);
             mintau_at(prev_node, Z(wv_cand), t / x, vi);
             mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
@@ -4584,8 +4620,8 @@ bool apply_batch(
         if (mpz_sgn(zmin)) {
             vp = &value[terminal];
             uint vlevel = cur_vlevel[terminal];
-            mpz_sub_ui(Z(temp), vp->alloc[vlevel - 1].q, TYPE_OFFSET(terminal));
-            if (mpz_cmp(Z(temp), zmin) <= 0)
+            if (!vtod(Z(temp), terminal, vp->alloc[vlevel - 1].q)
+                    || mpz_cmp(Z(temp), zmin) <= 0)
                 valid = 0;
         }
         if (valid) {
@@ -5245,7 +5281,7 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
     t_value *vp = &value[vi];
     uint vil = cur_vlevel[vi];
     t_allocation *ap = &vp->alloc[vil - 1];
-    mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
+    dtov(Z(lp_x), vi, zmax);
     mpz_div(Z(lp_x), Z(lp_x), ap->q);
 
     if (ispow2_u64(x)) {
@@ -5272,7 +5308,7 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
          * giving r >= 8(p^{x-1} - 1)/q_i so v_i >= 8 p^{x-1} (p^{x-1} - 1).
          * We can therefore constrain p : p < 1 + (zmax / 8)^{1 / (2(x-1))}.
          */
-        mpz_add_ui(Z(lp_x), zmax, TYPE_OFFSET(vi));
+        dtov(Z(lp_x), vi, zmax);
         mpz_fdiv_q_2exp(Z(lp_x), Z(lp_x), 3);
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
         mpz_add_ui(Z(lp_x), Z(lp_x), 1);
@@ -5419,7 +5455,7 @@ static ulong square_endr(t_node *np) {
     uint sql = cur_vlevel[sq0];
     if (sqg[sql - 1] != 2)
         return 0;
-    mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(sq0));
+    dtov(Z(temp), sq0, zmax);
     mpz_fdiv_q(Z(temp), Z(temp), value[sq0].alloc[sql - 1].q);
     mpz_sqrt(Z(temp), Z(temp));
     return mpz_fits_ulong_p(Z(temp)) ? mpz_get_ui(Z(temp)) : 0;
@@ -6272,7 +6308,7 @@ void run_flip_pqsq(uint vi) {
     t_allocation *ap = &vp->alloc[vil - 1];
 
     cur_act->x = xl;
-    mpz_add_ui(Z(r_walk), zmax, TYPE_OFFSET(vi));
+    dtov(Z(r_walk), vi, zmax);
     mpz_fdiv_q(Z(r_walk), Z(r_walk), ap->q);
     mpz_root(Z(r_walk), Z(r_walk), xl - 1);
     if (!mpz_fits_ulong_p(Z(r_walk)))
@@ -6299,7 +6335,7 @@ void run_flip_pqsq(uint vi) {
         ap = &vp->alloc[cur_vlevel[vi] - 1];
         if (need_work)
             diag_plain(cur_node);
-        mpz_add_ui(Z(temp), zmax, TYPE_OFFSET(vi));
+        dtov(Z(temp), vi, zmax);
         mpz_fdiv_q(Z(temp), Z(temp), ap->q);
         mpz_root(Z(temp), Z(temp), xs - 1);
         if (!mpz_fits_ulong_p(Z(temp)))
