@@ -112,8 +112,8 @@ speed: Makefile speed.c prime_iterator.c ${HFACTOR} ${MPUGMP}/gmp_main.c
 sq12 dsq12: Makefile sq12.c diag.c coultau.c coulfact.c prime_iterator.c diag.h coultau.h coulfact.h prime_iterator.h ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
-# coul.h may need a type
-test_pell test_tau: DEFINES += -DTYPE_o
+# coul.h needs a type
+test_pell test_tau ftest speed sq12: DEFINES += -DTYPE_o
 
 # The tests from t/t50 on are soak tests, each of a program of its own:
 # they take longer, and are for when we have changed what they test. Each

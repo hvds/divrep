@@ -48,12 +48,13 @@
  *   (if compiled with TYPE_t): tau(n + di) = tau(n)
  * (TYPE_t not yet supported.)
  */
+uint n, k;
+
 #define MAXK 66     /* nextprime(8 * sizeof(ulong)) - 1 */
 #if MAXK > 64 * DIS_WORDS
 #error "t_dis needs MAXK <= 64 * DIS_WORDS"
 #endif
 #define MAXK_KERN 64    /* under -k: positions are bits of a ulong */
-uint n, k;
 
 /* mpz_t passed as function parameter decays to pointer in a way that
  * allows it to be used as mpz_t, but cannot be converted to a pointer
@@ -114,10 +115,6 @@ uint div_count = 0;
 #if defined(TYPE_r)
     uint *target_tau = NULL;
     uint target_lcm;
-    static inline uint target_t(uint vi) { return target_tau[vi]; }
-#else
-#   define target_lcm (n)
-    static inline uint target_t(uint vi) { return n; }
 #endif
 
 /* For prime p < k, we "force" allocation of powers in a batch to ensure
@@ -528,28 +525,6 @@ static inline uint test_prime_run(uint first) {
 }
 static inline uint test_multi_run(tau_failure_handler tfh) {
     return tau_multi_run(tm_count, tfh);
-}
-
-#if defined(TYPE_o) || defined(TYPE_r)
-    static inline uint TYPE_OFFSET(uint i) {
-        return i;
-    }
-#elif defined(TYPE_a)
-    static inline uint TYPE_OFFSET(uint i) {
-        return i * n;
-    }
-#else
-#   error "No type defined"
-#endif
-
-static inline char typename(void) {
-#if defined(TYPE_o)
-    return 'o';
-#elif defined(TYPE_a)
-    return 'a';
-#elif defined(TYPE_r)
-    return 'r';
-#endif
 }
 
 uint know_target(uint vi) {
@@ -2617,7 +2592,7 @@ void init_post(void) {
     if (debugf)
         disp_forcep();
     prep_primes();  /* needs forcedp */
-    prep_mintau(target_lcm);
+    prep_mintau();
     sqg = malloc(maxfact * sizeof(uint));
 
     uint maxmidpp = 0;
@@ -6837,7 +6812,7 @@ int main(int argc, char **argv, char **envp) {
         uint *tt = calloc(k, sizeof(uint));
         for (uint i = 0; i < k; ++i)
             tt[i] = target_t(i);
-        cx0 = cvec_init(n, k, &zmin, tt);
+        cx0 = cvec_init(k, &zmin, tt);
 
         for (uint mfi = 0; mfi < modfix_count; ++mfi) {
             t_modfix *mfp = &modfix[mfi];

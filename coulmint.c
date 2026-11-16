@@ -9,9 +9,6 @@
 /* from coul.c */
 extern bool debugm;
 
-/* copy of coul.c's target_lcm, set by prep_mintau() */
-static uint target_lcm;
-
 /* additional arrays of mpz_t initialized once at start */
 mpz_t *mint_best, *mint_px; /* size mint_maxdepth */
 
@@ -118,8 +115,7 @@ static uint mint_depth(void) {
     return divisors[target_lcm / p].sumpm;
 }
 
-void prep_mintau(uint lcm) {
-    target_lcm = lcm;
+void prep_mintau(void) {
     mint_init_base(&mint_base);
 
     restricted_count = 0;

@@ -45,7 +45,6 @@ typedef struct s_cvec {
 /* typedef struct s_context t_context (in header) */
 /* constraints for all moduli */
 struct s_context {
-    uint n;
     uint k;
     mpz_t *min;         /* requested minimum d, passed in */
     uint *target_t;     /* vector of (remaining) tau */
@@ -73,27 +72,14 @@ t_suppress *suppress_stack = NULL;
 uint suppress_count = 0;
 uint suppress_size = 0;
 
-#if defined(TYPE_o) || defined(TYPE_r)
-    static inline uint TYPE_OFFSET(t_context *cx, uint i) {
-        return i;
-    }
-#elif defined(TYPE_a)
-    static inline uint TYPE_OFFSET(t_context *cx, uint i) {
-        return i * cx->n;
-    }
-#else
-#   error "No type defined"
-#endif
-
 void *mem_dup(void *src, uint size) {
     void *dest = malloc(size);
     memcpy(dest, src, size);
     return dest;
 }
 
-t_context *cvec_init(uint n, uint k, mpz_t *min, uint *target_t) {
+t_context *cvec_init(uint k, mpz_t *min, uint *target_t) {
     t_context *cx = malloc(sizeof(t_context));
-    cx->n = n;
     cx->k = k;
     cx->min = min;
     cx->target_t = target_t;
@@ -200,7 +186,6 @@ t_cvec **vec_dup(t_cvec **src, uint size) {
 
 t_context *ctx_dup(t_context *cx) {
     t_context *cy = malloc(sizeof(t_context));
-    cy->n = cx->n;
     cy->k = cx->k;
     cy->min = cx->min;
     cy->target_t = cx->target_t;
@@ -556,7 +541,7 @@ void apply_m(t_context *cx, uint m, t_fact *fm) {
     }
     uint mr = m / r;
     for (uint i = 0; i < cx->k; ++i) {
-        uint di = TYPE_OFFSET(cx, i);
+        uint di = TYPE_OFFSET(i);
         uint ti = cx->target_t[i];
         /* tau(mx) > tau(m) for all x > 1 */
         /* TODO: if ti == tm, then walk_1() and suppress anyway */

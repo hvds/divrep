@@ -12,6 +12,37 @@ void fail(char *format, ...);
 void fail_silent(void);
 void report(char *format, ...);
 
+/* We are searching for f(n, k), the least d such that for all 0 <= i < k:
+ *   (if compiled with TYPE_o): tau(d + i) = n
+ *   (if compiled with TYPE_a): tau(d + in) = n
+ *   (if compiled with TYPE_r): tau(d + i) = tau(n + i), d <> n
+ *   (if compiled with TYPE_t): tau(n + di) = tau(n)
+ * (TYPE_t not yet supported.)
+ * For each type, v_i = d + TYPE_OFFSET(i) is the value at position i,
+ * target_t(i) is the tau it must have, and target_lcm is the lcm of
+ * those targets.
+ */
+extern uint n;
+#if defined(TYPE_o)
+    static inline char typename(void) { return 'o'; }
+    static inline uint TYPE_OFFSET(uint i) { return i; }
+    static inline uint target_t(uint vi) { return n; }
+#   define target_lcm (n)
+#elif defined(TYPE_a)
+    static inline char typename(void) { return 'a'; }
+    static inline uint TYPE_OFFSET(uint i) { return i * n; }
+    static inline uint target_t(uint vi) { return n; }
+#   define target_lcm (n)
+#elif defined(TYPE_r)
+    extern uint *target_tau;
+    extern uint target_lcm;
+    static inline char typename(void) { return 'r'; }
+    static inline uint TYPE_OFFSET(uint i) { return i; }
+    static inline uint target_t(uint vi) { return target_tau[vi]; }
+#else
+#   error "No type defined"
+#endif
+
 /* 'divisors[i].div' is a list of divisors of 'i' in descending order of
  * highest prime factor, then ascending. 'high' is the highest prime
  * factor of 'i'; 'alldiv' is the number of factors; 'highdiv' is the

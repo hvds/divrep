@@ -4,7 +4,7 @@
 
 typedef struct s_context t_context;
 
-t_context *cvec_init(uint n, uint k, mpz_t *min, uint *target_t);
+t_context *cvec_init(uint k, mpz_t *min, uint *target_t);
 void ctx_free(t_context *cx);
 t_context *ctx_dup(t_context *cx);
 void cvec_done(t_context *cx);
