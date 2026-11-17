@@ -136,8 +136,8 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   and so requires p not to divide it. A forced batch instead gives the
   residue class of d it fixes by `batch_resclass()`, combined by
   `apply_resclass()`; nothing else derives a batch's class from its
-  primary, power and fold. (`batch_resclass()` needs a_i = 1 at the
-  primary; under TYPE_t the batch builder is to record the class.)
+  primary, power and fold, or from what the batch records (`dv`, `cls`):
+  under TYPE_t a batch can fix a class that no allocation implies.
 - **have_square (g'th-power tracking)**: a position is forced to be an
   exact g'th power when every possible way of completing its target
   divisor count uses exponents that share a common factor g > 1
@@ -530,9 +530,17 @@ actually used, more reliable than reconstructing it from other sources.
   allocation from here on is not itself forced/tracked as a batch";
   it does NOT mean the prime is unavailable.
   Such a prime is then allocated unforced, through `update_chinese()`,
-  which is safe only if p does not divide a_i: a reason any future type
-  with a_i > 1 (TYPE_t) must not generate tails without its batches
-  recording their residue classes.
+  which is safe only if p does not divide a_i: so pctul (TYPE_t, where
+  a_i = i + 1) has no tails.
+- **pctul's forced primes**: every p <= true_k and every p | n, with
+  batches from `tseq_batches()`, not `test_forcep()`. A batch that
+  allocates nothing but settles its prime (p | d for p not dividing n)
+  has x[0] = 1, and patterns show it as `p^0` at v_0, so that recovery
+  can rebuild every forced level; `level_batch()` finds the batch of a
+  forced level, which keeps `A_FORCED` under -I. The builder drops a
+  batch that holds no d (`tseq_single()` for a completed position, and
+  for odd p up to `TSEQ_QRMAX` a square cofactor with no residue mod p),
+  then sorts them into pcoul's order (`tseq_comparator()`), p^0 last.
 - **`keep_single`** is true (suppressing the tail for that prime) when
   `p <= force_all` (the `-f` CLI option), or - specifically for
   `TYPE_o` - whenever `n & 3` is nonzero (i.e. `n` is *not* divisible
