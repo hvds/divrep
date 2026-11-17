@@ -41,6 +41,36 @@ for my $N (-4 .. -1, 1 .. 4) {
     diag($_) for @bad;
 }
 
+# pctul's equations a_j.q_i x^2 - a_i.q_j y^2 = n.(i - j) have a large N,
+# with as many divisors as n gives it: the shared factors of x and y are
+# found among them.
+my @coeff_t = (1, 2, 3, 4, 5, 6, 8, 9, 12, 13, 26, 49, 98, 101);
+for my $N (49, -98, 1440, -2880, 7560, 323, -1292, 9699690, -999983,
+        2147483646) {
+    my($count, @bad) = (0);
+    for my $A (@coeff_t) {
+        for my $D (@coeff_t) {
+            my %want;
+            for my $x (1 .. $limit) {
+                my $y2 = $A * $x * $x - $N;
+                next if $y2 <= 0 || $y2 % $D;
+                $y2 /= $D;
+                my $y = int(sqrt($y2) + 0.5);
+                $want{"$x, $y"} = 1 if $y * $y == $y2;
+            }
+            my %got = map +($_ => 1),
+                    `$prog $A $D $N $limit` =~ /^solution \((.*)\)$/mg;
+            $count += keys %want;
+            my $lost = grep !$got{$_}, keys %want;
+            my $extra = grep !$want{$_}, keys %got;
+            push @bad, "${A}x^2 - ${D}y^2 = $N: missed $lost, wrong $extra"
+                    if $lost || $extra;
+        }
+    }
+    ok(!@bad, "all $count solutions found for N = $N");
+    diag($_) for @bad;
+}
+
 # Beyond what trying every x can reach: v+1 = 2x^2, v+4 = 5y^2. With
 # X = 2x, X^2 - 10y^2 = -6 has two classes of solutions, each stepped
 # by the unit 19 + 6 sqrt(10).
