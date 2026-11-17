@@ -86,6 +86,7 @@ typedef enum {
     r_walk, gw_qq,              /* gate_walk */
     rec_cand, rec_lead, rec_trail,  /* recover */
     p3_base,                    /* parse_305 */
+    dp_d,                       /* tseq_completer */
     ts_v, ts_d, ts_p,           /* tseq_single */
 
     dm_r,                       /* divmod */
@@ -388,6 +389,8 @@ bool seen_valid = 0;    /* if nothing seen, this case has no solutions */
  * a Pell walk.
  */
 bool defer_pell = 0;
+/* under TYPE_t, search (n, k) even if it depends on a smaller n (-jd) */
+bool search_dependent = 0;
 uint strategy;          /* best_v() strategy */
 uint strategy_set = 0;  /* strategy was user-selected */
 uint prev_strategy;     /* for special-case strategy override */
@@ -1991,6 +1994,8 @@ void recover(FILE *fp) {
             ;   /* comment */
         else if (strncmp("203 ", curbuf, 4) == 0)
             ;   /* batch number */
+        else if (strncmp("313 ", curbuf, 4) == 0)
+            ;   /* warning, see check_dependent() */
         else
             fail("unexpected log line %.3s in %s", curbuf, rpath);
     }
@@ -3310,6 +3315,103 @@ void check_exceptions(void) {
     }
 }
 
+#if defined(TYPE_t)
+/* Under TYPE_t, true if the only batch of p for f(nv, true_k) with target
+ * tau t that completes no position (one that does holds a single d, and
+ * is tested as such: see tseq_completer()) is the plain batch of level e,
+ * the power of p in nv, that fixes d == 0 (mod p^{e+1}).
+ */
+static bool tseq_fixes(ulong p, uint nv, uint t) {
+    uint e = simple_valuation(nv, p);
+    t_forcebatch *fbp = malloc(tseq_maxbatch(p, nv, t) * size_forcebatch());
+    uint count = tseq_batches(fbp, p, nv, t);
+    uint live = 0;
+    bool found = 0;
+    for (uint bi = 0; bi < count; ++bi) {
+        t_forcebatch *bp = tseq_batch(fbp, bi);
+        bool complete = 0;
+        for (uint vi = 0; vi < k; ++vi)
+            if (bp->x[vi] == t)
+                complete = 1;
+        if (complete)
+            continue;
+        ++live;
+        if (bp->cls == 0 && bp->dv == e)
+            found = 1;
+    }
+    free(fbp);
+    return live == 1 && found;
+}
+
+/* Under TYPE_t, the d of the batches of p that complete a position, for
+ * f(nv, true_k) with target tau t: each puts exactly p^{t-1} at some v_i,
+ * so d = (p^{t-1} - nv) / a_i. Returns a d that is a solution, and if div
+ * is set not divisible by p, or 0 if there is none.
+ * FIXME: the values tested can be large when p and t are, and is_taux()
+ * then slow; we accept a slow start.
+ */
+static ulong tseq_completer(ulong p, uint nv, uint t, bool div) {
+    for (uint vi = 0; vi < k; ++vi) {
+        mpz_ui_pow_ui(Z(temp), p, t - 1);
+        if (mpz_cmp_ui(Z(temp), nv) <= 0)
+            continue;
+        mpz_sub_ui(Z(temp), Z(temp), nv);
+        if (!mpz_divisible_ui_p(Z(temp), TYPE_MULT(vi)))
+            continue;
+        mpz_divexact_ui(Z(dp_d), Z(temp), TYPE_MULT(vi));
+        if (div && mpz_divisible_ui_p(Z(dp_d), p))
+            continue;
+        bool good = 1;
+        for (uint vj = 0; vj < k && good; ++vj) {
+            mpz_mul_ui(Z(temp), Z(dp_d), TYPE_MULT(vj));
+            mpz_add_ui(Z(temp), Z(temp), nv);
+            good = is_taux(Z(temp), t, 1);
+        }
+        if (good)
+            return mpz_fits_ulong_p(Z(dp_d)) ? mpz_get_ui(Z(dp_d)) : 1;
+    }
+    return 0;
+}
+
+/* Under TYPE_t, check whether f(n, k) depends on a smaller case. If for
+ * some p^e exactly dividing n the batches of p leave only d == 0 (mod
+ * p^{e+1}), every solution is p^e times a solution for f(n / p^e, k) that
+ * is divisible by p; if also the batches of p for n / p^e leave only
+ * d == 0 (mod p), the solutions correspond and f(n, k) = p^e.f(n / p^e, k).
+ * Then unless -jd says to search regardless, report as the perl code does
+ * and stop; in the first case alone, warn of the lower bound. Either way
+ * a batch that completes a position is tested for a solution first.
+ */
+void check_dependent(void) {
+    uint t = target_lcm;
+    for (uint i = 0; i < nf.count; ++i) {
+        ulong p = nf.ppow[i].p;
+        uint e = nf.ppow[i].e;
+        ulong pe = 1;
+        for (uint j = 0; j < e; ++j)
+            pe *= p;
+        uint nd = n / pe;
+        if (nd == 1)
+            continue;
+        if (!tseq_fixes(p, n, t) || tseq_completer(p, n, t, 0))
+            continue;
+        uint td = t / (e + 1);
+        if (tseq_fixes(p, nd, td) && !tseq_completer(p, nd, td, 1)) {
+            if (search_dependent)
+                continue;
+            report("201 Dependent - %u:%lu f(%u) # fix %lu\n",
+                    true_k, pe, nd, pe);
+            done();
+            exit(0);
+        }
+        report("313 Partly dependent: each solution is %lu.d with d a"
+                " solution for f(%u, %u) divisible by %lu, so f(%u, %u) >="
+                " %lu.f(%u, %u)\n",
+                pe, nd, true_k, p, n, true_k, pe, nd, true_k);
+    }
+}
+#endif
+
 void init_post(void) {
     init_cycles();
     init_tau(rough, opt_flake);
@@ -3489,6 +3591,8 @@ void report_init(FILE *fp, char *prog) {
     }
     if (kern_b)
         fprintf(fp, " -k%lu", kern_b);
+    if (search_dependent)
+        fprintf(fp, " -jd");
     if (force_all)
         fprintf(fp, " -f%u", force_all);
     if (unforce_all) {
@@ -7956,6 +8060,8 @@ int main(int argc, char **argv, char **envp) {
         else if (arg[1] == 'j') {
             if (arg[2] == 'p')
                 defer_pell = 1;
+            else if (arg[2] == 'd')
+                search_dependent = 1;
             else if (arg[2] == 's') {
                 set_fixed_strategy(&arg[3]);
             } else {
@@ -8041,6 +8147,9 @@ int main(int argc, char **argv, char **envp) {
         if (!check)
             check = 1;
     }
+#if defined(TYPE_t)
+    check_dependent();
+#endif
     prep_presquare();
 
     e_is jump = IS_DEEPER;
