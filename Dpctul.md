@@ -12,7 +12,9 @@ marked **[verify]** are my reading of the code and must be checked
 before being relied on.
 
 Stages 0 to 2 are on master (5a553ae..f98cbb5, 2026-11-16/17),
-and their record is in section 8 ("As done"). Where the code differs
+and their record is in section 8 ("As done"). Stage 3 was written over
+f98cbb5 (2026-11-17), delivered as patches; its record follows stage 3
+in section 8. Where the code differs
 from what is written below for those stages, the record says so; the
 names in sections 4 and 5 are now those of the code.
 
@@ -1110,6 +1112,63 @@ Done when: the tests pass, the soak test passes and is shown to
 fail on a broken build, and `inject -yt -n` agrees on each value
 found (**[verify]** that inject takes type t without a database).
 
+### As done: stage 3 (2026-11-17)
+
+Over f98cbb5, in order:
+
+- pc?ul: a batch may record its residue class
+- pctul: tau(n + id) = tau(n), for tau(n) a power of 2
+- pctul: stop at a dependent (n, k)
+- tests: pctul
+- skills: pcoul-internals on pctul batches
+
+How it differs from the text above:
+
+- `t_forcebatch` has `dv` and `cls`, with `cls` one of a class r,
+  `CLS_ANY` (d == 0 (mod p^dv)) or `CLS_PRIMARY`. Every pc[oar]ul batch
+  is `CLS_PRIMARY`, and so is every pctul batch with an extra power:
+  `batch_resclass()` derives their class from primary, power and fold
+  as before, then divides p^g out of the class and the modulus (g the
+  power of p in a_i) and multiplies by the inverse of a_i / p^g. That
+  is the class of 4.5 for an extra-power batch, so it needs no field.
+  Only plain batches record a class.
+- A batch that allocates nothing has x[0] = 1 (p^0 at v_0), which
+  keeps `is_tail()` false; `apply_unalloc()` applies it and marks its
+  prime used for mintau(). `unapply_batch()` and the secondaries loop
+  treat x <= 1 as no allocation (the same for pc[oar]ul, where x is
+  never 1). The batch of a forced level is found by `level_batch()`:
+  a level is forced just when it clears a bit of `fp_need`.
+- `target_t()` returns a scalar `target_lcm` = tau(n), not TYPE_r's
+  array (hv: fine as a precomputed variable).
+- The exclusion of 4.6 is added in `walk_v()` for each level whose
+  batch has x[0] = 1, `CLS_ANY` and p | n: that is exactly the case
+  where no allocation of p exists to exclude d divisible by p.
+- `-fr` is supported (hv): the builder applies the same test to the
+  primary's power as `prep_forcep()` does.
+- New codes: 313 for the warning of 4.12 (hv to validate the wording):
+  `313 Partly dependent: each solution is P.d with d a solution for
+  f(N', k) divisible by p, so f(n, k) >= P.f(N', k)`; and 524 for p^0
+  of a number that is not prime in a pattern. `recover()` passes over
+  313 lines.
+- The completing batches of 4.12 are tested by `is_taux()` at every
+  position, which can be slow when p and tau(n) are large; flagged
+  FIXME in the code (hv: accept).
+- The exceptions are checked before the refusal of tau(n) not a power
+  of 2, so that f(243, 5) reports 403.
+- `-df` shows a recorded class beside each batch.
+
+Tested: the soak test (n 2..250, k to 10, and n 300..400, k to 12, d to
+5000; 3058 tests) passes, and fails on three builds each lacking one
+kind of batch (extra powers above c = 1; plain batches with a class;
+extra-power batches with a w = c exclusion). Recovery from every
+progress line of -X runs gave every solution for (323, 6), (13, 4), (30,
+6), (105, 6), (15, 5), (27, 4) and (202, 5), the last run before the
+dependence check existed. `inject -yt -n` agrees with values found and
+with the 211 lines (it needs Math::GMP, Math::Prime::Util and
+Math::Prime::Util::GMP). Identical (8.1): 41 runs of pc[oar]ul before
+and after the series (and after the first commit alone), logs under -dL
+with times removed; `make dtest` passes after each commit.
+
 ### Stage 4: one square
 
 - 4.8 in full. `fail()` only where a second square would be fixed.
@@ -1313,7 +1372,7 @@ planner work starts (9.1); `TauSeq.pm` pointed at pctul after stage
 
 Still open:
 
-1. The code and wording of the warning of 4.12.
+1. The wording of the 313 warning of 4.12 (code settled in stage 3).
 2. The two pcoul cases for the timing test of 4.8.
 
 
