@@ -20,7 +20,7 @@ ifeq "${GCC_MAJOR}" "7"
   CC_EXTRA_OPT = -ftree-loop-linear -ftree-loop-distribution -ftree-loop-im
 endif
 CC_OPT = -O6 -fgcse-sm -fgcse-las -fgcse-after-reload -fivopts -ftracer -funroll-loops -fvariable-expansion-in-unroller -freorder-blocks-and-partition -funswitch-loops ${CC_EXTRA_OPT}
-dpcoul dpcaul dpcrul dsq12: CC_OPT = -O0
+dpcoul dpcaul dpcrul dpctul dsq12: CC_OPT = -O0
 
 # Tell MPUGMP code that we're not building the perl module.
 DEFINES := -DSTANDALONE
@@ -50,6 +50,7 @@ DEFINES += -DLARGE_MIN -DTRACK_STATS -DCHECK_OVERFLOW
 pcoul dpcoul: DEFINES += -DTYPE_o
 pcaul dpcaul: DEFINES += -DTYPE_a
 pcrul dpcrul: DEFINES += -DTYPE_r
+pctul dpctul: DEFINES += -DTYPE_t
 
 # Nonstandard binary, checks square cases only. Was used to rerun partial
 # searches after finding bugs in the squares-handling code.
@@ -87,11 +88,11 @@ ifndef PORTABLE
 endif
 
 default: pcoul
-all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
+all: pcoul dpcoul pcaul dpcaul pcrul dpcrul pctul dpctul
 
 %: GIT_DEFINES_$* = $(shell ./git-data ${MPUGMP} $^)
 
-pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
+pcoul dpcoul pcaul dpcaul pcrul dpcrul pctul dpctul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 test_pell: Makefile test_pell.c pell.c coultau.c rootmod.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
@@ -137,8 +138,8 @@ TESTS = t/t10init t/t11init-sort t/t20log t/t25time t/t30batch t/t40known \
 PROVE = PERL5LIB=lib$${PERL5LIB:+:$$PERL5LIB} prove -m \
 	--formatter TAP::Formatter::HDiag
 
-test: pcoul pcaul pcrul ${SOAK}
+test: pcoul pcaul pcrul pctul ${SOAK}
 	${PROVE} ${TESTS}
 
-dtest: dpcoul dpcaul dpcrul ${SOAK}
+dtest: dpcoul dpcaul dpcrul dpctul ${SOAK}
 	DEBUG=1 ${PROVE} ${TESTS}

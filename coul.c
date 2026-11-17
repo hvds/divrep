@@ -46,9 +46,10 @@
  *   (if compiled with TYPE_a): tau(d + in) = n
  *   (if compiled with TYPE_r): tau(d + i) = tau(n + i), d <> n
  *   (if compiled with TYPE_t): tau(n + di) = tau(n)
- * (TYPE_t not yet supported.)
+ * k is the number of positions searched (see coul.h), true_k the k of
+ * f(n, k): they differ only under TYPE_t, where the term n is not searched.
  */
-uint n, k;
+uint n, k, true_k;
 
 #define MAXK 66     /* nextprime(8 * sizeof(ulong)) - 1 */
 #if MAXK > 64 * DIS_WORDS
@@ -116,6 +117,8 @@ uint div_count = 0;
 #if defined(TYPE_r)
     uint *target_tau = NULL;
     uint target_lcm;
+#elif defined(TYPE_t)
+    uint target_lcm;
 #endif
 
 /* For prime p < k, we "force" allocation of powers in a batch to ensure
@@ -162,6 +165,7 @@ typedef struct s_forcep {
 } t_forcep;
 t_forcep *forcep = NULL;
 uint forcedp;
+static inline t_forcebatch *forcebatch_p(t_forcep *fp, uint i);
 uint force_all = 0;
 uint unforce_all = 0;
 bool restrict_forced = 0;
@@ -474,7 +478,7 @@ ulong countr, countw, countwi;
 #define MAX_DEC_ULONG 20
 #define MAX_DEC_POWER 5
 #define MAX_EXPANDED 5
-#define DIAG_BUFSIZE (6 + MAX_DEC_ULONG + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1 + MAX_EXPANDED) + 1)
+#define DIAG_BUFSIZE (6 + MAX_DEC_ULONG + k * maxfact * (MAX_DEC_ULONG + 1 + MAX_DEC_POWER + 1 + MAX_EXPANDED) + forcedp * (MAX_DEC_ULONG + 3) + 1)
 char *diag_buf = NULL;
 uint aux_buf_size = 0;
 char *aux_buf = NULL;
@@ -586,21 +590,47 @@ uint know_target(uint vi) {
     uint t = simple_tau(&f);
     free_fact(&f);
     return t;
+#elif defined(TYPE_t)
+    return simple_tau(&nf);
 #else
     return n;
 #endif
 }
 
 /* True if p is never allocated as an unforced prime, wherever it lies:
- * under TYPE_a each p | n divides every v_i or none, as the batch has it.
- * Needs checking only for p <= level.maxp, which starts high enough.
+ * under TYPE_a each p | n divides every v_i or none, as the batch has it;
+ * under TYPE_t each p | n is forced, and its batches settle its power at
+ * every v_i. Needs checking only for p <= level.maxp, which starts high
+ * enough.
  */
 static inline bool never_unforced(ulong p) {
-#if defined(TYPE_a)
+#if defined(TYPE_a) || defined(TYPE_t)
     return (n % p) == 0;
 #else
     return 0;
 #endif
+}
+
+/* True if a forced batch can allocate nothing and yet settle its prime,
+ * so must be shown in patterns, as p^0 at v_0 (see t_forcebatch).
+ */
+static inline bool has_p0(void) {
+#if defined(TYPE_t)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+/* The batch applied at level li, or NULL if li is not a forced level:
+ * one is, just when it clears a bit of fp_need, its forced prime's being
+ * the lowest set before it (see next_fpi()).
+ */
+static inline t_forcebatch *level_batch(uint li) {
+    uint need = nodes[li - 1].fp_need;
+    if (need == nodes[li].fp_need)
+        return NULL;
+    return forcebatch_p(&forcep[ffs_u32(need) - 1], acts[li].bi);
 }
 
 /* Returns true if p is "known" at the given level, so should not be
@@ -670,6 +700,14 @@ void update_window(t_node *cur_node) {
  */
 bool prep_show_v(t_node *cur_node, bool expanded) {
     bool marked = 0;
+    /* the levels of batches that allocate nothing, shown as p^0 at v_0 */
+    uint nulls[forcedp + 1], nullc = 0;
+    if (has_p0())
+        for (uint li = 1; li <= cur_node->level; ++li) {
+            t_forcebatch *bp = level_batch(li);
+            if (bp && bp->x[0] == 1)
+                nulls[nullc++] = li;
+        }
     uint offset = 0;
     t_act *sfx = NULL;
     for (uint li = final_level + 1; li <= cur_node->level; ++li)
@@ -688,13 +726,23 @@ bool prep_show_v(t_node *cur_node, bool expanded) {
             --vlevel;
         if (vi)
             diag_buf[offset++] = ' ';
-        if (vlevel == 1)
+        uint ni = 0, nc = (vi == 0) ? nullc : 0;
+        if (vlevel == 1 && nc == 0)
             diag_buf[offset++] = '.';
         else {
-            for (uint ai = 1; ai < vlevel; ++ai) {
-                t_allocation *ap = &vp->alloc[ai];
-                if (ai > 1)
+            for (uint ai = 1; ai < vlevel || ni < nc; ) {
+                if (ai > 1 || ni > 0)
                     diag_buf[offset++] = '.';
+                if (ni < nc
+                    && (ai >= vlevel || nulls[ni] < vp->alloc[ai].level)
+                ) {
+                    uint need = nodes[nulls[ni] - 1].fp_need;
+                    offset += sprintf(&diag_buf[offset], "%u^0",
+                            forcep[ffs_u32(need) - 1].p);
+                    ++ni;
+                    continue;
+                }
+                t_allocation *ap = &vp->alloc[ai++];
                 offset += sprintf(&diag_buf[offset], "%lu", ap->p);
                 if (ap->x > 2)
                     offset += sprintf(&diag_buf[offset], "^%u", ap->x - 1);
@@ -826,13 +874,20 @@ uint write_fact(t_sizedstr *bufp, mpz_t v, uint target) {
     return t;
 }
 
-bool report_211(uint vi, t_sizedstr *bufp) {
+/* Show term s of the sequence for the best d: v_s, except that under
+ * TYPE_t term 0 is n itself, not a position, and v_i is term i + 1.
+ */
+bool report_211(uint s, t_sizedstr *bufp) {
     /* 211 Sequence  0:  4 = tau(1248619267217398415 = 5.249723853443479683) */
-    dtov(Z(temp), vi, best);
-    uint target = know_target(vi);
+    uint lead = true_k - k;
+    if (s < lead)
+        mpz_set_ui(Z(temp), n);
+    else
+        dtov(Z(temp), s - lead, best);
+    uint target = know_target(s < lead ? 0 : s - lead);
     uint t = write_fact(bufp, Z(temp), target);
     report("211 Sequence %d: %d = tau(%Zu = %s)\n",
-            vi, t, Z(temp), bufp->s);
+            s, t, Z(temp), bufp->s);
     bufp->size = 0;
     return t == target;
 }
@@ -841,12 +896,12 @@ void report_prefinal(double tz) {
     if (!seen_best) {
         /* 500 f(241, 9) > 56346707724292074686037507 (655.570s) */
         report("500 f(%d, %d) > %Zd (%.3fs)\n",
-                n, k, zmax, seconds(tz));
+                n, true_k, zmax, seconds(tz));
         return;
     }
     t_sizedstr buf = { NULL, 0 };
     bool good = 1;
-    for (uint i = 0; i <= k || good; ++i)
+    for (uint i = 0; i <= true_k || good; ++i)
         if (!report_211(i, &buf))
             good = 0;
     free(buf.s);
@@ -1266,6 +1321,8 @@ void init_levels(void) {
     np->nextpi = 0;
 #if defined(TYPE_a)
     np->maxp = divisors[n].high;  /* covers never_unforced() */
+#elif defined(TYPE_t)
+    np->maxp = nf.count ? nf.ppow[nf.count - 1].p : 0;  /* likewise */
 #else
     np->maxp = 0;
 #endif
@@ -1648,12 +1705,16 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
                         " pattern");
             s = end;
             pp.e = (s[0] == '^') ? strtoul(&s[1], &s, 10) : 1;
-            if (mpz_cmp_ui(Z(p3_base), 1) == 0 || pp.e == 0)
+            /* p^0 is kept where it shows a batch, see has_p0() */
+            if (mpz_cmp_ui(Z(p3_base), 1) == 0 || (pp.e == 0 && !has_p0()))
                 ;
             else if (mpz_fits_ulong_p(Z(p3_base))
                     && bpsw_u64(mpz_get_ui(Z(p3_base)))) {
                 pp.p = mpz_get_ui(Z(p3_base));
                 add_fact(&stack->f[i], pp);
+            } else if (pp.e == 0) {
+                fail("524 expected a prime for p^0 in init or recovery"
+                        " pattern");
             } else {
                 add_product(&stack->f[i], Z(p3_base), pp.e);
                 product = 1;
@@ -1874,6 +1935,8 @@ void prep_target(void) {
 #if defined(TYPE_r)
     target_tau = malloc(k * sizeof(uint));
     target_lcm = 1;
+#elif defined(TYPE_t)
+    target_lcm = know_target(0);
 #endif
     maxfact = 0;
     maxodd = 0;
@@ -1969,6 +2032,12 @@ void prep_fact(void) {
 
 void prep_maxforce(void) {
     maxforce = malloc(k * sizeof(uint));
+#if defined(TYPE_t)
+    /* every p <= true_k is forced, so none is allocated unforced */
+    for (int i = 0; i < k; ++i)
+        maxforce[i] = true_k;
+    return;
+#endif
 #if defined(TYPE_o)
     if ((n & 3) != 0) {
         for (int i = 0; i < k; ++i)
@@ -2208,9 +2277,9 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
 static inline uint max_forcep(void) {
 #if defined(TYPE_o) || defined(TYPE_r)
     return k;
-#elif defined(TYPE_a)
+#elif defined(TYPE_a) || defined(TYPE_t)
     /* we also force each p | n */
-    return k + nf.count;
+    return true_k + nf.count;
 #endif
 }
 
@@ -2231,7 +2300,7 @@ uint list_forcep(uint *pi) {
             break;
         pi[count++] = p;
     }
-#elif defined(TYPE_a)
+#elif defined(TYPE_a) || defined(TYPE_t)
     /* divisors of n must be force_all, so must come before other primes */
     for (uint i = 0; i < nf.count; ++i) {
         p = (uint)nf.ppow[i].p;
@@ -2240,7 +2309,7 @@ uint list_forcep(uint *pi) {
     while (1) {
         _GMP_next_prime(pz);
         p = mpz_get_ui(pz);
-        if (p > k)
+        if (p > true_k)
             break;
         if (n % p)
             pi[count++] = p;
@@ -2249,6 +2318,185 @@ uint list_forcep(uint *pi) {
     mpz_clear(pz);
     return count;
 }
+
+#if defined(TYPE_t)
+/* Under TYPE_t, the batch i from fbp on in an array of batches. */
+static inline t_forcebatch *tseq_batch(t_forcebatch *fbp, uint i) {
+    return (t_forcebatch *)&(((char *)fbp)[i * size_forcebatch()]);
+}
+
+/* Under TYPE_t, add the batch that puts exactly p^{E[i]} at each v_i to
+ * those from fbp on, unless (E[i] + 1) does not divide t for some i, or
+ * -fr excludes it; returns how many there now are. A batch that allocates
+ * nothing has x[0] = 1, standing for p^0 at v_0.
+ */
+static uint tseq_add(
+    t_forcebatch *fbp, uint count, ulong p, uint t, uint *E,
+    uint primary, uint fold, uint dv, uint cls
+) {
+    uint maxe = 0;
+    for (uint vi = 0; vi < k; ++vi) {
+        if (t % (E[vi] + 1))
+            return count;
+        if (E[vi] > maxe) {
+            maxe = E[vi];
+            if (cls != CLS_PRIMARY)
+                primary = vi;
+        }
+    }
+    /* a cap of 0 means no cap, as in limit_p() */
+    uint fx = maxe + 1;
+    if (restrict_forced && maxe && maxp[xi(fx)] && maxp[xi(fx)] < p)
+        return count;
+    t_forcebatch *bp = tseq_batch(fbp, count);
+    fpb_init(bp, primary, 0);
+    for (uint vi = 0; vi < k; ++vi)
+        if (E[vi])
+            bp->x[vi] = E[vi] + 1;
+    if (maxe == 0)
+        bp->x[0] = 1;
+    bp->fold = fold;
+    bp->dv = dv;
+    bp->cls = cls;
+    return count + 1;
+}
+
+/* The most batches tseq_batches() can give for p. */
+static inline uint tseq_maxbatch(ulong p, uint nv, uint t) {
+    return (simple_valuation(nv, p) + 1) * (1 + k * divisors[t].alldiv);
+}
+
+/* Under TYPE_t, write the batches of the prime p for f(nv, true_k), with
+ * target tau t at every position, from fbp on, and return how many there
+ * are; nv is n except when testing whether n is dependent.
+ * With e the power of p in nv, f that in d and g_i that in a_i =
+ * TYPE_MULT(i), v_i = nv + a_i.d has p^{f + g_i} if that is less than e
+ * ("low"), p^e if it is more ("high"), and p^e or more if they are equal
+ * ("critical"). Writing nv = p^e.n' and, at a critical v_i, a_i = p^g.a'
+ * and d = p^f.d', p divides v_i / p^e = n' + a'.d' again just when
+ * d' == -n'/a' (mod p).
+ * The batches go level by level, f from 0 to e, level e standing for
+ * every f >= e. At each level the plain batch has exactly p^e at every
+ * critical position, so excludes those classes of d', and also d' == 0 if
+ * f < e: it fixes d mod p^{f+1} if one class is left, else d mod p^f.
+ * Then for each critical position m in turn, and each c >= 1, a batch has
+ * exactly p^{e+c} at m: d' == -n'/a'_m (mod p^c), with u = v_m / p^{e+c}
+ * prime to p. Another critical position j, with p^w exactly dividing
+ * a'_j - a'_m, has p^{e+w} if w < c, else p^{e+c}; if j < m it then makes
+ * this j's batch, not m's. If w = c it has exactly p^{e+c} only if u avoids
+ * one more class mod p. With no class left for u there is no batch; with
+ * one, for p = 2 only, it is folded in (see t_forcebatch).
+ * Each batch states the exact power of p at every v_i, and every d has
+ * the powers of exactly one of them, which batch_resclass() turns into a
+ * residue class of d. The exactness of a batch is enforced in the walks
+ * as for any batch, except in one case: see walk_v().
+ */
+uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
+    uint e = simple_valuation(nv, p);
+    ulong np = nv;
+    for (uint i = 0; i < e; ++i)
+        np /= p;
+    np %= p;
+    uint g[k], E[k];
+    ulong ar[k];    /* a_i / p^{g_i} */
+    for (uint vi = 0; vi < k; ++vi) {
+        ulong a = TYPE_MULT(vi);
+        uint gi = 0;
+        for (; a % p == 0; a /= p)
+            ++gi;
+        g[vi] = gi;
+        ar[vi] = a;
+    }
+    uint count = 0;
+    for (uint f = 0; f <= e; ++f) {
+        bool crit[k];
+        ulong cc[k];    /* at a critical v_i, the class d' must avoid */
+        ulong xs[k + 1];    /* the classes of d' excluded */
+        uint nx = 0;
+        if (f < e)
+            xs[nx++] = 0;
+        for (uint vi = 0; vi < k; ++vi) {
+            uint s = f + g[vi];
+            E[vi] = (s < e) ? s : e;
+            crit[vi] = (s == e);
+            if (!crit[vi])
+                continue;
+            cc[vi] = mulmod_u64(np, invert_u64(ar[vi] % p, p), p);
+            if (cc[vi])
+                cc[vi] = p - cc[vi];
+            uint xi;
+            for (xi = 0; xi < nx; ++xi)
+                if (xs[xi] == cc[vi])
+                    break;
+            if (xi == nx)
+                xs[nx++] = cc[vi];
+        }
+        /* the plain batch */
+        if (nx < p) {
+            uint cls = CLS_ANY;
+            if (nx + 1 == p) {
+                /* p <= k + 2 here, so this loop is short */
+                for (cls = 0; cls < p; ++cls) {
+                    uint xi;
+                    for (xi = 0; xi < nx; ++xi)
+                        if (xs[xi] == cls)
+                            break;
+                    if (xi == nx)
+                        break;
+                }
+            }
+            count = tseq_add(fbp, count, p, t, E, 0, 0, f, cls);
+        }
+        /* the batches with an extra power */
+        for (uint m = 0; m < k; ++m) {
+            if (!crit[m])
+                continue;
+            for (uint c = 1; e + c + 1 <= t; ++c) {
+                if (t % (e + c + 1))
+                    continue;
+                uint Ec[k];
+                memcpy(Ec, E, k * sizeof(uint));
+                Ec[m] = e + c;
+                ulong us[k];    /* the classes of u excluded */
+                uint nu = 0;
+                bool ok = 1;
+                for (uint vj = 0; vj < k && ok; ++vj) {
+                    if (vj == m || !crit[vj])
+                        continue;
+                    slong diff = (slong)ar[vj] - (slong)ar[m];
+                    uint w = simple_valuation(diff < 0 ? -diff : diff, p);
+                    if (w >= c && vj < m) {
+                        ok = 0;
+                        break;
+                    }
+                    Ec[vj] = e + (w < c ? w : c);
+                    if (w != c)
+                        continue;
+                    /* v_j / p^{e+c} == u + diff.d' / p^c (mod p) */
+                    for (uint i = 0; i < c; ++i)
+                        diff /= (slong)p;
+                    ulong dm = (ulong)(diff % (slong)p + (slong)p) % p;
+                    ulong uc = mulmod_u64(dm, cc[m], p);
+                    if (uc)
+                        uc = p - uc;
+                    uint ui;
+                    for (ui = 0; ui < nu; ++ui)
+                        if (us[ui] == uc)
+                            break;
+                    if (ui == nu)
+                        us[nu++] = uc;
+                }
+                if (!ok || nu + 1 >= p)
+                    continue;
+                uint fold = (p == 2) ? 1 : 0;
+                count = tseq_add(fbp, count, p, t, Ec, m, fold, f,
+                        CLS_PRIMARY);
+            }
+        }
+    }
+    return count;
+}
+#endif
 
 void prep_forcep(void) {
     uint p;
@@ -2266,9 +2514,18 @@ void prep_forcep(void) {
         t_forcep *fp = &forcep[fpi];
         fp->p = p;
         fp->count = 0;
+#if defined(TYPE_t)
+        fp->batch = malloc(tseq_maxbatch(p, n, target_lcm)
+                * size_forcebatch());
+        fp->count = tseq_batches(fp->batch, p, n, target_lcm);
+        bool have_unforced_tail = 0;
+#else
         fp->batch = malloc(maxbatch * size_forcebatch());
         t_forcebatch *fbp = forcebatch_p(fp, 0);
 
+        /* A tail lets p be allocated unforced, through update_chinese(),
+         * which needs p not to divide TYPE_MULT(i): so TYPE_t has none.
+         */
         bool keep_single = (p <= force_all) ? 1 : 0;
 #if defined(TYPE_o)
         if (n & 3)
@@ -2303,6 +2560,7 @@ void prep_forcep(void) {
         if (status != TFP_BAD)
             fbp = forcebatch_p(fp, ++fp->count);
 #endif
+#endif
         if (fp->count == 0) {
             if (have_unforced_tail) {
                 forcedp = fpi;
@@ -2317,10 +2575,13 @@ void prep_forcep(void) {
             );
             fail_silent();
         }
+#if !defined(TYPE_t)
         if (have_unforced_tail) {
+            /* not under TYPE_t: see update_chinese() */
             fpb_init(fbp, 1, 0);
             fbp = forcebatch_p(fp, ++fp->count);
         }
+#endif
         fp->batch = realloc(fp->batch, fp->count * size_forcebatch());
     }
 }
@@ -2341,7 +2602,13 @@ void disp_forcep(void) {
                 else
                     printf(".");
             }
-            printf("]\n");
+            printf("]");
+            if (fbp->cls == CLS_ANY)
+                printf(" d == 0 (mod %u^%u)", fp->p, fbp->dv);
+            else if (fbp->cls != CLS_PRIMARY)
+                printf(" d == %u.%u^%u (mod %u^%u)",
+                        fbp->cls, fp->p, fbp->dv, fp->p, fbp->dv + 1);
+            printf("\n");
         }
     }
 }
@@ -2558,6 +2825,9 @@ void prep_presquare(void) {
  * So 5 | v + 1, and tau(v + 1) = 8 needs v + 1 = 250 (fails) or 10q with
  * q prime. But v + 1 = (p^2 + 1)(p^4 - p^2 + 1), where the second factor
  * is odd and > 10, so the first is 2 or 10, giving p <= 3.
+ *
+ * t(243, 4) and t(2401, 3): the proofs are in the POD of
+ * lib/Constraint/Fact.pm, as used by Type::TauSeq.
  */
 typedef struct s_exception {
     char type;
@@ -2568,12 +2838,14 @@ const t_exception exceptions[] = {
     { 'r', 49, 2 },
     { 'r', 625, 4 },
     { 'r', 729, 4 },
+    { 't', 243, 4 },
+    { 't', 2401, 3 },
 };
 
 void check_exceptions(void) {
     for (uint i = 0; i < sizeof(exceptions) / sizeof(t_exception); ++i) {
         const t_exception *ep = &exceptions[i];
-        if (ep->type == typename() && ep->n == n && ep->k < k) {
+        if (ep->type == typename() && ep->n == n && ep->k < true_k) {
             report("403 Error: f(%u) > %u known impossible by exception"
                     " (%.2fs)\n", n, ep->k, elapsed());
             fail_silent();
@@ -2596,6 +2868,11 @@ void init_post(void) {
     }
     simple_fact(n, &nf);
     prep_target();
+#if defined(TYPE_t)
+    /* TYPE_RES() must fit an int: |TYPE_RES(i, j)| <= n.(k - 1) */
+    if ((ulong)n * (k - 1) > INT_MAX)
+        fail("require n.(k - 2) <= %d under pctul", INT_MAX);
+#endif
     if (init_pattern)
         parse_305(init_pattern, &istack, 0);
     if (rpath) {
@@ -2614,10 +2891,15 @@ void init_post(void) {
         setlinebuf(rfp);
     }
 #ifdef HAVE_SETPROCTITLE
-    setproctitle("-D(%u %u)", n, k);
+    setproctitle("-D(%u %u)", n, true_k);
 #endif
     if (!ignore_exceptions)
         check_exceptions();
+#if defined(TYPE_t)
+    if (!ispow2_u64(target_lcm))
+        fail("TODO: pctul supports only tau(n) a power of 2, not %u",
+                target_lcm);
+#endif
 
     /* level[0] is special, level[1] is special if any target_t is odd;
      * then we can have forcedp batch allocations and maxodd * k normal
@@ -2629,14 +2911,26 @@ void init_post(void) {
     maxlevel = 1 + 1 + k * (highpow ? maxfact : maxodd) + k
 #if defined(TYPE_a)
             + nf.count
+#elif defined(TYPE_t)
+            + 1 + nf.count  /* the prime true_k is forced too */
 #endif
             ;
 
     /* Strategy 1 is preferred when n is divisible by two or more
      * distinct odd primes. Otherwise, strategy 0 always gives the same
      * results, and is a bit faster. */
-    if (!strategy_set)
-        strategy = (nf.count > (highpow ? 1 : 2)) ? 1 : 0;
+    if (!strategy_set) {
+        uint tcount = nf.count;
+#if defined(TYPE_t)
+        /* what matters is the primes of the target, here tau(n) */
+        t_fact tf;
+        init_fact(&tf);
+        simple_fact(target_lcm, &tf);
+        tcount = tf.count;
+        free_fact(&tf);
+#endif
+        strategy = (tcount > (highpow ? 1 : 2)) ? 1 : 0;
+    }
 
     init_zrootmod(maxlevel);
     prep_fact();
@@ -2693,7 +2987,7 @@ void init_post(void) {
 
 void report_init(FILE *fp, char *prog) {
     fprintf(fp, "001 %spc%cul(%u %u)",
-            (start_seen ? "recover " : ""), typename(), n, k);
+            (start_seen ? "recover " : ""), typename(), n, true_k);
 
     if (strategy) {
         if (strategy == STRATEGY_FIXED) {
@@ -3223,7 +3517,7 @@ void walk_v(t_node *cur_node, mpz_t start) {
     mpz_t *m = &cur_node->rq;
     uint t[k];
     mpz_t *aq = &cur_node->aq;
-    t_mod inv[maxfact * k];
+    t_mod inv[maxfact * k + forcedp];
     uint inv_count = 0;
     uint need_prime[k];
     uint need_square[k];
@@ -3272,6 +3566,25 @@ void walk_v(t_node *cur_node, mpz_t start) {
         else
             need_other[noc++] = vi;
     }
+    /* A batch of p | n that answers only for d prime to p, but allocates
+     * nothing and fixes no class, has nothing above to exclude the d
+     * divisible by p: exclude them here. See tseq_batches().
+     */
+    if (has_p0())
+        for (uint li = 1; li <= cur_node->level; ++li) {
+            t_forcebatch *bp = level_batch(li);
+            if (!bp || bp->x[0] != 1 || bp->cls != CLS_ANY)
+                continue;
+            ulong p = acts[li].p;
+            if (n % p)
+                continue;
+            ulong inverse = small_divmod(*m, *aq, p);
+            if (inverse < p) {
+                t_mod *ip = &inv[inv_count++];
+                ip->v = (inverse) ? p - inverse : 0;
+                ip->m = p;
+            }
+        }
     g_node = cur_node;
 
 #if 0
@@ -4186,6 +4499,32 @@ void apply_null(t_node *prev, t_node *cur, ulong p) {
     cur->vi_depth = cur_vlevel[vi];
 }
 
+/* Apply batch bi of forced prime fpi, which allocates nothing but may fix
+ * a residue class of d: under TYPE_t, see t_forcebatch. Its level shows
+ * as p^0 at v_0. Returns FALSE if it is inconsistent or out of range.
+ * Its prime is now known not to be allocated anywhere else, so is marked
+ * as used for mintau().
+ */
+bool apply_unalloc(t_node *prev, t_node *cur, uint fpi, uint bi) {
+    ulong p = forcep[fpi].p;
+    uint vi = 0;
+    apply_level(prev, cur, vi, p, 1);
+    apply_pfreev(prev, cur, p);
+    if (p == sprimes[cur->nextpi])
+        cur->nextpi = find_nextpi(cur, cur->nextpi);
+    cur->have_min = prev->have_min;
+    batch_resclass(Z(br_res), Z(br_mod), fpi, bi);
+    if (!apply_resclass(prev, cur, p, Z(br_res), Z(br_mod)))
+        return 0;
+    if (mpz_cmp(cur->rq, zmax) > 0)
+        return 0;
+    /* no square can be fixed before TYPE_t supports one */
+    if (prev->have_square)
+        fail("TODO: a batch that allocates nothing, below a square");
+    cur->vi_depth = cur_vlevel[vi];
+    return 1;
+}
+
 /* Allocate a non-fixed (non-batch) prime p^{x-1} to v_{vi}. Returns FALSE
  * if it is invalid, or if no work to do.
  * Updates level and value, updates or propagates square residues.
@@ -4655,10 +4994,11 @@ void walk_midp(t_node *prev_node, bool recover) {
  */
 static inline void unapply_batch(uint fpi, uint bi, uint count) {
     t_forcebatch *bp = forcebatch_p(&forcep[fpi], bi);
-    if (bp->x[bp->primary] == 0)
+    /* x = 1 is p^0, which allocates nothing */
+    if (bp->x[bp->primary] <= 1)
         return;
     for (uint vj = 0; vj < count; ++vj)
-        if (bp->x[vj] != 0)
+        if (bp->x[vj] > 1)
             --cur_vlevel[vj];
 }
 
@@ -4691,6 +5031,12 @@ bool apply_batch(
         cur_node->fp_need &= ~(1U << fpi);
         return 1;
     }
+    if (bp->x[vi] == 1) {
+        if (!apply_unalloc(prev_node, cur_node, fpi, bi))
+            return 0;
+        cur_node->fp_need &= ~(1U << fpi);
+        return 1;
+    }
     cur_node->have_min = prev_node->have_min;
 
     uint ep = bp->x[vi] - 1;
@@ -4701,7 +5047,7 @@ bool apply_batch(
         terminal = vi;
 
     for (uint vj = 0; vj < k; ++vj) {
-        if (vi == vj || bp->x[vj] == 0)
+        if (vi == vj || bp->x[vj] <= 1)
             continue;
         if (!apply_secondary(prev_node, cur_node, vj, fp->p, bp->x[vj])) {
             unapply_batch(fpi, bi, vj);
@@ -6955,11 +7301,22 @@ int main(int argc, char **argv, char **envp) {
         n = strtoul(argv[i++], NULL, 10);
         if (n < 1)
             fail("require n >= 1, not %lu", n);
-        k = strtoul(argv[i++], NULL, 10);
+        true_k = strtoul(argv[i++], NULL, 10);
+        k = true_k;
+#if defined(TYPE_t)
+        /* the term n needs no search, so is not a position */
+        if (true_k < 2)
+            fail("require k >= 2, not %lu", true_k);
+        k = true_k - 1;
+        if (force_all || unforce_all)
+            fail("-f and -F are not supported under pctul");
+        if (check || modfix)
+            fail("-c and -m are not yet supported under pctul");
+#endif
         if (k < 1)
             fail("require k >= 1, not %lu", k);
         if (k > MAXK)
-            fail("require k <= %u, not %u", MAXK, k);
+            fail("require k <= %u, not %u", MAXK + true_k - k, true_k);
         if (kern_b && k > MAXK_KERN)
             fail("-k requires k <= %u, not %u", MAXK_KERN, k);
     } else
@@ -7039,7 +7396,7 @@ int main(int argc, char **argv, char **envp) {
     if ((opt_alloc & 2) == 0) {
         double tz = utime();
         report("367 c%cul(%u, %u): recurse %lu, walk %lu, walkc %lu (%.2fs)",
-                typename(), n, k, countr, countw, countwi, seconds(tz));
+                typename(), n, true_k, countr, countw, countwi, seconds(tz));
 #ifdef TRACK_STATS
         report(" [");
         for (uint i = 0; i < k; ++i) {
@@ -7056,7 +7413,8 @@ int main(int argc, char **argv, char **envp) {
         else if (log_full)
             report_prefinal(tz);
         if (seen_best)
-            report("200 f(%u, %u) = %Zu (%.2fs)\n", n, k, best, seconds(tz));
+            report("200 f(%u, %u) = %Zu (%.2fs)\n",
+                    n, true_k, best, seconds(tz));
     }
     done();
     return 0;
