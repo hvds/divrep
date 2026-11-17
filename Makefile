@@ -131,7 +131,7 @@ ifdef TEST_PRIME
 endif
 
 TESTS = t/t10init t/t11init-sort t/t20log t/t25time t/t30batch t/t40known \
-	t/t50pell t/t60tau t/t70prime
+	t/t50pell t/t60tau t/t70prime t/t80tseq
 
 # The formatter is loaded by prove itself, so needs lib/ in PERL5LIB;
 # -m merges stderr into the TAP stream so that the formatter sees it.
