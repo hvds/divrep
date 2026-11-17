@@ -72,6 +72,20 @@ sub test_pctul {
     is_deeply(sorted('pctul', qw{ -x6000 30 6 }), [
         376, 388, 1132, 1228, 2596, 5176, 5596, 5932
     ], 'pctul finds f(30, 6): tau(n) = 8');
+    is_deeply(sorted('pctul', qw{ -x200 12 3 }), [
+        8, 16, 20, 32, 40, 56, 80, 112, 136, 152, 160, 163, 200
+    ], 'pctul finds f(12, 3): tau(n) = 6, so squares arise');
+    is_deeply(sorted('pctul', qw{ -x1000 45 4 }), [
+        54, 108, 162, 378, 432, 486, 756, 864
+    ], 'pctul finds f(45, 4): tau(n) = 6, n odd');
+    is_deeply(sorted('pctul', qw{ -x30000 98 4 }), [
+        109, 409, 1369, 10369, 11065, 11449, 13609, 20109, 29809
+    ], 'pctul finds f(98, 4): tau(n) = 6, d odd');
+    is_deeply(sorted('pctul', qw{ -x2000 36 2 }), [
+        64, 160, 189, 220, 405, 448, 640, 1053, 1120, 1189, 1408, 1485
+    ], 'pctul finds f(36, 2): n a square, so v_0 is a square');
+    is_deeply(sorted('pctul', qw{ -x20000000 49 3 }), [ 120, 240, 5280, 9360 ],
+            'pctul finds f(49, 3): two squares, 2x^2 - y^2 = 49 by Pell');
     # every batch of 2 is ruled out
     my @lines = `./${debug}pctul -Ls0 -x60000 8 5 2>&1`;
     ok((grep /^406 .* p=2 /, @lines),
@@ -92,6 +106,20 @@ sub test_pctul {
             && !(grep /^201 /, @lines)
             && (grep /^202 Candidate 180 /, @lines),
             'pctul warns that f(210, 7) depends in part on f(105, 7)');
+
+    # tau = 3 needs v_i = q^2: if 3 | d then 9 + d = 9, else one of
+    # 9 + d, 9 + 2d is 2 (mod 3)
+    @lines = `./${debug}pctul -Ls0 -x1e100 9 4 2>&1`;
+    ok((grep /^406 .* p=3 /, @lines) && !(grep /^367 /, @lines),
+            'pctul reports no arrangement for f(9, 4) without a search');
+
+    # 25 + d, 25 + 2d squares need d and 2d squares mod 5, but 2 is not
+    @lines = `./${debug}pctul -Ls0 -x1e100 25 3 2>&1`;
+    ok((grep /^406 .* p=5 /, @lines) && !(grep /^367 /, @lines),
+            'pctul reports no arrangement for f(25, 3): 2 is not a square mod 5');
+    # while 2 is a square mod 17
+    is_deeply(sorted('pctul', qw{ -x10000 289 3 }), [ 2520 ],
+            'pctul finds f(289, 3)');
 
     # f(243, k) is known impossible by exception for k > 4
     @lines = `./${debug}pctul -Ls0 -x100000 243 5 2>&1`;
