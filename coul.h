@@ -17,7 +17,8 @@ void report(char *format, ...);
  *   (if compiled with TYPE_a): tau(d + in) = n
  *   (if compiled with TYPE_r): tau(d + i) = tau(n + i), d <> n
  *   (if compiled with TYPE_t): tau(n + di) = tau(n)
- * (TYPE_t not yet supported.)
+ * Under TYPE_t the term n itself needs no search, so there are positions
+ * only for i = 1 .. k - 1, and the k of f(n, k) is held as true_k.
  * For each type, v_i = TYPE_MULT(i).d + TYPE_OFFSET(i) is the value at
  * position i, target_t(i) is the tau it must have, and target_lcm is
  * the lcm of those targets.
@@ -42,6 +43,12 @@ extern uint n;
     static inline uint TYPE_MULT(uint i) { return 1; }
     static inline uint TYPE_OFFSET(uint i) { return i; }
     static inline uint target_t(uint vi) { return target_tau[vi]; }
+#elif defined(TYPE_t)
+    extern uint target_lcm;
+    static inline char typename(void) { return 't'; }
+    static inline uint TYPE_MULT(uint i) { return i + 1; }
+    static inline uint TYPE_OFFSET(uint i) { return n; }
+    static inline uint target_t(uint vi) { return target_lcm; }
 #else
 #   error "No type defined"
 #endif
@@ -122,7 +129,7 @@ typedef enum {
     A_FORCED,
     A_BASE,         /* level 0, so there is always a prev_node */
     A_PRESQ,        /* the dummy level before initial squares */
-    A_FIXED,        /* fixed by an -I pattern */
+    A_FIXED,        /* unforced, fixed by an -I pattern */
     A_MIDP,         /* -W's sweep, walk_midp() */
     A_6X,           /* the STRATEGY_6X walk, walk_6x() */
     A_FLIP,         /* run_flip_pqsq(), its allocation withdrawn */
