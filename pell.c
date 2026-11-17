@@ -4,6 +4,7 @@
 #include "pell.h"
 #include "coul.h"
 #include "coultau.h"
+#include "coulfact.h"
 #include "rootmod.h"
 
 typedef enum {
@@ -26,6 +27,11 @@ typedef struct s_zarray {
 /* solutions (x, y) in pairs, sorted by x; and the roots being tried */
 t_zarray sol, roots;
 uint sol_iter;
+
+/* the factors and divisors of |n|, see new_pell() */
+t_fact pn_fact;
+uint *pn_div = NULL;
+uint pn_divsize = 0;
 
 void resize_zarray(t_zarray *zap, uint size) {
     if (size > zap->alloc) {
@@ -52,12 +58,48 @@ void done_pell(void) {
     free(pell_stash);
     free_zarray(&sol);
     free_zarray(&roots);
+    free_fact(&pn_fact);
+    free(pn_div);
 }
 
 void init_pell(void) {
     pell_stash = malloc(E_PELLSTASH_MAX * sizeof(mpz_t));
     for (e_pellstash e = 0; e < E_PELLSTASH_MAX; ++e)
         mpz_init(Z(e));
+    init_fact(&pn_fact);
+}
+
+int uint_comparator(const void *va, const void *vb) {
+    uint a = *(uint *)va, b = *(uint *)vb;
+    return (a < b) ? -1 : (a > b) ? 1 : 0;
+}
+
+/* Set pn_div[] to the divisors of n in ascending order, returning how
+ * many there are.
+ */
+uint pell_divisors(uint n) {
+    pn_fact.count = 0;
+    simple_fact(n, &pn_fact);
+    uint count = 1;
+    for (uint i = 0; i < pn_fact.count; ++i)
+        count *= pn_fact.ppow[i].e + 1;
+    if (count > pn_divsize) {
+        pn_div = realloc(pn_div, count * sizeof(uint));
+        pn_divsize = count;
+    }
+    pn_div[0] = 1;
+    count = 1;
+    for (uint i = 0; i < pn_fact.count; ++i) {
+        uint prev = count;
+        uint pe = 1;
+        for (uint e = 0; e < pn_fact.ppow[i].e; ++e) {
+            pe *= pn_fact.ppow[i].p;
+            for (uint j = 0; j < prev; ++j)
+                pn_div[count++] = pn_div[j] * pe;
+        }
+    }
+    qsort(pn_div, count, sizeof(uint), &uint_comparator);
+    return count;
 }
 
 int pell_comparator(const void *va, const void *vb) {
@@ -262,10 +304,10 @@ void new_pell(mpz_t iA, mpz_t iD, int iN, mpz_t ilimit) {
     /* X and Y may share a factor f where f^2 divides the right side,
      * and since ra and rd are squarefree any such f divides n
      */
-    ulong an = mpz_get_ui(Z(p_n));    /* absolute value */
-    for (ulong f = 1; f <= an; ++f) {
-        if (an % f)
-            continue;
+    uint an = mpz_get_ui(Z(p_n));    /* absolute value, fits as iN does */
+    uint dc = pell_divisors(an);
+    for (uint di = 0; di < dc; ++di) {
+        uint f = pn_div[di];
         mpz_mul(Z(p_m), Z(p_n), by_a ? Z(p_ra) : Z(p_rd));
         if (!by_a)
             mpz_neg(Z(p_m), Z(p_m));
