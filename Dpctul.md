@@ -1188,6 +1188,58 @@ Done when: as stage 3, with no refusal left for any n. pctul then
 supports every (n, k), and by hv's decision `TauSeq.pm` can point at
 it: add `cul => './pctul'` there, as its own commit.
 
+### As done: stages 4 and 5 (2026-11-17)
+
+Over stage 3, in order:
+
+- pc?ul: Pell walk checks o_i reduced mod qq_i
+- pell: shared factors of x and y from the divisors of N
+- pctul: one fixed square
+- pctul: Pell
+- tests: pctul with squares and Pell
+- TauSeq: point cul at pctul
+- skills: pcoul-internals on pctul squares
+
+(and a fixup of stage 3's pctul commit adding pctul and dpctul to
+.gitignore).
+
+Found on the way: the Pell walk compared x^2 mod qq_i with o_i
+unreduced. Under pctul o_i holds n and is usually above qq_i, and every
+solution was lost (f(49, 3) found none). For pc[oar]ul I believe o_i is
+always reduced (offsets below k, and a p = 2 fold keeps it below qq_i);
+the identical-output set and a further twelve Pell-heavy pcoul runs
+agree.
+
+4.8 as written: `square_afresh()` calls `allzrootmod()` on o_s, g and
+qq_s from the node, for a batch applied below the first square (from
+`apply_batch()` and `apply_unalloc()`). [verify] resolved:
+`allzrootmod()` overwrites the level's array, so it is safe to call
+again. Unforced allocations keep `update_residues()`, converted in
+stage 1.
+
+4.9 as written: `new_pell()` enumerates the divisors of |N| from its
+factors (`pell_divisors()`, ascending, as before), and t50pell gains
+large N of pctul's shape.
+
+Timing test of 4.8 (hv named no cases, so these are mine). On pcoul,
+`-a` over all batches, with the batch path of `update_residues()` and
+with `roots_afresh()` forced on; output identical in every case (1.1M
+lines for the first), CPU seconds from the 367 line, three runs each,
+alternated, in the sandbox:
+
+    pcoul -a -x1e60 48 10    batch 5.06 4.69 4.84    afresh 6.12 5.93 5.67
+    pcoul -a -x1e60 60 10    batch 1.32 1.01 0.91    afresh 1.18 0.95 1.02
+
+So about 20 percent more over the forced part of (48, 10), and nothing
+measurable for (60, 10). pctul has no other path; whether pc[oar]ul
+should take it is for hv.
+
+Tested: the soak test now on every n (n 2..250 with k to 10, n 300..400
+with k to 12, d to 5000; 4382 tests); Appendix A's larger rows match
+their counts, among them (96, 4) to 2e7 (3523), (60, 4) to 2e6 (5069),
+(175, 4) and (98, 4) to 1e6, and (49, 3) to 2e7; TEST_PELL passes.
+Identical (8.1) for pc[oar]ul as at stage 3, plus the Pell runs above.
+
 ### Stage 6: -c and -m
 
 - The helper of section 5 in coulvec.c; modfix against a batch's
@@ -1373,7 +1425,8 @@ planner work starts (9.1); `TauSeq.pm` pointed at pctul after stage
 Still open:
 
 1. The wording of the 313 warning of 4.12 (code settled in stage 3).
-2. The two pcoul cases for the timing test of 4.8.
+2. Whether pc[oar]ul should also find a square's roots afresh below a
+   forced batch: figures in the record of stages 4 and 5.
 
 
 ## Appendix A: reference values
