@@ -1240,6 +1240,20 @@ their counts, among them (96, 4) to 2e7 (3523), (60, 4) to 2e6 (5069),
 (175, 4) and (98, 4) to 1e6, and (49, 3) to 2e7; TEST_PELL passes.
 Identical (8.1) for pc[oar]ul as at stage 3, plus the Pell runs above.
 
+Then, from hv's runs against known values for n <= 10:
+
+- pctul: drop a batch whose completed position holds no d. Such a batch
+  has v_i = p^E at the completed position, so holds at most one d; if
+  that is not a positive integer with the batch's powers at every
+  position, the batch goes. So f(9, 4) reports 406 up front: its only
+  batch of 3 puts 3^2 at every position (d = 0). No quadratic residue
+  argument was needed: for 3 not dividing d, or exactly dividing it,
+  some position has exactly 3^1 (9 + 3d, or 9 + d), and tau 3 rules
+  that out.
+- pctul: no arrangement for the base of a dependent n. A dependent
+  f(n, k) whose f(n / p^e, k) has a forced prime with no batch reports
+  406 naming the smaller case, not 201: f(6, 4) = 2.f(3, 4).
+
 ### Stage 6: -c and -m
 
 - The helper of section 5 in coulvec.c; modfix against a batch's
