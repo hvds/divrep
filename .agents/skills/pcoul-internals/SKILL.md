@@ -105,9 +105,39 @@ the schema and run `Seq::Run::finalize()` etc for testing.
 
 ### Key vocabulary / concepts
 
-- **aq / rq**: the shared CRT modulus and residue across ALL k
-  positions (they're consecutive integers, not independent, so a
-  prime allocated at any position constrains all of them).
+- **aq / rq**: d == rq (mod aq), the shared CRT modulus and residue
+  for d; every position is a fixed function of d, so a prime allocated
+  at any position constrains all of them.
+- **Types and positions**: coul.h holds, for each type, one-liners
+  giving its name, `TYPE_MULT()`, `TYPE_OFFSET()`, `target_t()` and
+  `target_lcm`, under the comment stating what each type searches for.
+  The search is for d, with v_i = a_i.d + c_i, a_i = TYPE_MULT(i) and
+  c_i = TYPE_OFFSET(i); a_i is 1 for the existing types, so for them d
+  is v_0. Rules for code that relates d and values:
+  - move between d and a value with `dtov()` and `vtod()`. `vtod()`
+    gives the greatest d with v_i <= v and returns whether v_i is
+    exactly v, so test d against a bound before rejecting an inexact
+    v (else a walk can run on past its limit);
+  - take a bound on v_i from the bound on d through `dtov()`: the
+    greatest v_i is not zmax;
+  - a walk at a position, where v_i / q_i == o_i (mod qq_i), forms o_i
+    and qq_i with `calc_o()` and `calc_qq()`; qq_i is
+    TYPE_MULT(i).aq / q_i, not aq / q_i. A walk's candidate is
+    rq + aq.t;
+  - a constraint carried from one position to another uses the
+    resultant `TYPE_RES(i, j)` = a_i.c_j - a_j.c_i, which equals
+    a_i.v_j - a_j.v_i for every d (so a congruence on v_j gives one on
+    a_j.v_i), and which any common factor of v_i and v_j divides. Do
+    not assume TYPE_RES(i + m, j + m) = TYPE_RES(i, j), though it holds
+    for the current types;
+  - never add an offset to a value by hand.
+- **Residue classes**: an unforced allocation of p^{x-1} at v_i is
+  combined into the CRT by `update_chinese()`, which divides by a_i
+  and so requires p not to divide it. A forced batch instead gives the
+  residue class of d it fixes by `batch_resclass()`, combined by
+  `apply_resclass()`; nothing else derives a batch's class from its
+  primary, power and fold. (`batch_resclass()` needs a_i = 1 at the
+  primary; under TYPE_t the batch builder is to record the class.)
 - **have_square (g'th-power tracking)**: a position is forced to be an
   exact g'th power when every possible way of completing its target
   divisor count uses exponents that share a common factor g > 1
@@ -477,6 +507,10 @@ actually used, more reliable than reconstructing it from other sources.
   (`apply_batch()` -> `apply_null()`) represents "this prime's
   allocation from here on is not itself forced/tracked as a batch";
   it does NOT mean the prime is unavailable.
+  Such a prime is then allocated unforced, through `update_chinese()`,
+  which is safe only if p does not divide a_i: a reason any future type
+  with a_i > 1 (TYPE_t) must not generate tails without its batches
+  recording their residue classes.
 - **`keep_single`** is true (suppressing the tail for that prime) when
   `p <= force_all` (the `-f` CLI option), or - specifically for
   `TYPE_o` - whenever `n & 3` is nonzero (i.e. `n` is *not* divisible
