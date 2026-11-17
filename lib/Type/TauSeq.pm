@@ -11,6 +11,10 @@ use ModFunc qw/ gcd /;
 use RootMod qw{ allrootmod };
 *tau = \&Type::Tauish::tau;
 
+my %PROG = (
+    cul => './pctul',
+);
+
 =head1 Type::TauSeq
 
 What is the longest possible arithmetic progression starting n and with
@@ -24,6 +28,11 @@ sub init {
     my $n = $self->n;
     $self->{target} = tau($n) if defined $n;
     return;
+}
+
+sub prog {
+    my($self, $which) = @_;
+    return $PROG{$which} // $self->SUPER::prog($which);
 }
 
 sub name { 'tauseq' }
