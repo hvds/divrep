@@ -10,6 +10,14 @@ still need his decision before the stage that depends on them. Items
 marked **[verify]** are my reading of the code and must be checked
 before being relied on.
 
+Since this was written, stages 0 to 2 of the pctul design (Dpctul.md)
+are on master (5a553ae..f98cbb5), in place before this work starts:
+calibrate is to be rebased over them first. They write every value
+as v_i = TYPE_MULT(i).d + TYPE_OFFSET(i) and route the sites through
+`dtov()`, `vtod()`, `calc_o()`, `calc_qq()` and `TYPE_RES()`, and
+change a few interfaces (listed in Dpctul.md 9.1). The price hooks of
+this design must be written in those terms (Dpctul.md 9.2).
+
 
 ## 0. Before starting
 

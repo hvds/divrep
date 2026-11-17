@@ -11,6 +11,11 @@ still need his decision before the stage that depends on them. Items
 marked **[verify]** are my reading of the code and must be checked
 before being relied on.
 
+Stages 0 to 2 are on master (5a553ae..f98cbb5, 2026-11-16/17),
+and their record is in section 8 ("As done"). Where the code differs
+from what is written below for those stages, the record says so; the
+names in sections 4 and 5 are now those of the code.
+
 What stands behind this document:
 
 - The arithmetic of sections 4.4 to 4.6 was checked by brute force
@@ -128,7 +133,7 @@ T4. **Fail loudly at what is not yet supported.** Each stage refuses,
     it does not cover. A pctul that silently mishandles a square is a
     false result; one that stops at it costs nothing.
 
-T5. **The class of d is stored with the batch, not derived from its
+T5. **The residue class of d is stored with the batch, not derived from its
     primary.** In pc[oar]ul the residue of v_0 follows from "p^e
     divides v_primary". In pctul it does not (4.5), so the batch
     carries what is needed to give it.
@@ -199,30 +204,47 @@ copy in coulvec.c; define all three once, in a header both include):
     /* TYPE_OFFSET() as now */
 #endif
 
-/* TYPE_MULT(i) . v_j - TYPE_MULT(j) . v_i, which is constant */
-static inline long TYPE_PAIR(uint i, uint j) {
-    return (long)TYPE_MULT(i) * TYPE_OFFSET(j)
-            - (long)TYPE_MULT(j) * TYPE_OFFSET(i);
+/* The resultant of v_i and v_j as linear polynomials in d: with
+ * a_i = TYPE_MULT(i), c_i = TYPE_OFFSET(i),
+ *   a_i.v_j - a_j.v_i = a_i.c_j - a_j.c_i
+ * for every d.
+ */
+static inline sint TYPE_RES(uint i, uint j) {
+    return (sint)TYPE_MULT(i) * TYPE_OFFSET(j)
+            - (sint)TYPE_MULT(j) * TYPE_OFFSET(i);
 }
 ```
 
-For types o and r `TYPE_PAIR(i, j)` is j - i; for type t it is
-n.(i - j), which needs more than an int for large n (see 4.9).
+For types o and r `TYPE_RES(i, j)` is j - i, for type a n.(j - i);
+for type t it is n.(i - j). An int holds it: with k positions,
+|i - j| <= k - 1 <= 65 (MAXK), so for type t it needs only
+n.(k - 1) <= INT_MAX, which allows n up to about 33 million whatever
+k is. Decided: an int, with pctul failing at startup (stage 3) if
+n.(k - 1) does not fit. The other types are far within range.
+Any common factor of v_i and v_j divides it (generalising "gcd(d + i,
+d + j) divides j - i"). It is computed from both positions, so does
+not assume TYPE_RES(i + m, j + m) = TYPE_RES(i, j), though that holds
+for all four types. (Named TYPE_PAIR() until review.)
 
 Two helpers over mpz_t, used wherever a site now adds or subtracts
 `TYPE_OFFSET(vi)`:
 
 ```c
 /* Set v to v_i for the given d. */
-static inline void v_of_d(mpz_t v, uint vi, mpz_t d);
+static inline void dtov(mpz_t v, uint vi, mpz_t d);
 
-/* Set d to the d that gives v at v_i; returns false, with d
- * unspecified, if there is none.
+/* Set d to the greatest d with v_i <= v. Returns TRUE if v_i is v
+ * for that d, so that a caller can test d against a bound before
+ * rejecting a v that no d gives.
  */
-static inline bool d_of_v(mpz_t d, uint vi, mpz_t v);
+static inline bool vtod(mpz_t d, uint vi, mpz_t v);
 ```
 
-`v_of_d(v, vi, zmax)` is the greatest value v_i can take, which is
+(As done in stage 1. A first version left d unspecified when there
+was none, which in the Pell branch of `walk_v()` skipped the test
+against zmax, and so could walk on for ever.)
+
+`dtov(v, vi, zmax)` is the greatest value v_i can take, which is
 what most of the sites want (section 5).
 
 ### 4.3 What a node knows
@@ -367,22 +389,36 @@ Moduli can exceed a ulong (p^{f+c} with p near n), so the class is
 formed in mpz_t when the batch is applied, as `update_chinese()` does
 now for a large px; it is not stored.
 
-Proposed, for the stage that needs it: two fields, `dv` (the level f)
-and `cls` (r, or a value meaning none), unused by pc[oar]ul; and one
-function that turns a batch into the class of d,
+Proposed, for stage 3: two fields, `dv` (the level f) and `cls` (r,
+or a value meaning none), unused by pc[oar]ul. (Stage 2 did not add
+them: nothing reads them before the builder.)
+
+Done in stage 2: one function turns a batch into the residue class of
+d, and one combines a residue class with a node,
 
 ```c
-/* Set (*res, *mod) to the class of d that batch bi of forced prime
- * fpi fixes: d == res (mod mod).
+/* Set (res, m) to the residue class of d that batch bi of forced
+ * prime fpi fixes: d == res (mod m), m a power of p.
  */
-void batch_class(mpz_t res, mpz_t mod, uint fpi, uint bi);
+void batch_resclass(mpz_t res, mpz_t m, uint fpi, uint bi);
+
+/* Combine d == res (mod m), m a power of p, with old into new;
+ * FALSE if inconsistent.
+ */
+static inline bool apply_resclass(
+    t_node *old, t_node *new, ulong p, mpz_t res, mpz_t m
+);
 ```
 
-which for pc[oar]ul computes what `update_chinese()` does today from
-(primary, x, fold), and for pctul what is above. `apply_primary()`,
-`least_is_best()` and whatever else passes a batch's `fold` to
-`update_chinese()` take the class from it instead (T5). **[verify]**
-the full list of those callers.
+For pc[oar]ul `batch_resclass()` computes what `update_chinese()` did
+from (primary, x, fold), asserting a_i = 1 at the primary; for pctul
+it is to return the `dv`/`cls` the builder recorded (stage 3).
+`apply_primary()` now takes (fpi, bi) and uses the two, and recovery
+uses `batch_is_best()`, the batch form of `least_is_best()` (which no
+longer takes a fold). Checked: those were the only places a batch's
+fold reached `update_chinese()`. A batch's fold also reaches
+`update_residues()` from `apply_batch()`, on the square path that 4.8
+replaces under TYPE_t.
 
 Appendix B has the batches of some small cases, as the rules give
 them.
@@ -436,6 +472,15 @@ The reasons:
 So `-f` and `-F` have nothing to act on under pctul. Decided: pctul
 refuses them. Tails for pctul are parked (9.3).
 
+No tails is also what makes `update_chinese()` safe under pctul: it
+divides by a_i, so p must not divide a_i, and for an unforced p that
+holds only because every unforced p > true_k. A tail would leave a
+forced p (p <= true_k, possibly dividing a_i) to be allocated
+unforced. Stage 3 must leave a comment where tails are generated
+(where `keep_single` is set, and at the tail's `fpb_init()`) saying
+that tails under TYPE_t would break that assumption, pointing at
+`update_chinese()`. (Its own comment already says so, since stage 2.)
+
 The batch that allocates nothing. In pcoul a batch always shows in the
 pattern, the tail apart. In pctul the commonest batch of a prime
 allocates nothing: "p divides d" for p not dividing n, and level 0 for
@@ -487,9 +532,10 @@ it is prime to every a_i. Allocating p^{x-1} at v_i fixes
 
     d == -c_i / a_i (mod p^{x-1})
 
-`update_chinese()` computes the residue -c_i mod p^{x-1} today. It
-multiplies by the inverse of a_i when `TYPE_MULT(vi) != 1`
-(`ppow_invert()` for the single-limb path; **[verify]** the mpz path).
+`update_chinese()` computes the residue -c_i mod p^{x-1}, and since
+stage 1 multiplies it by the inverse of a_i when `TYPE_MULT(vi) != 1`
+(`ppow_invert()` in the single-limb path, `mpz_invert()` in the mpz
+path). It asserts that p does not divide a_i.
 `single_fold()` is for p = 2, which is never unforced in pctul.
 
 `reject_single()` solves aq.t == -(rq + c_i) (mod p) for t. Under the
@@ -498,6 +544,7 @@ affine form that is
     a_i.aq.t == -(c_i + a_i.rq) (mod p)
 
 so it multiplies both the residue of aq and that of rq by a_i mod p
+(done in stage 1, in `reject_mod()`, which now takes the position)
 before it inverts. The same for its second stage mod p^2 and its
 general stage.
 
@@ -518,10 +565,10 @@ of qq_s, as now, because the batches state exact powers (4.11).
 `update_residues()`, on an unforced allocation of p^{x-1} at v_i.
 
 - At another position: the new knowledge is v_i == 0 (mod p^{x-1}),
-  and by the pair relation
-  a_i.v_s == TYPE_PAIR(i, s) (mod p^{x-1}). Today the code sets
+  and by the resultant
+  a_i.v_s == TYPE_RES(i, s) (mod p^{x-1}). Today the code sets
   `ur_a` to the offset between the two and divides by q_s; it becomes
-  `TYPE_PAIR(vi, sq0)` divided by a_i.q_s. p is prime to both.
+  `TYPE_RES(vi, sq0)` divided by a_i.q_s. p is prime to both.
 - At the square itself: the residues are divided by p^{(x-1)/g}
   modulo the old qq_s with p removed, as now.
 - In both, the modulus `ur_m` it forms as aq / q_s becomes
@@ -555,40 +602,45 @@ path from pc[oar]ul becomes a change hv can ask for separately. If
 it is not, report the figures before going further.
 
 `reject_square()` tests whether q_s.z^g == d (mod p) can hold when p
-is tried at v_i, with d the offset from v_i to the square. Under the
-pair relation the congruence is
+is tried at v_i, with d the offset from v_i to the square. By the
+resultant the congruence is
 
-    a_i.q_s.z^g == TYPE_PAIR(i, s) (mod p)
+    a_i.q_s.z^g == TYPE_RES(i, s) (mod p)
 
-so `rs_d` becomes `TYPE_PAIR(vi, sq0)` and the residue of q_s is
+so `rs_d` becomes `TYPE_RES(vi, sq0)` and the residue of q_s is
 multiplied by a_i (mod p, and mod p^2 for the lift). Its tests are
 then as now: the Jacobi symbol for h = 2, the power for h > 2, and
 the lift to p^2. No new inverse is needed. The call in `walk_midp()`
-changes the same way.
+changes the same way. (Done in stage 1: `reject_square()` now takes
+the position as its first argument.)
 
 `square_endr()` and the limits of the root walk in `walk_v()` take
-the greatest v_s from `v_of_d()`.
+the greatest v_s from `dtov()`.
 
 ### 4.9 Two squares: Pell
 
-With v_i = q_i.x^2 and v_j = q_j.y^2 the pair relation gives
+With v_i = q_i.x^2 and v_j = q_j.y^2 the resultant gives
 
-    a_j.q_i.x^2 - a_i.q_j.y^2 = TYPE_PAIR(j, i)
+    a_j.q_i.x^2 - a_i.q_j.y^2 = TYPE_RES(j, i)
 
 so `walk_v()` calls `new_pell()` with a_j.q_i, a_i.q_j and
-`TYPE_PAIR(sqj, sqi)`. Each solution is then checked against o and qq
+`TYPE_RES(sqj, sqi)`. Each solution is then checked against o and qq
 at both squares, as now; with the qq of 4.3 that check also ensures
-that d is an integer.
+that d is an integer. (The call is so written since stage 1; with
+TYPE_RES() an int, `new_pell()` keeps its int argument.)
 
-Two changes in pell.c:
+The limit passed for x must come from the greatest v_i, not from
+zmax: until stage 0 it was zmax / q_i, which lost any solution with
+d within TYPE_OFFSET(i) of the maximum (fixed on master as a bug of
+its own, alongside stage 0).
 
-- `new_pell()` takes its third argument as an int. For type t it is
-  n.(i - j), up to 2^38 or so. Make it a long.
-- `new_pell()` then loops f from 1 to |N| looking for the f whose
-  square divides the right side. For pc[oar]ul |N| is below 66 or a
-  small multiple of n. For pctul that loop would run to 2^38 for each
-  equation. The f wanted are divisors of N with f^2 dividing N.ra;
-  enumerate them from the factors of N. N takes at most k - 1
+One change in pell.c (its int argument stays, see 4.2):
+
+- `new_pell()` loops f from 1 to |N| looking for the f whose square
+  divides the right side. For pc[oar]ul |N| is below 66 or a small
+  multiple of n. For pctul |N| = n.|i - j| can be tens of millions,
+  for each equation. The f wanted are divisors of N with f^2 dividing
+  N.ra; enumerate them from the factors of N. N takes at most k - 1
   absolute values in a run, and n's factors are known (`nf`).
 
 `test_pell` covers pell.c; extend it to large N, and run the soak
@@ -762,7 +814,7 @@ On master `TYPE_OFFSET()` is used at 40 places in coul.c. They fall
 into five kinds. A site not listed here that adds an offset to a
 value, or forms aq / q, belongs to one of them.
 
-**The greatest v_i** (zmax + offset becomes `v_of_d(.., vi, zmax)`):
+**The greatest v_i** (zmax + offset becomes `dtov(.., vi, zmax)`):
 `updated_zmax()`, `apply_allocv()`, `limit_p()` (twice; the second
 is TYPE_o only), `prep_midp()`, `square_endr()`,
 `run_flip_pqsq()` (twice), and the root limit `wv_endr` in
@@ -777,17 +829,29 @@ that p^{x-1} must lie in (`w1_m`, `w1_mr`): with qq in place of
 aq / q that class also makes d an integer, and `need_mod` is then
 true whenever a_i > 1.
 
-**d from a value** (`d_of_v()`, reject if it fails): `walk_1()`,
+**d from a value** (`vtod()`, reject if not exact, after any test
+against a bound): `walk_1()`,
 `walk_1_set()` and the Pell branch of `walk_v()` (its test against
 zmax) where they turn a completed v_i into v_0; `apply_batch()`
 where it tests a terminal value against zmin. Then each other v_j
-comes from `v_of_d()`. The three places in `walk_v()` that rebuild
-the candidate as (o_0 + t.qq_0).q_0 use rq + aq.t under any type.
+comes from `dtov()`. The three places in `walk_v()` that rebuild
+the candidate as (o_0 + t.qq_0).q_0 use rq + aq.t under any type, and
+so do its failure handlers `walk_v_failure()` and `walk_zv_failure()`
+(from `g_node`, which replaced `g_q0`).
 
-**The pair constant** (`TYPE_PAIR()`): `walk_v()` (Pell, 4.9),
+All of these are done (stage 1), with two more helpers for the third
+kind, `calc_o()` and `calc_qq()`, that form o_i and qq_i, asserting I1 and
+I2 when a_i > 1. There is no build flag for debug-only checks, and an
+assertion where a_i = 1 would cost pc[oar]ul a division per position
+per walk, so they are not checked there.
+
+**The resultant** (`TYPE_RES()`): `walk_v()` (Pell, 4.9),
 `update_residues()`, `reject_prep_square()`, `walk_midp()` (4.8).
 `apply_batch()` also forms one, where a secondary of a batch hits
-the square; that path is pc[oar]ul's only (4.8).
+the square; that path is pc[oar]ul's only (4.8), and stage 1 left it
+alone. Note that it writes `TYPE_OFFSET(sq0 - vi)` with unsigned
+arithmetic, which wraps when sq0 < vi; the result is right only
+because a fold arises only for p = 2.
 
 Sites that need more than a substitution:
 
@@ -800,6 +864,11 @@ Sites that need more than a substitution:
   difference is nothing, for pctul it is a factor of a_i. Write both
   in the terms of 4.3. This must leave pc[oar]ul's decisions as they
   are (the offset is negligible against zmax, but check: 8.1).
+  Done in stage 1 as two commits: one in terms of `gate_span()`, the
+  span of a position, still taking the loop's position for the square
+  case, with estimates exactly as before; then one that takes the
+  square's position, which can change a decision only in a case
+  vanishingly rare.
 - `update_chinese()`, `reject_single()`: 4.7.
 - `test_forcep()`, `list_forcep()`, `max_forcep()`, `prep_forcep()`:
   unchanged for pc[oar]ul. Under TYPE_t `list_forcep()` gives the
@@ -813,7 +882,9 @@ Sites that need more than a substitution:
 - `relative_valuation()`, used by `insert_forced()` to take a batch's
   powers off the recovery stack. It recomputes from offsets what
   `bp->x[]` already holds. Use `bp->x[]`, for every type, and remove
-  it. **[verify]** that the two agree wherever a batch was matched.
+  it. Done in stage 0. Checked: equal by construction (both come
+  from the valuations `test_forcep()` takes), and a temporary
+  assertion comparing the two held over `make dtest`.
 - `prep_target()`, `know_target()`, `target_t()`, `target_lcm`: type t
   is type r with every target equal to tau(n). Use the TYPE_r code
   (`target_tau[]`, `target_lcm`) for both.
@@ -848,7 +919,7 @@ strategies (`best_v0()` to `best_v4()`; STRATEGY_6X is TYPE_o only),
 - `pctul [options] n k`, k as in f(n, k), 2 <= k <= MAXK + 1.
   **[verify]** which of the two bounds on positions (`MAXK`, the
   `t_dis` words) is the tighter once k is one less.
-- n is a uint, as now. c_i = n and the pair constant fit the types of
+- n is a uint, as now. c_i = n and the resultant fit the types of
   4.2 for any such n.
 - `-x<min>:<max>` bounds d.
 - `-f`, `-F`: refused (4.6).
@@ -930,7 +1001,7 @@ Done when: identical (8.1), bar the 211 lines of pcaul.
 
 ### Stage 1: the three relations
 
-- `TYPE_MULT()`, `TYPE_PAIR()`, `v_of_d()`, `d_of_v()`.
+- `TYPE_MULT()`, `TYPE_RES()`, `dtov()`, `vtod()`.
 - Every site of section 5 converted, by kind. `TYPE_MULT()` is 1 for
   all three programs, so nothing changes.
 - I1 and I2 asserted in the debug builds.
@@ -939,22 +1010,92 @@ Done when: identical (8.1), and `make test` shows no change in CPU
 time beyond noise on two production-size batches (give the commands).
 No pctul target yet.
 
-### Stage 2: a batch gives its class
+### Stage 2: a batch gives its residue class
 
-- `batch_class()`, used by `apply_primary()` and the recovery
+- `batch_resclass()`, used by `apply_primary()` and the recovery
   helpers in place of (primary, x, fold).
 - The fields of 4.5 added to `t_forcebatch`.
 
 Done when: identical (8.1).
+
+### As done: stages 0 to 2 (2026-11-16/17)
+
+On master, over 5a553ae, ending f98cbb5, in order:
+
+- pc?ul: insert_forced() takes powers from the batch
+- pc?ul: each type's characteristics in one place, in coul.h (name,
+  TYPE_MULT(), TYPE_OFFSET(), target_t(), target_lcm as one-liners per
+  type under the comment stating what each type searches for;
+  coulvec.c's context loses its n, coulmint.c its copy of target_lcm;
+  ftest, speed and sq12 are built with -DTYPE_o, as test_pell and
+  test_tau were)
+- pcaul: (bugfix) 211 lines showed the wrong values
+- pc?ul: (bugfix) Pell walk missed v_0 near the maximum (found while
+  reading for stage 1; see 4.9)
+- pc?ul: walk failure handlers take d from the node
+- pc?ul: v_i as a linear combination of d, TYPE_MULT, TYPE_OFFSET
+- pc?ul: TYPE_RES(), the resultant of two positions
+- pc?ul: allow for TYPE_MULT() in the CRT and reject_single()
+- pc?ul: gate_walk() in terms of the span of v_i
+- pc?ul: estimate a square walk from the square's span
+- pc?ul: a batch gives the residue class of d it fixes
+- pc?ul: say that least_is_best() writes to cur
+- skills: pcoul-internals on v_i as a function of d
+
+Names settled in review, used throughout this document: `dtov()` and
+`vtod()` (d to v_i and back; `vtod()` gives the greatest d with
+v_i <= v and says whether it is exact), `calc_o()` and `calc_qq()`,
+`TYPE_RES()` (an int: see 4.2), `batch_resclass()` and
+`apply_resclass()`. "Class" in this document means a residue class.
+
+Identical (8.1): 108 runs of the optimised builds, logs under `-dL`
+where short enough (else candidates, 367 counts and the log), with
+times and paths removed: pcoul n in {6, 8, 12, 18, 24, 30, 36, 48, 50,
+60} at small k, some under `-X`; `-j4`, `-W`, `-Wx`, `-k`, `-f`, `-F`,
+`-jp`, `-a`, `-g/-G`, `-m`, `-c`, `-I`; three recoveries; pcaul n in
+{2, 4, 6, 8, 12}; pcrul n in {10, 12, 20, 30, 36, 60, 100, 121, 144,
+210, 484, 1760}. Each of stage 0 (with the Pell fix), stage 1 before
+and after the square-span commit, and stage 2 gives the same output.
+Against master the one difference is from the Pell fix: pcoul 6 4
+makes one more Pell step (walkc +1, no candidate). `make dtest` passes
+after every commit; ftest, sq12, test_pell, test_tau and speed build.
+
+Timing (stage 1 condition), CPU seconds from the 367 line, master vs
+stage 2, three runs each, alternated:
+
+    pcoul -b0 -x22911293821947932 -j2 -f7 -g30 48 10
+        master 10.33 10.77 10.66    stage 2 10.72 10.74 10.30
+    pcoul -b3 -x1e19 36 4           (one square: 2^2.3^3 . 2 3)
+        master  8.65  9.35  8.14    stage 2  8.40  8.67  8.20
+
+No change beyond noise. (Run in the Claude sandbox, not on hv's
+machine.)
+
+Further, from review: `update_chinese()` keeps its fold parameter
+(a fold for odd p is still being considered); its comment says it is
+for unforced allocations, that p must not divide a_i (for an unforced
+p guaranteed only while TYPE_t has no tails), and why it does not use
+`apply_resclass()`. `batch_resclass()` asserts a_i = 1 at the primary;
+stage 3 replaces its derivation for TYPE_t. The square case of
+`gate_walk()` uses `calc_qq()`.
+
+Departures from the text above: the `dv`/`cls` fields wait for stage
+3; I1 and I2 are asserted only where a_i > 1 (section 5).
 
 ### Stage 3: pctul for tau(n) a power of 2
 
 Covers prime n, n = p.q, p^3, p.q.r and so on: no position can reach
 an odd tau above 1.
 
+- `fail()` at startup if n.(k - 1) exceeds INT_MAX, so that
+  `TYPE_RES()` fits its int (4.2).
+- `batch_resclass()` returns the residue class the builder recorded
+  (`dv`/`cls`), in place of its a_i = 1 derivation.
 - Targets; `true_k`; the target and forced-prime preparation of
   section 5; the builder of 4.5; `p^0` in patterns, parsed and
   recovered; the exclusion of 4.6; the reports; the exceptions.
+- The comment at tail generation required by 4.6 (tails would break
+  `update_chinese()`'s assumption that p does not divide a_i).
 - `fail()` if tau(n) is not a power of 2, and for `-c`, `-m`, `-f`,
   `-F`.
 - Tests: t40known and t10init entries for these n; the soak test,
@@ -979,7 +1120,7 @@ Done when: as stage 3, for the wider set.
 
 ### Stage 5: Pell
 
-- 4.9: `new_pell()` with a long, and its divisors from factors;
+- 4.9: `new_pell()` finds its divisors from factors;
   `test_pell` extended; `TEST_PELL=1 make dtest`.
 - n a square (`prep_presquare()`).
 - Tests: 49 3 and 36 2 from appendix A; the soak test on every n.
@@ -1025,8 +1166,17 @@ touch each other in few places. None of them blocks either.
 - On calibrate, `TYPE_OFFSET()` lives in coulint.h and is also used
   outside coul.c: `ke_root_node()` in coulplan.c; `cm_generic()`,
   `cm_trial()` and `cm_root_price()` in coulcost.c; twice in mock.c.
-  The first three form pair constants, the fourth a greatest v_s.
+  The first three form resultants, the fourth a greatest v_s.
   They convert by the rules of section 5 when calibrate is rebased.
+- Stages 0 to 2 also changed some interfaces that calibrate code may
+  call: `reject_square()` and `reject_mod()` take the position,
+  `least_is_best()` no longer takes a fold (`batch_is_best()` is its
+  batch form), `apply_primary()` takes (fpi, bi), `g_q0` became
+  `g_node`, `relative_valuation()` is gone, each type's
+  `TYPE_OFFSET()`, `TYPE_MULT()`, `target_t()` and `target_lcm` are in
+  coul.h (with `TYPE_RES()`), `prep_mintau()` and `cvec_init()` no
+  longer take the lcm and n, and `gate_walk()` forms its estimate
+  through `gate_span()`.
 - Stages 3 to 7 are almost all under TYPE_t or in the batch builder,
   which the planner does not price (its 5.5: `-f` is chosen with no
   cost involved). They can proceed beside planner stages 0 to 5.
@@ -1068,7 +1218,8 @@ price, and not as an option:
   5.5 ("expand this prime's singles" against "take the tail"); pctul
   would join it there. With `p^0` in patterns a tail and "p divides
   d" no longer look alike in the log, so the obstacle of 4.6 is gone
-  by then.
+  by then. Such primes would also need their class from the builder
+  rather than `update_chinese()`, where p can divide a_i (4.6).
 - Splitting a plain batch that has several classes left. It can be
   split into one batch per class, each with aq larger by p. For p = 3
   dividing n that is two batches; for p near n it is absurd.
@@ -1095,6 +1246,19 @@ cheaper of two ways of doing one walk (planner P4).
 - The cost table is measured by pcoul's benches and keyed by the kind
   and size of a test, not by type. pctul should be able to use it as
   it stands. **[verify]** once pctul runs under a calibrate build.
+
+### 9.5 Later speed-ups
+
+- Inverting a_i in `update_chinese()`. Its large path calls
+  `mpz_invert()` on the modulus p^x, and its single-limb path
+  `ppow_invert()`. Both ignore that a_i < MAXK is tiny: for a prime
+  to m, a^{-1} mod m = (1 + t.m) / a with t = -m^{-1} mod a, which
+  needs one `mpz_fdiv_ui(m, a)`, a single-word inverse mod a, and one
+  each of `mpz_mul_ui`, add and `mpz_divexact_ui`, with no gcd on
+  the large number and no use of m being a prime power. Consider a
+  helper (say `invert_small(r, a, m)`) for both paths. How often the
+  large path is reached depends on which (n, k) are attempted, so
+  judge it by profiling pctul, not by assumption.
 
 
 ## 10. Risks

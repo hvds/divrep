@@ -311,7 +311,7 @@ Not yet worked out:
   batch is complete, but a fold belongs to a prime's level. Either
   the forced lists are refined for every a that could arise, or the
   class is tightened at batch completion, which needs a way to add a
-  class with no allocation (pctul's `batch_class()` and its plain
+  class with no allocation (pctul's `batch_resclass()` and its plain
   batches are the nearest thing).
 - Whether the part B searches should itself be shared with its
   neighbours. Proposed: no, until measured.
@@ -454,7 +454,8 @@ loses nothing.
 
 **What the residues of a square rest on** (from reading master). In
 `apply_batch()` only the primary changes the class (rq, aq), through
-`apply_primary()` (`update_chinese()`, with the batch's fold). A
+`apply_primary()` (since pctul stage 2, from the batch's
+`batch_resclass()` through `apply_resclass()`). A
 secondary goes only through `apply_allocv()`: the tau check, its q,
 and, if its own position has just become a square, `alloc_square()`
 there, from the class and that position's q. For a square already
@@ -521,8 +522,8 @@ Not a site list; that comes after section 6.
   a; for an owner, s_min; for a non-owner, the folds of 4.4.
 - `candidate()` is given the d of the run that passed. Bounds on d
   apply per run.
-- Use pctul's accessors (`TYPE_MULT()`, `TYPE_PAIR()`, `v_of_d()`,
-  `d_of_v()`) wherever an offset is touched; no bare offsets.
+- Use pctul's accessors (`TYPE_MULT()`, `TYPE_RES()`, `dtov()`,
+  `vtod()`) wherever an offset is touched; no bare offsets.
 - Refuse the feature, with a message, wherever a stage does not yet
   support it (`-c`, `-m` at least).
 
@@ -762,11 +763,12 @@ Proposed, **[hv]**:
   refuse it. pcaul is possible but not designed here.
 - pctul keeps `k` as the positions of a run and adds `true_k`; this
   design must not change `k` either.
-- Both designs want a batch's class from one function
-  (`batch_class()`, pctul stage 2); the folds of 4.4 must go through
-  it.
-- pctul stage 0 makes `insert_forced()` take powers from `bp->x[]`;
-  recovery here will depend on that.
+- Both designs want a batch's residue class from one function
+  (`batch_resclass()`, on master since pctul stage 2, with
+  `apply_resclass()` to combine it with a node); the folds of 4.4
+  must go through it.
+- pctul stage 0 made `insert_forced()` take powers from `bp->x[]`
+  (on master); recovery here will depend on that.
 - pctul's non-goals (a stride sieve; interleaving trial division
   across values) are independent. The second overlaps 4.7: both want
   the multi-tau tests to choose their order across values.
