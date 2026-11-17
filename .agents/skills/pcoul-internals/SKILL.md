@@ -519,6 +519,11 @@ actually used, more reliable than reconstructing it from other sources.
   batch that holds no d (`tseq_single()` for a completed position, and
   for odd p up to `TSEQ_QRMAX` a square cofactor with no residue mod p),
   then sorts them into pcoul's order (`tseq_comparator()`), p^0 last.
+  Below a fixed square, a pctul batch finds the square's roots afresh
+  (`square_afresh()`), not through `update_residues()`'s
+  primary/secondary path, which assumes a_i = 1. pctul's Pell equations
+  have N = n.(i - j), so N can be large; o_i can exceed qq_i, so compare
+  residues reduced.
 - **`keep_single`** is true (suppressing the tail for that prime) when
   `p <= force_all` (the `-f` CLI option), or - specifically for
   `TYPE_o` - whenever `n & 3` is nonzero (i.e. `n` is *not* divisible
