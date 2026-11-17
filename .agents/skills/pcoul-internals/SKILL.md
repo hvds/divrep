@@ -515,7 +515,11 @@ actually used, more reliable than reconstructing it from other sources.
   allocates nothing but settles its prime (p | d for p not dividing n)
   has x[0] = 1, and patterns show it as `p^0` at v_0, so that recovery
   can rebuild every forced level; `level_batch()` finds the batch of a
-  forced level.
+  forced level. Below a fixed square, a pctul batch finds the square's
+  roots afresh (`square_afresh()`), not through `update_residues()`'s
+  primary/secondary path, which assumes a_i = 1. pctul's Pell equations
+  have N = n.(i - j), so N can be large; o_i can exceed qq_i, so compare
+  residues reduced.
 - **`keep_single`** is true (suppressing the tail for that prime) when
   `p <= force_all` (the `-f` CLI option), or - specifically for
   `TYPE_o` - whenever `n & 3` is nonzero (i.e. `n` is *not* divisible
