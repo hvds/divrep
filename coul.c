@@ -86,6 +86,7 @@ typedef enum {
     rec_cand, rec_lead, rec_trail,  /* recover */
     p3_base,                    /* parse_305 */
     dp_d,                       /* tseq_completer */
+    ts_v, ts_d, ts_p,           /* tseq_single */
 
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
@@ -2343,13 +2344,45 @@ static inline t_forcebatch *tseq_batch(t_forcebatch *fbp, uint i) {
     return (t_forcebatch *)&(((char *)fbp)[i * size_forcebatch()]);
 }
 
+/* Under TYPE_t, false if the batch that puts exactly p^{E[i]} at each
+ * v_i = nv + a_i.d completes some v_i, so that v_i = p^{E[i]} and only one
+ * d is possible, and that d is not a positive integer with exactly those
+ * powers of p.
+ */
+static bool tseq_single(ulong p, uint nv, uint t, uint *E) {
+    uint ci;
+    for (ci = 0; ci < k; ++ci)
+        if (E[ci] + 1 == t)
+            break;
+    if (ci == k)
+        return 1;
+    mpz_ui_pow_ui(Z(ts_v), p, E[ci]);
+    if (mpz_cmp_ui(Z(ts_v), nv) <= 0)
+        return 0;
+    mpz_sub_ui(Z(ts_v), Z(ts_v), nv);
+    if (!mpz_divisible_ui_p(Z(ts_v), TYPE_MULT(ci)))
+        return 0;
+    mpz_divexact_ui(Z(ts_d), Z(ts_v), TYPE_MULT(ci));
+    mpz_set_ui(Z(ts_p), p);
+    for (uint vj = 0; vj < k; ++vj) {
+        mpz_mul_ui(Z(ts_v), Z(ts_d), TYPE_MULT(vj));
+        mpz_add_ui(Z(ts_v), Z(ts_v), nv);
+        if (mpz_remove(Z(ts_v), Z(ts_v), Z(ts_p)) != E[vj])
+            return 0;
+        if (E[vj] + 1 == t && mpz_cmp_ui(Z(ts_v), 1) != 0)
+            return 0;
+    }
+    return 1;
+}
+
 /* Under TYPE_t, add the batch that puts exactly p^{E[i]} at each v_i to
  * those from fbp on, unless (E[i] + 1) does not divide t for some i, or
- * -fr excludes it; returns how many there now are. A batch that allocates
- * nothing has x[0] = 1, standing for p^0 at v_0.
+ * it holds no d (see tseq_single()), or -fr excludes it; returns how many
+ * there now are. A batch that allocates nothing has x[0] = 1, standing
+ * for p^0 at v_0.
  */
 static uint tseq_add(
-    t_forcebatch *fbp, uint count, ulong p, uint t, uint *E,
+    t_forcebatch *fbp, uint count, ulong p, uint nv, uint t, uint *E,
     uint primary, uint fold, uint dv, uint cls
 ) {
     uint maxe = 0;
@@ -2362,6 +2395,8 @@ static uint tseq_add(
                 primary = vi;
         }
     }
+    if (!tseq_single(p, nv, t, E))
+        return count;
     /* a cap of 0 means no cap, as in limit_p() */
     uint fx = maxe + 1;
     if (restrict_forced && maxe && maxp[xi(fx)] && maxp[xi(fx)] < p)
@@ -2463,7 +2498,7 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
                         break;
                 }
             }
-            count = tseq_add(fbp, count, p, t, E, 0, 0, f, cls);
+            count = tseq_add(fbp, count, p, nv, t, E, 0, 0, f, cls);
         }
         /* the batches with an extra power */
         for (uint m = 0; m < k; ++m) {
@@ -2507,7 +2542,7 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
                 if (!ok || nu + 1 >= p)
                     continue;
                 uint fold = (p == 2) ? 1 : 0;
-                count = tseq_add(fbp, count, p, t, Ec, m, fold, f,
+                count = tseq_add(fbp, count, p, nv, t, Ec, m, fold, f,
                         CLS_PRIMARY);
             }
         }

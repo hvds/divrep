@@ -86,13 +86,15 @@ sub test_pctul {
     ], 'pctul finds f(36, 2): n a square, so v_0 is a square');
     is_deeply(sorted('pctul', qw{ -x20000000 49 3 }), [ 120, 240, 5280, 9360 ],
             'pctul finds f(49, 3): two squares, 2x^2 - y^2 = 49 by Pell');
-    is_deeply(sorted('pctul', qw{ -x60000 8 5 }), [],
-            'pctul reports no false f(8, 5)');
+    # every batch of 2 is ruled out
+    my @lines = `./${debug}pctul -Ls0 -x60000 8 5 2>&1`;
+    ok((grep /^406 .* p=2 /, @lines),
+            'pctul reports no arrangement for f(8, 5)');
     is_deeply(sorted('pctul', qw{ -jd -x400000 15 7 }), [],
             'pctul reports no false f(15, 7)');
 
     # f(10, k) = 2.f(5, k) for k >= 3: every solution has d == 0 (mod 4)
-    my @lines = `./${debug}pctul -Ls0 -x200 10 3 2>&1`;
+    @lines = `./${debug}pctul -Ls0 -x200 10 3 2>&1`;
     ok(!$? && (grep m{^201 Dependent - 3:2 f\(5\) # fix 2$}, @lines),
             'pctul reports f(10, 3) dependent on f(5, 3)');
     is_deeply(sorted('pctul', qw{ -jd -x200 10 3 }), [
@@ -104,6 +106,12 @@ sub test_pctul {
             && !(grep /^201 /, @lines)
             && (grep /^202 Candidate 180 /, @lines),
             'pctul warns that f(210, 7) depends in part on f(105, 7)');
+
+    # tau = 3 needs v_i = q^2: if 3 | d then 9 + d = 9, else one of
+    # 9 + d, 9 + 2d is 2 (mod 3)
+    @lines = `./${debug}pctul -Ls0 -x1e100 9 4 2>&1`;
+    ok((grep /^406 .* p=3 /, @lines) && !(grep /^367 /, @lines),
+            'pctul reports no arrangement for f(9, 4) without a search');
 
     # f(243, k) is known impossible by exception for k > 4
     @lines = `./${debug}pctul -Ls0 -x100000 243 5 2>&1`;
