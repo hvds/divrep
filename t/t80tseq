@@ -15,8 +15,7 @@ my $prog = "./${debug}pctul";
 # pctul. Where pctul says (n, k) depends on a smaller n (201), check the
 # claim against the sieve, and that a search under -jd still finds them
 # all; likewise for the lower bound of a partly dependent case (313).
-# Each grid is [ nmin, nmax, kmax, dmax ]. For now only n with tau(n) a
-# power of 2 are supported.
+# Each grid is [ nmin, nmax, kmax, dmax ].
 my @grid = ([ 2, 250, 10, 5000 ], [ 300, 400, 12, 5000 ]);
 
 my $lim = 0;
@@ -35,7 +34,6 @@ my %sol;    # "n k dmax" => [ solutions ]
 for my $g (@grid) {
     my($nmin, $nmax, $kmax, $dmax) = @$g;
     for my $n ($nmin .. $nmax) {
-        next unless supported($n);
         for my $k (2 .. $kmax) {
             check($n, $k, $dmax);
         }
@@ -43,12 +41,6 @@ for my $g (@grid) {
 }
 done_testing();
 exit 0;
-
-sub supported {
-    my($n) = @_;
-    my $t = $tau[$n];
-    return !($t & ($t - 1));
-}
 
 sub sieve {
     my($n, $k, $dmax) = @_;
