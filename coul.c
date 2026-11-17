@@ -78,7 +78,7 @@ typedef enum {
     asq_o, asq_qq, asq_m,       /* alloc_square */
     wv_ati, wv_end, wv_cand,    /* walk_v */
     wv_startr, wv_endr, wv_qqr, wv_qqnext, wv_r, wv_rx, wv_temp,
-    wv_x, wv_y, wv_x2, wv_y2, wv_pa, wv_pb,
+    wv_x, wv_y, wv_x2, wv_y2, wv_pa, wv_pb, wv_oir, wv_ojr,
     w1_v, w1_j, w1_r,           /* walk_1 */
     w1_m, w1_mr,
     lp_x, lp_mint, lp_mint2,    /* limit_p */
@@ -4194,6 +4194,9 @@ void walk_v(t_node *cur_node, mpz_t start) {
             }
             new_pell(*pa, *pb, TYPE_RES(sqj, sqi), Z(wv_endr));
             uint pc = 0;
+            /* o_i need not be less than qq_i: TYPE_OFFSET() can be large */
+            mpz_fdiv_r(Z(wv_oir), *oi, *qqi);
+            mpz_fdiv_r(Z(wv_ojr), *oj, *qqj);
 
             mpz_t *pellx[2];
             uint pellt[2];
@@ -4243,11 +4246,11 @@ void walk_v(t_node *cur_node, mpz_t start) {
 
                 /* verify mod, coprime and tau */
                 mpz_fdiv_r(Z(wv_temp), Z(wv_x2), *qqi);
-                if (mpz_cmp(Z(wv_temp), *oi) != 0)
+                if (mpz_cmp(Z(wv_temp), Z(wv_oir)) != 0)
                     continue;   /* CHECKME: should this be an error? */
                 mpz_mul(Z(wv_y2), Z(wv_y), Z(wv_y));
                 mpz_fdiv_r(Z(wv_temp), Z(wv_y2), *qqj);
-                if (mpz_cmp(Z(wv_temp), *oj) != 0)
+                if (mpz_cmp(Z(wv_temp), Z(wv_ojr)) != 0)
                     continue;   /* CHECKME: should this be an error? */
                 mpz_gcd(Z(wv_temp), Z(wv_x), *qqi);
                 if (mpz_cmp_ui(Z(wv_temp), 1) != 0)
