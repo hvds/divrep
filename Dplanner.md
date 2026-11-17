@@ -11,12 +11,16 @@ marked **[verify]** are my reading of the code and must be checked
 before being relied on.
 
 Since this was written, stages 0 to 2 of the pctul design (Dpctul.md)
-are on master (5a553ae..f98cbb5), in place before this work starts:
-calibrate is to be rebased over them first. They write every value
-as v_i = TYPE_MULT(i).d + TYPE_OFFSET(i) and route the sites through
-`dtov()`, `vtod()`, `calc_o()`, `calc_qq()` and `TYPE_RES()`, and
-change a few interfaces (listed in Dpctul.md 9.1). The price hooks of
-this design must be written in those terms (Dpctul.md 9.2).
+went to master (5a553ae..f98cbb5), and calibrate has been rebased over
+them (2026-11-17, tip e5efc12). Names in calibrate code are as at
+d4afd1c, with the interface changes listed in Dpctul.md 9.1. Values
+are written as v_i = TYPE_MULT(i).d + TYPE_OFFSET(i), with the sites
+going through `dtov()`, `vtod()`, `calc_o()`, `calc_qq()` and
+`TYPE_RES()`; calibrate's estimators in doubles use `dtov_d()`
+(coulint.h) for the greatest v_i. The price hooks of this design must
+be written in those terms. Dpctul.md 9.2 lists what is still open:
+the estimators that size a value at position i as zmax / q_i, where
+for pctul it is nearer TYPE_MULT(i).zmax / q_i.
 
 
 ## 0. Before starting

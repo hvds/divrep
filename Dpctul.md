@@ -1163,11 +1163,21 @@ touch each other in few places. None of them blocks either.
   rebases calibrate over master. Decided: stages 0 to 2 go to master
   before the planner work starts, so that no planner code is written
   against bare offsets.
-- On calibrate, `TYPE_OFFSET()` lives in coulint.h and is also used
-  outside coul.c: `ke_root_node()` in coulplan.c; `cm_generic()`,
-  `cm_trial()` and `cm_root_price()` in coulcost.c; twice in mock.c.
-  The first three form resultants, the fourth a greatest v_s.
-  They convert by the rules of section 5 when calibrate is rebased.
+- Done: calibrate rebased over f98cbb5 (2026-11-17, tip e5efc12), each
+  conversion made in the commit that brings in its site. coulint.h
+  lost its own `TYPE_OFFSET()`, `target_t()` and `target_lcm` to
+  coul.h. Resultants by `TYPE_RES()`: `ke_root_node()` in coulplan.c,
+  `cm_generic()` and its cache key in coulcost.c. The greatest v_i by
+  `dtov()` in `kern_xtop()` (coul.c), and in doubles by a new
+  `dtov_d()` in coulint.h for `cm_root_price()` and `mock_walk_v()`.
+  The modulus TYPE_MULT(i).aq / q_i in place of aq / q_i in the
+  walk_1_set() estimates of `ja_cost()` and -Wa, and in the root
+  counts of `gq_roots()`, `ke_root_node()` and `ke_plain()`. Each is
+  written to give pcoul the same doubles as before, and a set of 22
+  calibrate runs gave the same logs before and after (bar the Pell
+  fix). Left for 9.2: the sizes of values (zmax / q_i).
+  hv is wary of estimates in doubles at all, since some cases will
+  want values beyond 10^308.
 - Stages 0 to 2 also changed some interfaces that calibrate code may
   call: `reject_square()` and `reject_mod()` take the position,
   `least_is_best()` no longer takes a fold (`batch_is_best()` is its
@@ -1195,8 +1205,9 @@ costs nothing to leave them out now.
   square) must use qq_i. On calibrate the functions that form sizes
   from zmax or aq are, in coulplan.c, the `gr_`, `gq_`, `ke_`, `wa_`
   and `wf_` estimators and `ja_cost()`; in coulcost.c `cm_trial()`
-  and `cm_tail()`; in mock.c `mock_walk_v()`. **[verify]** each as
-  the price hooks of planner stage 1 are made from them.
+  and `cm_tail()`; in mock.c `mock_walk_v()`. The moduli of these
+  were converted in the rebase (9.1); **[verify]** the rest as the
+  price hooks of planner stage 1 are made from them.
 - **A walk's length is in d; a value's size is not.** The steps of a
   walk are zmax / aq whatever the type. The values tested at position
   i are near a_i.zmax / q_i, up to six bits more than at the first
