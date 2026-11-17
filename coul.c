@@ -3211,8 +3211,6 @@ bool alloc_square(t_node *cur, uint vi) {
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap = &v->alloc[vlevel - 1];
     uint sqi = cur->have_square++;
-    if (roots_afresh() && sqi)
-        fail("TODO: pctul does not yet support a second square");
     uint g = divisors[ap->t].gcddm;
     if (sqi == 0) {
         sq0 = vi;
