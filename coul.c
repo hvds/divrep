@@ -625,6 +625,19 @@ static inline bool has_p0(void) {
 #endif
 }
 
+/* True if a forced batch applied below a fixed square finds the square's
+ * roots afresh (square_afresh()), rather than updating them from the
+ * primary and secondaries as update_residues() does: under TYPE_t the
+ * residue class of d does not follow from the primary's power alone.
+ */
+static inline bool roots_afresh(void) {
+#if defined(TYPE_t)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 /* The batch applied at level li, or NULL if li is not a forced level:
  * one is, just when it clears a bit of fp_need, its forced prime's being
  * the lowest set before it (see next_fpi()).
@@ -2743,6 +2756,8 @@ bool alloc_square(t_node *cur, uint vi) {
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap = &v->alloc[vlevel - 1];
     uint sqi = cur->have_square++;
+    if (roots_afresh() && sqi)
+        fail("TODO: pctul does not yet support a second square");
     uint g = divisors[ap->t].gcddm;
     if (sqi == 0) {
         sq0 = vi;
@@ -2760,6 +2775,25 @@ bool alloc_square(t_node *cur, uint vi) {
     if (rp->count == 0)
         return 0;
     return 1;
+}
+
+/* Find afresh the roots of the first square below cur, as alloc_square()
+ * does, from cur's rq and aq and the allocations now at the square.
+ * Returns FALSE if there are none. See roots_afresh().
+ */
+bool square_afresh(t_node *cur) {
+    uint vi = sq0;
+    uint vlevel = cur_vlevel[vi];
+    t_allocation *ap = &value[vi].alloc[vlevel - 1];
+    /* under -a4, the square may be fully allocated: nothing to track */
+    if (ap->t == 1)
+        return 1;
+    uint g = divisors[ap->t].gcddm;
+    sqg[vlevel - 1] = g;
+    calc_o(Z(asq_o), vi, cur->rq, ap->q);
+    calc_qq(Z(asq_qq), vi, cur->aq, ap->q);
+    allzrootmod(cur->level, Z(asq_o), g, Z(asq_qq));
+    return res_array(cur->level)->count != 0;
 }
 
 /* If any value is forced to be square even before any allocations,
@@ -2997,11 +3031,6 @@ void init_post(void) {
 #endif
     if (!ignore_exceptions)
         check_exceptions();
-#if defined(TYPE_t)
-    if (!ispow2_u64(target_lcm))
-        fail("TODO: pctul supports only tau(n) a power of 2, not %u",
-                target_lcm);
-#endif
 
     /* level[0] is special, level[1] is special if any target_t is odd;
      * then we can have forcedp batch allocations and maxodd * k normal
@@ -4625,9 +4654,8 @@ bool apply_unalloc(t_node *prev, t_node *cur, uint fpi, uint bi) {
         return 0;
     if (mpz_cmp(cur->rq, zmax) > 0)
         return 0;
-    /* no square can be fixed before TYPE_t supports one */
-    if (prev->have_square)
-        fail("TODO: a batch that allocates nothing, below a square");
+    if (prev->have_square && !square_afresh(cur))
+        return 0;
     cur->vi_depth = cur_vlevel[vi];
     return 1;
 }
@@ -5191,7 +5219,12 @@ bool apply_batch(
     }
 
     /* did we already have a square? */
-    if (prev_node->have_square) {
+    if (prev_node->have_square && roots_afresh()) {
+        if (!square_afresh(cur_node)) {
+            unapply_batch(fpi, bi, k);
+            return 0;
+        }
+    } else if (prev_node->have_square) {
         /* Need extra care only when a secondary hits the square,
          * so not if a) the primary hits it, or b) nothing hits it.
          */
