@@ -1,0 +1,106 @@
+#!/usr/bin/env perl
+BEGIN { do "./lib/reexec" for grep $_, $ENV{MATHPERL} }
+use strict;
+use warnings;
+use Test::More;
+
+# a soak test, see the Makefile
+plan skip_all => 'set TEST_TSEQ to run this' unless $ENV{TEST_TSEQ};
+
+my $debug = $ENV{DEBUG} ? 'd' : '';
+my $prog = "./${debug}pctul";
+
+# For a grid of (n, k) and a range of d, compare the solutions pctul finds
+# under -X with those found by sieving tau, which shares nothing with
+# pctul. Where pctul says (n, k) depends on a smaller n (201), check the
+# claim against the sieve, and that a search under -jd still finds them
+# all; likewise for the lower bound of a partly dependent case (313).
+# Each grid is [ nmin, nmax, kmax, dmax ]. For now only n with tau(n) a
+# power of 2 are supported.
+my @grid = ([ 2, 250, 10, 5000 ], [ 300, 400, 12, 5000 ]);
+
+my $lim = 0;
+for (@grid) {
+    my $l = $_->[1] + ($_->[2] - 1) * $_->[3];
+    $lim = $l if $lim < $l;
+}
+my @tau = (0, (1) x $lim);
+for my $i (2 .. $lim) {
+    for (my $j = $i; $j <= $lim; $j += $i) {
+        ++$tau[$j];
+    }
+}
+
+my %sol;    # "n k dmax" => [ solutions ]
+for my $g (@grid) {
+    my($nmin, $nmax, $kmax, $dmax) = @$g;
+    for my $n ($nmin .. $nmax) {
+        next unless supported($n);
+        for my $k (2 .. $kmax) {
+            check($n, $k, $dmax);
+        }
+    }
+}
+done_testing();
+exit 0;
+
+sub supported {
+    my($n) = @_;
+    my $t = $tau[$n];
+    return !($t & ($t - 1));
+}
+
+sub sieve {
+    my($n, $k, $dmax) = @_;
+    return $sol{"$n $k $dmax"} //= do {
+        my $t = $tau[$n];
+        my @s;
+        D: for my $d (1 .. $dmax) {
+            for my $i (1 .. $k - 1) {
+                next D if $tau[$n + $i * $d] != $t;
+            }
+            push @s, $d;
+        }
+        \@s;
+    };
+}
+
+sub run {
+    my(@args) = @_;
+    my @lines = `$prog -Ls0 -X @args 2>&1`;
+    return (undef, "exit status $?") if $?;
+    my %c = map +($_ => 1), map /^202 Candidate (\d+)/ ? $1 : (), @lines;
+    return ([ sort { $a <=> $b } keys %c ], @lines);
+}
+
+sub check {
+    my($n, $k, $dmax) = @_;
+    my $want = sieve($n, $k, $dmax);
+    my($got, @lines) = run("-x$dmax", $n, $k);
+    return fail("pctul $n $k: $lines[0]") unless $got;
+    my($dep) = map /^201 Dependent - \d+:(\d+) f\((\d+)\)/ ? [ $1, $2 ] : (),
+            @lines;
+    if ($dep) {
+        my($pe, $nd) = @$dep;
+        my $dmax2 = int($dmax / $pe);
+        my $base = sieve($nd, $k, $dmax2);
+        is_deeply($want, [ map $_ * $pe, @$base ],
+                "pctul $n $k: f($n, $k) = $pe.f($nd, $k)");
+        ($got, @lines) = run('-jd', "-x$dmax", $n, $k);
+        return fail("pctul -jd $n $k: $lines[0]") unless $got;
+        return is_deeply($got, $want, "pctul -jd $n $k finds every d");
+    }
+    for (@lines) {
+        my($pe, $nd) = /^313 .* (\d+)\.f\((\d+), \d+\)$/ or next;
+        my($p) = /divisible by (\d+)/;
+        my $dmax2 = int($dmax / $pe);
+        my %base = map +($_ => 1), @{ sieve($nd, $k, $dmax2) };
+        my @bad = grep { $_ % ($pe * $p) || !$base{$_ / $pe} } @$want;
+        ok(!@bad, "pctul $n $k: each d is $pe times one for f($nd, $k)")
+                or diag("not so: @bad");
+    }
+    return is_deeply($got, $want, "pctul $n $k finds every d")
+            unless grep /^40[36] /, @lines;
+    (my $why = $lines[-1]) =~ s/\s+\z//;
+    return is_deeply($want, [], "pctul $n $k has no d: $why");
+}

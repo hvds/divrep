@@ -14,6 +14,7 @@ my $debug = $ENV{DEBUG} ? 'd' : '';
 
 test_pcrul();
 test_unforce();
+test_pctul();
 
 done_testing();
 exit 0;
@@ -52,6 +53,57 @@ sub test_unforce {
         is_deeply(found('pcoul', '-x41139271:41139272', $F, qw{ 24 4 }),
                 [ 41139272 ], "pcoul $F f(24, 4) finds 41139272 (2^3 . 2 .)");
     }
+}
+
+sub test_pctul {
+    # tau(n + id) = tau(n) for 0 <= i < k
+    is_deeply(sorted('pctul', qw{ -x600 13 4 }),
+            [ 30, 48, 90, 150, 198, 210, 360, 408, 510, 528 ],
+            'pctul finds f(13, 4): n prime, so d divisible by 2.3');
+    is_deeply(sorted('pctul', qw{ -x2000000 97 7 }),
+            [ 33390, 99960, 120750, 390390, 631260, 813120, 1363950 ],
+            'pctul finds f(97, 7): n prime, so d divisible by 2.3.5.7');
+    is_deeply(sorted('pctul', qw{ -x1000 15 5 }), [
+        6, 18, 36, 126, 144, 188, 194, 288, 378, 482, 566, 614, 756
+    ], 'pctul finds f(15, 5): n = pq with 3 < k dividing n');
+    is_deeply(sorted('pctul', qw{ -x400 27 4 }), [
+        58, 64, 88, 158, 182, 188, 190, 338, 364, 388
+    ], 'pctul finds f(27, 4): n a prime cube');
+    is_deeply(sorted('pctul', qw{ -x6000 30 6 }), [
+        376, 388, 1132, 1228, 2596, 5176, 5596, 5932
+    ], 'pctul finds f(30, 6): tau(n) = 8');
+    # every batch of 2 is ruled out
+    my @lines = `./${debug}pctul -Ls0 -x60000 8 5 2>&1`;
+    ok((grep /^406 .* p=2 /, @lines),
+            'pctul reports no arrangement for f(8, 5)');
+    is_deeply(sorted('pctul', qw{ -jd -x400000 15 7 }), [],
+            'pctul reports no false f(15, 7)');
+
+    # f(10, k) = 2.f(5, k) for k >= 3: every solution has d == 0 (mod 4)
+    @lines = `./${debug}pctul -Ls0 -x200 10 3 2>&1`;
+    ok(!$? && (grep m{^201 Dependent - 3:2 f\(5\) # fix 2$}, @lines),
+            'pctul reports f(10, 3) dependent on f(5, 3)');
+    is_deeply(sorted('pctul', qw{ -jd -x200 10 3 }), [
+        12, 24, 36, 48, 84, 96, 108, 132, 168, 192
+    ], 'pctul -jd searches f(10, 3) regardless');
+    # f(210, 7) >= 2.f(105, 7), but f(105, 7) need not be even
+    @lines = `./${debug}pctul -Ls0 -X -x1000 210 7 2>&1`;
+    ok(!$? && (grep /^313 .* >= 2\.f\(105, 7\)$/, @lines)
+            && !(grep /^201 /, @lines)
+            && (grep /^202 Candidate 180 /, @lines),
+            'pctul warns that f(210, 7) depends in part on f(105, 7)');
+
+    # f(243, k) is known impossible by exception for k > 4
+    @lines = `./${debug}pctul -Ls0 -x100000 243 5 2>&1`;
+    ok(!$? && (grep /^403 /, @lines),
+            'pctul reports f(243, 5) impossible by exception');
+}
+
+# returns an arrayref of the candidates reported, in ascending order,
+# or a string describing how the run failed to complete
+sub sorted {
+    my $c = found(@_);
+    return ref($c) ? [ sort { $a <=> $b } @$c ] : $c;
 }
 
 # returns an arrayref of the candidates reported, in the order found,

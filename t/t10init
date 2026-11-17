@@ -6,7 +6,7 @@ use warnings;
 use Test::More;
 use File::Temp ();
 our $type;
-my %PROG = (o => './pcoul', a => './pcaul');
+my %PROG = (o => './pcoul', a => './pcaul', t => './pctul');
 
 # each of these tests one aspect of -I, of recovery, or of the two together
 test_init();
@@ -28,6 +28,7 @@ test_recover_last_batch();
 test_no_forced_primes();
 test_recover_init();
 test_divisors_of_n();
+test_tseq_p0();
 
 done_testing();
 exit 0;
@@ -885,6 +886,36 @@ sub test_divisors_of_n {
         is(0 + keys %seen, 7,
                 "all pcaul f(12,4) candidates to 1e5 found with '@$opts'");
     }
+}
+
+sub test_tseq_p0 {
+    # For tau(n + id) = tau(n), a forced prime's batch can allocate nothing
+    # yet settle its prime: for p not dividing n, the batch with p | d;
+    # for p | n, the one with p not dividing d. Patterns show it as p^0 at
+    # v_0, so that recovery can rebuild every forced level.
+    local $type = 't';
+    my $args = [qw{ -x1e7 323 6 }];
+    # the batches that allocate nothing come last, so this is the last
+    my $b13 = 'b13: 17^0.19^0.2^0.3^0.5^0 . . . .';
+    expect_recover(q{recover a batch that is all p^0},
+        $args, ["305 $b13 (0.00s)"], "$b13: 1 / 333333");
+    expect_recover(q{recover inside its walk},
+        $args, ["305 $b13: 1000 / 333333 (0.00s)"], "$b13: 1001 / 333333",
+        2);
+    expect_recover(q{recover a batch with 3 at two positions},
+        $args, ['305 b2: 17^0.19^0.2^0.3 5 . 3 . (0.00s)'],
+        'b2: 17^0.19^0.2^0.3 5 . 3 .: 0 / 333332');
+    expect_recover_next_batch(q{recover to the next batch, all p^0},
+        [qw{ -x60000 323 6 }],
+        ['305 b12: 17^0.19^0.2^0.3^0 . . 5 .: 2000 / 2000 (0.00s)'], $b13);
+    expect_result(q{-I with 17 at every position},
+        28050, '17 17 17 17 17', [qw{ -x60000 323 6 }]);
+    expect_result(q{-I with 17^0 at v_0},
+        130, '17^0 . . . .', [qw{ -x60000 323 6 }]);
+    expect_log(q{fail if p^0 is not at v_0},
+        521, '. 17^0 . . .', [qw{ -x60000 323 6 }]);
+    expect_log(q{fail if p^0 is not of a prime},
+        524, '15^0 . . . .', [qw{ -x60000 323 6 }]);
 }
 
 sub temp_log {
