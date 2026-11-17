@@ -3155,6 +3155,38 @@ static ulong tseq_completer(ulong p, uint nv, uint t, bool div) {
     return 0;
 }
 
+/* Under TYPE_t, a forced prime for f(nv, true_k) with target tau t that
+ * has no batch, so that f(nv, true_k) has no solution, or 0 if each has
+ * at least one.
+ */
+static ulong tseq_unarranged(uint nv, uint t) {
+    t_fact f;
+    init_fact(&f);
+    simple_fact(nv, &f);
+    ulong bad = 0;
+    for (ulong p = 2; p <= true_k + f.count && !bad; ++p) {
+        /* the primes up to true_k, then those dividing nv */
+        ulong q = p;
+        if (p > true_k)
+            q = f.ppow[p - true_k - 1].p;
+        else {
+            ulong r;
+            for (r = 2; r * r <= q; ++r)
+                if (q % r == 0)
+                    break;
+            if (r * r <= q || nv % q == 0)
+                continue;
+        }
+        t_forcebatch *fbp = malloc(
+                tseq_maxbatch(q, nv, t) * size_forcebatch());
+        if (tseq_batches(fbp, q, nv, t) == 0)
+            bad = q;
+        free(fbp);
+    }
+    free_fact(&f);
+    return bad;
+}
+
 /* Under TYPE_t, check whether f(n, k) depends on a smaller case. If for
  * some p^e exactly dividing n the batches of p leave only d == 0 (mod
  * p^{e+1}), every solution is p^e times a solution for f(n / p^e, k) that
@@ -3181,6 +3213,14 @@ void check_dependent(void) {
         if (tseq_fixes(p, nd, td) && !tseq_completer(p, nd, td, 1)) {
             if (search_dependent)
                 continue;
+            /* the solutions correspond, so if there are none say so */
+            ulong bad = tseq_unarranged(nd, td);
+            if (bad) {
+                report("406 Error: no valid arrangement of powers for p=%lu"
+                        " in f(%u, %u), on which this depends (%.2fs)\n",
+                        bad, nd, true_k, seconds(utime()));
+                fail_silent();
+            }
             report("201 Dependent - %u:%lu f(%u) # fix %lu\n",
                     true_k, pe, nd, pe);
             done();
