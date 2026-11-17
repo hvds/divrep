@@ -72,7 +72,7 @@ typedef enum {
     tfp_v,                      /* test_forcep */
     sqm_t, sqm_q, sqm_b, sqm_z, sqm_x,  /* sqrtmod_t */
     uc_minusvi, uc_px, uc_inv,  /* update_chinese */
-    br_res, br_mod,             /* batch_resclass */
+    br_res, br_mod, br_inv,     /* batch_resclass */
     ur_a, ur_m, ur_ipg, ur_q,   /* update_residues */
     asq_o, asq_qq, asq_m,       /* alloc_square */
     wv_ati, wv_end, wv_cand,    /* walk_v */
@@ -137,12 +137,21 @@ uint div_count = 0;
  * When only one remains, "fold" is that unit, and the allocation can
  * fix v_0 mod p^{e+1} rather than mod p^e; else it is 0. For p = 2 it
  * is always 1.
+ *
+ * The residue class of d a batch fixes is given by its primary, power
+ * and fold (cls == CLS_PRIMARY), unless cls says otherwise: under TYPE_t
+ * a batch may fix a class that no allocation implies, d == p^dv.cls
+ * (mod p^{dv+1}), or d == 0 (mod p^dv) for CLS_ANY. See batch_resclass().
  */
 typedef struct s_forcebatch {
     uint primary;   /* x[primary] is first max */
     uint fold;      /* v_primary / p^e == fold (mod p), if non-zero */
+    uint dv;        /* power of p in d, if cls is not CLS_PRIMARY */
+    uint cls;       /* d / p^dv (mod p), or CLS_ANY, or CLS_PRIMARY */
     uint x[0];      /* allocate p^{x-1} at v_i for i: 0..k-1 */
 } t_forcebatch;
+#define CLS_ANY ((uint)~0)
+#define CLS_PRIMARY ((uint)~1)
 static inline size_t size_forcebatch(void) {
     return sizeof(t_forcebatch) + k * sizeof(uint);
 }
@@ -2031,6 +2040,8 @@ static inline bool has_tail(t_forcep *fp) {
 static inline void fpb_init(t_forcebatch *fpb, uint vi, uint x) {
     fpb->primary = vi;
     fpb->fold = 0;
+    fpb->dv = 0;
+    fpb->cls = CLS_PRIMARY;
     memset(&fpb->x[0], 0, k * sizeof(uint));
     if (x)
         fpb->x[vi] = x;
@@ -4023,22 +4034,46 @@ static inline bool apply_resclass(
 }
 
 /* Set (res, m) to the residue class of d that batch bi of forced prime
- * fpi fixes: d == res (mod m), m a power of p. With p^e at the primary
- * v_i, that is v_i == 0 (mod p^e), or v_i == fold.p^e (mod p^{e+1}) if
- * it has a fold: see t_forcebatch. This derivation needs TYPE_MULT(i)
- * to be 1; under TYPE_t the builder will record the class instead.
+ * fpi fixes: d == res (mod m), m a power of p. Unless the batch records
+ * its class (see t_forcebatch), with p^e at the primary v_i that is
+ * v_i == 0 (mod p^e), or v_i == fold.p^e (mod p^{e+1}) if it has a fold.
+ * Then p^g dividing TYPE_MULT(i) must divide v_i - TYPE_OFFSET(i) too,
+ * and is divided out of both and of the modulus.
  */
 void batch_resclass(mpz_t res, mpz_t m, uint fpi, uint bi) {
     t_forcep *fp = &forcep[fpi];
     t_forcebatch *bp = forcebatch_p(fp, bi);
+    ulong p = fp->p;
+    if (bp->cls != CLS_PRIMARY) {
+        mpz_ui_pow_ui(m, p, bp->dv);
+        if (bp->cls == CLS_ANY)
+            mpz_set_ui(res, 0);
+        else {
+            mpz_mul_ui(res, m, bp->cls);
+            mpz_mul_ui(m, m, p);
+        }
+        return;
+    }
     uint vi = bp->primary;
-    assert(TYPE_MULT(vi) == 1);
-    mpz_ui_pow_ui(m, fp->p, bp->x[vi] - 1);
+    mpz_ui_pow_ui(m, p, bp->x[vi] - 1);
     mpz_mul_ui(res, m, bp->fold);
     if (bp->fold)
-        mpz_mul_ui(m, m, fp->p);
+        mpz_mul_ui(m, m, p);
     mpz_sub_ui(res, res, TYPE_OFFSET(vi));
     mpz_mod(res, res, m);
+    uint a = TYPE_MULT(vi);
+    if (a != 1) {
+        for (; a % p == 0; a /= p) {
+            assert(mpz_divisible_ui_p(res, p));
+            mpz_divexact_ui(res, res, p);
+            mpz_divexact_ui(m, m, p);
+        }
+        mpz_set_ui(Z(br_inv), a);
+        if (!mpz_invert(Z(br_inv), Z(br_inv), m))
+            fail("panic: no inverse of %u mod %Zu", a, m);
+        mpz_mul(res, res, Z(br_inv));
+        mpz_mod(res, res, m);
+    }
 }
 
 /* An unforced allocation of p^e at one v_i fixes v_i / p^e (mod p)
