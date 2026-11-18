@@ -2497,6 +2497,29 @@ static bool tseq_extra_squares(
     return 0;
 }
 
+/* Under TYPE_t, the order in which tseq_batches() leaves the batches of
+ * a prime, as prep_forcep() gives them for other types: by primary, then
+ * by its power in the order of divisors[].div, each meant to bring the
+ * likelier early solutions first; then any batch that allocates nothing.
+ * The batches compared are those from tsort_base on, by index.
+ */
+static t_forcebatch *tsort_base;
+static int tseq_comparator(const void *va, const void *vb) {
+    uint ia = *(uint *)va, ib = *(uint *)vb;
+    t_forcebatch *a = tseq_batch(tsort_base, ia);
+    t_forcebatch *b = tseq_batch(tsort_base, ib);
+    uint xa = a->x[a->primary], xb = b->x[b->primary];
+    if ((xa <= 1) != (xb <= 1))
+        return (xa <= 1) ? 1 : -1;
+    if (xa > 1) {
+        if (a->primary != b->primary)
+            return (a->primary < b->primary) ? -1 : 1;
+        if (xi(xa) != xi(xb))
+            return (xi(xa) < xi(xb)) ? -1 : 1;
+    }
+    return (ia < ib) ? -1 : (ia > ib) ? 1 : 0;
+}
+
 /* Under TYPE_t, write the batches of the prime p for f(nv, true_k), with
  * target tau t at every position, from fbp on, and return how many there
  * are; nv is n except when testing whether n is dependent.
@@ -2684,6 +2707,19 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
         }
     }
     free(qr);
+
+    /* put them in the order of tseq_comparator() */
+    uint order[count];
+    for (uint bi = 0; bi < count; ++bi)
+        order[bi] = bi;
+    tsort_base = fbp;
+    qsort(order, count, sizeof(uint), &tseq_comparator);
+    size_t size = size_forcebatch();
+    char *sorted = malloc(count * size + 1);
+    for (uint bi = 0; bi < count; ++bi)
+        memcpy(&sorted[bi * size], tseq_batch(fbp, order[bi]), size);
+    memcpy(fbp, sorted, count * size);
+    free(sorted);
     return count;
 }
 #endif
