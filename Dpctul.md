@@ -910,7 +910,7 @@ Sites that need more than a substitution:
   v_i = m; under type t that is d = (m - n) / a_i if it is an integer.
 
 Not affected, as far as I can see, and so to be exercised and not
-rewritten (stage 7): `walk_midp()` beyond the call above, `-k` and
+rewritten (stage 8): `walk_midp()` beyond the call above, `-k` and
 the `kern_` code (TYPE_o only where it tests n), the flip, the
 strategies (`best_v0()` to `best_v4()`; STRATEGY_6X is TYPE_o only),
 `mintau()`, the caps, `-a` and `-b`, `-o`.
@@ -1274,7 +1274,86 @@ Then, from hv's runs against known values for n <= 10:
 - Tests: a search under `-c` finds what it finds without; `-m`
   restricts to the class given.
 
-### Stage 7: the rest, exercised
+### Stage 7: the constraints gtauseq knows
+
+hv (2026-11-18): gtauseq spots that f(9, 3) is impossible only with at
+least -c27, and f(18, 4) only with at least -c36. So: analyse the
+constraints gtauseq knows, check that coulvec.c has the same, check that
+pctul takes advantage of them where it can (at the batch stage above
+all), and decide which checks to make automatically rather than only
+under -c. Needs stage 6, which teaches coulvec.c a_i > 1.
+
+Inventory, Perl side (lib/Type/Tauish.pm unless noted), each rule to be
+stated as a claim about tau and checked:
+
+- `apply_m()`, for each modulus m up to -c: if tau(n) = 2, avoid
+  v_i == 0 (mod m) for prime m; `test_series()` (beyond some bound,
+  v_i == 0 (mod m) is impossible when tau(m), or that of the least
+  m_2 or m_3 the exponents can grow to, exceeds tau(n) or divides it
+  badly); `test_m_rad_m()` (xp^y (mod p^{y+1}) with y + 1 not dividing
+  tau(n); where tau(n) / tau(m) is odd, the cofactor must be a residue
+  mod each prime of m and of m.rad(m); for p = 2 the further
+  non-residues mod 2^{y+1}, such as 3 (mod 4)).
+- `check_fixed()` / `find_fixed()` / `fix_power()` (311): a position
+  whose unknown part must be a square or higher power fixes the form of
+  d; with two, the Pell equation (317).
+- `fix_fact` (-fact, lib/Constraint/Fact.pm); `check_mult()` (dependent
+  n, done in 4.12); `check_exceptions()`; -b, -cp, and the -m, -mq, -mm
+  overrides.
+
+C side: coulvec.c's `apply_m()` has four rules: v_i == 0 (mod m) when
+t_i < tau(m) (or equal, above a minimum); m/rad(m) times a unit
+(mod m) when tau(m/rad(m)) does not divide t_i; non-residues mod m for
+odd t_i; the p^6 + 1 factorization for t_i = 7. Compare rule by rule
+with the Perl, and list each gap both ways (for example the Perl's
+mod 2^{y+1} residues and `test_series()`'s m_2 and m_3 bounds).
+
+What pctul's batches already capture, for forced primes only: every
+rule about the exact power of p at each v_i (the levels of 4.4 are
+those rules, in full), and since 0017 the residue mod an odd forced p
+of a cofactor that must be a square. That is why pctul reports f(9, 3)
+as 406 at startup with no -c. Not captured:
+
+- p = 2: an odd square is 1 (mod 8), and the cofactor of an even
+  square is restricted mod 8 likewise. This would go in the builder
+  next to the odd-p residue check.
+- Across primes: one prime's batch fixes d mod p^j, and another's
+  leaves a square whose residue mod p^j that then decides. Today this
+  is found only when the square's roots are computed at apply time
+  (`square_afresh()`), and the batch fails there.
+- Unforced moduli: residues mod a small q (q > true_k, not dividing
+  n) for a position that must be a square. Neither the batches nor
+  the walks use these until q is allocated: the square walk works mod
+  qq_i, and the Pell walk only checks solutions against qq_i.
+
+Worked case, f(18, 4) (tau 6): pctul ends at once even with -x1e30 but
+cannot say 406, and reports only that it found nothing. The batch of 2
+with exactly 2^2 at v_1 = 18 + 2d needs d == 1 (mod 4); the batch of 3
+with 3^1 at v_2 = 18 + 3d leaves v_2 = 3z^2, so z^2 = 6 + d == 3
+(mod 4), which has no root: that combination dies in `square_afresh()`.
+The only walks are of the two completing batches (d = 7 and d = 14),
+and those count as valid batches, so the final "no valid arrangement"
+is not reported. (To verify against -dB once the stage starts.)
+
+Decisions to make (hv):
+
+1. Which checks run automatically. Candidates: the p = 2 residue rules
+   in the builder (cheap, per prime); residues mod small unforced q as
+   a filter in the square and Pell walks (needs a timing test); the
+   cross-prime case at batch-combination time if it can be done more
+   cheaply than by root-finding.
+2. Whether a run that ends with no walk cut short by -x, and no
+   candidate, should report the case impossible (406) rather than
+   nothing found: true for f(18, 4), and a stronger claim, so it needs
+   its own argument that every way of reaching a solution was walked
+   in full.
+3. What -c is still for in pctul afterwards.
+
+Tests: f(9, 3) and f(18, 4) report 406 with no -c; each check made
+automatic is shown by a case it decides and by a broken build the soak
+test catches; under -c, pctul finds the same solutions as without.
+
+### Stage 8: the rest, exercised
 
 Nothing new is written unless something fails. Each of `-W`, `-k`,
 `-j4`, the flip, `-a`, `-b`, `-o` and `-X` with a lowered maximum is
@@ -1454,6 +1533,8 @@ Still open:
 1. The wording of the 313 warning of 4.12 (code settled in stage 3).
 2. Whether pc[oar]ul should also find a square's roots afresh below a
    forced batch: figures in the record of stages 4 and 5.
+3. Stage 7's decisions: which constraint checks become automatic, and
+   whether a run that walked everything in full may report 406.
 
 
 ## Appendix A: reference values
