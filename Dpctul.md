@@ -1335,19 +1335,26 @@ The only walks are of the two completing batches (d = 7 and d = 14),
 and those count as valid batches, so the final "no valid arrangement"
 is not reported. (To verify against -dB once the stage starts.)
 
-Decisions to make (hv):
+Decisions (hv, 2026-11-18):
 
-1. Which checks run automatically. Candidates: the p = 2 residue rules
-   in the builder (cheap, per prime); residues mod small unforced q as
-   a filter in the square and Pell walks (needs a timing test); the
-   cross-prime case at batch-combination time if it can be done more
-   cheaply than by root-finding.
-2. Whether a run that ends with no walk cut short by -x, and no
-   candidate, should report the case impossible (406) rather than
-   nothing found: true for f(18, 4), and a stronger claim, so it needs
-   its own argument that every way of reaching a solution was walked
-   in full.
-3. What -c is still for in pctul afterwards.
+1. Which checks run automatically: ideally, everything pc?ul can find
+   that would make a material difference, with no need to ask; -c
+   should then have little reason to exist. "Material" is decided case
+   by case with a timing test against a case it applies to. Candidates
+   so far: the p = 2 residue rules in the builder (cheap, per prime);
+   residues mod small unforced q as a filter in the square and Pell
+   walks; the cross-prime case at batch-combination time, if cheaper
+   than root-finding.
+2. 406 claims that no solution is possible, at any -x; 500 that there
+   is none up to zmax, though there may be one beyond. Where all but a
+   finite set of d are ruled out, check those members of the set that
+   lie below zmax, as for any d. If none is a solution, report 406 when
+   every member lies below zmax, and 500 when some lie above it. For
+   f(18, 4) the finite set is the d of the completing batches.
+   (The dependence check of 4.12 tests such d whatever zmax is; that
+   is a separate claim, and stays as it is unless hv says otherwise.)
+3. -c in pctul: kept as it is for now; as checks become automatic it
+   should matter less, and whether to retire it is decided afterwards.
 
 Tests: f(9, 3) and f(18, 4) report 406 with no -c; each check made
 automatic is shown by a case it decides and by a broken build the soak
@@ -1533,8 +1540,10 @@ Still open:
 1. The wording of the 313 warning of 4.12 (code settled in stage 3).
 2. Whether pc[oar]ul should also find a square's roots afresh below a
    forced batch: figures in the record of stages 4 and 5.
-3. Stage 7's decisions: which constraint checks become automatic, and
-   whether a run that walked everything in full may report 406.
+3. Stage 7 (decided in principle, 2026-11-18): automatic checks
+   wherever they make a material difference; 406 after checking a
+   finite remaining set only when all of it lies below zmax (else
+   check those below zmax, and report 500).
 
 
 ## Appendix A: reference values
