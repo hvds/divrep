@@ -2419,6 +2419,84 @@ static inline uint tseq_maxbatch(ulong p, uint nv, uint t) {
     return (simple_valuation(nv, p) + 1) * (1 + k * divisors[t].alldiv);
 }
 
+/* Under TYPE_t, the largest odd p for which tseq_batches() scans the
+ * residues mod p for classes that leave a square no residue.
+ */
+#define TSEQ_QRMAX 0x100000
+
+/* True if a position with exactly p^E left with target tau t must be a
+ * square times p^E, its remaining tau being odd.
+ */
+static inline bool tseq_oddtau(uint t, uint E) {
+    return t % (E + 1) == 0 && ((t / (E + 1)) & 1);
+}
+
+/* Under TYPE_t, true unless the batch with an extra power p^{e+c} at
+ * critical position m, with exact powers Ec[], leaves some position that
+ * must be a square times p^{Ec} a cofactor that cannot be a nonzero
+ * residue mod p (qr[] marks those), for every class of u = v_m / p^{e+c}
+ * that is left (not in us[]). With d' == rho (mod p): the cofactor is
+ * a'_i.rho at a low position, n' at a high one, u at m and at a critical
+ * position with w > c, u + dm_j.rho with w = c, and with w < c a fixed
+ * value (n' + a'_j.d') / p^w that needs d' (mod p^{w+1}).
+ */
+static bool tseq_extra_squares(
+    ulong p, uint t, uint f, uint e, ulong nfull, uint m, uint c,
+    uint *Ec, uint *g, ulong *ar, bool *crit, uint *wj, ulong *dmj,
+    ulong rho, ulong *us, uint nu, bool *qr
+) {
+    ulong shift[k];     /* need qr[u + shift] */
+    uint ns = 0;
+    for (uint vi = 0; vi < k; ++vi) {
+        if (!tseq_oddtau(t, Ec[vi]))
+            continue;
+        if (vi == m) {
+            shift[ns++] = 0;
+        } else if (!crit[vi]) {
+            ulong v = (f + g[vi] < e) ? mulmod_u64(ar[vi] % p, rho, p) : nfull % p;
+            if (!qr[v])
+                return 0;
+        } else if (wj[vi] > c) {
+            shift[ns++] = 0;
+        } else if (wj[vi] == c) {
+            shift[ns++] = mulmod_u64(dmj[vi], rho, p);
+        } else {
+            uint w = wj[vi];
+            mpz_ui_pow_ui(Z(ts_v), p, w + 1);
+            mpz_set_ui(Z(ts_d), ar[m]);
+            if (!mpz_invert(Z(ts_d), Z(ts_d), Z(ts_v)))
+                fail("panic: no inverse of %lu mod %lu^%u", ar[m], p, w + 1);
+            mpz_mul_ui(Z(ts_d), Z(ts_d), nfull);
+            mpz_neg(Z(ts_d), Z(ts_d));
+            mpz_mod(Z(ts_d), Z(ts_d), Z(ts_v));   /* d' (mod p^{w+1}) */
+            mpz_mul_ui(Z(ts_d), Z(ts_d), ar[vi]);
+            mpz_add_ui(Z(ts_d), Z(ts_d), nfull);
+            mpz_mod(Z(ts_d), Z(ts_d), Z(ts_v));
+            for (uint i = 0; i < w; ++i)
+                mpz_divexact_ui(Z(ts_d), Z(ts_d), p);
+            if (!qr[mpz_fdiv_ui(Z(ts_d), p)])
+                return 0;
+        }
+    }
+    if (ns == 0)
+        return 1;
+    for (ulong u = 1; u < p; ++u) {
+        uint ui;
+        for (ui = 0; ui < nu; ++ui)
+            if (us[ui] == u)
+                break;
+        if (ui < nu)
+            continue;
+        uint si;
+        for (si = 0; si < ns; ++si)
+            if (!qr[(u + shift[si]) % p])
+                break;
+        if (si == ns)
+            return 1;
+    }
+    return 0;
+}
+
 /* Under TYPE_t, write the batches of the prime p for f(nv, true_k), with
  * target tau t at every position, from fbp on, and return how many there
  * are; nv is n except when testing whether n is dependent.
@@ -2446,10 +2524,17 @@ static inline uint tseq_maxbatch(ulong p, uint nv, uint t) {
  */
 uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
     uint e = simple_valuation(nv, p);
-    ulong np = nv;
+    ulong nfull = nv;   /* n' */
     for (uint i = 0; i < e; ++i)
-        np /= p;
-    np %= p;
+        nfull /= p;
+    ulong np = nfull % p;
+    /* the nonzero squares mod p, if p is odd and small enough to scan */
+    bool *qr = NULL;
+    if ((p & 1) && p <= TSEQ_QRMAX) {
+        qr = calloc(p, sizeof(bool));
+        for (ulong c = 1; c <= p / 2; ++c)
+            qr[mulmod_u64(c, c, p)] = 1;
+    }
     uint g[k], E[k];
     ulong ar[k];    /* a_i / p^{g_i} */
     for (uint vi = 0; vi < k; ++vi) {
@@ -2487,7 +2572,50 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
         /* the plain batch */
         if (nx < p) {
             uint cls = CLS_ANY;
-            if (nx + 1 == p) {
+            bool sq = 0, dead = 0;
+            for (uint vi = 0; vi < k && qr; ++vi) {
+                if (!tseq_oddtau(t, E[vi]))
+                    continue;
+                /* v_i / p^{E_i} == n' (mod p) at a high position */
+                if (f + g[vi] > e) {
+                    if (!qr[np])
+                        dead = 1;
+                } else
+                    sq = 1;
+            }
+            if (dead)
+                ;
+            else if (sq) {
+                /* keep the classes c of d' giving every square cofactor
+                 * a nonzero residue: a'.c at a low position, n' + a'.c at
+                 * a critical one; we need only know if 0, 1 or more are
+                 * left
+                 */
+                uint left = 0;
+                for (ulong c = 0; c < p && left < 2; ++c) {
+                    uint xi;
+                    for (xi = 0; xi < nx; ++xi)
+                        if (xs[xi] == c)
+                            break;
+                    if (xi < nx)
+                        continue;
+                    bool good = 1;
+                    for (uint vi = 0; vi < k && good; ++vi) {
+                        if (!tseq_oddtau(t, E[vi]) || f + g[vi] > e)
+                            continue;
+                        ulong v = mulmod_u64(ar[vi] % p, c, p);
+                        if (crit[vi])
+                            v = (v + np) % p;
+                        good = qr[v];
+                    }
+                    if (good && left++ == 0)
+                        cls = c;
+                }
+                if (left == 0)
+                    dead = 1;
+                else if (left > 1)
+                    cls = CLS_ANY;
+            } else if (nx + 1 == p) {
                 /* p <= k + 2 here, so this loop is short */
                 for (cls = 0; cls < p; ++cls) {
                     uint xi;
@@ -2498,7 +2626,8 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
                         break;
                 }
             }
-            count = tseq_add(fbp, count, p, nv, t, E, 0, 0, f, cls);
+            if (!dead)
+                count = tseq_add(fbp, count, p, nv, t, E, 0, 0, f, cls);
         }
         /* the batches with an extra power */
         for (uint m = 0; m < k; ++m) {
@@ -2513,6 +2642,8 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
                 ulong us[k];    /* the classes of u excluded */
                 uint nu = 0;
                 bool ok = 1;
+                uint wj[k];     /* p^w exactly divides a'_j - a'_m */
+                ulong dmj[k];   /* (a'_j - a'_m) / p^c (mod p), if w = c */
                 for (uint vj = 0; vj < k && ok; ++vj) {
                     if (vj == m || !crit[vj])
                         continue;
@@ -2523,12 +2654,14 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
                         break;
                     }
                     Ec[vj] = e + (w < c ? w : c);
+                    wj[vj] = w;
                     if (w != c)
                         continue;
                     /* v_j / p^{e+c} == u + diff.d' / p^c (mod p) */
                     for (uint i = 0; i < c; ++i)
                         diff /= (slong)p;
                     ulong dm = (ulong)(diff % (slong)p + (slong)p) % p;
+                    dmj[vj] = dm;
                     ulong uc = mulmod_u64(dm, cc[m], p);
                     if (uc)
                         uc = p - uc;
@@ -2541,12 +2674,16 @@ uint tseq_batches(t_forcebatch *fbp, ulong p, uint nv, uint t) {
                 }
                 if (!ok || nu + 1 >= p)
                     continue;
+                if (qr && !tseq_extra_squares(p, t, f, e, nfull, m, c,
+                        Ec, g, ar, crit, wj, dmj, cc[m], us, nu, qr))
+                    continue;
                 uint fold = (p == 2) ? 1 : 0;
                 count = tseq_add(fbp, count, p, nv, t, Ec, m, fold, f,
                         CLS_PRIMARY);
             }
         }
     }
+    free(qr);
     return count;
 }
 #endif
