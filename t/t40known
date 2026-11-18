@@ -34,7 +34,8 @@ sub test_pcrul {
     # f(49, 3) is known impossible by exception, unless we ignore that
     my @lines = `./${debug}pcrul -Ls0 -x100000 49 3 2>&1`;
     ok(!$? && (grep /^403 /, @lines),
-            'pcrul reports f(49, 3) impossible by exception');
+            'pcrul reports f(49, 3) impossible by exception')
+        or diag_tail(\@lines);
     is_deeply(found('pcrul', qw{ -ix -x100000 49 3 }), [],
             'pcrul -ix searches f(49, 3) regardless');
 }
@@ -54,11 +55,25 @@ sub test_unforce {
 }
 
 # returns an arrayref of the candidates reported, in the order found,
-# or a string describing how the run failed to complete
+# or a string describing how the run failed to complete (showing the
+# tail of its output as a diagnostic)
 sub found {
     my($prog, @args) = @_;
     my @lines = `./$debug$prog -Ls0 -X @args 2>&1`;
-    return "exit status $?" if $?;
-    return 'no final line' unless grep /^367 /, @lines;
+    my $fail = $? ? "exit status $?"
+            : (grep /^367 /, @lines) ? undef
+            : 'no final line';
+    if (defined $fail) {
+        diag("./$debug$prog -Ls0 -X @args");
+        diag_tail(\@lines);
+        return $fail;
+    }
     return [ map /^202 Candidate (\d+)/ ? $1 : (), @lines ];
+}
+
+# diag() the last few lines of a run's output: some runs give thousands
+sub diag_tail {
+    my($lines) = @_;
+    my $from = @$lines > 10 ? @$lines - 10 : 0;
+    diag(join '', @$lines[$from .. $#$lines]);
 }
