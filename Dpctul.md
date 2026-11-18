@@ -1254,6 +1254,19 @@ Then, from hv's runs against known values for n <= 10:
   f(n, k) whose f(n / p^e, k) has a forced prime with no batch reports
   406 naming the smaller case, not 201: f(6, 4) = 2.f(3, 4).
 
+- pctul: a square needs a residue mod each forced prime. A position left
+  with odd tau by a batch of p must be a square times its exact power of
+  p, so its cofactor must be a nonzero residue mod p. For odd p up to
+  TSEQ_QRMAX (2^20) the builder scans the classes of d' (plain batches;
+  only whether 0, 1 or more are left matters) or of u (extra-power
+  batches; only whether any is left), with the cofactor a'.c (low),
+  n' + a'.c (critical), n' (high), u or u + dm.rho (critical with
+  w >= c in an extra batch), or a fixed value (w < c). f(25, 3) now
+  reports 406 up front. Not done: conditions mod 8 for odd squares at
+  p = 2; f(p^2, k) for k >= 4 with 2 .. k-1 all residues (such as
+  f(529, 4)) still searches, since only Fermat's four-squares theorem
+  rules it out, and hv wants a proof he can follow before adding that.
+
 ### Stage 6: -c and -m
 
 - The helper of section 5 in coulvec.c; modfix against a batch's
