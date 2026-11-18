@@ -1266,6 +1266,11 @@ Then, from hv's runs against known values for n <= 10:
   p = 2; f(p^2, k) for k >= 4 with 2 .. k-1 all residues (such as
   f(529, 4)) still searches, since only Fermat's four-squares theorem
   rules it out, and hv wants a proof he can follow before adding that.
+- pctul: batches in pcoul's order. Each prime's batches are sorted as
+  prep_forcep() lists them for the other types (by primary, then its
+  power in divisors[].div order, the likelier early solutions first),
+  with a batch that allocates nothing last; hv: that helps while still
+  searching for the minimum, and is neutral for a proof.
 
 ### Stage 6: -c and -m
 
