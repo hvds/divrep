@@ -129,7 +129,7 @@ typedef enum {
     A_FORCED,
     A_BASE,         /* level 0, so there is always a prev_node */
     A_PRESQ,        /* the dummy level before initial squares */
-    A_FIXED,        /* fixed by an -I pattern */
+    A_FIXED,        /* unforced, fixed by an -I pattern */
     A_MIDP,         /* -W's sweep, walk_midp() */
     A_6X,           /* the STRATEGY_6X walk, walk_6x() */
     A_FLIP,         /* run_flip_pqsq(), its allocation withdrawn */

@@ -639,14 +639,13 @@ static inline bool roots_afresh(void) {
 #endif
 }
 
-/* The batch applied at level li, or NULL if li is not a forced level:
- * one is, just when it clears a bit of fp_need, its forced prime's being
- * the lowest set before it (see next_fpi()).
+/* The batch applied at level li, or NULL if li is not a forced level.
+ * Its forced prime is the lowest still needed before it (see next_fpi()).
  */
 static inline t_forcebatch *level_batch(uint li) {
-    uint need = nodes[li - 1].fp_need;
-    if (need == nodes[li].fp_need)
+    if (acts[li].action != A_FORCED)
         return NULL;
+    uint need = nodes[li - 1].fp_need;
     return forcebatch_p(&forcep[ffs_u32(need) - 1], acts[li].bi);
 }
 
@@ -7033,8 +7032,10 @@ e_is insert_stack(void) {
             }
         }
 
+        /* a forced level keeps A_FORCED, see level_batch() */
         for (uint l = final_level + 1; l < level; ++l)
-            acts[l].action = A_FIXED;
+            if (acts[l].action != A_FORCED)
+                acts[l].action = A_FIXED;
         /* do not recurse back into elements set by init_pattern */
         final_level = level - 1;
     }
