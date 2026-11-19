@@ -898,6 +898,10 @@ void disp_batch(void) {
 }
 
 void diag_any(t_node *cur_node, bool need_disp) {
+    /* Clear this before testing what it asks for, so that a signal
+     * arriving while we work is not lost.
+     */
+    need_work = 0;
     double t1 = utime();
     update_window(cur_node);
 
@@ -960,8 +964,8 @@ void diag_any(t_node *cur_node, bool need_disp) {
             }
         }
     }
-    if (!debugw && !debugL)
-        need_work = 0;
+    if (debugw || debugL)
+        need_work = 1;
 }
 
 void diag_plain(t_node *cur_node) {
