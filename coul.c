@@ -4559,6 +4559,9 @@ void walk_midp(t_node *prev_node, bool recover) {
 
     while (midppc) {
         p = prime_iterator_prev(&cur_act->piter);
+        /* past 2, every power still listed is done */
+        if (!p)
+            break;
 
         /* If p is already allocated must still prune any completed powers,
          * skipping only the apply.

@@ -876,6 +876,15 @@ sub test_divisors_of_n {
     # forced order is 2, 5, 3: a product must give 5 before 3
     expect_result(q{a product is split in forced order},
         760120585, '5 405 5^4', [qw{ -x1e16 20 3 }]);
+    # the -k pass sweeps down to 2, and must not then try p = 0 (whose
+    # test for dividing n was a division by zero)
+    for my $opts ([], [qw{ -k1000 }]) {
+        my $lines = run_test($type, [ @$opts, qw{ -X -x1e5 12 4 } ], 0);
+        my %seen;
+        ++$seen{$_} for map /^202 Candidate (\d+)/, @{ $lines->{202} // [] };
+        is(0 + keys %seen, 7,
+                "all pcaul f(12,4) candidates to 1e5 found with '@$opts'");
+    }
 }
 
 sub temp_log {
