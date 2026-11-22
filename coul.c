@@ -88,7 +88,7 @@ typedef enum {
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
-    j4a, j4b, j4m, j4p, j4q,    /* best_6x() */
+    j4a, j4b, j4m, j4p, j4q, j4z,   /* best_6x() */
 
     MAX_ZSTASH
 } t_zstash;
@@ -5199,6 +5199,9 @@ void walk_6x(void) {
         fail("panic: STRATEGY_6X in use but no power of 2 found");
     /* take out the constant factor */
     mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
+    /* p must keep v_i within the maximum */
+    dtov(Z(j4z), vi, zmax);
+    mpz_fdiv_q(Z(j4z), Z(j4z), ap_last->q);
 
     /* Iterate j4a over all combinations of the prime power allocations
      * via a bit vector of which allocations to include. (We don't need
@@ -5245,7 +5248,8 @@ void walk_6x(void) {
         mpz_sub_ui(Z(temp), Z(j4a), 1);
         mpz_fdiv_qr(Z(j4p), Z(j4m), Z(temp), Z(j4b));
         if (mpz_cmp_ui(Z(j4m), 2) <= 0) {
-            if (_GMP_is_prob_prime(Z(j4p))) {
+            if (mpz_cmp(Z(j4p), Z(j4z)) <= 0
+                    && _GMP_is_prob_prime(Z(j4p))) {
                 /* p = Z(j4p) is prime and yields v_{i+2} = 2z^2 */
                 mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                 if (need_work)
@@ -5254,7 +5258,8 @@ void walk_6x(void) {
             }
             if (mpz_cmp_ui(Z(j4b), 2) <= 0) {
                 mpz_add_ui(Z(j4p), Z(j4p), 2 / mpz_get_ui(Z(j4b)));
-                if (_GMP_is_prob_prime(Z(j4p))) {
+                if (mpz_cmp(Z(j4p), Z(j4z)) <= 0
+                        && _GMP_is_prob_prime(Z(j4p))) {
                     mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                     if (need_work)
                         diag_6x(cur_act, a);
