@@ -2195,6 +2195,22 @@ e_tfp test_forcep(t_forcebatch *fpb, uint p, uint vi, uint x) {
     return TFP_SINGLE;
 }
 
+/* True if a batch of p that test_forcep() finds TFP_SINGLE is kept as a
+ * batch of its own, rather than left to the tail.
+ */
+static inline bool keep_single(uint p) {
+    if (p <= force_all)
+        return 1;
+#if defined(TYPE_o)
+    if (n & 3)
+        return 1;
+#elif defined(TYPE_a)
+    if ((n % p) == 0)
+        return 1;
+#endif
+    return 0;
+}
+
 /* The size of array that list_forcep() needs. */
 static inline uint max_forcep(void) {
 #if defined(TYPE_o) || defined(TYPE_r)
@@ -2260,14 +2276,7 @@ void prep_forcep(void) {
         fp->batch = malloc(maxbatch * size_forcebatch());
         t_forcebatch *fbp = forcebatch_p(fp, 0);
 
-        bool keep_single = (p <= force_all) ? 1 : 0;
-#if defined(TYPE_o)
-        if (n & 3)
-            keep_single = 1;
-#elif defined(TYPE_a)
-        if ((n % p) == 0)
-            keep_single = 1;
-#endif
+        bool keep = keep_single(p);
         bool have_unforced_tail = 0;
         for (uint vi = 0; vi < k; ++vi) {
             t_divisors *d = &divisors[ target_t(vi) ];
@@ -2281,7 +2290,7 @@ void prep_forcep(void) {
                 uint status = test_forcep(fbp, p, vi, fx);
                 if (status == TFP_BAD)
                     continue;
-                if (status == TFP_SINGLE && !keep_single) {
+                if (status == TFP_SINGLE && !keep) {
                     have_unforced_tail = 1;
                     continue;
                 }
