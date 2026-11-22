@@ -8,13 +8,16 @@ Git data support
 
 =head1 DESCRIPTION
 
-We track two repositories: our own (divrep), and that for Math-Prime-Util-GMP
-(mpu). Executables report the state of the code they were built from using
-a semicolon-separated string representing the two repos, where each fragment
-is of the form "A(B)*", in which A is the SHA of the last committed change
-affecting any of the program's dependencies, B is the SHA of the last common
-commit between A and the master branch (skipped if A is in master), and the
-asterisk is present if any dependency had uncommitted changes.
+We track up to three repositories: our own (divrep), that for
+Math-Prime-Util-GMP (mpu), and that for msiqs (msiqs), which supplies SIQS
+for some builds. Executables report the state of the code they were built
+from using a semicolon-separated string representing the repos, where each
+fragment is of the form "A(B)*", in which A is the SHA of the last committed
+change affecting any of the program's dependencies, B is the SHA of the last
+common commit between A and the master branch (skipped if A is in master),
+and the asterisk is present if any dependency had uncommitted changes.
+The msiqs fragment is present only for builds using msiqs; a string
+without it represents no msiqs dependency, which is pure.
 
 Additionally, we attempt to give an indication of the more complicated state
 of a logfile with distinct states across recoveries. In this case, each
@@ -34,6 +37,8 @@ For C programs, the component parts of the string are made available
 by use of 'git-data' in the Makefile, which provides the values:
   DIVREP_CHANGE DIVREP_BASE DIVREP_DIRTY
   MPU_CHANGE MPU_BASE MPU_DIRTY
+and for builds using msiqs:
+  MSIQS_CHANGE MSIQS_BASE MSIQS_DIRTY
 
 =head1 CLASS METHODS
 
@@ -84,17 +89,22 @@ my %whitelist = (
     mpu => { map +($_ => 1), (
         'b363d69',  # hvds fork, simpqs-full branch
     ) },
+    msiqs => { map +($_ => 1), (
+    ) },
 );
 
-my @repo = (qw{ divrep mpu });
+my @repo = (qw{ divrep mpu msiqs });
 my %repo_idx = map +($repo[$_] => $_), 0 .. $#repo;
+# repos after the first $required are optional, and an empty fragment
+# for one of them is pure
+my $required = 2;
 
 sub new {
     my($class, $str) = @_;
     $str //= '';
     my @part = split /;/, $str;
     die "malformed git status string '$str'"
-            unless $str eq '' || @part == @repo;
+            unless $str eq '' || (@part >= $required && @part <= @repo);
     return bless {
         raw => $str,
         data => [ map _derive($repo[$_], $part[$_]), 0 .. $#repo ],
@@ -135,12 +145,16 @@ sub composite {
         $part[$_] = sprintf '%s%s%s', $part[$_],
                 ($count ? "\%$count" : ''), ($dirty ? '*' : '');
     }
+    pop @part while @part > $required && $part[-1] eq '';
     return join ';', @part;
 }
 
 sub _derive {
     my($repo, $str) = @_;
-    return [ '', '', 1, 0, 0 ] unless defined $str && length $str;
+    unless (defined $str && length $str) {
+        return [ '', '', 0, 0, 0 ] if $repo_idx{$repo} >= $required;
+        return [ '', '', 1, 0, 0 ];
+    }
     $str =~ m{
         ^ (?: ([0-9a-f]{7,32}) (?: \( ([0-9a-f]{7,32}) \) )? )? (\*?)
         (?: % (\d+) (\*?) )? $

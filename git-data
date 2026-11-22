@@ -5,32 +5,51 @@ use warnings;
 
 my $git = '/usr/bin/git';
 
-# We are called with the path to the MPU::GMP repository, and a list of the
-# local and MPU dependencies for a build target.
+# We are called with the path to the MPU::GMP repository, optionally
+# "-msiqs=<path>" giving the path to the msiqs repository (ignored if
+# the path is empty), and a list of the local, MPU and msiqs dependencies
+# for a build target.
 # Output a string showing variable declarations for DIVREP_CHANGE, DIVREP_BASE,
 # DIVREP_DIRTY, MPU_CHANGE, MPU_BASE and MPU_DIRTY, reflecting the aggregate
 # status of the listed files: the last divrep or MPU::GMP commit for which
 # any of the relevant files changed; the merge-base of that commit and the
 # master branch; and 1 if there are uncommitted changes among those files,
-# or 0 of there are none.
+# or 0 of there are none. If any dependencies are in the msiqs repository,
+# also output MSIQS_CHANGE, MSIQS_BASE and MSIQS_DIRTY likewise for those.
 
-my($mpu, @deps) = @ARGV;
-$mpu =~ s{/*$}{/};  # ensure trailing slash
-my $lenmpu = length $mpu;
+my $mpu = shift @ARGV;
+my $msiqs = '';
+if (@ARGV && $ARGV[0] =~ /^-msiqs=(.*)\z/) {
+    $msiqs = $1;
+    shift @ARGV;
+}
+my @deps = @ARGV;
 
-my(@divrep, @mpu);
-for (@deps) {
-    if (substr($_, 0, $lenmpu) eq $mpu) {
-        push @mpu, substr $_, $lenmpu;
-    } elsif (!m{^/}) {
-        push @divrep, $_;
+my @repo = ([ 'MPU', $mpu, [] ]);
+push @repo, [ 'MSIQS', $msiqs, [] ] if length $msiqs;
+for (@repo) {
+    $_->[1] =~ s{/*$}{/};  # ensure trailing slash
+}
+
+my @divrep;
+DEP: for my $dep (@deps) {
+    for (@repo) {
+        my($prefix, $path, $list) = @$_;
+        if (substr($dep, 0, length $path) eq $path) {
+            push @$list, substr $dep, length $path;
+            next DEP;
+        }
+    }
+    if ($dep !~ m{^/}) {
+        push @divrep, $dep;
     } else {
-        die "absolute path '$_' not in MPU repo '$mpu'";
+        die "absolute path '$dep' not in a known repo ("
+                . join(', ', map "'$_->[1]'", @repo) . ")";
     }
 }
 
 git_data('DIVREP', '', \@divrep);
-git_data('MPU', $mpu, \@mpu);
+git_data($_->[0], $_->[1], $_->[2]) for @repo;
 exit 0;
 
 sub git_data {
@@ -55,4 +74,3 @@ sub git_data {
     printf qq{-D%s_BASE="\\"%s\\""\n}, $prefix, $base;
     printf qq{-D%s_DIRTY=%s\n}, $prefix, $dirty;
 }
-

@@ -2782,7 +2782,7 @@ void report_init(FILE *fp, char *prog) {
                     mfp->mod, mfp->negate ? '!' : '=', mfp->val);
         }
     }
-    /* git SHA details for divrep and MPU::GMP */
+    /* git SHA details for divrep, MPU::GMP and (if used) msiqs */
     fprintf(fp, " sha=%s", DIVREP_CHANGE);
     if (strcmp(DIVREP_CHANGE, DIVREP_BASE))
         fprintf(fp, "(%s)", DIVREP_BASE);
@@ -2793,6 +2793,13 @@ void report_init(FILE *fp, char *prog) {
         fprintf(fp, "(%s)", MPU_BASE);
     if (MPU_DIRTY)
         fprintf(fp, "*");
+#ifdef MSIQS_CHANGE
+    fprintf(fp, ";%s", MSIQS_CHANGE);
+    if (strcmp(MSIQS_CHANGE, MSIQS_BASE))
+        fprintf(fp, "(%s)", MSIQS_BASE);
+    if (MSIQS_DIRTY)
+        fprintf(fp, "*");
+#endif
 
     if (clock_is_realtime)
         fprintf(fp, " *RT*");
