@@ -88,7 +88,7 @@ typedef enum {
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
-    j4a, j4b, j4m, j4p, j4q, j4z,   /* best_6x() */
+    j4a, j4b, j4m, j4p, j4q, j4z,   /* best_sqdiff() */
 
     MAX_ZSTASH
 } t_zstash;
@@ -268,7 +268,7 @@ struct {
     uint vi;
     ulong p;            /* W: p in progress; F: have checked p^r up to p */
     uint x;             /* W: x in progress */
-    uint a;             /* 6X: bit-vector over allocated prime powers */
+    uint a;             /* sqdiff: bit-vector over allocated prime powers */
     ulong p_outer;      /* F: have checked all p^{2r} up to p_outer */
     ulong p_inner;      /* F: have checked all p^{2r}.q^r up to p_inner */
 } act_recover;
@@ -310,7 +310,7 @@ uint *fixed_v = NULL;   /* values specified for -js */
 #define BV_SPECIAL k
 #define BV_WALK (BV_SPECIAL + 0)
 #define BV_NEXTX (BV_SPECIAL + 1)
-#define BV_6X (BV_SPECIAL + 2)
+#define BV_SQDIFF (BV_SPECIAL + 2)
 
 /* What prep_unforced_x() and limit_unforced_x() find for allocating
  * p^{x-1} at the current level's v_i.
@@ -328,7 +328,7 @@ typedef enum {
     CH_FORCED,      /* the batches of the next forced prime */
     CH_UNFORCED,    /* a loop of p^x at the act's v_i */
     CH_WALK,        /* walk_v() covers everything below */
-    CH_6X           /* walk_6x() covers everything below */
+    CH_SQDIFF       /* walk_sqdiff() covers everything below */
 } e_choice;
 
 /* e_is indicates where we should pick up when we enter recurse() */
@@ -340,7 +340,7 @@ typedef enum {
     IS_RWALK,   /* Finish a partial (non-midp) walk before continuing */
     IS_BATCH,   /* Start in process_batch() */
     IS_MIDP,    /* Resume walk_midp(), possibly with partial progress */
-    IS_6X,      /* Resume best_6x(), possibly with partial progress */
+    IS_SQDIFF,  /* Resume walk_sqdiff(), possibly with partial progress */
     IS_FLIP     /* Resume run_flip_pqsq(), possibly with partial progress */
 } e_is;
 
@@ -350,16 +350,16 @@ uint best_v1(t_act *cur_act);
 uint best_v2(t_act *cur_act);
 uint best_v3(t_act *cur_act);
 uint best_v4(t_act *cur_act);
-/* best_6x() special-case strategy (TYPE_o only) */
-uint best_6x(t_act *cur_act);
+/* best_sqdiff() special-case strategy (TYPE_o only) */
+uint best_sqdiff(t_act *cur_act);
 /* best_fixed() special-case strategy (-js) */
 uint best_fixed(t_act *cur_act);
-#define STRATEGY_6X 5
+#define STRATEGY_SQDIFF 5
 #define STRATEGY_FIXED 6
 #define NUM_STRATEGIES 7
 t_strategy strategies[NUM_STRATEGIES] = {
     &best_v0, &best_v1, &best_v2, &best_v3, &best_v4,
-    &best_6x, &best_fixed
+    &best_sqdiff, &best_fixed
 };
 
 /* What each action does, where it differs from others. An action that
@@ -380,11 +380,11 @@ void undo_unforced(t_act *cur_act);
 void undo_flip(t_act *cur_act);
 typedef uint (*t_suffix_op)(t_act *cur_act, char *buf);
 uint suffix_midp(t_act *cur_act, char *buf);
-uint suffix_6x(t_act *cur_act, char *buf);
+uint suffix_sqdiff(t_act *cur_act, char *buf);
 uint suffix_flip(t_act *cur_act, char *buf);
 typedef char *(*t_parse_op)(char *s);
 char *parse_midp(char *s);
-char *parse_6x(char *s);
+char *parse_sqdiff(char *s);
 char *parse_flip(char *s);
 typedef struct s_action_ops {
     t_next_op next;
@@ -397,7 +397,9 @@ const t_action_ops action_ops[A_NONE] = {
     [A_UNFORCED] = { .next = &next_unforced, .undo = &undo_unforced },
     [A_FORCED] = { .next = &next_forced, .undo = &undo_forced },
     [A_MIDP] = { .suffix = &suffix_midp, .tag = " W(", .parse = &parse_midp },
-    [A_6X] = { .suffix = &suffix_6x, .tag = " 6X(", .parse = &parse_6x },
+    [A_SQDIFF] = {
+        .suffix = &suffix_sqdiff, .tag = " 6X(", .parse = &parse_sqdiff
+    },
     [A_FLIP] = {
         .undo = &undo_flip,
         .suffix = &suffix_flip, .tag = " F(", .parse = &parse_flip
@@ -1038,9 +1040,9 @@ void mark_unsorted(void) {
             cur_vlevel[vj] = d;
         }
         strategy = actp->choice_strategy;
-        /* if best_v() would now choose the 6X walk, no mark is needed */
+        /* if best_v() would now choose the sqdiff walk, no mark is needed */
         uint bvi = best_v(actp);
-        actp->unsorted = (bvi == BV_6X) ? 0 : (bvi != actp->vi);
+        actp->unsorted = (bvi == BV_SQDIFF) ? 0 : (bvi != actp->vi);
     }
     strategy = save_strategy;
     memcpy(cur_vlevel, save, k * sizeof(uint));
@@ -1070,8 +1072,8 @@ void updated_zmax(void) {
             }
             mark_unsorted();
         }
-    } else if (strategy == STRATEGY_6X && cur_vlevel) {
-        /* best_6x() also depends on zmax */
+    } else if (strategy == STRATEGY_SQDIFF && cur_vlevel) {
+        /* best_sqdiff() also depends on zmax */
         mark_unsorted();
     }
 }
@@ -4211,9 +4213,9 @@ bool apply_secondary(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
          * Switch to a strategy that takes advantage of this; the strategy
          * itself will revert when the conditions no longer hold.
          */
-        if (strategy != STRATEGY_6X)
+        if (strategy != STRATEGY_SQDIFF)
             prev_strategy = strategy;
-        strategy = STRATEGY_6X;
+        strategy = STRATEGY_SQDIFF;
     }
 #endif
     return 1;
@@ -4254,10 +4256,11 @@ static inline uint kern_tau(uint vi) {
     return vp->alloc[vil - 1].t;
 }
 
-/* True if the current batch is one STRATEGY_6X takes, see apply_secondary().
+/* True if the current batch is one STRATEGY_SQDIFF takes, see
+ * apply_secondary().
  * Valid once the batch is complete, provided sq0 was fixed in it.
  */
-static bool kern_6x(void) {
+static bool kern_sqdiff(void) {
 #if defined(TYPE_o)
     if ((n & 3) == 2 && sq0 >= 2) {
         t_allocation *ap = &value[sq0].alloc[ cur_vlevel[sq0] - 1 ];
@@ -4292,7 +4295,7 @@ static t_kern *kern_state(t_node *np) {
     ks->b = kern_b;
     ks->at = 0;
     ks->passed = 0;
-    ks->on = (np->have_square == 1 && !kern_6x());
+    ks->on = (np->have_square == 1 && !kern_sqdiff());
     np->kern = ks;
     if (!ks->on)
         return ks;
@@ -5057,19 +5060,19 @@ uint best_v4(t_act *cur_act) {
     return ti ? vi : BV_WALK;
 }
 
-/* Show the candidate walk_6x() is about to try: the prime Z(j4p), from
+/* Show the candidate walk_sqdiff() is about to try: the prime Z(j4p), from
  * the subset a of the allocations at its position.
  */
-void diag_6x(t_act *cur_act, uint a) {
+void diag_sqdiff(t_act *cur_act, uint a) {
     cur_act->bi = a;   /* spare at an unforced level */
     diag_plain(&nodes[cur_act->level]);
 }
 
-uint suffix_6x(t_act *cur_act, char *buf) {
+uint suffix_sqdiff(t_act *cur_act, char *buf) {
     return gmp_sprintf(buf, " 6X(%Zu,%u,%u)", Z(j4p), cur_act->vi, cur_act->bi);
 }
 
-char *parse_6x(char *s) {
+char *parse_sqdiff(char *s) {
     int pend = 0;
     sscanf(s, "%*[0-9]%n", &pend);
     if (pend == 0)
@@ -5104,14 +5107,14 @@ ulong loop_limit(t_act *cur_act, uint vi) {
     return limp ? limp : ULONG_MAX;
 }
 
-/* STRATEGY_6X: if we have the pattern "...2^e . 2z^2...", allocating 2^e
+/* STRATEGY_SQDIFF: if we have the pattern "...2^e . 2z^2...", allocating 2^e
  * at v_i and 2 or 2y^2 at v_{i+2} leaving an odd square, v_i must be of
  * the form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
  * forced by the quadratic residue check).
  *
  * We force allocation at v_i until the remaining tau is odd (in which
  * case we can finish with a Pell walk) or 2, in which case we return
- * BV_6X to invoke the fast walk_6x().
+ * BV_SQDIFF to invoke the fast walk_sqdiff().
  *
  * But until tau at v_i is 2, we take instead the position prev_strategy
  * would choose if its loop has a lower limit: our loop of q^2 at v_i
@@ -5119,8 +5122,8 @@ ulong loop_limit(t_act *cur_act, uint vi) {
  * elsewhere may have a far lower limit (e.g. p^28 for n = 174). The
  * choice depends on zmax, see updated_zmax().
  */
-uint best_6x(t_act *cur_act) {
-    /* check if conditions for STRATEGY_6X still hold */
+uint best_sqdiff(t_act *cur_act) {
+    /* check if conditions for STRATEGY_SQDIFF still hold */
     t_node *prev_node = &nodes[cur_act->level - 1];
     if (!prev_node->have_square || sq0 < 2) {
         strategy = prev_strategy;
@@ -5142,10 +5145,10 @@ uint best_6x(t_act *cur_act) {
             return vj;
         return vi;          /* allocate some more */
     }
-    return BV_6X;           /* walk_6x() can now handle this */
+    return BV_SQDIFF;           /* walk_sqdiff() can now handle this */
 }
 
-/* STRATEGY_6X: we have t_i = 2, t_{i+2} odd, such that v_{i+2} must be of
+/* STRATEGY_SQDIFF: we have t_i = 2, t_{i+2} odd, such that v_{i+2} must be of
  * the form 2z^2 (z odd) and v_i must be of the form 16abp (p as yet
  * unallocated) with 8abp = (z-1)(z+1) so a = bp +/- 1.
  * Thus from here the only solutions possible involve a pair of coprime
@@ -5153,7 +5156,7 @@ uint best_6x(t_act *cur_act) {
  * all such coprime pairs for testing, and invoke walk_1() for each
  * resulting p that is prime.
  */
-void walk_6x(void) {
+void walk_sqdiff(void) {
     t_node *cur_node = &nodes[level];
     t_node *prev_node = &nodes[level - 1];
     t_act *cur_act = &acts[level];
@@ -5171,7 +5174,7 @@ void walk_6x(void) {
     cur_vlevel[vi] = vlevel + 1;
     cur_node->have_min = 1;
     cur_act->vi = vi;
-    cur_act->action = A_6X;
+    cur_act->action = A_SQDIFF;
     /* We will fully fix v_i, so we don't need to roll the prime we
      * allocate into rq/aq by calling update_chinese each time: the
      * previous values tell us everything we need to know.
@@ -5189,14 +5192,14 @@ void walk_6x(void) {
         ap = &vp->alloc[i];
         if (ap->p == 2) {
             if (ap->x < 5)
-                fail("panic: STRATEGY_6X in use but have only 2^%u assigned",
-                        ap->x - 1);
+                fail("panic: STRATEGY_SQDIFF in use but have only 2^%u"
+                        " assigned", ap->x - 1);
             l2 = i;
             break;
         }
     }
     if (l2 == 0)
-        fail("panic: STRATEGY_6X in use but no power of 2 found");
+        fail("panic: STRATEGY_SQDIFF in use but no power of 2 found");
     /* take out the constant factor */
     mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
     /* p must keep v_i within the maximum */
@@ -5211,15 +5214,15 @@ void walk_6x(void) {
      * dealing with higher values of n.
      */
     if (vlevel > sizeof(uint) * 8 - 1)
-        fail("FIXME: too many factors for STRATEGY_6X");
+        fail("FIXME: too many factors for STRATEGY_SQDIFF");
     uint a_start = (1U << vlevel) - 2;
-    if (act_recover.action == A_6X) {
+    if (act_recover.action == A_SQDIFF) {
         /* on recover, skip to the bit-vector value that was in progress */
         if (act_recover.vi != vi)
-            fail("panic: STRATEGY_6X recovery wants vi=%u, but we have vi=%u",
-                    act_recover.vi, vi);
+            fail("panic: STRATEGY_SQDIFF recovery wants vi=%u,"
+                    " but we have vi=%u", act_recover.vi, vi);
         if (act_recover.a & 1)
-            fail("panic: STRATEGY_6X recovery has invalid bit-vector %u",
+            fail("panic: STRATEGY_SQDIFF recovery has invalid bit-vector %u",
                     act_recover.a);
         a_start = act_recover.a;
         act_recover.action = A_NONE;        /* consumed */
@@ -5253,7 +5256,7 @@ void walk_6x(void) {
                 /* p = Z(j4p) is prime and yields v_{i+2} = 2z^2 */
                 mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                 if (need_work)
-                    diag_6x(cur_act, a);
+                    diag_sqdiff(cur_act, a);
                 walk_1(cur_node, vi);
             }
             if (mpz_cmp_ui(Z(j4b), 2) <= 0) {
@@ -5262,7 +5265,7 @@ void walk_6x(void) {
                         && _GMP_is_prob_prime(Z(j4p))) {
                     mpz_mul(ap_next->q, ap_last->q, Z(j4p));
                     if (need_work)
-                        diag_6x(cur_act, a);
+                        diag_sqdiff(cur_act, a);
                     walk_1(cur_node, vi);
                 }
             }
@@ -5340,8 +5343,8 @@ static inline e_choice choose_action(t_act *cur_act) {
         return CH_UNFORCED;
     }
     switch (vi - BV_SPECIAL) {
-      case BV_6X - BV_SPECIAL:
-        return CH_6X;
+      case BV_SQDIFF - BV_SPECIAL:
+        return CH_SQDIFF;
       case BV_NEXTX - BV_SPECIAL:
         return CH_NOTHING;
       case BV_WALK - BV_SPECIAL:
@@ -5385,7 +5388,7 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
          */
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
 #if defined(TYPE_o)
-    } else if (strategy == STRATEGY_6X && nextt == 2 && vi + 2 == sq0) {
+    } else if (strategy == STRATEGY_SQDIFF && nextt == 2 && vi + 2 == sq0) {
         /* v_i = q_i p^{x-1} r => q_i p^{x-1} = 8ab such that br = a +/- 1.
          * When p^{x-1} dominates, we minimize v_i by setting a = p^{x-1}
          * giving r >= 8(p^{x-1} - 1)/q_i so v_i >= 8 p^{x-1} (p^{x-1} - 1).
@@ -6314,8 +6317,8 @@ e_is insert_stack(void) {
             } else {
                 e_choice ch = choose_action(cur_act);
                 if (ch != CH_UNFORCED) {
-                    if (ch == CH_6X)
-                        jump = IS_6X;
+                    if (ch == CH_SQDIFF)
+                        jump = IS_SQDIFF;
                     /* CHECKME: should we be handling the other cases here?
                      * CH_WALK -> IS_RWALK, CH_NOTHING -> IS_NEXTX */
                     break;
@@ -6636,8 +6639,8 @@ static inline bool start_act(t_act *cur_act) {
       case CH_WALK:
         start_walk(cur_act);
         return 0;
-      case CH_6X:
-        walk_6x();
+      case CH_SQDIFF:
+        walk_sqdiff();
         return 0;
       case CH_NOTHING:
         return 0;
@@ -6678,12 +6681,12 @@ void recurse(e_is jump_continue) {
         if (after_sweep(&nodes[level - 1]))
             goto deeper;
         goto unwind;
-      case IS_6X: {
+      case IS_SQDIFF: {
         e_choice ch = choose_action(actp);  /* re-verify */
-        if (ch != CH_6X)
+        if (ch != CH_SQDIFF)
             fail("panic: choose_action() on recovery chose %u, not %u",
-                    ch, CH_6X);
-        walk_6x();
+                    ch, CH_SQDIFF);
+        walk_sqdiff();
         goto unwind;
       }
       case IS_FLIP:

@@ -124,7 +124,7 @@ typedef enum {
     A_PRESQ,        /* the dummy level before initial squares */
     A_FIXED,        /* fixed by an -I pattern */
     A_MIDP,         /* -W's sweep, walk_midp() */
-    A_6X,           /* the STRATEGY_6X walk, walk_6x() */
+    A_SQDIFF,       /* the STRATEGY_SQDIFF walk, walk_sqdiff() */
     A_FLIP,         /* run_flip_pqsq(), its allocation withdrawn */
 
     A_NONE          /* none of the above; also the number of actions */
@@ -164,7 +164,7 @@ extern uint cur_batch_level;
  * with its node (see kern_state()): whether it applies at all, its bound,
  * and as bit vectors the positions it applies to and those passed over.
  * It applies to a batch that fixes exactly one square, unless that is
- * one STRATEGY_6X takes (2.z^2 at v_i, i >= 2), which has its own loop
+ * one STRATEGY_SQDIFF takes (2.z^2 at v_i, i >= 2), which has its own loop
  * at v_{i-2} and gains nothing from the pass.
  */
 typedef struct s_kern {

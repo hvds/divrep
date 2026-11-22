@@ -160,8 +160,8 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   So an allocation is worth more than the space it cuts (zmax/aq) when
   it brings a position to t_i = 2 or odd, or makes the next allocation
   able to; with one square already fixed, steering a second position
-  to odd t is the biggest prize. `-k` and `STRATEGY_6X` are hand-built
-  routes to step 3 and to a special case of step 2.
+  to odd t is the biggest prize. `-k` and `STRATEGY_SQDIFF` are
+  hand-built routes to step 3 and to a special case of step 2.
 - **What a batch costs is set by what is still needed, not only by
   its aq**: every position must still take some p^e for each part of
   its remaining tau, and the cheapest available primes for that can
@@ -255,9 +255,9 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   fixed set; an act is one doing of it, with its own state.
   `A_NONE` ends the list: it is the count of actions, and the
   placeholder where there is none.
-  While -W's sweep, the STRATEGY_6X walk or a flip runs, its level's
-  action is `A_MIDP` (`walk_midp()`), `A_6X` (`walk_6x()`) or `A_FLIP`
-  (the level whose p^{z-1} `run_flip_pqsq()` replaces, with that
+  While -W's sweep, the sqdiff walk or a flip runs, its level's
+  action is `A_MIDP` (`walk_midp()`), `A_SQDIFF` (`walk_sqdiff()`) or
+  `A_FLIP` (the level whose p^{z-1} `run_flip_pqsq()` replaces, with that
   allocation withdrawn from `cur_vlevel[]`; `known_prime()` passes
   over it), reset to `A_UNFORCED` when it ends. The const
   `action_ops[]` table, beside `strategies[]`, gives each action what
@@ -361,8 +361,8 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   the loop's own call to `process_batch()`, and the `e_is` value that
   `insert_stack()` returns tells `recurse()` where to pick up:
   `IS_BATCH` when that call still has to be made; `IS_MIDP`,
-  `IS_RWALK`, `IS_6X` or `IS_FLIP` to resume a sweep, a walk, a 6X
-  search or a flip; `IS_NEXT` or `IS_NEXTX` to move on
+  `IS_RWALK`, `IS_SQDIFF` or `IS_FLIP` to resume a sweep, a walk, a
+  sqdiff search or a flip; `IS_NEXT` or `IS_NEXTX` to move on
   from the last allocation shown.
 - **Recovery and candidates**: the levels are rebuilt under the
   maximum that held when the last progress line was written, because
