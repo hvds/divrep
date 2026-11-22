@@ -418,7 +418,7 @@ sub test_recover_j0123 {
 }
 
 sub test_6x {
-    # STRATEGY_6X: allocation patterns like "...2^{4+} . 2z^2..." trigger
+    # sqdiff: allocation patterns like "...2^{4+} . 2z^2..." trigger
     # a strategy switch taking advantage of the maths to restrict to a much
     # smaller search space.
     #
@@ -429,7 +429,7 @@ sub test_6x {
     # With tau 6 left at v_0 and 54 at v_1, 6X keeps its loop of q^2 at v_0
     expect_diag(q{6x pattern is identified and applied, 54 4}, 6,
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }],
-        'b6: 2^8.7^2 . 2.3^8 . 6X(1567,0,6)',
+        'b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)',
     );
     # reject_square() passes over 14 of the q^2 at v_0 from 457^2 on, with
     # no root of the square at v_1 in range
@@ -443,11 +443,11 @@ sub test_6x {
 }
 
 sub test_recover_6x {
-    # STRATEGY_6X recovery: a "6X(p,vi,a)" diag line (see above) must be
-    # enough to resume best_6x()'s own search loop exactly where it left
-    # off - including re-trying 'a' itself (hitting both of its walk_1()
-    # branches unconditionally, by design; see best_6x()'s own comment),
-    # then continuing on to whatever the search does next.
+    # sqdiff recovery: a "Q(p,vi,a,e)" diag line (see above) must be
+    # enough to resume the walk exactly where it left off - including
+    # re-trying the split (a, e) itself - then continuing on to whatever
+    # the search does next. The "6X(p,vi,a)" line of earlier versions
+    # resumes the walk from its start.
     #
     # Since recovery does not re-explore already-completed ancestor
     # branches above the recorded point, a recovered run's recurse count
@@ -457,6 +457,19 @@ sub test_recover_6x {
     local $type = 'o';
 
     expect_recover_recurse_count(q{recover 6x from its own diag point, 54 4},
+        80, ['305 b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)'],
+        [qw{ -g1000 -x1e13 -jp -b6 54 4 }]);
+    # it retries the split shown, but none before it; the second line is
+    # edited, 1567 coming from the split (4, 1)
+    expect_recover(q{recover 6x retries the split shown},
+        [qw{ -g1000 -x1e13 -jp -b6 54 4 }],
+        ['305 b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)'],
+        'b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)');
+    expect_recover(q{recover 6x from the last split moves on},
+        [qw{ -g1000 -x1e13 -jp -b6 54 4 }],
+        ['305 b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,6)'],
+        'b6: 2^8.11^2 . 2.3^8 .');
+    expect_recover_recurse_count(q{recover 6x from an old-style line, 54 4},
         80, ['305 b6: 2^8.7^2 . 2.3^8 . 6X(1567,0,6)'],
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }]);
 
@@ -465,7 +478,7 @@ sub test_recover_6x {
     # not resume beneath it.
     expect_recover(q{recover 6x with a trailing candidate that ends a level},
         [qw{ -g1000 -jp -x1e13 54 4 }],
-        ['305 b6: 2^8.1013^2 . 2.3^8 . 6X(32837407,0,6)',
+        ['305 b6: 2^8.1013^2 . 2.3^8 . Q(32837407,0,4,1)',
          '202 Candidate 1000000000000 (0.00s)'],
         'b6: 2^8.5^5 . 2.3^8 .');
 }

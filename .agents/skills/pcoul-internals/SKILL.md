@@ -269,7 +269,7 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   passes it. Only `A_FORCED` and `A_UNFORCED` iterate; the others run
   to completion inside a level (a withdrawn flip level has an `undo`
   op only, for unwinding through it). An action with a `suffix` op is
-  shown in progress lines by that suffix (`W(...)`, `6X(...)`,
+  shown in progress lines by that suffix (`W(...)`, `Q(...)`,
   `F(...)`) in place of the allocation at its level. Levels from there
   up belong to it, and are never marked in a 315 line. Its `parse` op
   reads the suffix back into the one record `act_recover`, which the
