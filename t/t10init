@@ -6,7 +6,7 @@ use warnings;
 use Test::More;
 use File::Temp ();
 our $type;
-my %PROG = (o => './pcoul', a => './pcaul');
+my %PROG = (o => './pcoul', a => './pcaul', r => './pcrul');
 
 # each of these tests one aspect of -I, of recovery, or of the two together
 test_init();
@@ -440,6 +440,20 @@ sub test_6x {
     # count in the thousands if it fails to give way)
     expect_recurse_count(q{6x gives way to a high power elsewhere, 66 3}, 4,
         [qw{ -g11 -x1e20 -b1 66 3 }]);
+
+    # Other squares and partners: d + 18 = 2Y^2 makes d = 2(Y - 3)(Y + 3),
+    # and b0 (2^8 2) leaves tau 2 at v_0 (expect hundreds without)
+    {
+        local $type = 'a';
+        expect_recurse_count(q{sqdiff for pcaul, 18 2}, 4,
+            [qw{ -b0 -x1e14 18 2 }]);
+    }
+    # d + 1 = Y^2 makes d = (Y - 1)(Y + 1) (expect thousands without)
+    {
+        local $type = 'r';
+        expect_recurse_count(q{sqdiff for pcrul, 48 3}, 66,
+            [qw{ -x1e20 48 3 }]);
+    }
 }
 
 sub test_recover_6x {

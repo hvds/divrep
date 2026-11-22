@@ -165,8 +165,8 @@ extern uint cur_batch_level;
  * with its node (see kern_state()): whether it applies at all, its bound,
  * and as bit vectors the positions it applies to and those passed over.
  * It applies to a batch that fixes exactly one square, unless that is
- * one STRATEGY_SQDIFF takes (2.z^2 at v_i, i >= 2), which has its own loop
- * at v_{i-2} and gains nothing from the pass.
+ * one STRATEGY_SQDIFF takes (the square has a partner, see kern_sqdiff()),
+ * which has its own loop at the partner and gains nothing from the pass.
  */
 typedef struct s_kern {
     int id;             /* batch_alloc when it was planned */

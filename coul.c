@@ -2457,13 +2457,6 @@ void prep_sqdiff(void) {
             sint res = TYPE_RES(vs, vj);
             if (vs == vj || res >= 0)
                 continue;
-#if defined(TYPE_o)
-            /* for now, only the pair (s, s - 2) for n == 2 (mod 4) */
-            if ((n & 3) != 2 || vj + 2 != vs)
-                continue;
-#else
-            continue;
-#endif
             ulong as = TYPE_MULT(vs), aj = TYPE_MULT(vj);
             f.count = 0;
             sqd_fact(&f, aj * (ulong)-res);

@@ -217,6 +217,28 @@ the schema and run `Seq::Run::finalize()` etc for testing.
   other way round, as q^{2z-1} then r^{z-1} with r >= p, which is
   cheaper. z need not be prime, but not a power of 2. The flip ends
   only the x = z branch of its level: later x there go on as usual.
+- **sqdiff (`STRATEGY_SQDIFF`)**: once one square v_s = x.Y^2 is
+  fixed (x squarefree), a position v_j with TYPE_RES(s, j) = -N < 0
+  such that a_j.x.N = S^2 is a *partner*: multiplying through,
+  (P/Q).v_j = f1.f2 with f1 = alpha.Y - sigma, f2 = alpha.Y + sigma,
+  two factors that differ by 2.sigma. `prep_sqdiff()` finds, for each
+  ordered pair (s, j), the x needed and the constants (`t_sqdpair`),
+  keeping a pair only if every prime of 2.sigma.P.Q is fixed at v_j by
+  the batches (`fixed_at()`: up to `maxforce[j]`, less what -F may
+  leave to the walks), so that the prime still to find there is coprime
+  to them. When the first square is fixed, `sqd_detect()` puts its x on
+  the node (`sqx`, 0 if no partner) and switches strategy. Then:
+  every allocation at a partner lies in one factor, so `limit_p()`
+  caps it near the root of v_j (`sqd_limit()`), a 4th root of zmax
+  for q^2; `best_sqdiff()` allocates at a partner (unless the previous
+  strategy's choice has a lower loop limit) until one has tau 2 left,
+  when `walk_sqdiff()` lists the finitely many splits of
+  M = (P/Q).q_j between the factors, each giving at most two p, with
+  the split (a, e) shown as `Q(p,vi,a,e)` for recovery. The old
+  STRATEGY_6X was the case TYPE_o, x = 2, j = s - 2. -k makes no pass
+  in a batch with a usable partner (`kern_sqdiff()`). Candidates from
+  the walk are very rare, so a set comparison under -X barely tests it:
+  check it directly (brute force over p) when changing it.
 - **`mintau()`'s memoization is keyed purely by content, not tree
   position.** Its cache (`mint_base`, a lazily-grown `t_mint` trie
   indexed by `off` - the *gap* between consecutive available-prime
