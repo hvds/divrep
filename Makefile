@@ -1,5 +1,7 @@
 # Path to the Math-Prime-Util-GMP repository
 MPUGMP ?= /src/perl/Math-Prime-Util-GMP
+# Path to the msiqs repository (github danaj/msiqs), optional.
+MSIQS ?= /src/maths/msiqs
 
 # Checkpoint SHA of the Math-Prime-Util-GMP repository, used to determine
 # which files should exist. It needs to be one of the known values, or the
@@ -12,6 +14,13 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
 #   32fcf54782 (danaj master 2026-11-07, SIQS from msiqs)
 MPUGMP_VER ?= 39982f872b
+
+# Checkpoint SHA of the msiqs repository, used to determine which files
+# should exist if you want to build with the main code. This is optional:
+# MPUGMP carries a frozen serial copy of it, which will be used if this is
+# not specified.
+# MSIQS_VER ?= c71d023e22
+
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c coulmint.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
     coulvec.h coulmint.h types.h builtins.h
@@ -54,7 +63,15 @@ ifeq ($(MPUGMP_VER), 32fcf54782)
     DEFINES += -DHAVE_MISC_UI_H -DMPUG_054 -DMPUG_SIQS
     HFACTOR += ${MPUGMP}/misc_ui.h ${MPUGMP}/poly.h ${MPUGMP}/znlog.h ${MPUGMP}/siqs.h ${MPUGMP}/tinyecm64.h
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c ${MPUGMP}/znlog.c
-    CFACTOR += ${MPUGMP}/siqs.c ${MPUGMP}/lanczos.c ${MPUGMP}/pr32_iter.c ${MPUGMP}/tinyecm64.c
+    ifdef MSIQS_VER
+        DEFINES += -DMSIQS_SIQS_C="\"${MSIQS}/siqs.c\""
+        CFACTOR += qsbridge.c ${MSIQS}/lanczos.c ${MSIQS}/pr32_iter.c ${MSIQS}/tinyecm64.c
+        # siqs.c is built by including it in qsbridge.c; all but msiqs.c
+        # (its standalone program) are listed for git-data.
+        HFACTOR += $(filter-out ${MSIQS}/msiqs.c,$(wildcard ${MSIQS}/*.[ch]))
+    else
+        CFACTOR += ${MPUGMP}/siqs.c ${MPUGMP}/lanczos.c ${MPUGMP}/pr32_iter.c ${MPUGMP}/tinyecm64.c
+    endif
 endif
 
 # TODO: decide individually whether to remove optionality on these
@@ -102,7 +119,7 @@ endif
 default: pcoul
 all: pcoul dpcoul pcaul dpcaul pcrul dpcrul
 
-%: GIT_DEFINES_$* = $(shell ./git-data ${MPUGMP} $^)
+%: GIT_DEFINES_$* = $(shell ./git-data ${MPUGMP} -msiqs=${MSIQS} $^)
 
 pcoul dpcoul pcaul dpcaul pcrul dpcrul: Makefile coul.c ${COUL} ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} coul.c ${COUL} ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt

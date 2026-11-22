@@ -49,7 +49,14 @@ files are needed, and a mismatch typically shows up as link errors.
 
 From commit 32fcf54782, MPUGMP replaces its own quadratic sieve code
 with SIQS from Dana Jacobsen's "msiqs", carrying a frozen serial copy
-of it.
+of it. You can instead build with the latest msiqs code by specifying
+the path to its repository and the SHA:
+  git clone https://github.com/danaj/msiqs
+  git checkout c71d023e22
+  make MPUGMP=/path/to/Math-Prime-Util-GMP MPUGMP_VER=32fcf54782 \
+      MSIQS=/path/to/msiqs MSIQS_VER=c71d023e22 pcoul
+(MSIQS can be set regardless, defining MSIQS_VER is what triggers
+building with that code.)
 
 If your libgmp header file (gmp.h) is not in the standard include
 paths, you will also need to modify the Makefile to include the
