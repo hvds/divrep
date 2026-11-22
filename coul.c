@@ -167,6 +167,69 @@ bool restrict_forced = 0;
 uint sq0 = 0;
 uint *sqg = NULL;   /* size maxfact */
 
+/* STRATEGY_SQDIFF: pairs (s, j) for which a square at v_s makes v_j
+ * factorize.
+ *
+ * With v_i = a_i.d + c_i, eliminating d gives a_s.v_j - a_j.v_s =
+ * TYPE_RES(s, j); call that -N. If v_s = x.Y^2 (x squarefree) is the
+ * first square fixed, then a_s.v_j = a_j.x.Y^2 - N, and multiplying by
+ * a_j.x gives
+ *   a_s.a_j.x.v_j = (a_j.x.Y)^2 - a_j.x.N.
+ * When N > 0 and a_j.x.N is a square S^2, the right side factorizes as
+ * (a_j.x.Y - S)(a_j.x.Y + S). Since x is squarefree, that happens only
+ * when x is the squarefree part of a_j.N: we record that as the pair's
+ * xneed, and v_j is a partner of v_s whenever the square has that x.
+ * Both factors are divisible by h = gcd(a_j.x, S); taking h out of each,
+ * with alpha = a_j.x / h and sigma = S / h,
+ *   (P/Q).v_j = f1.f2,  f1 = alpha.Y - sigma,  f2 = alpha.Y + sigma
+ * where P/Q = a_s.alpha / h in lowest terms, so f2 - f1 = 2.sigma.
+ *
+ * Every prime power still to be allocated at v_j lies wholly in f1 or f2,
+ * so is at most about the root of (P/Q).v_j (see sqd_limit()). Once v_j
+ * has tau 2 left, v_j = q_j.p for a single unknown prime p, f1.f2 = M.p
+ * with M = (P/Q).q_j, and walk_sqdiff() tries each way of dividing M
+ * between the two factors. The difference 2.sigma governs how its primes
+ * can divide, so sfac has the primes of 2.sigma with their powers (see
+ * sqd_split()); a prime of P not allocated at v_j is one more factor of
+ * M to place, so pfac has the primes of P; and Y = (f1 + sigma) / alpha
+ * must be an integer. All this needs the power at v_j of each prime of
+ * 2.sigma.P.Q to be known, and p to be none of them, so the pair is kept
+ * (with xneed not 0) only if each of them is fixed at v_j by the batches
+ * (see fixed_at()).
+ *
+ * For STRATEGY_6X's pair, TYPE_o with j = s - 2: a_i = 1 and N = 2, so
+ * xneed = 2, S = 2, h = 2, alpha = 1, sigma = 1 and P/Q = 1/2: then
+ * v_s = 2.Y^2 gives v_{s-2} = 2.(Y - 1)(Y + 1).
+ * For pctul's f(198, 12), with v_i = (i + 1).d + n, take the pair (9, 10):
+ * N = n = 198 and a_10.N = 11.198 = 2.33^2, so xneed = 2, S = 66, h = 22,
+ * alpha = 1, sigma = 3 and P/Q = 10/22 = 5/11: then v_9 = 2.Y^2 gives
+ * 5.v_10 = 11.(Y - 3)(Y + 3), and the primes 2, 3, 5 and 11 must all be
+ * fixed at v_10.
+ */
+typedef struct s_sqdpair {
+    ulong xneed;
+    ulong alpha;
+    ulong sigma;
+    ulong P;
+    ulong Q;
+    t_fact sfac;
+    t_fact pfac;
+} t_sqdpair;
+t_sqdpair *sqd_pairs = NULL;    /* k * k entries, or NULL if no pair kept */
+bool *sqd_has = NULL;   /* k entries: true if v_s has some pair (s, j) */
+ulong sqd_xmax;         /* greatest xneed */
+ulong *sqd_pmin = NULL; /* least prime not fixed at v_j, see fixed_at() */
+uint sqd_vj;            /* the partner best_sqdiff() chose to walk */
+
+static inline t_sqdpair *sqd_pair(uint vs, uint vj) {
+    return &sqd_pairs[vs * k + vj];
+}
+
+/* True if v_j is a partner of the first square below np. */
+static inline bool sqd_partner(t_node *np, uint vj) {
+    return np->sqx && vj != sq0 && sqd_pair(sq0, vj)->xneed == np->sqx;
+}
+
 uint maxlevel;              /* avvailable entries in nodes[], acts[] */
 t_node *nodes = NULL;       /* one per level: the state reached */
 t_act *acts = NULL;         /* one per level: the loop reaching it */
@@ -350,7 +413,7 @@ uint best_v1(t_act *cur_act);
 uint best_v2(t_act *cur_act);
 uint best_v3(t_act *cur_act);
 uint best_v4(t_act *cur_act);
-/* best_sqdiff() special-case strategy (TYPE_o only) */
+/* best_sqdiff() special-case strategy, see sqd_detect() */
 uint best_sqdiff(t_act *cur_act);
 /* best_fixed() special-case strategy (-js) */
 uint best_fixed(t_act *cur_act);
@@ -1256,6 +1319,7 @@ void init_levels(void) {
     t_node *np = &nodes[0];
     np->have_min = (sminp || sminpx) ? 0 : 1;
     np->have_square = 0;
+    np->sqx = 0;
     np->nextpi = 0;
 #if defined(TYPE_a)
     np->maxp = divisors[n].high;  /* covers never_unforced() */
@@ -1369,6 +1433,13 @@ void done(void) {
         for (int i = 0; i < forcedp; ++i)
             free(forcep[i].batch);
     free(forcep);
+    if (sqd_pairs)
+        for (uint i = 0; i < k * k; ++i) {
+            free_fact(&sqd_pairs[i].sfac);
+            free_fact(&sqd_pairs[i].pfac);
+        }
+    free(sqd_pairs);
+    free(sqd_has);
     free(maxforce);
     done_mintau();
     if (divisors)
@@ -2325,6 +2396,109 @@ void prep_forcep(void) {
     }
 }
 
+/* True if the power of the prime p at v_j is fixed by the batches: the
+ * forced primes up to maxforce[j], unless -F may leave p to the walks
+ * (see test_forcep()), and under TYPE_a each p | n.
+ */
+static bool fixed_at(uint vj, ulong p) {
+    if (never_unforced(p))
+        return 1;
+    if (p > maxforce[vj])
+        return 0;
+    if (unforce_all && p >= unforce_all && !keep_single(p))
+        return 0;
+    return 1;
+}
+
+/* True if every prime in f is fixed at v_j, see fixed_at(). */
+static bool sqd_fixed(uint vj, t_fact *f) {
+    for (uint i = 0; i < f->count; ++i)
+        if (!fixed_at(vj, f->ppow[i].p))
+            return 0;
+    return 1;
+}
+
+/* Find the pairs for STRATEGY_SQDIFF, see t_sqdpair. */
+void prep_sqdiff(void) {
+    /* with every target tau a power of 2, no square is ever fixed */
+    bool any = 0;
+    for (uint vi = 0; vi < k; ++vi)
+        if (!ispow2_u64(target_t(vi)))
+            any = 1;
+    if (!any)
+        return;
+
+    sqd_pairs = calloc(k * k, sizeof(t_sqdpair));
+    sqd_has = calloc(k, sizeof(bool));
+    sqd_xmax = 0;
+    t_fact f, sf, pf;
+    init_fact(&f);
+    init_fact(&sf);
+    init_fact(&pf);
+    for (uint vs = 0; vs < k; ++vs)
+        for (uint vj = 0; vj < k; ++vj) {
+            sint res = TYPE_RES(vs, vj);
+            if (vs == vj || res >= 0)
+                continue;
+#if defined(TYPE_o)
+            /* for now, only the pair (s, s - 2) for n == 2 (mod 4) */
+            if ((n & 3) != 2 || vj + 2 != vs)
+                continue;
+#else
+            continue;
+#endif
+            ulong as = TYPE_MULT(vs), aj = TYPE_MULT(vj);
+            f.count = 0;
+            simple_fact(aj * (ulong)-res, &f);
+            /* a_j.N = x.(S/x)^2 */
+            ulong x = 1, sq = 1;
+            for (uint i = 0; i < f.count; ++i) {
+                t_ppow *pp = &f.ppow[i];
+                if (pp->e & 1)
+                    x *= pp->p;
+                for (uint e = 0; e < (pp->e + 1) / 2; ++e)
+                    sq *= pp->p;
+            }
+            ulong h = simple_gcd(aj * x, sq);
+            ulong alpha = aj * x / h;
+            ulong sigma = sq / h;
+            ulong g = simple_gcd(as * alpha, h);
+            ulong P = as * alpha / g;
+            ulong Q = h / g;
+            sf.count = 0;
+            simple_fact(2 * sigma, &sf);
+            pf.count = 0;
+            simple_fact(P, &pf);
+            f.count = 0;
+            simple_fact(Q, &f);
+            if (!sqd_fixed(vj, &sf) || !sqd_fixed(vj, &pf)
+                    || !sqd_fixed(vj, &f))
+                continue;
+            t_sqdpair *sp = sqd_pair(vs, vj);
+            sp->xneed = x;
+            sp->alpha = alpha;
+            sp->sigma = sigma;
+            sp->P = P;
+            sp->Q = Q;
+            sp->sfac = sf;
+            sp->pfac = pf;
+            init_fact(&sf);
+            init_fact(&pf);
+            sqd_has[vs] = 1;
+            if (sqd_xmax < x)
+                sqd_xmax = x;
+        }
+    free_fact(&f);
+    free_fact(&sf);
+    free_fact(&pf);
+    if (sqd_xmax == 0) {
+        free(sqd_pairs);
+        sqd_pairs = NULL;
+        free(sqd_has);
+        sqd_has = NULL;
+    }
+}
+
 void disp_forcep(void) {
     uint plen;
     for (uint fi = 0; fi < forcedp; ++fi) {
@@ -2462,6 +2636,38 @@ void prep_mp(void) {
     }
 }
 
+/* On fixing the first square, at v_s: set cur->sqx to the squarefree part
+ * x of q_s if v_s has a partner (see t_sqdpair), and if so switch to
+ * STRATEGY_SQDIFF; best_sqdiff() reverts to the previous strategy when
+ * that no longer applies.
+ * What is left at v_s is a square, so x is the product of the primes
+ * with an odd power among its allocations.
+ */
+static void sqd_detect(t_node *cur, uint vs) {
+    cur->sqx = 0;
+    if (!sqd_pairs || !sqd_has[vs])
+        return;
+    t_value *vp = &value[vs];
+    ulong x = 1;
+    for (uint i = 1; i < cur_vlevel[vs]; ++i) {
+        t_allocation *ap = &vp->alloc[i];
+        if (ap->x & 1)
+            continue;
+        /* cannot match if x > sqd_xmax */
+        if (ap->p > sqd_xmax / x)
+            return;
+        x *= ap->p;
+    }
+    for (uint vj = 0; vj < k; ++vj)
+        if (vj != vs && sqd_pair(vs, vj)->xneed == x) {
+            cur->sqx = x;
+            if (strategy != STRATEGY_SQDIFF)
+                prev_strategy = strategy;
+            strategy = STRATEGY_SQDIFF;
+            return;
+        }
+}
+
 /* Record a new square at v_i; return FALSE if invalid.
  * Finds the quadratic (or higher-order) residues; stash them for later
  * propagation if this is the first square; fail if there are none.
@@ -2475,6 +2681,7 @@ bool alloc_square(t_node *cur, uint vi) {
     if (sqi == 0) {
         sq0 = vi;
         sqg[vlevel - 1] = g;
+        sqd_detect(cur, vi);
     }
 
     /* if this is first square, store in the level for further propagation;
@@ -2526,6 +2733,7 @@ void prep_presquare(void) {
         cur_act->action = A_PRESQ;
         cur_act->p = 0;
         cur->have_square = 0;
+        cur->sqx = 0;
         for (uint vi = 0; vi < k; ++vi)
             if (target_t(vi) & 1)
                 alloc_square(cur, vi);
@@ -2643,6 +2851,7 @@ void init_post(void) {
     prep_maxforce();
     prep_mp();  /* maxp[], minp[], midp[] */
     prep_forcep();
+    prep_sqdiff();  /* needs maxforce[] */
     if (debugf)
         disp_forcep();
     prep_primes();  /* needs forcedp */
@@ -4125,6 +4334,7 @@ void apply_level(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     cur_act->p = p;
     cur_act->x = x;
     cur->have_square = prev->have_square;
+    cur->sqx = prev->sqx;
     cur->nextpi = prev->nextpi;
     cur->fp_need = prev->fp_need;
     /* init cur->pfreev, with new prime now unavailable if used */
@@ -4216,17 +4426,6 @@ bool apply_secondary(t_node *prev, t_node *cur, uint vi, ulong p, uint x) {
     mpz_ui_pow_ui(px, p, x - 1);
     if (!apply_allocv(prev, cur, vi, p, x, px))
         return 0;
-#if defined(TYPE_o)
-    if (p == 2 && x == 2 && vi >= 2 && (n % 4) == 2 && cur->have_square == 1) {
-        /* n_i = 2z^2 -> n_{i-2} = 2(z-1)(z+1)
-         * Switch to a strategy that takes advantage of this; the strategy
-         * itself will revert when the conditions no longer hold.
-         */
-        if (strategy != STRATEGY_SQDIFF)
-            prev_strategy = strategy;
-        strategy = STRATEGY_SQDIFF;
-    }
-#endif
     return 1;
 }
 
@@ -4265,18 +4464,20 @@ static inline uint kern_tau(uint vi) {
     return vp->alloc[vil - 1].t;
 }
 
-/* True if the current batch is one STRATEGY_SQDIFF takes, see
- * apply_secondary().
- * Valid once the batch is complete, provided sq0 was fixed in it.
+/* True if the batch complete at np is one STRATEGY_SQDIFF takes: its
+ * square has a partner left with tau 2, or with tau that recursion can
+ * allocate at (see best_sqdiff()).
  */
-static bool kern_sqdiff(void) {
-#if defined(TYPE_o)
-    if ((n & 3) == 2 && sq0 >= 2) {
-        t_allocation *ap = &value[sq0].alloc[ cur_vlevel[sq0] - 1 ];
-        /* FIXME: make an "mpz_is2mod4_p" or similar function for this */
-        return ((mpz_getlimbn(ap->q, 0) & 3) == 2) ? 1 : 0;
+static bool kern_sqdiff(t_node *np) {
+    if (!np->sqx)
+        return 0;
+    for (uint vj = 0; vj < k; ++vj) {
+        if (!sqd_partner(np, vj))
+            continue;
+        uint t = kern_tau(vj);
+        if (t == 2 || divisors[t].high > (highpow ? 1 : 2))
+            return 1;
     }
-#endif
     return 0;
 }
 
@@ -4304,7 +4505,7 @@ static t_kern *kern_state(t_node *np) {
     ks->b = kern_b;
     ks->at = 0;
     ks->passed = 0;
-    ks->on = (np->have_square == 1 && !kern_sqdiff());
+    ks->on = (np->have_square == 1 && !kern_sqdiff(np));
     np->kern = ks;
     if (!ks->on)
         return ks;
@@ -5116,45 +5317,65 @@ ulong loop_limit(t_act *cur_act, uint vi) {
     return limp ? limp : ULONG_MAX;
 }
 
-/* STRATEGY_SQDIFF: if we have the pattern "...2^e . 2z^2...", allocating 2^e
- * at v_i and 2 or 2y^2 at v_{i+2} leaving an odd square, v_i must be of
- * the form 2(z-1)(z+1), which is very restrictive (and requires e >= 4,
- * forced by the quadratic residue check).
+/* STRATEGY_SQDIFF: with one square fixed, each partner v_j factors as
+ * f1.f2 with f2 - f1 = 2.sigma (see t_sqdpair): while v_j has even tau
+ * left, every prime power allocated there lies in one factor, so is at
+ * most about the root of v_j (see limit_p()); once tau 2 is left, the
+ * candidates are finite, and walk_sqdiff() lists them.
  *
- * We force allocation at v_i until the remaining tau is odd (in which
- * case we can finish with a Pell walk) or 2, in which case we return
- * BV_SQDIFF to invoke the fast walk_sqdiff().
+ * We allocate at a partner until one has tau 2 left, in which case we
+ * return BV_SQDIFF for walk_sqdiff(), or odd tau, which will be handled
+ * by a Pell walk.
  *
- * But until tau at v_i is 2, we take instead the position prev_strategy
- * would choose if its loop has a lower limit: our loop of q^2 at v_i
- * runs to about (zmax/8)^{1/4} whatever n is, while a high power
- * elsewhere may have a far lower limit (e.g. p^28 for n = 174). The
- * choice depends on zmax, see updated_zmax().
+ * But before that, we take instead the position prev_strategy would
+ * choose if its loop has a lower limit: our loop of q^2 at v_j runs to
+ * about a 4th root whatever n is, while a high power elsewhere may have
+ * a far lower limit (e.g. p^28 for n = 174). The choice depends on zmax,
+ * see updated_zmax().
  */
 uint best_sqdiff(t_act *cur_act) {
     /* check if conditions for STRATEGY_SQDIFF still hold */
     t_node *prev_node = &nodes[cur_act->level - 1];
-    if (!prev_node->have_square || sq0 < 2) {
+    if (prev_node->have_square != 1 || !prev_node->sqx || kern_batch()) {
         strategy = prev_strategy;
         return best_v(cur_act);
     }
 
-    uint vi = sq0 - 2;
-    t_value *vp = &value[vi];
-    uint vlevel = cur_vlevel[vi];
-    uint t = vp->alloc[vlevel - 1].t;
-    /* odd t makes v_i a second square: Pell case, walk will be fast;
-     * prep_midp() relies on us not allocating here when t is an odd prime */
-    if (t & 1)
-        return BV_WALK;
-    if (t != 2) {
-        uint vj = strategies[prev_strategy](cur_act);
-        if (vj < BV_SPECIAL && vj != vi
-                && loop_limit(cur_act, vj) < loop_limit(cur_act, vi))
-            return vj;
-        return vi;          /* allocate some more */
+    uint vi = BV_SPECIAL;   /* the partner to allocate at, if any */
+    ulong limi = 0;
+    uint walk_vj = BV_SPECIAL;
+    for (uint vj = 0; vj < k; ++vj) {
+        if (!sqd_partner(prev_node, vj))
+            continue;
+        uint t = value[vj].alloc[cur_vlevel[vj] - 1].t;
+        /* Odd t makes v_j a second square: Pell case, walk will be fast.
+         * prep_midp() relies on us not allocating here when t is an odd
+         * prime. */
+        if (t & 1)
+            return BV_WALK;
+        if (t == 2) {
+            if (walk_vj == BV_SPECIAL)
+                walk_vj = vj;
+            continue;
+        }
+        if (walk_vj != BV_SPECIAL || dis_at(prev_node, vj))
+            continue;
+        ulong limj = loop_limit(cur_act, vj);
+        if (vi == BV_SPECIAL || limj < limi) {
+            vi = vj;
+            limi = limj;
+        }
     }
-    return BV_SQDIFF;           /* walk_sqdiff() can now handle this */
+    if (walk_vj != BV_SPECIAL) {
+        sqd_vj = walk_vj;
+        return BV_SQDIFF;   /* walk_sqdiff() can now handle this */
+    }
+    uint vj = strategies[prev_strategy](cur_act);
+    if (vi == BV_SPECIAL)
+        return vj;
+    if (vj < BV_SPECIAL && vj != vi && loop_limit(cur_act, vj) < limi)
+        return vj;
+    return vi;              /* allocate some more */
 }
 
 /* STRATEGY_SQDIFF: we have t_i = 2, t_{i+2} odd, such that v_{i+2} must be of
@@ -5169,8 +5390,7 @@ void walk_sqdiff(void) {
     t_node *cur_node = &nodes[level];
     t_node *prev_node = &nodes[level - 1];
     t_act *cur_act = &acts[level];
-    assert(sq0 >= 2);
-    uint vi = sq0 - 2;
+    uint vi = sqd_vj;
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
     t_allocation *ap;
@@ -5397,7 +5617,8 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
          */
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
 #if defined(TYPE_o)
-    } else if (strategy == STRATEGY_SQDIFF && nextt == 2 && vi + 2 == sq0) {
+    } else if (strategy == STRATEGY_SQDIFF && nextt == 2
+            && sqd_partner(&nodes[cur_act->level - 1], vi)) {
         /* v_i = q_i p^{x-1} r => q_i p^{x-1} = 8ab such that br = a +/- 1.
          * When p^{x-1} dominates, we minimize v_i by setting a = p^{x-1}
          * giving r >= 8(p^{x-1} - 1)/q_i so v_i >= 8 p^{x-1} (p^{x-1} - 1).

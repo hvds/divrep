@@ -144,6 +144,7 @@ typedef struct s_node {
     uint level;     /* index of this entry */
     bool have_min;  /* we have passed any minp requirement */
     uint have_square;   /* number of v_i residues forced square so far */
+    ulong sqx;      /* x of the first square if it has a partner, else 0 */
     uint nextpi;    /* index of least prime not yet allocated */
     ulong maxp;     /* highest prime allocated so far, or never_unforced() */
     ulong *cap;     /* if set, caps p of p^{x-1} at v_i below here, cap_at() */
