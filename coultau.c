@@ -1147,6 +1147,7 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
             taum[i].vi = taum[j].vi;
             taum[i].t = taum[j].t;
             taum[i].e = taum[j].e;
+            taum[i].tlim = taum[j].tlim;
         }
         taum[i].state = 2;
         taum[i].bits = _find_tmfb(mpz_sizeinbase(taum[i].n, 2));
