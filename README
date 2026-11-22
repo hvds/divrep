@@ -47,6 +47,10 @@ To build against one of the other MPUGMP commits listed in the
 Makefile, set MPUGMP_VER to match it: it decides which MPUGMP source
 files are needed, and a mismatch typically shows up as link errors.
 
+From commit 32fcf54782, MPUGMP replaces its own quadratic sieve code
+with SIQS from Dana Jacobsen's "msiqs", carrying a frozen serial copy
+of it.
+
 If your libgmp header file (gmp.h) is not in the standard include
 paths, you will also need to modify the Makefile to include the
 appropriate path.
@@ -74,7 +78,8 @@ machines. The Windows release builds use this option.
 VERBOSE: print verbose information about factorization timings.
 
 TRY_HARDER: also try slower factorization tests before giving up. This
-adds 10 more ECM trials, the first taking about 15 minutes and each
+adds 10 more ECM trials (5 with MPUGMP 32fcf54782 or later, whose own
+trials go further), the first taking about 15 minutes and each
 subsequent one doubling the time. Generally this isn't worthwhile: if we
 didn't find a factor before these tests, ECM probably won't find it.
 

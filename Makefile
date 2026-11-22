@@ -10,6 +10,7 @@ MPUGMP ?= /src/perl/Math-Prime-Util-GMP
 #   cbf87f5e18 (danaj master 2023-05-15)
 #   a2907ae3b7 (danaj master 2025-07-11)
 #   39982f872b (danaj master v0.54 tag, CPAN release 2026-08-08)
+#   32fcf54782 (danaj master 2026-11-07, SIQS from msiqs)
 MPUGMP_VER ?= 39982f872b
 COUL = coulfact.c diag.c rootmod.c coultau.c pell.c prime_iterator.c coulvec.c coulmint.c
 HOUL = coulfact.h diag.h rootmod.h coultau.h pell.h coul.h prime_iterator.h \
@@ -25,8 +26,14 @@ dpcoul dpcaul dpcrul dsq12: CC_OPT = -O0
 # Tell MPUGMP code that we're not building the perl module.
 DEFINES := -DSTANDALONE
 
-CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/pbrent63.c ${MPUGMP}/isaac.c ${MPUGMP}/tinyqs.c ${MPUGMP}/squfof126.c ${MPUGMP}/simpqs.c ${MPUGMP}/primality.c ${MPUGMP}/utility.c ${MPUGMP}/gmp_main.c ${MPUGMP}/bls75.c ${MPUGMP}/real.c ${MPUGMP}/ecpp.c
+CFACTOR = ${MPUGMP}/factor.c ${MPUGMP}/ecm.c ${MPUGMP}/isaac.c ${MPUGMP}/squfof126.c ${MPUGMP}/primality.c ${MPUGMP}/utility.c ${MPUGMP}/gmp_main.c ${MPUGMP}/bls75.c ${MPUGMP}/real.c ${MPUGMP}/ecpp.c
 HFACTOR = ${MPUGMP}/factor.h
+# MPUGMP versions with SIQS from msiqs, which replaces its own QS code
+# (and pbrent63)
+MPUG_SIQS_VERS = 32fcf54782
+ifeq ($(filter $(MPUGMP_VER),$(MPUG_SIQS_VERS)),)
+    CFACTOR += ${MPUGMP}/pbrent63.c ${MPUGMP}/tinyqs.c ${MPUGMP}/simpqs.c
+endif
 ifeq ($(MPUGMP_VER), cbf87f5e18)
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c
 endif
@@ -42,6 +49,12 @@ ifeq ($(MPUGMP_VER), 39982f872b)
     DEFINES += -DHAVE_MISC_UI_H -DMPUG_054
     HFACTOR += ${MPUGMP}/misc_ui.h ${MPUGMP}/poly.h ${MPUGMP}/znlog.h
     CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c ${MPUGMP}/znlog.c
+endif
+ifeq ($(MPUGMP_VER), 32fcf54782)
+    DEFINES += -DHAVE_MISC_UI_H -DMPUG_054 -DMPUG_SIQS
+    HFACTOR += ${MPUGMP}/misc_ui.h ${MPUGMP}/poly.h ${MPUGMP}/znlog.h ${MPUGMP}/siqs.h ${MPUGMP}/tinyecm64.h
+    CFACTOR += ${MPUGMP}/lucas_seq.c ${MPUGMP}/rootmod.c ${MPUGMP}/random_prime.c ${MPUGMP}/misc_ui.c ${MPUGMP}/poly.c ${MPUGMP}/znlog.c
+    CFACTOR += ${MPUGMP}/siqs.c ${MPUGMP}/lanczos.c ${MPUGMP}/pr32_iter.c ${MPUGMP}/tinyecm64.c
 endif
 
 # TODO: decide individually whether to remove optionality on these

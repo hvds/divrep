@@ -24,6 +24,7 @@ typedef struct factor_state_s {
     int e;      /* new exponent found */
     int ef;     /* exponent multiplier */
     UV tlim;    /* p^2 limit checked by trial division */
+    ulong missed;   /* bitset of ladder rungs not to try again */
 
     /* used only for trial division phase */
     UV sp;      /* smallprime index */
@@ -44,6 +45,7 @@ typedef struct s_tm {
     uint state; /* next factor test to try */
     ulong bits; /* bitset showing which factor tests to try */
     ulong tlim; /* checked to */
+    ulong missed;   /* bitset of ladder rungs not to try again */
 } t_tm;
 extern t_tm *taum;
 

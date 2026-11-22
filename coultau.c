@@ -7,11 +7,15 @@
 #include "gmp_main.h"
 #include "primality.h"
 #include "utility.h"
-#include "pbrent63.h"
 #include "squfof126.h"
 #include "ecm.h"
-#include "tinyqs.h"
-#include "simpqs.h"
+#ifdef MPUG_SIQS
+#   include "siqs.h"
+#else
+#   include "pbrent63.h"
+#   include "tinyqs.h"
+#   include "simpqs.h"
+#endif
 
 #include <time.h>
 #include <string.h>
@@ -23,12 +27,21 @@ uint taum_alloc = 0;
 uint taum_size;
 uint test_rough = 0;
 mpz_t tmf, tmf2, tmp_lim;
+#ifndef MPUG_SIQS
 #define SIMPQS_SIZE 66
 mpz_t simpqs_array[SIMPQS_SIZE];
+#endif
 
 /* B2 < B1 gives the default stage 2 bound */
+#ifdef MPUG_SIQS
+/* as in MPUG's factor(), each call takes fresh curves from MPUG's ISAAC */
+#define _GMP_ECM_FACTOR(n, f, b1, b2, ncurves) \
+     _GMP_ecm_factor_projective(n, f, b1, b2, ncurves, \
+            irand_u64(), get_verbose_level())
+#else
 #define _GMP_ECM_FACTOR(n, f, b1, b2, ncurves) \
      _GMP_ecm_factor_projective(n, f, b1, b2, ncurves)
+#endif
 
 /* Avoid CLOCK_PROCESS_CPUTIME_ID, which is ratcheted by 300Hz scheduler
  * ticks once coul.c:init_time() has armed its timers.
@@ -169,7 +182,9 @@ static inline UV skip_trial_bands(
 
 /* The factoring ladder: the methods tau_multi_run() and factor_one() try
  * in turn on a value with no factor below the trial division limit, in
- * the order of MPUG's factor() of the time, each with its parameters.
+ * the order of MPUG's factor() of the time, each with its parameters;
+ * from MPUGMP 32fcf54782, those of factor_pretests[] then factor_ladder[]
+ * in its factor.c, after tinyecm64 for values of up to 64 bits.
  * Each rung applies to values of minbits to maxbits bits (maxbits 0 for
  * no limit); a value is the cofactor being factored when a rung is
  * tried, so that a rung's size limits and parameters are found from the
@@ -189,6 +204,9 @@ typedef enum {
     RM_PBRENT,      /* Pollard-Brent rho with a = arg1, arg2 rounds */
     RM_HOLF,        /* Hart's one line factorization, arg1 rounds */
     RM_CHEB,        /* Chebyshev method with B = arg1, x0 = arg2 */
+    RM_TINYECM,     /* tinyecm64 */
+    RM_EARLY_PM1,   /* p-1 with bounds by size, see rung_try() */
+    RM_ECM_PRE,     /* ECM with B1 = arg1, arg2 curves, B2 by size */
 
     RM_MAX
 } e_rung_method;
@@ -203,9 +221,53 @@ typedef struct s_rung {
 } t_rung;
 #define RF_LAST 1   /* last resort: tried only under TRY_HARDER */
 #define RF_054 2    /* tried only from MPUGMP v0.54 */
+#define RF_ONCE 4   /* after a miss, not tried on any cofactor */
 
 static const t_rung rungs[] = {
     { 0, 0, RM_NONE }, { 0, 0, RM_NONE },
+#ifdef MPUG_SIQS
+    /* As in factor(), QS is tried at most once on a value: each of its
+     * rungs applies only to sizes above the previous one's limit.
+     */
+    /* minbits maxbits method           arg1       arg2  flags */
+    {    0,   64, RM_TINYECM,             0,         0 },
+    /* factor_pretests[] */
+    {   88,    0, RM_EARLY_PM1,           0,         0, RF_ONCE },
+    {  128,    0, RM_ECM_PRE,           200,         4 },
+    {  160,    0, RM_ECM_PRE,           600,         4 },
+    {  176,    0, RM_ECM_PRE,           600,        12 },
+    {  192,    0, RM_ECM_PRE,          2000,        10 },
+    {  208,    0, RM_PM1,            200000,   3000000 },
+    {  208,    0, RM_ECM_PRE,         20000,         2 },
+    {  240,    0, RM_ECM_PRE,         30000,        20 },
+    {  256,    0, RM_ECM_PRE,         40000,        40 },
+    {  270,    0, RM_ECM_PRE,         80000,        40 },
+    {  288,    0, RM_ECM_PRE,        160000,        80 },
+    /* factor_ladder[] */
+    {    0,  320, RM_QS,                  0,         0 },
+    {    0,    0, RM_ECM_SCALED,          2,        20 },
+    {  321,  360, RM_QS,                  0,         0 },
+    {    0,    0, RM_PBRENT,              1,   1048576 },
+    {    0,    0, RM_ECM_SCALED,          4,        20 },
+    {    0,    0, RM_ECM_SCALED,          8,        20 },
+    {  361,  400, RM_QS,                  0,         0 },
+    {    0,    0, RM_HOLF,          1048576,         0 },
+    {    0,    0, RM_CHEB,            50000,         0 },
+    {    0,    0, RM_PM1,           5000000, 100000000 },
+    {    0,    0, RM_ECM_SCALED,         32,        40 },
+    {    0,    0, RM_ECM_SCALED,          8,       100 },
+    {    0,    0, RM_ECM_SCALED,         16,       100 },
+    {    0,    0, RM_ECM_SCALED,         32,       100 },
+    {  401, MPU_SIQS_MAX_BITS, RM_QS,     0,         0 },
+    {    0,    0, RM_ECM_SCALED,         64,       100 },
+    {    0,    0, RM_ECM_SCALED,        128,       100 },
+    /* last resort, beyond factor() */
+    {    0,    0, RM_ECM_SCALED,        256,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,        512,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,       1024,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,       2048,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,       4096,       100, RF_LAST }
+#else
     /* minbits maxbits method           arg1       arg2  flags */
     {    0,   63, RM_BRENT63,        400000,         0 },
     {   65,  126, RM_PM1,              5000,      5000 },
@@ -256,12 +318,45 @@ static const t_rung rungs[] = {
     {    0,    0, RM_ECM_SCALED,       1024,       100, RF_LAST },
     {    0,    0, RM_ECM_SCALED,       2048,       100, RF_LAST },
     {    0,    0, RM_ECM_SCALED,       4096,       100, RF_LAST }
+#endif
 };
 #define TM_TERM 0
 /* leave room for possible power check at rung 1 */
 #define TM_INIT 2
 #define TM_MAX (sizeof(rungs) / sizeof(t_rung))
 
+#ifdef MPUG_SIQS
+/* the base B1 for scaled ECM, as factor_ecm_base_bound() in factor.c */
+static inline ulong rung_ecm_b1(uint nbits) {
+    return nbits < 65 ? 5000
+        : nbits < 160 ? 20000
+        : nbits < 192 ? 30000
+        : nbits < 224 ? 40000
+        : nbits < 256 ? 80000
+        : nbits < 512 ? 160000
+        : 320000;
+}
+
+/* B1 for the early p-1, as factor_early_pm1_bound() in factor.c */
+static inline ulong rung_early_pm1_b1(uint nbits) {
+    return nbits < 88 ? 0
+        : nbits < 112 ? 1000
+        : nbits < 176 ? 2000
+        : 20000;
+}
+
+/* Trial division to a limit tlim (see TLIM_IS_SQUARE) has shown that
+ * a value has no factor less than the root of tlim.
+ */
+static inline uint32_t trial_start(ulong tlim) {
+    ulong r = (ulong)sqrt((double)tlim);
+    while (r * r > tlim)
+        --r;
+    while ((r + 1) * (r + 1) <= tlim)
+        ++r;
+    return (r > UINT32_MAX) ? UINT32_MAX : (uint32_t)r;
+}
+#else
 /* the base B1 for scaled ECM, that of the ECM by size above */
 static inline ulong rung_ecm_b1(uint nbits) {
     return nbits < 100 ? 5000
@@ -273,6 +368,7 @@ static inline ulong rung_ecm_b1(uint nbits) {
         : nbits < 512 ? 160000
         : 320000;
 }
+#endif
 
 /* Returns the bitset of rungs that apply to values of nbits bits,
  * including last resort rungs only if last is TRUE.
@@ -300,8 +396,13 @@ static ulong rung_mask(uint nbits, bool last) {
  * do extra work to find the other parts again.
  */
 static bool do_qs(mpz_t n, mpz_t f, ulong tlim) {
+#ifdef MPUG_SIQS
+    uint32_t count;
+    mpz_t *parts = gmp_siqs(n, &count, trial_start(tlim), 0);
+#else
     mpz_t *parts = simpqs_array;
     uint count = _GMP_simpqs(n, parts);
+#endif
     bool found = 0;
 
     if (count >= 2) {
@@ -328,6 +429,9 @@ static bool do_qs(mpz_t n, mpz_t f, ulong tlim) {
         fs_clear(&fs);
         found = 1;
     }
+#ifdef MPUG_SIQS
+    gmp_siqs_free(parts, count);
+#endif
     return found;
 }
 
@@ -337,12 +441,24 @@ static bool do_qs(mpz_t n, mpz_t f, ulong tlim) {
 static bool rung_try(const t_rung *r, mpz_t n, mpz_t f, uint nbits,
         ulong tlim) {
     switch (r->method) {
+#ifdef MPUG_SIQS
+    case RM_TINYECM:
+        return _GMP_tinyecm64_factor(n, f, 0);
+    case RM_EARLY_PM1: {
+        ulong b1 = rung_early_pm1_b1(nbits);
+        return _GMP_pminus1_factor(n, f, b1, (nbits <= 224 ? 5 : 10) * b1);
+    }
+    case RM_ECM_PRE:
+        return _GMP_ECM_FACTOR(n, f, r->arg1,
+                (nbits <= 224) ? 40 * r->arg1 : 0, r->arg2);
+#else
     case RM_BRENT63:
         return pbrent63(n, f, r->arg1);
-    case RM_SQUFOF:
-        return squfof126(n, f, r->arg1);
     case RM_TINYQS:
         return tinyqs(n, f);
+#endif
+    case RM_SQUFOF:
+        return squfof126(n, f, r->arg1);
     case RM_PM1:
         return _GMP_pminus1_factor(n, f, r->arg1, r->arg2);
     case RM_ECM:
@@ -367,7 +483,7 @@ static bool rung_try(const t_rung *r, mpz_t n, mpz_t f, uint nbits,
 #ifdef VERBOSE
 static const char *rm_name[] = {
     "none", "brent63", "squfof", "tinyqs", "p-1", "ecm", "ecm", "qs",
-    "brent", "holf", "cheb"
+    "brent", "holf", "cheb", "tecm", "epm1", "ecm"
 };
 static inline bool ct_rung(uint i, mpz_t n, mpz_t f, uint nbits,
         ulong tlim) {
@@ -402,8 +518,10 @@ void init_tau(uint rough, uint flake) {
     mpz_init(tmf2);
     mpz_init(tmp_lim);
     init_tmfbl(flake);
+#ifndef MPUG_SIQS
     for (uint i = 0; i < SIMPQS_SIZE; ++i)
         mpz_init(simpqs_array[i]);
+#endif
 #ifdef MPUG_054
     mpz_init_set_ui(gcd_1k, 1);
     for (pn = 2; pn < TRIAL_BAND_A_END; ++pn)
@@ -425,8 +543,10 @@ void init_tau(uint rough, uint flake) {
 }
 
 void done_tau(void) {
+#ifndef MPUG_SIQS
     for (uint i = 0; i < SIMPQS_SIZE; ++i)
         mpz_clear(simpqs_array[i]);
+#endif
     done_tmfbl();
     if (taum_alloc)
         for (uint i = 0; i < taum_alloc; ++i)
@@ -463,6 +583,7 @@ void fs_init(factor_state* fs) {
     fs->log = get_verbose_level();
     fs->ntofac = 0;
     fs->tlim = 0;
+    fs->missed = 0;
     return;
 }
 
@@ -622,11 +743,15 @@ fs_retry:
         {
             /* the whole ladder, including last resort rungs */
             uint nbits = mpz_sizeinbase(fs->n, 2);
-            ulong bits = rung_mask(nbits, 1);
-            for (uint i = TM_INIT; i < TM_MAX; ++i)
-                if ((bits & (1UL << i))
-                        && ct_rung(i, fs->n, fs->f, nbits, fs->tlim))
+            ulong bits = rung_mask(nbits, 1) & ~fs->missed;
+            for (uint i = TM_INIT; i < TM_MAX; ++i) {
+                if (!(bits & (1UL << i)))
+                    continue;
+                if (ct_rung(i, fs->n, fs->f, nbits, fs->tlim))
                     goto found_factor;
+                if (rungs[i].flags & RF_ONCE)
+                    fs->missed |= 1UL << i;
+            }
         }
 
         /* Last resort failed and we have no interface to signal that,
@@ -1008,6 +1133,13 @@ static inline bool tmf_try(uint i, t_tm *tm) {
     return ct_rung(i, tm->n, tmf, mpz_sizeinbase(tm->n, 2), tm->tlim);
 }
 
+/* Record that rung i of the ladder found no factor of tm->n. */
+static inline void tmf_miss(uint i, t_tm *tm) {
+    tm->state = i + 1;
+    if (rungs[i].flags & RF_ONCE)
+        tm->missed |= 1UL << i;
+}
+
 /* Returns the number of values still being tested at the point a failure
  * was seen; return value of zero implies success.
  */
@@ -1027,6 +1159,7 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
         }
         taum[i].state = 2;
         taum[i].bits = _find_tmfb(mpz_sizeinbase(taum[i].n, 2));
+        taum[i].missed = 0;
         ++i;
     }
     if (i == 0)
@@ -1047,7 +1180,7 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
             if (!(tm->bits & (1UL << i)))
                 continue;
             if (!tmf_try(i, tm)) {
-                tm->state = i + 1;
+                tmf_miss(i, tm);
                 continue;
             }
 
@@ -1095,7 +1228,7 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
             }
             tm->state = TM_INIT;
             next_i = TM_INIT;
-            tm->bits = _find_tmfb(mpz_sizeinbase(tm->n, 2));
+            tm->bits = _find_tmfb(mpz_sizeinbase(tm->n, 2)) & ~tm->missed;
             goto tmr_retry;
 
           tmr_splice:
@@ -1110,6 +1243,7 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
                 taum[j].state = taum[count].state;
                 taum[j].bits = taum[count].bits;
                 taum[j].tlim = taum[count].tlim;
+                taum[j].missed = taum[count].missed;
                 goto tmr_redo;
             }
             /* don't redo this j, it has fallen off the end */
@@ -1162,7 +1296,7 @@ bool tau_single_try(uint i) {
         if (!(tm->bits & (1UL << i)))
             continue;
         if (!tmf_try(i, tm)) {
-            tm->state = i + 1;
+            tmf_miss(i, tm);
             continue;
         }
 
