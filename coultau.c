@@ -16,6 +16,7 @@
 #include <time.h>
 #include <string.h>
 #include <errno.h>
+#include <math.h>
 
 t_tm *taum = NULL;
 uint taum_alloc = 0;
@@ -25,8 +26,9 @@ mpz_t tmf, tmf2, tmp_lim;
 #define SIMPQS_SIZE 66
 mpz_t simpqs_array[SIMPQS_SIZE];
 
-#define _GMP_ECM_FACTOR(n, f, b1, ncurves) \
-     _GMP_ecm_factor_projective(n, f, b1, 0, ncurves)
+/* B2 < B1 gives the default stage 2 bound */
+#define _GMP_ECM_FACTOR(n, f, b1, b2, ncurves) \
+     _GMP_ecm_factor_projective(n, f, b1, b2, ncurves)
 
 /* Avoid CLOCK_PROCESS_CPUTIME_ID, which is ratcheted by 300Hz scheduler
  * ticks once coul.c:init_time() has armed its timers.
@@ -76,89 +78,6 @@ static inline ulong ct_power(mpz_t n) {
     gmp_printf("(%ld) pow: %Zd^%lu\n", cgdiff(&cg_tp0), n, r);
     return r;
 }
-static inline bool ct_ecm(mpz_t n, mpz_t f, ulong b1, ulong curves) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_ECM_FACTOR(n, f, b1, curves);
-    gmp_printf("(%ld) ecm: %Zu [%lu, %lu] %u",
-            cgdiff(&cg_tp0), n, b1, curves, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_pminus1(mpz_t n, mpz_t f, ulong b1, ulong b2) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_pminus1_factor(n, f, b1, b2);
-    gmp_printf("(%ld) p-1: %Zu [%lu, %lu] %u", cgdiff(&cg_tp0), n, b1, b2, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_tinyqs(mpz_t n, mpz_t f) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = tinyqs(n, f);
-    gmp_printf("(%ld) tqs: %Zu %u", cgdiff(&cg_tp0), n, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_simpqs(mpz_t n, mpz_t *fa) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    int r = _GMP_simpqs(n, fa);
-    gmp_printf("(%ld) sqs: %Zu %d", cgdiff(&cg_tp0), n, r);
-    if (r)
-        gmp_printf(" %Zu", fa[0]);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_holf(mpz_t n, mpz_t f, ulong rounds) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_holf_factor(n, f, rounds);
-    gmp_printf("(%ld) hlf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_squfof(mpz_t n, mpz_t f, ulong rounds) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = squfof126(n, f, rounds);
-    gmp_printf("(%ld) sqf: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_brent63(mpz_t n, mpz_t f, ulong rounds) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = pbrent63(n, f, rounds);
-    gmp_printf("(%ld) b63: %Zu [%lu] %d", cgdiff(&cg_tp0), n, rounds, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_brent(mpz_t n, mpz_t f, ulong a, ulong rounds) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_pbrent_factor(n, f, a, rounds);
-    gmp_printf("(%ld) brent: %Zu [%lu, %lu] %d",
-            cgdiff(&cg_tp0), n, a, rounds, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
-static inline bool ct_cheb(mpz_t n, mpz_t f, ulong B) {
-    clock_gettime(CG_CLOCK, &cg_tp0);
-    bool r = _GMP_cheb_factor(n, f, B, 0);
-    gmp_printf("(%ld) cheb: %Zu [%lu] %d", cgdiff(&cg_tp0), n, B, r);
-    if (r)
-        gmp_printf(" %Zu", f);
-    gmp_printf("\n");
-    return r;
-}
 extern int fs_trial(factor_state* fs);
 static inline bool ct_trial(factor_state *fs) {
     clock_gettime(CG_CLOCK, &cg_tp0);
@@ -172,16 +91,7 @@ static inline bool ct_trial(factor_state *fs) {
 #else
 #   define ct_prime(n) ct_isprime(n)
 #   define ct_power(n) power_factor(n, n)
-#   define ct_ecm(n, f, b1, curves) _GMP_ECM_FACTOR(n, f, b1, curves)
-#   define ct_pminus1(n, f, b1, b2) _GMP_pminus1_factor(n, f, b1, b2)
-#   define ct_tinyqs(n, f) tinyqs(n, f)
-#   define ct_simpqs(n, fa) _GMP_simpqs(n, fa)
-#   define ct_holf(n, f, rounds) _GMP_holf_factor(n, f, rounds)
-#   define ct_squfof(n, f, rounds) squfof126(n, f, rounds)
-#   define ct_brent63(n, f, rounds) pbrent63(n, f, rounds)
-#   define ct_brent(n, f, a, rounds) _GMP_pbrent_factor(n, f, a, rounds)
 #   define ct_trial(fs) fs_trial(fs)
-#   define ct_cheb(n, f, B) _GMP_cheb_factor(n, f, B, 0)
 #endif
 
 #define NPRIMES_SMALL 6500
@@ -255,6 +165,226 @@ static inline UV skip_trial_bands(
     }
     return sp;
 }
+#endif
+
+/* The factoring ladder: the methods tau_multi_run() and factor_one() try
+ * in turn on a value with no factor below the trial division limit, in
+ * the order of MPUG's factor() of the time, each with its parameters.
+ * Each rung applies to values of minbits to maxbits bits (maxbits 0 for
+ * no limit); a value is the cofactor being factored when a rung is
+ * tried, so that a rung's size limits and parameters are found from the
+ * value being tested at the time.
+ * Rungs before TM_INIT are unused, so that a rung's index is its bit in
+ * the bitsets of rungs to try (tmfbl[], t_tm.bits).
+ */
+typedef enum {
+    RM_NONE = 0,    /* unused */
+    RM_BRENT63,     /* pbrent63 with arg1 rounds */
+    RM_SQUFOF,      /* squfof126 with arg1 rounds */
+    RM_TINYQS,      /* tinyqs */
+    RM_PM1,         /* p-1 with B1 = arg1, B2 = arg2 */
+    RM_ECM,         /* ECM with B1 = arg1, arg2 curves */
+    RM_ECM_SCALED,  /* ECM with B1 = arg1 * rung_ecm_b1(), arg2 curves */
+    RM_QS,          /* quadratic sieve, see do_qs() */
+    RM_PBRENT,      /* Pollard-Brent rho with a = arg1, arg2 rounds */
+    RM_HOLF,        /* Hart's one line factorization, arg1 rounds */
+    RM_CHEB,        /* Chebyshev method with B = arg1, x0 = arg2 */
+
+    RM_MAX
+} e_rung_method;
+
+typedef struct s_rung {
+    uint minbits;
+    uint maxbits;
+    e_rung_method method;
+    ulong arg1;
+    ulong arg2;
+    uint flags;
+} t_rung;
+#define RF_LAST 1   /* last resort: tried only under TRY_HARDER */
+#define RF_054 2    /* tried only from MPUGMP v0.54 */
+
+static const t_rung rungs[] = {
+    { 0, 0, RM_NONE }, { 0, 0, RM_NONE },
+    /* minbits maxbits method           arg1       arg2  flags */
+    {    0,   63, RM_BRENT63,        400000,         0 },
+    {   65,  126, RM_PM1,              5000,      5000 },
+    {   65,  126, RM_TINYQS,              0,         0 },
+    {    0,   53, RM_SQUFOF,         400000,         0 },
+    {   54,   58, RM_PM1,              1000,     10000 },
+    {   59,   63, RM_PM1,              2000,     20000 },
+    {   64,   72, RM_PM1,              4000,     40000 },
+    {   65,   77, RM_PM1,             10000,    100000 },
+    {    0,   77, RM_SQUFOF,        1000000,         0 },
+    {    0,    0, RM_PM1,             20000,    200000 },
+    {    0,    0, RM_ECM,               200,         4 },
+    {    0,    0, RM_ECM,               600,        20 },
+    {    0,    0, RM_ECM,              2000,        10 },
+    /* MPUG's factor() skips this p-1 for 100 to 159 bits */
+    {    0,   99, RM_PM1,            200000,   3000000 },
+    {  160,    0, RM_PM1,            200000,   3000000 },
+    /* ECM by size, from which rung_ecm_b1() takes its B1; Dana confirms
+     * that 2 curves are deliberate for 100 to 159 bits: a quick ECM hit
+     * before going to QS.
+     */
+    {    0,   99, RM_ECM,              5000,        20 },
+    {  100,  127, RM_ECM,             10000,         2 },
+    {  128,  159, RM_ECM,             20000,         2 },
+    {  160,  191, RM_ECM,             30000,        20 },
+    {  192,  223, RM_ECM,             40000,        40 },
+    {  224,  255, RM_ECM,             80000,        40 },
+    {  256,  511, RM_ECM,            160000,        80 },
+    {  512,    0, RM_ECM,            320000,       160 },
+    {   90,  299, RM_QS,                  0,         0 },
+    {    0,    0, RM_ECM_SCALED,          2,        20 },
+    {    0,    0, RM_PBRENT,              1,   1048576 },
+    {    0,    0, RM_ECM_SCALED,          4,        20 },
+    {    0,    0, RM_ECM_SCALED,          8,        20 },
+    {    0,    0, RM_HOLF,          1048576,         0 },
+    /* available earlier, presumed trustworthy from v0.54 */
+    {    0,    0, RM_CHEB,            50000,         0, RF_054 },
+    {    0,    0, RM_PM1,           5000000, 100000000 },
+    {    0,    0, RM_ECM_SCALED,         32,        40 },
+    /* last resort */
+    {    0,    0, RM_ECM_SCALED,          8,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,         16,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,         32,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,         64,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,        128,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,        256,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,        512,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,       1024,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,       2048,       100, RF_LAST },
+    {    0,    0, RM_ECM_SCALED,       4096,       100, RF_LAST }
+};
+#define TM_TERM 0
+/* leave room for possible power check at rung 1 */
+#define TM_INIT 2
+#define TM_MAX (sizeof(rungs) / sizeof(t_rung))
+
+/* the base B1 for scaled ECM, that of the ECM by size above */
+static inline ulong rung_ecm_b1(uint nbits) {
+    return nbits < 100 ? 5000
+        : nbits < 128 ? 10000
+        : nbits < 160 ? 20000
+        : nbits < 192 ? 30000
+        : nbits < 224 ? 40000
+        : nbits < 256 ? 80000
+        : nbits < 512 ? 160000
+        : 320000;
+}
+
+/* Returns the bitset of rungs that apply to values of nbits bits,
+ * including last resort rungs only if last is TRUE.
+ */
+static ulong rung_mask(uint nbits, bool last) {
+    ulong bits = 0;
+    for (uint i = TM_INIT; i < TM_MAX; ++i) {
+        const t_rung *r = &rungs[i];
+        if (nbits < r->minbits || (r->maxbits && nbits > r->maxbits))
+            continue;
+        if ((r->flags & RF_LAST) && !last)
+            continue;
+#ifndef MPUG_054
+        if (r->flags & RF_054)
+            continue;
+#endif
+        bits |= 1UL << i;
+    }
+    return bits;
+}
+
+/* Invoke QS on n, which has no factor below the root of tlim (see
+ * TLIM_IS_SQUARE), and return a prime factor in f. QS gives us a
+ * partition of n, of which we use only one part, accepting that we may
+ * do extra work to find the other parts again.
+ */
+static bool do_qs(mpz_t n, mpz_t f, ulong tlim) {
+    mpz_t *parts = simpqs_array;
+    uint count = _GMP_simpqs(n, parts);
+    bool found = 0;
+
+    if (count >= 2) {
+        /* look for a prime among the parts */
+        for (uint i = 0; i < count; ++i)
+            if (ct_prime(parts[i])) {
+                mpz_set(f, parts[i]);
+                found = 1;
+                break;
+            }
+    }
+    if (count >= 2 && !found) {
+        /* all parts composite: find a factor of the first one */
+        factor_state fs;
+        fs_init(&fs);
+        mpz_set(fs.n, parts[0]);
+        fs.tlim = tlim;     /* ref TLIM_IS_SQUARE */
+        fs.state = FS_POWER;
+        if (!factor_one(&fs))
+            fail("factor_one(%Zd) failed to find factor in QS composite\n",
+                fs.n
+            );
+        mpz_set(f, fs.f);
+        fs_clear(&fs);
+        found = 1;
+    }
+    return found;
+}
+
+/* Try rung r on n of nbits bits, with no factor below the root of tlim.
+ * Returns TRUE with a proper factor of n in f if it finds one.
+ */
+static bool rung_try(const t_rung *r, mpz_t n, mpz_t f, uint nbits,
+        ulong tlim) {
+    switch (r->method) {
+    case RM_BRENT63:
+        return pbrent63(n, f, r->arg1);
+    case RM_SQUFOF:
+        return squfof126(n, f, r->arg1);
+    case RM_TINYQS:
+        return tinyqs(n, f);
+    case RM_PM1:
+        return _GMP_pminus1_factor(n, f, r->arg1, r->arg2);
+    case RM_ECM:
+        return _GMP_ECM_FACTOR(n, f, r->arg1, 0, r->arg2);
+    case RM_ECM_SCALED:
+        return _GMP_ECM_FACTOR(n, f, r->arg1 * rung_ecm_b1(nbits), 0,
+                r->arg2);
+    case RM_QS:
+        return do_qs(n, f, tlim);
+    case RM_PBRENT:
+        return _GMP_pbrent_factor(n, f, r->arg1, r->arg2);
+    case RM_HOLF:
+        return _GMP_holf_factor(n, f, r->arg1);
+    case RM_CHEB:
+        return _GMP_cheb_factor(n, f, r->arg1, r->arg2);
+    default:
+        fail("unknown factoring method %u", r->method);
+    }
+    return 0;
+}
+
+#ifdef VERBOSE
+static const char *rm_name[] = {
+    "none", "brent63", "squfof", "tinyqs", "p-1", "ecm", "ecm", "qs",
+    "brent", "holf", "cheb"
+};
+static inline bool ct_rung(uint i, mpz_t n, mpz_t f, uint nbits,
+        ulong tlim) {
+    const t_rung *rp = &rungs[i];
+    struct timespec t0;
+    clock_gettime(CG_CLOCK, &t0);
+    bool r = rung_try(rp, n, f, nbits, tlim);
+    gmp_printf("(%ld) %s: %Zu [%u: %lu, %lu] %u", cgdiff(&t0),
+            rm_name[rp->method], n, i, rp->arg1, rp->arg2, r);
+    if (r)
+        gmp_printf(" %Zu", f);
+    gmp_printf("\n");
+    return r;
+}
+#else
+#   define ct_rung(i, n, f, nbits, tlim) \
+        rung_try(&rungs[i], n, f, nbits, tlim)
 #endif
 
 void init_tmfbl(uint flake);
@@ -411,8 +541,6 @@ static int _fs_remove(factor_state* fs) {
  * it found one, else factorization is complete.
  */
 int factor_one(factor_state* fs) {
-    UV nbits = mpz_sizeinbase(fs->n, 2);
-    UV B1;
     int cmp;
 
 fs_retry:
@@ -491,157 +619,14 @@ fs_retry:
             return 1;
         }
 
-        if (nbits <= 63)
-            if (ct_brent63(fs->n, fs->f, 400000))
-                goto found_factor;
-        if (nbits >= 65 && nbits <= 126) {
-            if (ct_pminus1(fs->n, fs->f, 5000, 5000))
-                goto found_factor;
-            if (ct_tinyqs(fs->n, fs->f))
-                goto found_factor;
-        }
-        /* It's possible the previous calls failed or weren't available */
-        if (nbits <= 53) {
-            if (ct_squfof(fs->n, fs->f, 400000))
-                goto found_factor;
-        } else if (nbits <= 77) {
-            int sb1 = (nbits < 58) ? 1
-                : (nbits < 63) ? 2
-                : (nbits < 72) ? 4
-                : 10;
-            if (ct_pminus1(fs->n, fs->f, sb1 * 1000, sb1 * 10000))
-                goto found_factor;
-            if (ct_squfof(fs->n, fs->f, 1000000))
-                goto found_factor;
-        }
-        /* recheck power? */
-        if (ct_pminus1(fs->n, fs->f, 20000, 200000))
-            goto found_factor;
-
-        /* Small ECM to find small factors */
-        if (ct_ecm(fs->n, fs->f, 200, 4))
-            goto found_factor;
-        if (ct_ecm(fs->n, fs->f, 600, 20))
-            goto found_factor;
-        if (ct_ecm(fs->n, fs->f, 2000, 10))
-            goto found_factor;
-
-        /* Small p-1 */
-        if (nbits < 100 || nbits >= 160)
-            if (ct_pminus1(fs->n, fs->f, 200000, 3000000))
-                goto found_factor;
-
-        /* Set ECM parameters that have a good chance of success */
-        UV curves;
-        if (nbits < 100) {
-            B1 = 5000;
-            curves = 20;
-        } else if (nbits < 128) {
-            /* FIXME: surely this and the next case should be 'curves = 20'?
-             * there was a comment on each "go to QS" - is the intent to do
-             * a quick hit here, then rely on QS for more progress?
-             */
-            B1 = 10000;
-            curves = 2;
-        } else if (nbits < 160) {
-            B1 = 20000;
-            curves = 2;
-        } else if (nbits < 192) {
-            B1 = 30000;
-            curves = 20;
-        } else if (nbits < 224) {
-            B1 = 40000;
-            curves = 40;
-        } else if (nbits < 256) {
-            B1 = 80000;
-            curves = 40;
-        } else if (nbits < 512) {
-            B1 = 160000;
-            curves = 80;
-        } else {
-            B1 = 320000;
-            curves = 160;
-        }
-        if (curves > 0 && ct_ecm(fs->n, fs->f, B1, curves))
-            goto found_factor;
-
-        /* QS (30+ digits). Fantastic if it is a semiprime, but can be
-         * slow and a memory hog if not (compared to ECM). Restrict to
-         * reasonable size numbers (< 91 digits). Because of the way it
-         * works, it will generate (possibly) multiple factors for the same
-         * amount of work. Go to some trouble to use them.
-         */
-        if (nbits >= 90 && nbits < 300) {
-            mpz_t farray[66];
-            int i, qs_nfactors;
-            for (i = 0; i < 66; i++)
-                mpz_init(farray[i]);
-            qs_nfactors = ct_simpqs(fs->n, farray);
-            mpz_set(fs->f, farray[0]);
-            if (qs_nfactors > 2) {
-                /* We found multiple factors */
-                for (i = 2; i < qs_nfactors; i++) {
-                    if (fs->log)
-                        gmp_printf("SIMPQS found extra factor %Zd\n",
-                                farray[i]);
-                    if (fs->ntofac >= MAX_FACTORS - 1)
-                        croak("Too many factors\n");
-                    mpz_init_set(fs->tofac_stack[fs->ntofac], farray[i]);
-                    ++fs->ntofac;
-                    mpz_divexact(fs->n, fs->n, farray[i]);
-                }
-                /* f = farray[0], n = farray[1], farray[2..] pushed */
-            }
-            for (i = 0; i < 66; i++)
-                mpz_clear(farray[i]);
-            if (qs_nfactors > 1) {
-                if (fs->log)
-                    gmp_printf("SIMPQS found factor %Zd\n", fs->f);
-                goto found_factor;
-            }
-        }
-
-        if (ct_ecm(fs->n, fs->f, 2 * B1, 20))
-            goto found_factor;
-        if (ct_brent(fs->n, fs->f, 1, 1024 * 1024))
-            goto found_factor;
-        if (ct_ecm(fs->n, fs->f, 4 * B1, 20))
-            goto found_factor;
-        if (ct_ecm(fs->n, fs->f, 8 * B1, 20))
-            goto found_factor;
-        /* HOLF in case it's a near-ratio-of-perfect-square */
-        if (ct_holf(fs->n, fs->f, 1024 * 1024))
-            goto found_factor;
-#ifdef MPUG_054
-        /* available earlier, presumed trustworthy from v0.54 */
-        if (ct_cheb(fs->n, fs->f, 50000))
-            goto found_factor;
-#endif
-        /* Large p-1 with stage 2: B2 = 20 * B1 */
-        if (ct_pminus1(fs->n, fs->f, 5000000, 5000000 * 20))
-            goto found_factor;
-        if (ct_ecm(fs->n, fs->f, 32 * B1, 40))
-            goto found_factor;
-#if 0
-        if (ct_brent(fs->n, fs->f, 2, 512 * 1024 * 1024))
-            goto found_factor;
-#endif
-
-        /* our method of last resort: ECM with high bmax and many curves */
-        if (fs->log)
-            gmp_printf("starting large ECM on %Zd\n", fs->n);
-        B1 *= 8;
-        for (UV i = 0; i < 10; B1 *= 2, i++) {
-            if (ct_ecm(fs->n, fs->f, B1, 100)) {
-                if (!mpz_divisible_p(fs->n, fs->f)
-                    || mpz_cmp_ui(fs->f, 1) == 0
-                    || mpz_cmp(fs->f, fs->n) == 0
-                ) {
-                    gmp_printf("n = %Zd    f = %Zd\n", fs->n, fs->f);
-                    croak("Incorrect factoring");
-                }
-                goto found_factor;
-            }
+        {
+            /* the whole ladder, including last resort rungs */
+            uint nbits = mpz_sizeinbase(fs->n, 2);
+            ulong bits = rung_mask(nbits, 1);
+            for (uint i = TM_INIT; i < TM_MAX; ++i)
+                if ((bits & (1UL << i))
+                        && ct_rung(i, fs->n, fs->f, nbits, fs->tlim))
+                    goto found_factor;
         }
 
         /* Last resort failed and we have no interface to signal that,
@@ -742,37 +727,6 @@ int is_taux(mpz_t n, uint32_t k, uint32_t x) {
     }
     fs_clear(&fs);
     return result;
-}
-
-/* We need to invoke simpqs, but find a single prime factor to return;
- * we accept that means we may do extra work to find back additional
- * factors.
- */
-bool do_simpqs(mpz_t n, mpz_t f) {
-    int qs = ct_simpqs(n, simpqs_array);
-
-    /* if not factorized, it's a fail */
-    if (qs < 2)
-        return 0;
-
-    /* look for a prime among the factors */
-    for (uint i = 0; i < qs; ++i)
-        if (ct_prime(simpqs_array[i])) {
-            mpz_set(f, simpqs_array[i]);
-            return 1;
-        }
-
-    /* all factors composite: pick the first one and find a factor there */
-    factor_state fs;
-    fs_init(&fs);
-    mpz_set(fs.n, simpqs_array[0]);
-    if (!factor_one(&fs))
-        fail("factor_one(%Zd) failed to find factor in simpqs composite\n",
-            fs.n
-        );
-    mpz_set(f, fs.f);
-    fs_clear(&fs);
-    return 1;
 }
 
 static inline bool prep_abort(t_tm *tm, bool result) {
@@ -961,123 +915,40 @@ bool tau_multi_prep(uint i) {
     return 1;
 }
 
-bool tmf_2(t_tm *tm) { return ct_brent63(tm->n, tmf, 400000); }
-bool tmf_3(t_tm *tm) { return ct_pminus1(tm->n, tmf, 5000, 5000); }
-bool tmf_4(t_tm *tm) { return ct_tinyqs(tm->n, tmf); }
-bool tmf_5(t_tm *tm) { return ct_squfof(tm->n, tmf, 400000); }
-bool tmf_6(t_tm *tm) { return ct_pminus1(tm->n, tmf, 1000, 10000); }
-bool tmf_7(t_tm *tm) { return ct_pminus1(tm->n, tmf, 2000, 20000); }
-bool tmf_8(t_tm *tm) { return ct_pminus1(tm->n, tmf, 4000, 40000); }
-bool tmf_9(t_tm *tm) { return ct_pminus1(tm->n, tmf, 10000, 100000); }
-bool tmf_10(t_tm *tm) { return ct_squfof(tm->n, tmf, 1000000); }
-bool tmf_11(t_tm *tm) { return ct_pminus1(tm->n, tmf, 20000, 200000); }
-bool tmf_12(t_tm *tm) { return ct_ecm(tm->n, tmf, 200, 4); }
-bool tmf_13(t_tm *tm) { return ct_ecm(tm->n, tmf, 600, 20); }
-bool tmf_14(t_tm *tm) { return ct_ecm(tm->n, tmf, 2000, 10); }
-bool tmf_15(t_tm *tm) { return ct_pminus1(tm->n, tmf, 200000, 3000000); }
-bool tmf_16(t_tm *tm) { tm->B1 = 5000; return ct_ecm(tm->n, tmf, tm->B1, 20); }
-/* Dana confirms curves=2 is deliberate for these two: a quick ECM hit before
- * going to QS. */
-bool tmf_17(t_tm *tm) { tm->B1 = 10000; return ct_ecm(tm->n, tmf, tm->B1, 2); }
-bool tmf_18(t_tm *tm) { tm->B1 = 20000; return ct_ecm(tm->n, tmf, tm->B1, 2); }
-bool tmf_19(t_tm *tm) { tm->B1 = 30000; return ct_ecm(tm->n, tmf, tm->B1, 20); }
-bool tmf_20(t_tm *tm) { tm->B1 = 40000; return ct_ecm(tm->n, tmf, tm->B1, 40); }
-bool tmf_21(t_tm *tm) { tm->B1 = 80000; return ct_ecm(tm->n, tmf, tm->B1, 40); }
-bool tmf_22(t_tm *tm) { tm->B1 = 160000; return ct_ecm(tm->n, tmf, tm->B1, 80); }
-bool tmf_23(t_tm *tm) { tm->B1 = 320000; return ct_ecm(tm->n, tmf, tm->B1, 160); }
-bool tmf_24(t_tm *tm) { return do_simpqs(tm->n, tmf); }
-bool tmf_25(t_tm *tm) { return ct_ecm(tm->n, tmf, 2 * tm->B1, 20); }
-bool tmf_26(t_tm *tm) { return ct_brent(tm->n, tmf, 1, 1 << 20); }
-bool tmf_27(t_tm *tm) { return ct_ecm(tm->n, tmf, 4 * tm->B1, 20); }
-bool tmf_28(t_tm *tm) { return ct_ecm(tm->n, tmf, 8 * tm->B1, 20); }
-bool tmf_29(t_tm *tm) { return ct_holf(tm->n, tmf, 1 << 20); }
-/* we enable ct_cheb only with MPUG_054 */
-bool tmf_30(t_tm *tm) { return ct_cheb(tm->n, tmf, 50000); }
-bool tmf_31(t_tm *tm) { return ct_pminus1(tm->n, tmf, 5000000, 5000000 * 20); }
-bool tmf_32(t_tm *tm) { return ct_ecm(tm->n, tmf, 32 * tm->B1, 40); }
-/* last resort tests */
-bool tmf_33(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 3, 100); }
-bool tmf_34(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 4, 100); }
-bool tmf_35(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 5, 100); }
-bool tmf_36(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 6, 100); }
-bool tmf_37(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 7, 100); }
-bool tmf_38(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 8, 100); }
-bool tmf_39(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 9, 100); }
-bool tmf_40(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 10, 100); }
-bool tmf_41(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 11, 100); }
-bool tmf_42(t_tm *tm) { return ct_ecm(tm->n, tmf, tm->B1 << 12, 100); }
-
-typedef bool (*t_tmf)(t_tm *tm);
-const t_tmf tmfa[] = {
-    NULL, NULL, &tmf_2, &tmf_3, &tmf_4, &tmf_5, &tmf_6, &tmf_7,
-    &tmf_8, &tmf_9, &tmf_10, &tmf_11, &tmf_12, &tmf_13, &tmf_14, &tmf_15,
-    &tmf_16, &tmf_17, &tmf_18, &tmf_19, &tmf_20, &tmf_21, &tmf_22, &tmf_23,
-    &tmf_24, &tmf_25, &tmf_26, &tmf_27, &tmf_28, &tmf_29, &tmf_30, &tmf_31,
-    &tmf_32, &tmf_33, &tmf_34, &tmf_35, &tmf_36, &tmf_37, &tmf_38, &tmf_39,
-    &tmf_40, &tmf_41, &tmf_42
-};
-#define TM_TERM 0
-/* leave room for possible power check at tmf_1() */
-#define TM_INIT 2
-#define TM_MAX (sizeof(tmfa) / sizeof(t_tmf))
-typedef struct s_tmf_bits {
-    uint maxlen;
-    ulong tmf_bits;
-} t_tmf_bits;
-
-#ifdef TRY_HARDER
-/* include "last resort tests" tmf_33 .. tmf_42 */
-#   define HIGH_BITS 0b1111111111000000000000000000000000000000000UL
-#else
-#   define HIGH_BITS 0
-#endif
-t_tmf_bits tmfb[] = {
-    { 53, 0b110111110000000011111110000100100UL | HIGH_BITS},
-    { 58, 0b110111110000000011111110001000100UL | HIGH_BITS},
-    { 63, 0b110111110000000011111110010000100UL | HIGH_BITS},
-    { 64, 0b110111110000000011111110100000000UL | HIGH_BITS},
-    { 72, 0b110111110000000011111111100011000UL | HIGH_BITS},
-    { 77, 0b110111110000000011111111000011000UL | HIGH_BITS},
-    { 89, 0b110111110000000011111100000011000UL | HIGH_BITS},
-    { 99, 0b110111111000000011111100000011000UL | HIGH_BITS},
-    {126, 0b110111111000000100111100000011000UL | HIGH_BITS},
-    {127, 0b110111111000000100111100000000000UL | HIGH_BITS},
-    {159, 0b110111111000001000111100000000000UL | HIGH_BITS},
-    {191, 0b110111111000010001111100000000000UL | HIGH_BITS},
-    {223, 0b110111111000100001111100000000000UL | HIGH_BITS},
-    {255, 0b110111111001000001111100000000000UL | HIGH_BITS},
-    {299, 0b110111111010000001111100000000000UL | HIGH_BITS},
-    {511, 0b110111110010000001111100000000000UL | HIGH_BITS},
-    {  0, 0b110111110100000001111100000000000UL | HIGH_BITS}
-};
-#define TMFB_MAX (sizeof(tmfb) / sizeof(t_tmf_bits))
+/* tmfbl[size] is the bitset of rungs to try on values of size bits, for
+ * size up to tmfb_maxb; tmfb_lim the bitset for all larger sizes
+ */
 ulong *tmfbl = NULL;
 uint tmfb_maxb;
 ulong tmfb_lim;
 
-/* don't flake out for anything before QS */
-#define NO_FLAKE ((1 << 24) - 1)
 void init_tmfbl(uint flake) {
-#ifdef MPUG_054
-    /* cheb_factor (tmf_30) is disabled by default, it is not clear how
-     * reliable it is at random non-release points before v0.54. Enable
-     * it now - it is valid for every bitsize.
-     */
-    for (uint j = 0; j < TMFB_MAX; ++j)
-        tmfb[j].tmf_bits |= (1UL << 30);
+    /* don't flake out for anything before QS */
+    ulong no_flake = 0;
+    for (uint i = TM_INIT; i < TM_MAX && rungs[i].method != RM_QS; ++i)
+        no_flake |= 1UL << i;
+#ifdef TRY_HARDER
+    bool last = 1;
+#else
+    bool last = 0;
 #endif
-    tmfb_lim = tmfb[TMFB_MAX - 1].tmf_bits;
-    tmfb_maxb = tmfb[TMFB_MAX - 2].maxlen;
-    if (flake && tmfb_maxb > flake)
-        tmfb_lim = tmfb_lim & NO_FLAKE;
 
+    /* beyond tmfb_maxb, the rungs that apply no longer change */
+    tmfb_maxb = 0;
+    for (uint i = TM_INIT; i < TM_MAX; ++i) {
+        const t_rung *r = &rungs[i];
+        if (tmfb_maxb < r->maxbits)
+            tmfb_maxb = r->maxbits;
+        if (r->minbits && tmfb_maxb < r->minbits - 1)
+            tmfb_maxb = r->minbits - 1;
+    }
+    tmfb_lim = rung_mask(tmfb_maxb + 1, last);
+    if (flake && tmfb_maxb > flake)
+        tmfb_lim &= no_flake;
     tmfbl = malloc((tmfb_maxb + 1) * sizeof(ulong));
-    uint i = 0;
-    for (uint j = 0; j <= TMFB_MAX - 2; ++j) {
-        uint lim = tmfb[j].maxlen;
-        ulong bits = tmfb[j].tmf_bits;
-        for (; i <= lim; ++i)
-            tmfbl[i] = (flake && i > flake) ? (bits & NO_FLAKE) : bits;
+    for (uint i = 0; i <= tmfb_maxb; ++i) {
+        ulong bits = rung_mask(i, last);
+        tmfbl[i] = (flake && i > flake) ? (bits & no_flake) : bits;
     }
 }
 
@@ -1132,6 +1003,11 @@ mpz_t *tm_factor(t_tm *tm) {
     return &tmf;
 }
 
+/* Try rung i of the ladder on tm->n, setting tmf to any factor found. */
+static inline bool tmf_try(uint i, t_tm *tm) {
+    return ct_rung(i, tm->n, tmf, mpz_sizeinbase(tm->n, 2), tm->tlim);
+}
+
 /* Returns the number of values still being tested at the point a failure
  * was seen; return value of zero implies success.
  */
@@ -1170,7 +1046,7 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
                 continue;
             if (!(tm->bits & (1UL << i)))
                 continue;
-            if (!(*tmfa[i])(tm)) {
+            if (!tmf_try(i, tm)) {
                 tm->state = i + 1;
                 continue;
             }
@@ -1233,7 +1109,6 @@ uint tau_multi_run(uint count, tau_failure_handler tfh) {
                 taum[j].e = taum[count].e;
                 taum[j].state = taum[count].state;
                 taum[j].bits = taum[count].bits;
-                taum[j].B1 = taum[count].B1;
                 taum[j].tlim = taum[count].tlim;
                 goto tmr_redo;
             }
@@ -1286,7 +1161,7 @@ bool tau_single_try(uint i) {
     for (uint i = TM_INIT; i < TM_MAX; ++i) {
         if (!(tm->bits & (1UL << i)))
             continue;
-        if (!(*tmfa[i])(tm)) {
+        if (!tmf_try(i, tm)) {
             tm->state = i + 1;
             continue;
         }

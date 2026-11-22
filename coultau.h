@@ -43,7 +43,6 @@ typedef struct s_tm {
     uint e;     /* power found */
     uint state; /* next factor test to try */
     ulong bits; /* bitset showing which factor tests to try */
-    ulong B1;   /* for ECM tests */
     ulong tlim; /* checked to */
 } t_tm;
 extern t_tm *taum;

@@ -44,9 +44,6 @@ int main(int argc, char **argv) {
     t0 = utime();
 
     t_tm *tm = &taum[0];
-    /* some tests assume this already set */
-    /* TODO: calculate based on n */
-    tm->B1 = 160000;
 
     if (argc > 1)
         mpz_set_str(tm->n, argv[1], 10);
@@ -55,7 +52,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    uint test = 31;
+    uint test = 32;
     if (argc > 2)
         test = strtoul(argv[2], NULL, 0);
 
