@@ -81,6 +81,7 @@ typedef enum {
     w1_v, w1_j, w1_r,           /* walk_1 */
     w1_m, w1_mr,
     lp_x, lp_mint, lp_mint2,    /* limit_p */
+    sql_v, sql_s,               /* sqd_limit */
     r_walk, gw_qq,              /* gate_walk */
     rec_cand, rec_lead, rec_trail,  /* recover */
     p3_base,                    /* parse_305 */
@@ -5262,6 +5263,45 @@ uint best_v4(t_act *cur_act) {
     return ti ? vi : BV_WALK;
 }
 
+/* The power of the prime r in q_j. */
+static inline uint sqd_val(uint vj, ulong r) {
+    t_value *vp = &value[vj];
+    for (uint i = 1; i < cur_vlevel[vj]; ++i)
+        if (vp->alloc[i].p == r)
+            return vp->alloc[i].x - 1;
+    return 0;
+}
+
+/* The power e of a prime r of 2.sigma in M = (P/Q).q_j, see t_sqdpair. A
+ * negative value means M is not an integer, so v_j has no solution.
+ */
+static inline int sqd_mval(t_sqdpair *sp, uint vj, ulong r) {
+    return (int)sqd_val(vj, r) + (int)simple_valuation(sp->P, r)
+            - (int)simple_valuation(sp->Q, r);
+}
+
+/* With M = A.B, f1.f2 = M.p and B.p - A = +/- 2.sigma (see walk_sqdiff()),
+ * set eb[] to the powers that a prime r of 2.sigma can have in B, in
+ * ascending order, given its powers e in M and g in 2.sigma; return how
+ * many there are (at most 2). With e_A = e - e_B, we need the power of r
+ * in B.p - A to be exactly g: so e_A != e_B and min(e_A, e_B) = g, or
+ * e_A = e_B below g, or for odd r also e_A = e_B = g (for r = 2 that
+ * makes B.p - A divisible by 2^{g+1}).
+ */
+static uint sqd_split(uint *eb, ulong r, int e, uint g) {
+    if (e > 2 * (int)g) {
+        eb[0] = g;
+        eb[1] = e - g;
+        return 2;
+    }
+    if (e >= 0 && (e & 1) == 0
+            && ((uint)e / 2 < g || ((uint)e / 2 == g && r != 2))) {
+        eb[0] = e / 2;
+        return 1;
+    }
+    return 0;
+}
+
 /* Show the candidate walk_sqdiff() is about to try: the prime Z(j4p), from
  * the subset a of the allocations at its position.
  */
@@ -5577,6 +5617,43 @@ static inline e_choice choose_action(t_act *cur_act) {
     fail("panic: unknown best_v() result %u (k=%u)", vi, k);
 }
 
+/* At v_j, a partner of the square, reduce the limit lim on p for p^{x-1}
+ * if it can. With p coprime to 2.sigma.P.Q, as every prime still to be
+ * allocated there is, p^{x-1} lies wholly in f1 or f2 (see t_sqdpair).
+ * That factor F also holds r^e for each prime r of 2.sigma, with e at
+ * least the least power either factor can take (see sqd_split()); call
+ * their product m. The other factor is within 2.sigma of F, so
+ * F.(F - 2.sigma) <= (P/Q).v_j, and
+ *   p^{x-1} <= (sigma + sqrt(sigma^2 + (P/Q).v_j)) / m.
+ * This increases with zmax, as limit_p() requires.
+ */
+static void sqd_limit(mpz_t lim, uint vj, uint x) {
+    t_sqdpair *sp = sqd_pair(sq0, vj);
+    ulong m = 1;
+    for (uint i = 0; i < sp->sfac.count; ++i) {
+        t_ppow *pp = &sp->sfac.ppow[i];
+        uint eb[2];
+        int e = sqd_mval(sp, vj, pp->p);
+        if (sqd_split(eb, pp->p, e, pp->e) == 0)
+            continue;
+        /* the least is the same for each split; m divides 2.sigma */
+        uint ea = e - eb[0];
+        for (uint j = (eb[0] < ea) ? eb[0] : ea; j; --j)
+            m *= pp->p;
+    }
+    dtov(Z(sql_v), vj, zmax);
+    mpz_mul_ui(Z(sql_v), Z(sql_v), sp->P);
+    mpz_fdiv_q_ui(Z(sql_v), Z(sql_v), sp->Q);
+    mpz_set_ui(Z(sql_s), sp->sigma);
+    mpz_addmul_ui(Z(sql_v), Z(sql_s), sp->sigma);
+    mpz_sqrt(Z(sql_v), Z(sql_v));
+    mpz_add_ui(Z(sql_v), Z(sql_v), sp->sigma);
+    mpz_fdiv_q_ui(Z(sql_v), Z(sql_v), m);
+    mpz_root(Z(sql_v), Z(sql_v), x - 1);
+    if (mpz_cmp(Z(sql_v), lim) < 0)
+        mpz_set(lim, Z(sql_v));
+}
+
 /* Returns the greatest p for which p^{x-1} needs to be tried at v_i
  * leaving remaining tau nextt: 1 signifies no primes, 0 that the answer
  * is 2^64 or more.
@@ -5608,19 +5685,6 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
          * to zmax^{1/2(x-1)}.
          */
         mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
-#if defined(TYPE_o)
-    } else if (strategy == STRATEGY_SQDIFF && nextt == 2
-            && sqd_partner(&nodes[cur_act->level - 1], vi)) {
-        /* v_i = q_i p^{x-1} r => q_i p^{x-1} = 8ab such that br = a +/- 1.
-         * When p^{x-1} dominates, we minimize v_i by setting a = p^{x-1}
-         * giving r >= 8(p^{x-1} - 1)/q_i so v_i >= 8 p^{x-1} (p^{x-1} - 1).
-         * We can therefore constrain p : p < 1 + (zmax / 8)^{1 / (2(x-1))}.
-         */
-        dtov(Z(lp_x), vi, zmax);
-        mpz_fdiv_q_2exp(Z(lp_x), Z(lp_x), 3);
-        mpz_root(Z(lp_x), Z(lp_x), 2 * (x - 1));
-        mpz_add_ui(Z(lp_x), Z(lp_x), 1);
-#endif
     } else if (restricted_count && divisors[x].high == divisors[nextt].high) {
         /* Let h = x.high, x = ha, then the power of the next allocation can
          * be ha (in which case it must use a higher prime than this one),
@@ -5662,6 +5726,9 @@ ulong limit_p(t_act *cur_act, uint vi, uint x, uint nextt) {
         }
         mpz_root(Z(lp_x), Z(lp_x), x - 1);
     }
+
+    if (sqd_partner(&nodes[cur_act->level - 1], vi))
+        sqd_limit(Z(lp_x), vi, x);
 
     ulong cap = cap_at(nodes[cur_act->level - 1].cap, vi, x);
     if (cap && mpz_cmp_ui(Z(lp_x), cap) > 0)
