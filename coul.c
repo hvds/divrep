@@ -89,7 +89,8 @@ typedef enum {
     dm_r,                       /* divmod */
     np_p,                       /* next_prime */
     s_exp, uls_temp,            /* ston, ulston */
-    j4a, j4b, j4m, j4p, j4q, j4z,   /* best_sqdiff() */
+    sqd_m, sqd_au, sqd_a, sqd_b,    /* walk_sqdiff() */
+    sqd_p, sqd_q, sqd_r, sqd_t, sqd_z,
 
     MAX_ZSTASH
 } t_zstash;
@@ -216,6 +217,15 @@ typedef struct s_sqdpair {
     t_fact sfac;
     t_fact pfac;
 } t_sqdpair;
+/* the most distinct primes a ulong such as 2.sigma can have */
+#define MAX_SQDP 15
+/* The split of M walk_sqdiff() is trying at v_j, for progress lines. */
+struct {
+    uint vj;
+    ulong a;            /* bit vector */
+    uint ec;            /* count of e[] */
+    uint e[MAX_SQDP];   /* powers e_B */
+} sqd_walk;
 t_sqdpair *sqd_pairs = NULL;    /* k * k entries, or NULL if no pair kept */
 bool *sqd_has = NULL;   /* k entries: true if v_s has some pair (s, j) */
 ulong sqd_xmax;         /* greatest xneed */
@@ -332,7 +342,10 @@ struct {
     uint vi;
     ulong p;            /* W: p in progress; F: have checked p^r up to p */
     uint x;             /* W: x in progress */
-    uint a;             /* sqdiff: bit-vector over allocated prime powers */
+    ulong a;            /* Q: bit vector of the split in progress */
+    uint ec;            /* Q: count of e[] */
+    uint e[MAX_SQDP];   /* Q: powers of the split in progress */
+    bool restart;       /* Q: start the walk afresh */
     ulong p_outer;      /* F: have checked all p^{2r} up to p_outer */
     ulong p_inner;      /* F: have checked all p^{2r}.q^r up to p_inner */
 } act_recover;
@@ -455,6 +468,7 @@ typedef struct s_action_ops {
     t_undo_op undo;
     t_suffix_op suffix;
     char *tag;
+    char *oldtag;       /* a tag earlier versions wrote, for the same parse */
     t_parse_op parse;
 } t_action_ops;
 const t_action_ops action_ops[A_NONE] = {
@@ -462,7 +476,8 @@ const t_action_ops action_ops[A_NONE] = {
     [A_FORCED] = { .next = &next_forced, .undo = &undo_forced },
     [A_MIDP] = { .suffix = &suffix_midp, .tag = " W(", .parse = &parse_midp },
     [A_SQDIFF] = {
-        .suffix = &suffix_sqdiff, .tag = " 6X(", .parse = &parse_sqdiff
+        .suffix = &suffix_sqdiff, .tag = " Q(", .parse = &parse_sqdiff,
+        .oldtag = " 6X("
     },
     [A_FLIP] = {
         .undo = &undo_flip,
@@ -1441,6 +1456,7 @@ void done(void) {
         }
     free(sqd_pairs);
     free(sqd_has);
+    free(sqd_pmin);
     free(maxforce);
     done_mintau();
     if (divisors)
@@ -1743,8 +1759,13 @@ void parse_305(char *s, t_recover **stackp, bool expanded) {
     }
     for (e_action a = 0; a < A_NONE; ++a) {
         char *tag = action_ops[a].tag;
-        if (tag == NULL || strncmp(s, tag, strlen(tag)) != 0)
+        if (tag == NULL)
             continue;
+        if (strncmp(s, tag, strlen(tag)) != 0) {
+            tag = action_ops[a].oldtag;
+            if (tag == NULL || strncmp(s, tag, strlen(tag)) != 0)
+                continue;
+        }
         if (shown != A_NONE)
             fail("520 more than one suffix in recovery pattern");
         shown = a;
@@ -2497,6 +2518,14 @@ void prep_sqdiff(void) {
         sqd_pairs = NULL;
         free(sqd_has);
         sqd_has = NULL;
+        return;
+    }
+    sqd_pmin = malloc(k * sizeof(ulong));
+    for (uint vj = 0; vj < k; ++vj) {
+        ulong p = 2;
+        while (!bpsw_u64(p) || fixed_at(vj, p))
+            ++p;
+        sqd_pmin[vj] = p;
     }
 }
 
@@ -5310,35 +5339,56 @@ static uint sqd_split(uint *eb, ulong r, sint e, uint g) {
     return 0;
 }
 
-/* Show the candidate walk_sqdiff() is about to try: the prime Z(j4p), from
- * the subset a of the allocations at its position.
+/* Show the candidate walk_sqdiff() is about to try: the prime Z(sqd_p),
+ * from the split in sqd_walk.
  */
-void diag_sqdiff(t_act *cur_act, uint a) {
-    cur_act->bi = a;   /* spare at an unforced level */
+void diag_sqdiff(t_act *cur_act) {
     diag_plain(&nodes[cur_act->level]);
 }
 
 uint suffix_sqdiff(t_act *cur_act, char *buf) {
-    return gmp_sprintf(buf, " 6X(%Zu,%u,%u)", Z(j4p), cur_act->vi, cur_act->bi);
+    uint off = gmp_sprintf(buf, " Q(%Zu,%u,%lu,",
+            Z(sqd_p), sqd_walk.vj, sqd_walk.a);
+    for (uint i = 0; i < sqd_walk.ec; ++i)
+        off += sprintf(&buf[off], i ? ".%u" : "%u", sqd_walk.e[i]);
+    buf[off++] = ')';
+    buf[off] = 0;
+    return off;
 }
 
+/* Reads "p,vi,a,e)" for the split (a, e) at which to resume, or the
+ * "p,vi,a)" of the 6X(...) mark of earlier versions, whose walk split M
+ * differently, so is resumed from the start.
+ */
 char *parse_sqdiff(char *s) {
     int pend = 0;
     sscanf(s, "%*[0-9]%n", &pend);
     if (pend == 0)
-        fail("514 could not parse 6X(...) recovery prime: '%s'", s);
+        fail("514 could not parse Q(...) recovery prime: '%s'", s);
     /* skip the prime, it is not needed for recovery */
     s += pend;
     if (s[0] != ',')
-        fail("515 unexpected character in 6X(...) recovery");
+        fail("515 unexpected character in Q(...) recovery");
     ++s;
     act_recover.vi = strtoul(s, &s, 10);
     if (s[0] != ',')
-        fail("515 unexpected character in 6X(...) recovery");
+        fail("515 unexpected character in Q(...) recovery");
     ++s;
     act_recover.a = strtoul(s, &s, 10);
+    act_recover.ec = 0;
+    act_recover.restart = (s[0] == ')');
+    if (act_recover.restart)
+        return s + 1;
+    if (s[0] != ',')
+        fail("515 unexpected character in Q(...) recovery");
+    do {
+        ++s;
+        if (act_recover.ec >= MAX_SQDP)
+            fail("515 too many powers in Q(...) recovery");
+        act_recover.e[act_recover.ec++] = strtoul(s, &s, 10);
+    } while (s[0] == '.');
     if (s[0] != ')')
-        fail("515 unexpected character in 6X(...) recovery");
+        fail("515 unexpected character in Q(...) recovery");
     return s + 1;
 }
 
@@ -5418,22 +5468,52 @@ uint best_sqdiff(t_act *cur_act) {
     return vi;              /* allocate some more */
 }
 
-/* STRATEGY_SQDIFF: we have t_i = 2, t_{i+2} odd, such that v_{i+2} must be of
- * the form 2z^2 (z odd) and v_i must be of the form 16abp (p as yet
- * unallocated) with 8abp = (z-1)(z+1) so a = bp +/- 1.
- * Thus from here the only solutions possible involve a pair of coprime
- * factors ab that yield a prime p for the unallocated part: we generate
- * all such coprime pairs for testing, and invoke walk_1() for each
- * resulting p that is prime.
+/* Try the candidate p = Z(sqd_p) from the split A = Z(sqd_a),
+ * B = Z(sqd_b) at the partner v_j, see walk_sqdiff(); Z(sqd_z) is the
+ * greatest p that keeps v_j within the maximum.
+ */
+static void sqd_cand(t_node *cur_node, uint vj, t_sqdpair *sp) {
+    if (mpz_cmp_ui(Z(sqd_p), sqd_pmin[vj]) < 0
+            || mpz_cmp(Z(sqd_p), Z(sqd_z)) > 0)
+        return;
+    /* p must not already be at v_j */
+    if (mpz_fits_ulong_p(Z(sqd_p)) && sqd_val(vj, mpz_get_ui(Z(sqd_p))))
+        return;
+    if (!_GMP_is_prob_prime(Z(sqd_p)))
+        return;
+    uint vl = cur_vlevel[vj];
+    t_allocation *ap = &value[vj].alloc[vl - 1];
+    mpz_mul(ap->q, value[vj].alloc[vl - 2].q, Z(sqd_p));
+    if (need_work)
+        diag_sqdiff(&acts[cur_node->level]);
+    walk_1(cur_node, vj);
+}
+
+/* STRATEGY_SQDIFF: with tau 2 left at a partner v_j of the square,
+ * v_j = q_j.p for one prime p not yet found, coprime to 2.sigma.P.Q, and
+ * f1.f2 = M.p with M = (P/Q).q_j (see t_sqdpair). We split M as A.B, A
+ * the factor without p: each prime of M not dividing 2.sigma goes
+ * wholly to one side, as one bit of a bit vector a (bit i for the
+ * allocation at value[vj].alloc[i], then one for each prime of P not
+ * allocated at v_j); and each prime r of 2.sigma takes a power e_B in B
+ * as sqd_split() allows. Then B.p = A +/- 2.sigma, and we invoke walk_1()
+ * for each such p that is a prime not yet at v_j, at least sqd_pmin[vj],
+ * keeps v_j within the maximum (which walk_1() does not check), and
+ * gives an integer Y = (f1 + sigma) / alpha. That last depends only on A
+ * and the sign: f1 is A when B.p = A + 2.sigma, and B.p when
+ * B.p = A - 2.sigma, so alpha must divide A + sigma or A - sigma.
+ * The walk goes through a in descending order and, for each a, through
+ * the powers e_B in ascending order, the least prime's slowest, so that
+ * recovery can resume from a given (a, e).
  */
 void walk_sqdiff(void) {
     t_node *cur_node = &nodes[level];
     t_node *prev_node = &nodes[level - 1];
     t_act *cur_act = &acts[level];
     uint vi = sqd_vj;
+    t_sqdpair *sp = sqd_pair(sq0, vi);
     t_value *vp = &value[vi];
     uint vlevel = cur_vlevel[vi];
-    t_allocation *ap;
     t_allocation *ap_last = &vp->alloc[vlevel - 1];
     t_allocation *ap_next = &vp->alloc[vlevel];
     ap_next->t = 1;
@@ -5451,95 +5531,149 @@ void walk_sqdiff(void) {
     mpz_set(cur_node->aq, prev_node->aq);
     mpz_set(cur_node->rq, prev_node->rq);
 
-    /* We need prime p: v_i = 8abp with a = bp +/- 1.
-     * We find that by iterating 'a' over all combinations of the prime power
-     * allocations (excluding the constant factor 8).
-     */
-    /* find the actual power of 2 allocated */
-    uint l2 = 0;
-    for (uint i = 1; i < vlevel; ++i) {
-        ap = &vp->alloc[i];
-        if (ap->p == 2) {
-            if (ap->x < 5)
-                fail("panic: STRATEGY_SQDIFF in use but have only 2^%u"
-                        " assigned", ap->x - 1);
-            l2 = i;
-            break;
-        }
-    }
-    if (l2 == 0)
-        fail("panic: STRATEGY_SQDIFF in use but no power of 2 found");
-    /* take out the constant factor */
-    mpz_fdiv_q_2exp(Z(j4q), ap_last->q, 3);
-    /* p must keep v_i within the maximum */
-    dtov(Z(j4z), vi, zmax);
-    mpz_fdiv_q(Z(j4z), Z(j4z), ap_last->q);
-
-    /* Iterate j4a over all combinations of the prime power allocations
-     * via a bit vector of which allocations to include. (We don't need
-     * to check 0 case of the vector, since it gives j4a = 1.)
-     * Maybe TODO: a simple (vlevel - 2)-deep recursion would save
-     * duplicate multiplications here, worth considering when we start
-     * dealing with higher values of n.
-     */
-    if (vlevel > sizeof(uint) * 8 - 1)
-        fail("FIXME: too many factors for STRATEGY_SQDIFF");
-    uint a_start = (1U << vlevel) - 2;
-    if (act_recover.action == A_SQDIFF) {
-        /* on recover, skip to the bit-vector value that was in progress */
+    bool recover = (act_recover.action == A_SQDIFF);
+    if (recover) {
         if (act_recover.vi != vi)
             fail("panic: STRATEGY_SQDIFF recovery wants vi=%u,"
                     " but we have vi=%u", act_recover.vi, vi);
-        if (act_recover.a & 1)
-            fail("panic: STRATEGY_SQDIFF recovery has invalid bit-vector %u",
-                    act_recover.a);
-        a_start = act_recover.a;
         act_recover.action = A_NONE;        /* consumed */
+        if (act_recover.restart)
+            recover = 0;
     }
-    for (uint a = a_start; a; a -= 2) {
-        mpz_set_ui(Z(j4a), 1);
-        for (uint i = 1; i < vlevel; ++i) {
-            if ((a & (1U << i)) == 0)
-                continue;
-            ap = &vp->alloc[i];
-            if (ap->p == 2)
-                mpz_mul_2exp(Z(j4a), Z(j4a), ap->x - 4);
-            else {
-                mpz_ui_pow_ui(Z(temp), ap->p, ap->x - 1);
-                mpz_mul(Z(j4a), Z(j4a), Z(temp));
-            }
-        }
-        mpz_divexact(Z(j4b), Z(j4q), Z(j4a));
-        /* CHECKME: we want a > b, would it be a saving to compare
-         * against sqrt(q) in the loop instead? Probably yes: since
-         * we need a ~ bp, we could actually compare against something
-         * like sqrt(q p_m) where p_m is the least unallocated prime.
-         */
-        if (mpz_cmp(Z(j4a), Z(j4b)) < 0)
+
+    ulong s2 = 2 * sp->sigma;
+    uint nu = vlevel + sp->pfac.count;
+    if (nu > 8 * sizeof(ulong))
+        fail("FIXME: too many factors for STRATEGY_SQDIFF");
+    ulong up[nu];
+    uint ue[nu];
+    uint nr = sp->sfac.count;
+    uint et[nr], eb[nr][2], ec[nr], ei[nr];
+
+    mpz_mul_ui(Z(sqd_m), ap_last->q, sp->P);
+    if (!mpz_divisible_ui_p(Z(sqd_m), sp->Q))
+        goto sqd_done;
+    mpz_divexact_ui(Z(sqd_m), Z(sqd_m), sp->Q);
+    dtov(Z(sqd_z), vi, zmax);
+    mpz_fdiv_q(Z(sqd_z), Z(sqd_z), ap_last->q);
+
+    /* the prime powers of M that go wholly to one side */
+    ulong mask = 0;
+    for (uint i = 1; i < vlevel; ++i) {
+        t_allocation *ap = &vp->alloc[i];
+        if (s2 % ap->p == 0)
             continue;
-        mpz_sub_ui(Z(temp), Z(j4a), 1);
-        mpz_fdiv_qr(Z(j4p), Z(j4m), Z(temp), Z(j4b));
-        if (mpz_cmp_ui(Z(j4m), 2) <= 0) {
-            if (mpz_cmp(Z(j4p), Z(j4z)) <= 0
-                    && _GMP_is_prob_prime(Z(j4p))) {
-                /* p = Z(j4p) is prime and yields v_{i+2} = 2z^2 */
-                mpz_mul(ap_next->q, ap_last->q, Z(j4p));
-                if (need_work)
-                    diag_sqdiff(cur_act, a);
-                walk_1(cur_node, vi);
+        uint e = ap->x - 1 + simple_valuation(sp->P, ap->p);
+        uint eq = simple_valuation(sp->Q, ap->p);
+        if (e == eq)
+            continue;
+        up[i] = ap->p;
+        ue[i] = e - eq;
+        mask |= 1UL << i;
+    }
+    for (uint i = 0; i < sp->pfac.count; ++i) {
+        t_ppow *pp = &sp->pfac.ppow[i];
+        if (s2 % pp->p == 0 || sqd_val(vi, pp->p))
+            continue;
+        up[vlevel + i] = pp->p;
+        ue[vlevel + i] = pp->e;
+        mask |= 1UL << (vlevel + i);
+    }
+
+    /* the powers e_B each prime of 2.sigma can take */
+    for (uint i = 0; i < nr; ++i) {
+        t_ppow *pp = &sp->sfac.ppow[i];
+        int e = sqd_mval(sp, vi, pp->p);
+        ec[i] = sqd_split(eb[i], pp->p, e, pp->e);
+        if (ec[i] == 0)
+            goto sqd_done;
+        et[i] = e;
+        ei[i] = 0;
+    }
+
+    ulong a = mask;
+    if (recover) {
+        a = act_recover.a;
+        if (a & ~mask)
+            fail("panic: STRATEGY_SQDIFF recovery has invalid bit vector"
+                    " %lu", a);
+        if (act_recover.ec != nr)
+            fail("panic: STRATEGY_SQDIFF recovery has %u powers, wants %u",
+                    act_recover.ec, nr);
+        for (uint i = 0; i < nr; ++i) {
+            while (ei[i] < ec[i] && eb[i][ei[i]] != act_recover.e[i])
+                ++ei[i];
+            if (ei[i] == ec[i])
+                fail("panic: STRATEGY_SQDIFF recovery has invalid power %u",
+                        act_recover.e[i]);
+        }
+    }
+    sqd_walk.vj = vi;
+    sqd_walk.ec = nr;
+    while (1) {
+        sqd_walk.a = a;
+        mpz_set_ui(Z(sqd_au), 1);
+        for (uint i = 1; i < nu; ++i)
+            if ((a >> i) & 1) {
+                mpz_ui_pow_ui(Z(temp), up[i], ue[i]);
+                mpz_mul(Z(sqd_au), Z(sqd_au), Z(temp));
             }
-            if (mpz_cmp_ui(Z(j4b), 2) <= 0) {
-                mpz_add_ui(Z(j4p), Z(j4p), 2 / mpz_get_ui(Z(j4b)));
-                if (mpz_cmp(Z(j4p), Z(j4z)) <= 0
-                        && _GMP_is_prob_prime(Z(j4p))) {
-                    mpz_mul(ap_next->q, ap_last->q, Z(j4p));
-                    if (need_work)
-                        diag_sqdiff(cur_act, a);
-                    walk_1(cur_node, vi);
+        while (1) {
+            mpz_set(Z(sqd_a), Z(sqd_au));
+            for (uint i = 0; i < nr; ++i) {
+                uint e = eb[i][ei[i]];
+                sqd_walk.e[i] = e;
+                if (e < et[i]) {
+                    mpz_ui_pow_ui(Z(temp), sp->sfac.ppow[i].p, et[i] - e);
+                    mpz_mul(Z(sqd_a), Z(sqd_a), Z(temp));
                 }
             }
+            mpz_divexact(Z(sqd_b), Z(sqd_m), Z(sqd_a));
+            /* alpha.Y = f1 + sigma, where f1 is B.p = A - 2.sigma or A */
+            bool minus = 1, plus = 1;
+            if (sp->alpha > 1) {
+                ulong am = mpz_fdiv_ui(Z(sqd_a), sp->alpha);
+                ulong sm = sp->sigma % sp->alpha;
+                minus = (am == sm);
+                plus = ((am + sm) % sp->alpha == 0);
+                if (!(minus || plus))
+                    goto sqd_skip;
+            }
+            /* p >= sqd_pmin[vi] needs A + 2.sigma >= B.pmin */
+            mpz_add_ui(Z(sqd_t), Z(sqd_a), s2);
+            mpz_mul_ui(Z(sqd_p), Z(sqd_b), sqd_pmin[vi]);
+            if (mpz_cmp(Z(sqd_t), Z(sqd_p)) >= 0) {
+                /* B.q + r = A + 2.sigma */
+                mpz_fdiv_qr(Z(sqd_q), Z(sqd_r), Z(sqd_t), Z(sqd_b));
+                /* B.p = A - 2.sigma: p = q - (4.sigma - r) / B */
+                if (minus && mpz_cmp_ui(Z(sqd_r), 2 * s2) <= 0) {
+                    ulong d = 2 * s2 - mpz_get_ui(Z(sqd_r));
+                    if (d == 0 || (mpz_cmp_ui(Z(sqd_b), d) <= 0
+                            && d % mpz_get_ui(Z(sqd_b)) == 0)) {
+                        mpz_sub_ui(Z(sqd_p), Z(sqd_q),
+                                d ? d / mpz_get_ui(Z(sqd_b)) : 0);
+                        sqd_cand(cur_node, vi, sp);
+                    }
+                }
+                /* B.p = A + 2.sigma */
+                if (plus && mpz_sgn(Z(sqd_r)) == 0) {
+                    mpz_set(Z(sqd_p), Z(sqd_q));
+                    sqd_cand(cur_node, vi, sp);
+                }
+            }
+          sqd_skip: ;
+            /* next powers, the last prime's fastest */
+            uint i = nr;
+            while (i > 0 && ++ei[i - 1] == ec[i - 1])
+                ei[--i] = 0;
+            if (i == 0)
+                break;
         }
+        if (a == 0)
+            break;
+        a = (a - 1) & mask;
     }
+  sqd_done:
     cur_vlevel[vi] = vlevel;    /* restore */
     cur_act->action = A_UNFORCED;
 }

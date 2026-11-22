@@ -15,8 +15,8 @@ test_recover_trailing();
 test_recover_ruled_out();
 test_batch_id_64bit();
 test_recover_j0123();
-test_6x();
-test_recover_6x();
+test_sqdiff();
+test_recover_sqdiff();
 test_flip();
 test_recover_j4();
 test_recover_failed_apply();
@@ -117,13 +117,13 @@ sub test_init {
         is(0 + @{ $lines->{202} // [] }, 21,
                 "all f(6,4) candidates to 1e13 found with '@$opts'");
     }
-    # not in a batch STRATEGY_6X takes, where the pass would be wasted
+    # not in a batch STRATEGY_SQDIFF takes, where the pass would be wasted
     {
         my @walks = map {
             my $lines = run_test($type, [ @$_, qw{ -b0 -x1e18 18 5 } ], 0);
             ($lines->{367}[0] // '') =~ /walk (\d+)/ ? $1 : -1;
         } [], [qw{ -k1e4 }];
-        is($walks[1], $walks[0], '-k makes no pass in a STRATEGY_6X batch');
+        is($walks[1], $walks[0], '-k makes no pass in a STRATEGY_SQDIFF batch');
     }
     # a position with tau 6 left is passed over where another has 18
     # and nothing is allocated there, so that -W need not sweep it
@@ -417,8 +417,8 @@ sub test_recover_j0123 {
     );
 }
 
-sub test_6x {
-    # STRATEGY_6X: allocation patterns like "...2^{4+} . 2z^2..." trigger
+sub test_sqdiff {
+    # sqdiff: allocation patterns like "...2^{4+} . 2z^2..." trigger
     # a strategy switch taking advantage of the maths to restrict to a much
     # smaller search space.
     #
@@ -426,28 +426,28 @@ sub test_6x {
     # to a full walk_v() sweep for the small -x values we test.
     local $type = 'o';
 
-    # With tau 6 left at v_0 and 54 at v_1, 6X keeps its loop of q^2 at v_0
-    expect_diag(q{6x pattern is identified and applied, 54 4}, 6,
+    # With tau 6 left at v_0 and 54 at v_1, sqdiff keeps its loop of q^2 at v_0
+    expect_diag(q{sqdiff pattern is identified and applied, 54 4}, 6,
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }],
-        'b6: 2^8.7^2 . 2.3^8 . 6X(1567,0,6)',
+        'b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)',
     );
     # reject_square() passes over 14 of the q^2 at v_0 from 457^2 on, with
     # no root of the square at v_1 in range
-    expect_recurse_count(q{6x search is exhaustively correct, 54 4}, 86,
+    expect_recurse_count(q{sqdiff search is exhaustively correct, 54 4}, 86,
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }]);
 
-    # With tau 6 left at v_0, 6X gives way to p^10 at v_1 (expect a recursion
+    # With tau 6 left at v_0, sqdiff gives way to p^10 at v_1 (expect recursion
     # count in the thousands if it fails to give way)
-    expect_recurse_count(q{6x gives way to a high power elsewhere, 66 3}, 4,
+    expect_recurse_count(q{sqdiff gives way to a high power elsewhere, 66 3}, 4,
         [qw{ -g11 -x1e20 -b1 66 3 }]);
 }
 
-sub test_recover_6x {
-    # STRATEGY_6X recovery: a "6X(p,vi,a)" diag line (see above) must be
-    # enough to resume best_6x()'s own search loop exactly where it left
-    # off - including re-trying 'a' itself (hitting both of its walk_1()
-    # branches unconditionally, by design; see best_6x()'s own comment),
-    # then continuing on to whatever the search does next.
+sub test_recover_sqdiff {
+    # sqdiff recovery: a "Q(p,vi,a,e)" diag line (see above) must be
+    # enough to resume the walk exactly where it left off - including
+    # re-trying the split (a, e) itself - then continuing on to whatever
+    # the search does next. The "6X(p,vi,a)" line of earlier versions
+    # resumes the walk from its start.
     #
     # Since recovery does not re-explore already-completed ancestor
     # branches above the recorded point, a recovered run's recurse count
@@ -456,16 +456,29 @@ sub test_recover_6x {
     # by comparing against the -dW trace at the recorded point.
     local $type = 'o';
 
-    expect_recover_recurse_count(q{recover 6x from its own diag point, 54 4},
+    expect_recover_recurse_count(q{recover sqdiff from its diag point, 54 4},
+        80, ['305 b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)'],
+        [qw{ -g1000 -x1e13 -jp -b6 54 4 }]);
+    # it retries the split shown, but none before it; the second line is
+    # edited, 1567 coming from the split (4, 1)
+    expect_recover(q{recover sqdiff retries the split shown},
+        [qw{ -g1000 -x1e13 -jp -b6 54 4 }],
+        ['305 b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)'],
+        'b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,1)');
+    expect_recover(q{recover sqdiff from the last split moves on},
+        [qw{ -g1000 -x1e13 -jp -b6 54 4 }],
+        ['305 b6: 2^8.7^2 . 2.3^8 . Q(1567,0,4,6)'],
+        'b6: 2^8.11^2 . 2.3^8 .');
+    expect_recover_recurse_count(q{recover sqdiff from an old-style line, 54 4},
         80, ['305 b6: 2^8.7^2 . 2.3^8 . 6X(1567,0,6)'],
         [qw{ -g1000 -x1e13 -jp -b6 54 4 }]);
 
-    # A trailing candidate can leave no room for a level above the 6X
+    # A trailing candidate can leave no room for a level above the sqdiff
     # search, here 1013^2 at v_0: the search must move on from that level,
     # not resume beneath it.
-    expect_recover(q{recover 6x with a trailing candidate that ends a level},
+    expect_recover(q{recover sqdiff with trailing candidate that ends a level},
         [qw{ -g1000 -jp -x1e13 54 4 }],
-        ['305 b6: 2^8.1013^2 . 2.3^8 . 6X(32837407,0,6)',
+        ['305 b6: 2^8.1013^2 . 2.3^8 . Q(32837407,0,4,1)',
          '202 Candidate 1000000000000 (0.00s)'],
         'b6: 2^8.5^5 . 2.3^8 .');
 }
