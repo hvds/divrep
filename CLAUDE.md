@@ -80,8 +80,8 @@ Expected: all ok.
 ## Never
 - Weaken or bypass fail() so that a run carries on. Change a test's
   expected output, or remove a TODO, without understanding why.
-- Change CC_OPT, the default DEFINES, the MPUGMP pin, tmfb[] or a
-  factoring threshold unasked.
+- Change CC_OPT, the default DEFINES, the MPUGMP pin, the factoring
+  ladder (rungs[]) or a factoring threshold unasked.
 - Add a native-integer fast path without measurements at production
   size. Add a cast, or widen a helper's argument, to quiet a warning.
 - Add Python, shell scripts, dependencies, files not asked for, or

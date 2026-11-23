@@ -153,8 +153,8 @@ applied himself, so nothing here was ever stated about pull requests.
 - [firm] No large near-identical blocks under #ifdef and #else: they at
   least double the maintenance cost. My first
   cheb_factor patch duplicated the tmf functions and two tables; the
-  accepted one defines everything once and enables it in the data (one
-  bit of tmfb[], set in init_tmfbl() under MPUG_054).
+  accepted one defined everything once and enabled it in the data (one
+  bit of what was tmfb[], now a flag on its entry in rungs[]).
 - [firm] Where the duplication is small, an #ifdef in the tree is
   preferred to a separate branch: "that will also be far more
   informative in the git history at some future point when the ifdefs
@@ -194,7 +194,8 @@ applied himself, so nothing here was ever stated about pull requests.
 - [firm] Time with process CPU time, not wall clock: the load on hv's
   machine varies.
 - [firm] Some settings are deliberate though they look wrong: the QS
-  threshold of 90 bits; tmfb[], kept as a mirror of MPUG's own cascade.
+  threshold of 90 bits (before MPUGMP 32fcf54782); the factoring ladder
+  (rungs[] in coultau.c), kept as a mirror of MPUG's own cascade.
   I also blamed hv's fork for a trial-division threshold that upstream
   introduced in 2014. Check the history and ask before "fixing" tuning.
 - [firm] Getting proven results faster is the priority. Reproducible
@@ -596,8 +597,8 @@ Reporting:
 - [inferred] Replace or weaken a fail() so that a run carries on. A run
   that carries on wrongly can claim a range was searched when it was not,
   which breaks the proof standard (B1).
-- [inferred] Change CC_OPT, the default DEFINES, the MPUGMP pin, tmfb[],
-  or a factoring threshold, without asking.
+- [inferred] Change CC_OPT, the default DEFINES, the MPUGMP pin, the
+  factoring ladder (rungs[]), or a factoring threshold, without asking.
 - [inferred] Add a native-integer fast path without measurements at
   production size.
 - [inferred] Add a cast, or widen a helper's argument, to quiet a
