@@ -8409,32 +8409,45 @@ static const char *clock_unit(char *buf, size_t size, double ghz) {
     return buf;
 }
 
-/* With -dT, warn of each section of the cost table made by a different
- * build: those for the factoring tests by a different MPU::GMP, the rest
- * by a different divrep; and of each timed in a different unit from this
- * run's times.
+/* With -dT, warn of each section of the cost table that is not for this
+ * build: those for the factoring and primality tests if there is no copy
+ * by this build of MPU::GMP and msiqs (others are not used, see
+ * cm_fbuild()), the rest if made by a different divrep; and of each timed
+ * in a different unit from this run's times.
  */
 void cost_table_check(void) {
-    static const char *mpu[] = { "scan", "prime", "multi", "ladder", "qs" };
+    static const char *fsec[] = {
+        "scan", "prime", "bpsw", "multi", "ladder", "qs", "situ"
+    };
+    for (uint i = 0; i < sizeof(fsec) / sizeof(fsec[0]); ++i) {
+        if (cm_table_sha(fsec[i]))
+            continue;
+        const char *other = cm_table_unused(fsec[i]);
+        if (other)
+            report("000 cost table: no %s for this build, only from"
+                    " build %s\n", fsec[i], other);
+        else
+            report("000 cost table: no build recorded for %s\n", fsec[i]);
+    }
+    /* the prime test preparations, priced without them if absent */
+    if (!cm_table_sha("pprep")) {
+        const char *other = cm_table_unused("pprep");
+        if (other)
+            report("000 cost table: no pprep for this build, only from"
+                    " build %s\n", other);
+    }
     static const char *coul[] = { "walk", "w1s", "leaf", "tail" };
-    for (uint i = 0; i < 9; ++i) {
-        bool is_mpu = i < 5;
-        const char *sec = is_mpu ? mpu[i] : coul[i - 5];
-        const char *sha = cm_table_sha(sec);
-        const char *want = is_mpu ? MPU_CHANGE : DIVREP_CHANGE;
+    for (uint i = 0; i < sizeof(coul) / sizeof(coul[0]); ++i) {
+        const char *sha = cm_table_sha(coul[i]);
         if (!sha) {
-            report("000 cost table: no build recorded for %s\n", sec);
+            report("000 cost table: no build recorded for %s\n", coul[i]);
             continue;
         }
-        /* "divrep(base)*;mpu(base)": the part for this section */
-        const char *s = sha;
-        if (is_mpu) {
-            s = strchr(sha, ';');
-            s = s ? s + 1 : "";
-        }
-        size_t len = strcspn(s, "(*;");
-        if (len != strlen(want) || strncmp(s, want, len) != 0)
-            report("000 cost table: %s from build %s\n", sec, sha);
+        /* "divrep(base)*;...": the divrep part */
+        size_t len = strcspn(sha, "(*;");
+        if (len != strlen(DIVREP_CHANGE)
+                || strncmp(sha, DIVREP_CHANGE, len) != 0)
+            report("000 cost table: %s from build %s\n", coul[i], sha);
     }
     /* and of each whose times are in a different unit from this run's */
     static const char *all[] = { "scan", "prime", "multi", "ladder", "qs",
