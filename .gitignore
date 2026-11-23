@@ -12,6 +12,7 @@ test_pell
 test_tau
 test_prime
 ftest
+ladder
 speed
 sq12
 dsq12

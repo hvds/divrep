@@ -147,6 +147,9 @@ test_prime: Makefile test_prime.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR}
 ftest: Makefile ftest.c coultau.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
 	gcc -o ftest -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ftest.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
+ladder: Makefile ladder.c coultau.c coulfact.c prime_iterator.c ${HOUL} ${CFACTOR} ${HFACTOR}
+	gcc -o ladder -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} ladder.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
+
 speed: Makefile speed.c prime_iterator.c ${HFACTOR} ${MPUGMP}/gmp_main.c
 	gcc -o speed -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} speed.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm
 
@@ -154,7 +157,7 @@ sq12 dsq12: Makefile sq12.c diag.c coultau.c coulfact.c prime_iterator.c diag.h 
 	gcc -o $@ -g ${CC_OPT} ${DEFINES} ${GIT_DEFINES_$*} sq12.c diag.c coultau.c coulfact.c prime_iterator.c ${CFACTOR} -I${MPUGMP} -lgmp -lm -lrt
 
 # coul.h needs a type
-test_pell test_tau ftest speed sq12 dsq12: DEFINES += -DTYPE_o
+test_pell test_tau ftest ladder speed sq12 dsq12: DEFINES += -DTYPE_o
 
 # The tests from t/t50 on are soak tests, each of a program of its own:
 # they take longer, and are for when we have changed what they test. Each
