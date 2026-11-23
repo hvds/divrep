@@ -1201,7 +1201,7 @@ static inline void tmf_miss(uint i, t_tm *tm) {
         tm->missed |= 1UL << i;
 }
 
-/* the ladder for the benches (bench.c) */
+/* the ladder, for programs that time it (see coultau.h) */
 uint tm_rungs(void) {
     return TM_MAX;
 }
@@ -1210,6 +1210,9 @@ bool tm_rung(uint i, t_tm *tm) {
 }
 ulong tm_rungmask(uint bits) {
     return _find_tmfb(bits);
+}
+bool tm_rung_qs(uint i) {
+    return i < TM_MAX && rungs[i].method == RM_QS;
 }
 
 /* Returns the number of values still being tested at the point a failure
