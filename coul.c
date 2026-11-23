@@ -324,6 +324,7 @@ volatile bool need_work, need_diag, need_log;
 bool clock_is_realtime = 0;
 
 mpz_t zmin, zmax;   /* limits to check for v_0 */
+double zmax_given = 0;  /* zmax as given: it may since have improved */
 mpz_t best;         /* best solution seen */
 bool improve_max = 1;   /* reduce zmax when solution found */
 bool any_bound = 0;     /* apply_single() accepts rq > zmax */
@@ -3063,6 +3064,7 @@ void set_minmax(char *s) {
         mpz_set_ui(zmin, 0);
         ston(zmax, s);
     }
+    zmax_given = mpz_get_d(zmax);
 }
 
 void set_gain(char *s) {
@@ -4628,24 +4630,6 @@ bool apply_primary(t_node *prev, t_node *cur, uint fpi, uint bi) {
     return 1;
 }
 
-/* the tau left at v_i once the current batch was complete */
-static inline uint kern_tau(uint vi) {
-    t_value *vp = &value[vi];
-    uint vil = cur_vlevel[vi];
-    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
-        --vil;
-    return vp->alloc[vil - 1].t;
-}
-
-/* what was allocated at v_i once the current batch was complete */
-static inline mpz_t *kern_q(uint vi) {
-    t_value *vp = &value[vi];
-    uint vil = cur_vlevel[vi];
-    while (vil > 1 && vp->alloc[vil - 1].level > cur_batch_level)
-        --vil;
-    return &vp->alloc[vil - 1].q;
-}
-
 /* True if the batch complete at np is one STRATEGY_SQDIFF takes: its
  * square has a partner left with tau 2, or with tau that recursion can
  * allocate at (see best_sqdiff()).
@@ -4688,7 +4672,7 @@ t_kern *kern_state(t_node *np) {
     ks->keep = kern_keep;
     ks->at = 0;
     ks->passed = 0;
-    ks->on = (np->have_square == 1 && !kern_sqdiff(np));
+    ks->on = (np->have_square == 1);
     np->kern = ks;
     if (!ks->on)
         return ks;
@@ -4716,6 +4700,14 @@ t_kern *kern_state(t_node *np) {
                 best = vi;
         ks->passed &= ~(1UL << best);
         ks->at |= 1UL << best;
+    }
+    /* A batch that STRATEGY_SQDIFF can take is left to it unless that is
+     * estimated to cost more.
+     */
+    if (kern_sqdiff(np) && ke_prefer_sqdiff(np, ks->at)) {
+        ks->on = 0;
+        ks->at = 0;
+        ks->passed = 0;
     }
     return ks;
 }
@@ -5601,7 +5593,9 @@ ulong loop_limit(t_act *cur_act, uint vi) {
  * see updated_zmax().
  */
 uint best_sqdiff(t_act *cur_act) {
-    /* check if conditions for STRATEGY_SQDIFF still hold */
+    /* Check if conditions for STRATEGY_SQDIFF still hold, and that the
+     * batch is not one that -k takes instead (see kern_state()).
+     */
     t_node *prev_node = &nodes[cur_act->level - 1];
     if (prev_node->have_square != 1 || !prev_node->sqx || kern_batch()) {
         strategy = prev_strategy;
@@ -5955,37 +5949,46 @@ static inline e_choice choose_action(t_act *cur_act, bool fresh) {
     fail("panic: unknown best_v() result %u (k=%u)", vi, k);
 }
 
-/* At v_j, a partner of the square, reduces the limit lim on p for p^{x-1}
- * if it can. With p coprime to 2.sigma.P.Q, as every prime still to be
- * allocated there is, p^{x-1} lies wholly in f1 or f2 (see t_sqdpair).
- * That factor F also holds r^e for each prime r of 2.sigma, with e at
- * least the least power either factor can take (see sqd_split()); call
- * their product m. The other factor is within 2.sigma of F, so
- * F.(F - 2.sigma) <= (P/Q).v_j, and
- *   p^{x-1} <= (sigma + sqrt(sigma^2 + (P/Q).v_j)) / m.
- * This increases with zmax, as limit_p() requires.
- * If M = (P/Q).q_j is not an integer, or some prime of 2.sigma cannot
- * split, then no value of v_j is possible: set lim to 1 for no primes.
+/* At v_j, a partner of the square, the product m of r^e for each prime r
+ * of 2.sigma, e the least power of r that either factor can take (see
+ * sqd_split()); or 0 if M = (P/Q).q_j is not an integer, or some prime
+ * of 2.sigma cannot split, when no value of v_j is possible. m divides
+ * 2.sigma.
  */
-static void sqd_limit(mpz_t lim, uint vj, uint x) {
-    t_sqdpair *sp = sqd_pair(sq0, vj);
-
-    /* if M is not an integer there is no solution */
+static ulong sqd_mfac(t_sqdpair *sp, uint vj) {
     if (!mpz_divisible_ui_p(value[vj].alloc[cur_vlevel[vj] - 1].q, sp->Q))
-        goto sqd_impossible;
-
+        return 0;
     ulong m = 1;
     for (uint i = 0; i < sp->sfac.count; ++i) {
         t_ppow *pp = &sp->sfac.ppow[i];
         uint eb[2];
         sint e = sqd_mval(sp, vj, pp->p);
-        /* if this p cannot split, there is no solution */
         if (sqd_split(eb, pp->p, e, pp->e) == 0)
-            goto sqd_impossible;
-        /* the least is the same for each split; m divides 2.sigma */
+            return 0;
+        /* the least is the same for each split */
         uint ea = e - eb[0];
         for (uint j = (eb[0] < ea) ? eb[0] : ea; j; --j)
             m *= pp->p;
+    }
+    return m;
+}
+
+/* At v_j, a partner of the square, reduces the limit lim on p for p^{x-1}
+ * if it can. With p coprime to 2.sigma.P.Q, as every prime still to be
+ * allocated there is, p^{x-1} lies wholly in f1 or f2 (see t_sqdpair).
+ * That factor F also holds the r-parts making up m (see sqd_mfac()). The
+ * other factor is within 2.sigma of F, so F.(F - 2.sigma) <= (P/Q).v_j,
+ * and
+ *   p^{x-1} <= (sigma + sqrt(sigma^2 + (P/Q).v_j)) / m.
+ * This increases with zmax, as limit_p() requires.
+ * If no value of v_j is possible, sets lim to 1 for no primes.
+ */
+static void sqd_limit(mpz_t lim, uint vj, uint x) {
+    t_sqdpair *sp = sqd_pair(sq0, vj);
+    ulong m = sqd_mfac(sp, vj);
+    if (m == 0) {
+        mpz_set_ui(lim, 1);
+        return;
     }
     dtov(Z(sql_v), vj, zmax);
     mpz_mul_ui(Z(sql_v), Z(sql_v), sp->P);
@@ -5998,10 +6001,24 @@ static void sqd_limit(mpz_t lim, uint vj, uint x) {
     mpz_root(Z(sql_v), Z(sql_v), x - 1);
     if (mpz_cmp(Z(sql_v), lim) < 0)
         mpz_set(lim, Z(sql_v));
-    return;
-  sqd_impossible:
-    mpz_set_ui(lim, 1);
-    return;
+}
+
+/* True if v_j is a partner of the square of the batch complete at np. */
+bool sqd_is_partner(t_node *np, uint vj) {
+    return sqd_partner(np, vj);
+}
+
+/* For estimates: the limit of sqd_limit() on p for p^{x-1} at v_j, a
+ * partner of the square, with zmax z; 0 if no value of v_j is possible.
+ */
+double sqd_limit_d(uint vj, uint x, double z) {
+    t_sqdpair *sp = sqd_pair(sq0, vj);
+    ulong m = sqd_mfac(sp, vj);
+    if (m == 0)
+        return 0;
+    double s = sp->sigma;
+    double v = (TYPE_MULT(vj) * z + TYPE_OFFSET(vj)) * sp->P / sp->Q;
+    return pow((s + sqrt(s * s + v)) / m, 1.0 / (x - 1));
 }
 
 /* Returns the greatest p for which p^{x-1} needs to be tried at v_i
