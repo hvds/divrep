@@ -73,7 +73,7 @@ void add_zfact(t_zfact *f, t_zpow pp) {
     f->ppow[count].e = pp.e;
 }
 
-uint try_simple_fact(uint n, uint d, t_fact *f) {
+ulong try_simple_fact(ulong n, ulong d, t_fact *f) {
     uint e = 0;
     while ((n % d) == 0) {
         n /= d;
@@ -88,11 +88,17 @@ uint try_simple_fact(uint n, uint d, t_fact *f) {
     return n;
 }
 
-void simple_fact(uint n, t_fact *f) {
-    uint d = 3;
+void simple_fact(ulong n, t_fact *f) {
+    ulong d = 3;
     if (n > 1)
         n = try_simple_fact(n, 2, f);
     while (n > 1) {
+        if (d * d > n) {
+            /* then n is prime */
+            t_ppow pp = { n, 1 };
+            add_fact(f, pp);
+            break;
+        }
         n = try_simple_fact(n, d, f);
         d += 2;
     }
