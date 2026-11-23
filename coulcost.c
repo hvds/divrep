@@ -440,32 +440,142 @@ static void cm_load(void);
  * "V section sha [clock]", and the unit of its times: clock "CY<GHz>"
  * for cycles at that clock rate, as pcoul reports times with the cycle
  * counter open (see work_clock()), else "CPU" for CPU seconds; with no
- * clock (a table from before it was recorded), CPU seconds.
+ * clock (a table from before it was recorded), CPU seconds. A V line
+ * starts a section, whose rows follow it.
+ *
+ * The sections that time the factoring and primality code (cm_fsec[])
+ * may be there once for each build of MPU::GMP and msiqs: a copy made by
+ * a build other than this one is not used, as if absent (see
+ * cm_fbuild()); rows of such a section with no V line before them are
+ * used. Until a V pprep line, the pprep rows (samples of MPU::GMP's
+ * pretest) are by the build of the last V samp line, as in a table from
+ * before section pprep.
  */
 static struct {
     char section[16], sha[80];
     double ghz;
-} cm_ver[16];
+    bool used;
+} cm_ver[64];
 static uint cm_nver = 0;
 
-/* the build that made a section of the table, or NULL if not known */
+static const char *cm_fsec[] = {
+    "scan", "prime", "bpsw", "multi", "ladder", "qs", "situ", "pprep"
+};
+#define CM_NFSEC (sizeof(cm_fsec) / sizeof(cm_fsec[0]))
+
+/* the index in cm_fsec[] of a section, or -1 if it is not one of those */
+static int cm_fsec_of(const char *section) {
+    for (uint i = 0; i < CM_NFSEC; ++i)
+        if (strcmp(cm_fsec[i], section) == 0)
+            return i;
+    return -1;
+}
+
+/* The index in cm_fsec[] of the section a row of the table belongs to
+ * (as section_of() in multibench-table), or -1 if it is not one of those.
+ */
+static int cm_fsec_row(const char *line) {
+    if (line[0] >= '0' && line[0] <= '9')
+        return cm_fsec_of("multi");
+    if (line[0] && line[1] == ' ') {
+        switch (line[0]) {
+        case 'S': case 'L':
+            return cm_fsec_of("scan");
+        case 'P': case 'R':
+            return cm_fsec_of("prime");
+        case 'G':
+            return cm_fsec_of("ladder");
+        case 'Q':
+            return cm_fsec_of("qs");
+        case 'K':
+            return cm_fsec_of("situ");
+        }
+    }
+    if (strncmp(line, "D bpsw.", 7) == 0)
+        return cm_fsec_of("bpsw");
+    if (strncmp(line, "D pprep.", 8) == 0)
+        return cm_fsec_of("pprep");
+    return -1;
+}
+
+/* Whether a part of a sha string "change(base)*" is the given change. */
+static bool cm_sha_part_is(const char *part, const char *change) {
+    size_t len = strcspn(part, "(*;");
+    return len == strlen(change) && strncmp(part, change, len) == 0;
+}
+
+/* Whether a build's sha "divrep(base)*;mpu(base)*[;msiqs(base)*]" (as
+ * on the 001 line) has the factoring code of this build: the same
+ * MPU::GMP, and the same msiqs or none.
+ */
+static bool cm_fbuild(const char *sha) {
+    const char *m = strchr(sha, ';');
+    if (!m || !cm_sha_part_is(m + 1, MPU_CHANGE))
+        return 0;
+    const char *q = strchr(m + 1, ';');
+#ifdef MSIQS_CHANGE
+    return q && cm_sha_part_is(q + 1, MSIQS_CHANGE);
+#else
+    return !q;
+#endif
+}
+
+/* record a copy of a section of the table, made by build sha */
+static void cm_vadd(const char *section, const char *sha, double ghz,
+        bool used) {
+    if (cm_nver == sizeof(cm_ver) / sizeof(cm_ver[0]))
+        fail("cost table: too many V lines");
+    strcpy(cm_ver[cm_nver].section, section);
+    strcpy(cm_ver[cm_nver].sha, sha);
+    cm_ver[cm_nver].ghz = ghz;
+    cm_ver[cm_nver++].used = used;
+}
+
+/* the build that made the copy of a section of the table in use, or
+ * NULL if not known
+ */
 const char *cm_table_sha(const char *section) {
     if (!cm_loaded)
         cm_load();
     for (uint i = 0; i < cm_nver; ++i)
-        if (strcmp(cm_ver[i].section, section) == 0)
+        if (cm_ver[i].used && strcmp(cm_ver[i].section, section) == 0)
             return cm_ver[i].sha;
     return NULL;
 }
 
-/* the unit of a section's times: cycles at this many GHz, 0 for CPU
- * seconds, or -1 if the section is not known
+/* the build that made a copy of a section of the table not used, being
+ * from another build of MPU::GMP or msiqs, or NULL if there is none
+ */
+const char *cm_table_unused(const char *section) {
+    if (!cm_loaded)
+        cm_load();
+    for (uint i = 0; i < cm_nver; ++i)
+        if (!cm_ver[i].used && strcmp(cm_ver[i].section, section) == 0)
+            return cm_ver[i].sha;
+    return NULL;
+}
+
+/* For a message that a section is missing: if the table has a copy of
+ * it from another build of MPU::GMP or msiqs, a note saying so.
+ */
+static const char *cm_fother(const char *section) {
+    static char buf[160];
+    const char *other = cm_table_unused(section);
+    if (!other)
+        return "";
+    snprintf(buf, sizeof(buf), " for this build (%s only from build %s)",
+            section, other);
+    return buf;
+}
+
+/* the unit of a section's times, as used: cycles at this many GHz, 0
+ * for CPU seconds, or -1 if the section is not known
  */
 double cm_table_ghz(const char *section) {
     if (!cm_loaded)
         cm_load();
     for (uint i = 0; i < cm_nver; ++i)
-        if (strcmp(cm_ver[i].section, section) == 0)
+        if (cm_ver[i].used && strcmp(cm_ver[i].section, section) == 0)
             return cm_ver[i].ghz;
     return -1;
 }
@@ -559,6 +669,18 @@ static void cm_load(void) {
     } else
         fn = "(built-in)";
     char line[256], name[32];
+    /* for each of cm_fsec[], whether the copy being read is used */
+    bool fuse[CM_NFSEC];
+    for (uint i = 0; i < CM_NFSEC; ++i)
+        fuse[i] = 1;
+    /* For the pprep rows: whether a V pprep line has come, and if not,
+     * the last V samp line's build, recorded when the first row after it
+     * comes.
+     */
+    const int fpp = cm_fsec_of("pprep");
+    bool vpprep = 0, ppnote = 0;
+    char ppsha[sizeof(cm_ver[0].sha)];
+    double ppghz = 0;
     while (cm_line(line, sizeof(line), fp, &src)) {
         char sha[sizeof(cm_ver[0].sha)], clk[16];
         int nv = sscanf(line, "V %15s %79s %15s", name, sha, clk);
@@ -566,13 +688,28 @@ static void cm_load(void) {
             double ghz = 0;
             if (nv == 3 && strncmp(clk, "CY", 2) == 0)
                 ghz = strtod(clk + 2, NULL);
-            if (cm_nver < sizeof(cm_ver) / sizeof(cm_ver[0])) {
-                strcpy(cm_ver[cm_nver].section, name);
-                strcpy(cm_ver[cm_nver].sha, sha);
-                cm_ver[cm_nver++].ghz = ghz;
+            int fs = cm_fsec_of(name);
+            bool used = (fs < 0) ? 1 : cm_fbuild(sha);
+            if (fs >= 0)
+                fuse[fs] = used;
+            if (fs == fpp)
+                vpprep = 1;
+            else if (!vpprep && strcmp(name, "samp") == 0) {
+                fuse[fpp] = cm_fbuild(sha);
+                strcpy(ppsha, sha);
+                ppghz = ghz;
+                ppnote = 1;
             }
+            cm_vadd(name, sha, ghz, used);
             continue;
         }
+        int fs = cm_fsec_row(line);
+        if (fs == fpp && ppnote) {
+            cm_vadd("pprep", ppsha, ppghz, fuse[fpp]);
+            ppnote = 0;
+        }
+        if (fs >= 0 && !fuse[fs])
+            continue;
         uint t, e, b, F;
         double v[6];
         int nd = sscanf(line, "D %31s %u %lf %lf %lf", name, &b, &v[0],
@@ -739,9 +876,9 @@ static void cm_load(void) {
             for (uint b = 0; b <= CM_PP_MAXB; ++b)
                 cm_pp[res][b] = cm_pp_model(b, res);
     if (!cm_P.nb || !cm_R.nb)
-        fail("cost table: %s: need P and R rows", fn);
+        fail("cost table: %s: need P and R rows%s", fn, cm_fother("prime"));
     if (!cm_nscan)
-        fail("cost table: %s: need S and L rows", fn);
+        fail("cost table: %s: need S and L rows%s", fn, cm_fother("scan"));
     uint maxL = 0;
     for (uint i = 0; i < cm_nscan; ++i) {
         if (!cm_scan[i].L || !cm_scan[i].ns)
@@ -2292,6 +2429,30 @@ void cs_rd_add(uint rp, uint l, uint pbits, uint e, double dt) {
  * a V line giving the build and the unit of the times, as
  * multibench-table -S expects.
  */
+/* a samples file's V line for a section: this build, and the unit */
+static void cs_vline(FILE *fp, const char *section, double ghz) {
+    extern void fprint_sha(FILE *fp);
+    fprintf(fp, "V %s ", section);
+    fprint_sha(fp);
+    if (ghz)
+        fprintf(fp, " CY%g\n", ghz);
+    else
+        fprintf(fp, " CPU\n");
+}
+
+/* a samples file's D rows for series [from, to) */
+static void cs_drows(FILE *fp, uint from, uint to) {
+    for (uint c = from; c < to; ++c)
+        for (uint l = 1; l <= CR_MAXL; ++l) {
+            t_csstat *sp = &cs_stat[c][l];
+            if (!sp->n)
+                continue;
+            fprintf(fp, "D %s %u %lu %.5f %.5f\n", cs_name(c), 64 * l,
+                    sp->n, sp->mean * 1e6,
+                    (sp->n > 1) ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
+        }
+}
+
 void cs_write(void) {
     if (!cs_on)
         return;
@@ -2308,24 +2469,10 @@ void cs_write(void) {
                 strerror(errno));
         return;
     }
-    extern void fprint_sha(FILE *fp);
     extern double work_clock_ghz(void);
-    fprintf(fp, "V samp ");
-    fprint_sha(fp);
     double ghz = work_clock_ghz();
-    if (ghz)
-        fprintf(fp, " CY%g\n", ghz);
-    else
-        fprintf(fp, " CPU\n");
-    for (uint c = 0; c < CS_COUNT; ++c)
-        for (uint l = 1; l <= CR_MAXL; ++l) {
-            t_csstat *sp = &cs_stat[c][l];
-            if (!sp->n)
-                continue;
-            fprintf(fp, "D %s %u %lu %.5f %.5f\n", cs_name(c), 64 * l,
-                    sp->n, sp->mean * 1e6,
-                    (sp->n > 1) ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
-        }
+    cs_vline(fp, "samp", ghz);
+    cs_drows(fp, 0, CS_PPREP);
     /* E rdeep.<path> <bits> <e> <pbits> <n> <mean> <sd> */
     for (uint rp = 0; rp < RP_COUNT; ++rp)
         for (uint l = 1; l <= CS_GL; ++l)
@@ -2339,6 +2486,18 @@ void cs_write(void) {
                             sp->mean * 1e6, (sp->n > 1)
                                 ? sqrt(sp->ss / (sp->n - 1)) * 1e6 : 0);
                 }
+    /* The prime test preparations, which time MPU::GMP's pretest, go
+     * under their own V line, since section pprep is kept by build of
+     * MPU::GMP and msiqs.
+     */
+    ulong npp = 0;
+    for (uint c = CS_PPREP; c < CS_COUNT; ++c)
+        for (uint l = 1; l <= CR_MAXL; ++l)
+            npp += cs_stat[c][l].n;
+    if (npp) {
+        cs_vline(fp, "pprep", ghz);
+        cs_drows(fp, CS_PPREP, CS_COUNT);
+    }
     fclose(fp);
     report("000 cost samples: %lu appended to %s\n", total, cs_file);
 }

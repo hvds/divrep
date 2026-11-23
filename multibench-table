@@ -30,9 +30,18 @@ F<ladder> (see F<ladder.c>), given by C<-l> (default F<./ladder>), in
 the same unit.
 The table is in sections (scan, prime, bpsw, multi, ladder, qs, walk,
 w1s, leaf, tail, situ), each stamped with the build that made it and
-the unit of its times ("V section sha CY3.6", or CPU). C<-s> makes only
-the sections named, and C<-u> copies the rest from an existing table
-(with a warning for any timed in a different unit).
+the unit of its times ("V section sha CY3.6", or CPU), its rows
+following that line. C<-s> makes only the sections named, and C<-u>
+copies the rest from an existing table (with a warning for any timed in
+a different unit).
+
+The sections that time the factoring and primality code (scan, prime,
+bpsw, multi, ladder, qs, situ, and pprep, of samples) may be there once
+for each build of
+MPU::GMP and msiqs, as the MPU::GMP and msiqs parts of their stamps'
+sha show: pcoul uses only the copy made by its own build, taking any
+other as absent. Such a section made now replaces only this build's
+copy, C<-u> keeping the others.
 
 Some costs are kept as measurements by size rather than as fitted
 constants, in rows
@@ -64,7 +73,9 @@ outcome, and C<rsqfail> and C<rsqapply> likewise below a fixed square,
 where it also extends the roots; and by the limbs
 of the value, C<pprep.fail>, C<pprep.prime> and C<pprep.test> per call
 of tau_prime_prep() by its result (trial division found a factor, found
-the value prime, or left a prime test to follow). The deep primes are
+the value prime, or left a prime test to follow), which time MPU::GMP's
+pretest, so are written after a V pprep line of their own. The deep
+primes are
 sampled again by the path they took through reject_single(), which
 decides their cost far better than x, as E rows
 "E rdeep.<path> bits e pbits n mean sd": C<exit> for an exit (x = 2, or
@@ -73,7 +84,10 @@ for the general path, by the limbs of aq, the power e of p in the
 modulus inverted (0 but on the general path) and the bits of p. With
 C<-S>I<samples> (and C<-u>), these are added to the section samp of the
 table, alone unless C<-s> chose sections to make as well, E rows pooled
-like D rows; and for each path an F row
+like D rows, and the pprep rows to the copy of section pprep for the
+build that took them (that of the V samp line before them, in samples
+from before section pprep, as for such a table); and for each path an F
+row
 "F rdeep.<path> base mbit knee step limb" is fitted afresh to all its
 E rows, for the cost of a prime there as base + mbit.kp
 + knee.max(0, kp - 32) + step.[limbs > 1] + limb.max(0, limbs - 2),
@@ -254,9 +268,10 @@ F<coultau.c>, which choose the rungs used, up to 255 bits (511 with -f).
 my($verbose, $ladder, $mock, $outfile, $flake, $update, $append, $samples)
         = ('./pcoul', './ladder', undef, undef, 0, undef, 0, undef);
 my @sections
-        = qw{ scan prime bpsw multi ladder qs walk w1s leaf tail situ samp };
-# (samp is made only from samples, with -S)
-my %want = map +($_ => 1), grep $_ ne 'samp', @sections;
+        = qw{ scan prime bpsw multi ladder qs walk w1s leaf tail situ samp
+            pprep };
+# (samp and pprep are made only from samples, with -S)
+my %want = map +($_ => 1), grep $_ ne 'samp' && $_ ne 'pprep', @sections;
 my $chose = 0;  # whether -s, -o or -M chose the sections
 # (with sizes either side of the limb boundaries at 64 and 128 bits,
 # where costs step up)
@@ -291,7 +306,8 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
         next;
     }
     if ($arg eq '-o') {
-        %want = map +($_ => 1), grep $_ ne 'multi' && $_ ne 'samp', @sections;
+        %want = map +($_ => 1),
+                grep !/^(?:multi|samp|pprep)$/, @sections;
         $chose = 1;
         next;
     }
@@ -303,29 +319,48 @@ while (@ARGV && $ARGV[0] =~ /^-/) {
     die "Unknown option '$arg'";
 }
 # With -S, the samples pcoul runs appended to a file (see cs_write() in
-# coulcost.c) are added to the section samp of the -u table, alone unless
-# -s (or -o or -M) chose sections to make as well.
-my(@sver, @srows);
+# coulcost.c) are added to the sections samp and pprep of the -u table,
+# alone unless -s (or -o or -M) chose sections to make as well. Each
+# run's samples follow its V samp line; those of the prime test
+# preparations (section pprep) are by the build of MPU::GMP and msiqs
+# that the V pprep line before them names, or failing that the V samp
+# line (as pcoul wrote them before section pprep), so go to that build's
+# copy: their V lines and rows by group in %spver and %sprows.
+my(@sver, @srows, %spver, %sprows);
 if (defined $samples) {
     defined $update or die "-S adds samples to a table, so needs -u";
     %want = () unless $chose;
-    $want{samp} = 1;
     open my $fh, '<', $samples or die "$samples: $!";
+    my($sv, $pv);
     while (<$fh>) {
         chomp;
         if (/^V samp /) {
             push @sver, $_;
+            ($sv, $pv) = ($_, undef);
+        } elsif (/^V pprep /) {
+            $pv = $_;
+        } elsif (/^D pprep\./) {
+            my $v = $pv // (defined($sv) ? $sv =~ s/^V samp /V pprep /r
+                    : die "$samples: D pprep row with no V line before it");
+            my($vsha) = $v =~ /^V \S+ (\S+)/;
+            my $g = 'pprep@' . fkey($vsha);
+            push @{ $spver{$g} }, $v;
+            push @{ $sprows{$g} }, $_;
         } elsif (/^[DE] /) {
             push @srows, $_;
         }
     }
     close $fh;
-    my %u;
-    @sver = grep !$u{$_}++, @sver;
-    @srows or die "no samples in $samples";
+    for my $list (\@sver, values %spver) {
+        my %u;
+        @$list = grep !$u{$_}++, @$list;
+    }
+    @srows || %sprows or die "no samples in $samples";
+    $want{samp} = 1 if @srows;
+    $want{pprep} = 1 if %sprows;
 }
-!$want{samp} || defined $samples
-        or die "section samp is made only from samples, with -S";
+!($want{samp} || $want{pprep}) || defined $samples
+        or die "sections samp and pprep are made only from samples, with -S";
 my $need_mock = grep $want{$_}, qw{ leaf tail };
 @ARGV == 0 && ($mock || !$need_mock)
         or die "500 Usage: $0 [-v<verbose>] [-l<ladder>]"
@@ -339,14 +374,50 @@ my $need_mock = grep $want{$_}, qw{ leaf tail };
 # rows, 4 and 6 for the scan rows).
 my($n, $k) = (12, 2);
 
-# with -u, the existing table: its lines by section
-my %old;
+# The sections that time the factoring and primality code, which may be
+# there once for each build of MPU::GMP and msiqs (pcoul uses only the
+# copy by its own build, see cm_fbuild() in coulcost.c), so are kept in
+# groups by build: "<section>@<build>" (see fkey()). Other sections have
+# one group, named as the section.
+my %fsec = map +($_ => 1), qw{ scan prime bpsw multi ladder qs situ pprep };
+
+# with -u, the existing table: its lines by group, each group's V lines,
+# and the groups in the order they came; a V line starts a group, and a
+# row belongs to the group its section last started (as cm_load() in
+# coulcost.c reads it). Until a V pprep line, pprep rows are by the build
+# of the last V samp line, as in a table from before section pprep: a V
+# pprep line is made from it for them.
+my(%old, %oldver, @groups);
 if (defined $update) {
     open my $fh, '<', $update or die "$update: $!";
+    my(%cur, $vsamp, $vpprep);
     while (<$fh>) {
         chomp;
         my $sec = section_of($_) or next;
-        push @{ $old{$sec} }, $_;
+        if ($sec eq 'V') {
+            my($vs, $vsha) = /^V (\w+) (\S+)/ or next;
+            my $g = $fsec{$vs} ? "$vs\@" . fkey($vsha) : $vs;
+            $cur{$vs} = $g;
+            push @groups, $g unless $oldver{$g} || $old{$g};
+            push @{ $oldver{$g} }, $_;
+            $vpprep = 1 if $vs eq 'pprep';
+            if ($vs eq 'samp' && !$vpprep) {
+                $vsamp = $_;
+                delete $cur{pprep};
+            }
+            next;
+        }
+        if ($sec eq 'pprep' && !$cur{pprep} && defined $vsamp) {
+            my $v = $vsamp =~ s/^V samp /V pprep /r;
+            my($vsha) = $v =~ /^V \S+ (\S+)/;
+            my $g = $cur{pprep} = 'pprep@' . fkey($vsha);
+            push @groups, $g unless $oldver{$g} || $old{$g};
+            push @{ $oldver{$g} }, $v
+                    unless grep $_ eq $v, @{ $oldver{$g} // [] };
+        }
+        my $g = $cur{$sec} // ($fsec{$sec} ? "$sec\@" : $sec);
+        push @groups, $g unless $oldver{$g} || $old{$g};
+        push @{ $old{$g} }, $_;
     }
     close $fh;
 }
@@ -420,8 +491,10 @@ $| = 1;
 # counter, times are CPU seconds at whatever clock the machine ran.
 # (with only samples to add, there is no pcoul to run, and the unit is
 # theirs)
-my $bench = grep $want{$_} && $_ ne 'samp', @sections;
+my $bench = grep $want{$_} && $_ ne 'samp' && $_ ne 'pprep', @sections;
 my($sha, $clock) = $bench ? build_sha($verbose) : (undef, sample_unit());
+# the factoring build, by which this build's copies are found
+my $fkey = defined($sha) ? fkey($sha) : '';
 if ($need_mock) {
     my(undef, $mclock) = build_sha($mock);
     $mclock eq $clock
@@ -469,7 +542,8 @@ $total += @cal_situ if $want{situ};
 # the lines built, by section, and the stamps of those the ladder
 # program built
 my(%new, %lver);
-$new{samp} = \@srows if defined $samples;
+$new{samp} = \@srows if @srows;
+$new{$_} = $sprows{$_} for keys %sprows;
 
 # Trial division: its limit L by size, and the cost of failing at each
 # trial prime, at a range of sizes including those around 80 bits, where
@@ -480,9 +554,9 @@ my $tscan = (grep $_ > 2 && !($_ & 1), divisors($n))[0] // 2;
 # and an even t whose half is not 2, for the extra cost of a factor that
 # does not end prep
 my $tx = (grep $_ >= 6 && !($_ & 1), divisors($n))[0];
-$new{scan} = [ map bench("scan,$_,2000,$tscan" . ($tx ? ",$tx" : '')),
+$new{cur('scan')} = [ map bench("scan,$_,2000,$tscan" . ($tx ? ",$tx" : '')),
         @scan_bits ] if $want{scan};
-my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } lines_of('scan');
+my %L = map { /^L (\d+) (\d+)/ ? ($1 => $2) : () } lines_of(cur('scan'));
 %L or !grep($want{$_}, qw{ multi prime bpsw ladder })
         or die "need the trial division limits: add -sscan, or -u a table";
 sub trial_limit {
@@ -502,13 +576,13 @@ if ($want{multi}) {
                 fail\ ([\d.]+)\ decided\ ([\d.]+)\ pending\ ([\d.]+)
                 \ \(pass\ ([\d.]+)\);\ prep\ ([\d.]+)us .* run\ ([\d.]+)us
             }x or die "no result for t=$t bits=$b";
-            push @{ $new{multi} }, join(' ', $t, $e, $b, $F, @v);
+            push @{ $new{cur('multi')} }, join(' ', $t, $e, $b, $F, @v);
         }
     }
 }
 if ($want{prime}) {
     for my $b (@prime_bits) {
-        push @{ $new{prime} }, grep /^[PR] /,
+        push @{ $new{cur('prime')} }, grep /^[PR] /,
                 bench("prime,$b,20000," . trial_limit($b));
     }
 }
@@ -516,7 +590,7 @@ if ($want{prime}) {
 # tau_prime_run() makes it
 if ($want{bpsw}) {
     for my $b (@d_bits) {
-        push @{ $new{bpsw} }, grep /^D bpsw\./,
+        push @{ $new{cur('bpsw')} }, grep /^D bpsw\./,
                 bench("bpsw,$b,2000," . trial_limit($b));
     }
 }
@@ -528,7 +602,7 @@ if ($want{ladder}) {
         # oversampled at large sizes, for the rare costly rungs
         my @alpha = ($b < 100) ? () : (0.3);
         $count = ($b <= 255) ? 60 : ($b <= 299) ? 30 : 12 if $b > 191;
-        push @{ $new{ladder} }, ladder_run('ladder',
+        push @{ $new{cur('ladder')} }, ladder_run('ladder',
                 [ '-F' . trial_limit($b), $flake ? "-o$flake" : () ],
                 'G', $b, $count, @alpha);
     }
@@ -536,7 +610,7 @@ if ($want{ladder}) {
 if ($want{qs}) {
     for my $b (@qs_bits) {
         my $count = ($b < 200) ? 5 : ($b < 230) ? 2 : 1;
-        push @{ $new{qs} }, ladder_run('qs', [], 'Q', $b, $count);
+        push @{ $new{cur('qs')} }, ladder_run('qs', [], 'Q', $b, $count);
     }
 }
 my @log_sq = ($want{walk} || $want{w1s}) ? gate_log(@cal_sq) : ();
@@ -575,24 +649,25 @@ if ($want{leaf}) {
 }
 $new{tail} = [ sprintf('C ctail %.4f', cprime('tail', @cal_tail)) ]
         if $want{tail};
-$new{situ} = [ fit_prep(@cal_situ) ] if $want{situ};
+$new{cur('situ')} = [ fit_prep(@cal_situ) ] if $want{situ};
 
 # each section rebuilt is marked with the build that made it, and the
 # unit of its times
 # (with -a, a section's D rows from several builds: one V line for each)
-my %ver;
-for (lines_of('V')) {
-    push @{ $ver{$1} }, $_ if /^V (\w+) /;
-}
-for my $sec (@sections) {
-    next unless $want{$sec};
-    my @keep = (appended($sec) ? @{ $ver{$sec} // [] } : ());
-    if ($sec eq 'samp') {
+my %ver = map +($_ => [ @{ $oldver{$_} } ]), keys %oldver;
+# (section pprep in the groups its samples are for)
+for my $g (map $_ eq 'pprep' ? sort(keys %sprows) : cur($_),
+        grep $want{$_}, @sections) {
+    my $sec = group_sec($g);
+    push @groups, $g unless grep $_ eq $g, @groups;
+    my @keep = (appended($g) ? @{ $ver{$g} // [] } : ());
+    if ($sec eq 'samp' || $sec eq 'pprep') {
         # the builds of the samples, after those of the rows already there
         my %u;
-        $ver{$sec} = [ grep !$u{$_}++, @keep, @sver ];
-        my %c = map { (/^V \S+ \S+ (\S+)/ ? $1 : 'CPU') => 1 } @{ $ver{$sec} };
-        keys(%c) == 1 or die "multibench-table: section samp would mix"
+        $ver{$g} = [ grep !$u{$_}++, @keep,
+                @{ ($sec eq 'samp') ? \@sver : $spver{$g} } ];
+        my %c = map { (/^V \S+ \S+ (\S+)/ ? $1 : 'CPU') => 1 } @{ $ver{$g} };
+        keys(%c) == 1 or die "multibench-table: section $sec would mix"
                 . " times in " . join(' and ', sort keys %c) . "\n";
         next;
     }
@@ -605,25 +680,38 @@ for my $sec (@sections) {
     # (the ladder and qs sections by the build of the ladder program)
     my $v = $lver{$sec} // "V $sec $sha $clock";
     my($vsha) = $v =~ /^V \S+ (\S+)/;
-    $ver{$sec} = [ (grep !/^V \S+ \Q$vsha\E /, @keep), $v ];
+    $ver{$g} = [ (grep !/^V \S+ \Q$vsha\E /, @keep), $v ];
 }
-for my $sec (grep !$want{$_} && $ver{$_}, @sections) {
-    for (@{ $ver{$sec} }) {
+# the groups kept that this build would use: each warned of if timed in
+# another unit (other builds' copies of factoring sections being for
+# those builds)
+for my $g (@groups) {
+    my $sec = group_sec($g);
+    next if $want{$sec} || $g ne cur($sec);
+    my %c;
+    for (@{ $ver{$g} // [] }) {
         my($c) = /^V \S+ \S+ (\S+)/;
-        $c //= 'CPU';
+        $c{$c // 'CPU'} = 1;
+    }
+    for my $c (sort keys %c) {
         warn "multibench-table: section $sec kept is timed in $c,"
                 . " not $clock\n" if $c ne $clock;
     }
 }
-print $out "$_\n" for map @{ $ver{$_} // [] }, @sections;
-print $out "$_\n" for map lines_of($_), @sections;
+# each group as its V lines and then its rows, by section
+for my $sec (@sections) {
+    for my $g (grep group_sec($_) eq $sec, @groups) {
+        print $out "$_\n" for @{ $ver{$g} // [] }, lines_of($g);
+    }
+}
 thin_report() if defined $samples;
 finish();
 
-# List the rows of section samp still too thin for pcoul to price from
-# (see cm_dthin() in coulcost.c), so as to know what needs more samples.
+# List the rows of sections samp and pprep (the copies samples were
+# added to) still too thin for pcoul to price from (see cm_dthin() in
+# coulcost.c), so as to know what needs more samples.
 sub thin_report {
-    for (lines_of('samp')) {
+    for (map lines_of($_), 'samp', sort keys %sprows) {
         my($s, $b, $n, $mean, $sd) = /^D (\S+) (\d+) (\S+) (\S+) (\S+)$/
                 or next;
         my $se = ($n > 1) ? $sd / sqrt($n) : 0;
@@ -637,14 +725,15 @@ sub thin_report {
 # (with -a), rather than replacing its lines.
 sub appended {
     my($sec) = @_;
-    return ($append || $sec eq 'samp') && $new{$sec}
+    return ($append || group_sec($sec) =~ /^(?:samp|pprep)$/) && $new{$sec}
             && grep /^D /, @{ $old{$sec} // [] };
 }
 
 # The unit of the samples' times (as their V lines give it), which must
 # be the same for all of them.
 sub sample_unit {
-    my %c = map { (/^V \S+ \S+ (\S+)/ ? $1 : 'CPU') => 1 } @sver;
+    my %c = map { (/^V \S+ \S+ (\S+)/ ? $1 : 'CPU') => 1 }
+            @sver, map @$_, values %spver;
     keys(%c) == 1 or die "multibench-table: samples in $samples mix"
             . " times in " . join(' and ', sort keys %c) . "\n";
     return (keys %c)[0];
@@ -773,6 +862,28 @@ sub fit_rdeep {
     return sprintf 'F rdeep.%s %.5f %.5f %.5f %.5f %.5f', $path, @c;
 }
 
+# The factoring build of a sha "divrep(base)*;mpu(base)*[;msiqs(base)*]"
+# (as on pcoul's 001 line): its MPU::GMP part and any msiqs part, without
+# their bases or marks of uncommitted changes.
+sub fkey {
+    my($bsha) = @_;
+    my(undef, @part) = split /;/, $bsha;
+    s/[(*].*// for @part;
+    return join ';', @part;
+}
+
+# the group of this build's copy of a section
+sub cur {
+    my($sec) = @_;
+    return $fsec{$sec} ? "$sec\@$fkey" : $sec;
+}
+
+# the section of a group
+sub group_sec {
+    my($g) = @_;
+    return $g =~ s/\@.*//r;
+}
+
 # the section of a table line, if it has one
 sub section_of {
     local($_) = @_;
@@ -781,7 +892,8 @@ sub section_of {
         : /^[SL] / ? 'scan'
         : /^[PR] / ? 'prime'
         : /^D bpsw\./ ? 'bpsw'
-        : /^D (?:r(?:deep|early|rej1|prime|sqfail|sqapply|fail|apply)|pprep)\b/ ? 'samp'
+        : /^D r(?:deep|early|rej1|prime|sqfail|sqapply|fail|apply)\b/ ? 'samp'
+        : /^D pprep\./ ? 'pprep'
         : /^[EF] rdeep\./ ? 'samp'
         : /^G / ? 'ladder'
         : /^Q / ? 'qs'
@@ -807,8 +919,21 @@ sub build_sha {
 sub finish {
     keep_diag() if defined $outfile;
     close $out if defined $outfile;
-    unlink $tmp;
+    unlink $tmp, "$tmp.table";
     exit 0;
+}
+
+# Write the table as this build would take it, its own copies of the
+# factoring sections (made now or kept) with the rest, for the pcoul
+# runs that price from it ($COST_TABLE), and return the file's name;
+# with any further lines given.
+sub table_file {
+    my(@extra) = @_;
+    my $fn = "$tmp.table";
+    open my $fh, '>', $fn or die "$fn: $!";
+    print $fh "$_\n" for (map lines_of(cur($_)), @sections), @extra;
+    close $fh;
+    return $fn;
 }
 
 # count a pcoul run, showing progress when writing to a file
@@ -837,6 +962,9 @@ sub ladder_run {
     defined $v or die "no result from $ladder @$opt @args";
     my($c) = $v =~ /^V \S+ \S+ (\S+)/;
     $c eq $clock or die "$ladder times in $c, but $verbose in $clock";
+    my($lsha) = $v =~ /^V \S+ (\S+)/;
+    fkey($lsha) eq $fkey or die "$ladder is built with MPU::GMP and msiqs"
+            . " " . fkey($lsha) . ", but $verbose with $fkey";
     $lver{$sec} = $v;
     return grep /^[GQ] /, @lines;
 }
@@ -857,6 +985,7 @@ sub bench {
 sub gate_log {
     my(@args) = @_;
     local $ENV{GATE_STATS} = $tmp;
+    local $ENV{COST_TABLE} = table_file();
     unlink $tmp;
     progress("-dv6 @args");
     my $out = `'$verbose' -X -dv6 @{[ map quote($_), @args ]} 2>&1`;
@@ -878,11 +1007,13 @@ sub gate_log {
 sub prep_log {
     my(@args) = @_;
     local $ENV{GATE_STATS} = $tmp;
+    local $ENV{COST_TABLE} = table_file();
     unlink $tmp;
     progress("-ja1 -dv16 @args");
     my $cmd = "'$verbose' -X -ja1 -dv16 -Ld60 @{[ map quote($_), @args ]}";
     my $out = `$cmd 2>&1`;
-    open my $fh, '<', $tmp or die "$tmp: $!";
+    open my $fh, '<', $tmp
+            or die "no records from $verbose @args: " . (split /\n/, $out)[-1];
     # 1 in 4 of the T records suffices, and 1 in 40 of the U records,
     # which are many more (11 million from one run); read a line at a
     # time, and not into $_, which a caller may be using
@@ -1218,12 +1349,9 @@ sub cprime {
     my($var, $other) = ($kind eq 'tail')
             ? ('MOCK_TAIL_OFF', 'MOCK_LEAF_OFF')
             : ('MOCK_LEAF_OFF', 'MOCK_TAIL_OFF');
-    my @table = map lines_of($_), @sections;
-    open my $fh, '>', $tmp or die "$tmp: $!";
-    print $fh "$_\n" for @table, map "C $_ 0",
-            grep !(grep /^C $_ /, @table), qw{ cprime cprimesq ctail };
-    close $fh;
-    local $ENV{COST_TABLE} = $tmp;
+    my @table = map lines_of(cur($_)), @sections;
+    local $ENV{COST_TABLE} = table_file(map "C $_ 0",
+            grep !(grep /^C $_ /, @table), qw{ cprime cprimesq ctail });
     local $ENV{$other} = 1;
     my(%real, $primes);
     for my $rep (1 .. 3) {
