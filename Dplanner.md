@@ -22,6 +22,16 @@ be written in those terms. Dpctul.md 9.2 lists what is still open:
 the estimators that size a value at position i as zmax / q_i, where
 for pctul it is nearer TYPE_MULT(i).zmax / q_i.
 
+Later still (2026-11-23), master's factoring ladder became a table of
+rungs (`rungs[]` in coultau.c) with support for MPUGMP 32fcf54782,
+whose QS is SIQS from msiqs, and calibrate was rebased over that. For
+this design: no code may assume QS is a given rung (it was 24 at
+d4afd1c, and there may now be several), but asks `tm_rung_qs()`; the
+ladder and qs sections of the cost table are made by the program
+`ladder` (multibench-table -l), not by benches in pcoul; and those
+sections belong to the factoring build that made them, so a table's
+G and Q rows from a v0.54 build misprice a 32fcf54782 build.
+
 
 ## 0. Before starting
 
@@ -714,7 +724,8 @@ range, or a small complete run):
 - A file of shards, tracked in the repo: id, n, k, the arguments that
   define the shard (-x, -b or -I, -f where the shard needs it), the
   best known option string, its CPU time and counted cost, the build
-  sha, the date. Runs never modify it (hv's rule for `timings`); a
+  sha (with its MPU::GMP and any msiqs part: times are comparable only
+  within one factoring build), the date. Runs never modify it (hv's rule for `timings`); a
   tool rewrites it on request.
 - A driver in Perl, `evalplan`. It runs each shard under the planner
   build, one at a time (P10), reads the 367 and 369 lines and the
@@ -910,9 +921,16 @@ that has them. Then the planner can be proposed as the default.
    by-height calibration table is how to see whether it works. If it
    does not, run-level choice (stage 6) fails first and visibly.
 3. **Factoring-bound shapes.** Where the ladder dominates, prices
-   rest on the G rows, which are rough above about 191 bits. Stage 6
-   will show this as poor calibration on those shards; the fix is in
-   the cost table, not the planner.
+   rest on the G rows, which are rough above about 191 bits, and on
+   the Q rows, which the model holds flat beyond the largest size
+   (`cm_interp1()`). With msiqs, QS is about ten times faster than
+   simpqs at 200-260 bits, so fewer shapes are factoring-bound; and
+   its time is close to log-linear in bits from about 130 bits (a fit
+   to 130-230 bits predicted 240-300 within about 11%), so the Q rows
+   can be extended by a fit (`ladder fit`) rather than measured at
+   length. Stage 6 will show any remaining weakness as poor
+   calibration on those shards; the fix is in the cost table, not
+   the planner.
 4. **Recovery.** Each new decision kind needs a log record (P3). The
    record formats are hv's to approve, and each needs random-point
    recovery tests before it is enabled.
