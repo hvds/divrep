@@ -6473,7 +6473,7 @@ double sqd_limit_d(uint vj, uint x, double z) {
     if (m == 0)
         return 0;
     double s = sp->sigma;
-    double v = (TYPE_MULT(vj) * z + TYPE_OFFSET(vj)) * sp->P / sp->Q;
+    double v = dtov_d(z, vj) * sp->P / sp->Q;
     return pow((s + sqrt(s * s + v)) / m, 1.0 / (x - 1));
 }
 

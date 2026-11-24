@@ -341,15 +341,15 @@ static inline double gr_iters(t_node *lv) {
 
 /* The roots a walk at the node lv is expected to visit, with one square
  * fixed: those of its residue classes mod qq = TYPE_MULT(sq0).aq / q up
- * to the root of zmax / q, where q is what is allocated at the square
- * (as the gain gate's r_walk, less what lies below zmin).
+ * to the root of v_s / q at zmax, where q is what is allocated at the
+ * square (as the gain gate's r_walk, less what lies below zmin).
  */
 static double gq_roots(t_node *lv) {
     uint sql = cur_vlevel[sq0];
     double g = sqg[sql - 1];
     double q = mpz_get_d(value[sq0].alloc[sql - 1].q);
-    double hi = pow(mpz_get_d(zmax) / q, 1 / g);
-    double lo = pow(mpz_get_d(zmin) / q, 1 / g);
+    double hi = pow(dtov_d(mpz_get_d(zmax), sq0) / q, 1 / g);
+    double lo = pow(dtov_d(mpz_get_d(zmin), sq0) / q, 1 / g);
     return (hi - lo) * q * res_array(lv->level)->count
             / (TYPE_MULT(sq0) * mpz_get_d(lv->aq));
 }
@@ -850,7 +850,7 @@ static t_gqloop gq_loop(
     }
     double ct = (g > 1) ? nr * GQ_RES : 0;
     if (x == 3 && g == 2) {
-        double endr = sqrt(mpz_get_d(zmax)
+        double endr = sqrt(dtov_d(mpz_get_d(zmax), sq0)
                 / mpz_get_d(value[sq0].alloc[sql - 1].q));
         /* the scale that binds first, and where */
         double c = (zl < 2 * endr) ? zl : 2 * endr, qc = sqrt(c);
@@ -901,7 +901,7 @@ static double gq_recurse(
         uint sql = cur_vlevel[sq0];
         t_allocation *ap = &value[sq0].alloc[sql - 1];
         double g = sqg[sql - 1], g2 = divisors[ap->t / x].gcddm;
-        double Z = mpz_get_d(zmax) / mpz_get_d(ap->q);
+        double Z = dtov_d(mpz_get_d(zmax), sq0) / mpz_get_d(ap->q);
         walks *= pow(Z, 1 / g2 - 1 / g) * gr_psum(a, b, s / g2);
     } else
         walks *= gr_psum(a, b, s);
@@ -991,8 +991,8 @@ typedef struct {
     bool sq;        /* the square */
     bool kern;      /* a position -k applies to */
     bool sqd;       /* a partner of the square (see t_sqdpair) */
-    double Z;       /* zmax over what is allocated, and where -k applies
-                     * over its bound */
+    double Z;       /* v_i at zmax over what is allocated, and where -k
+                     * applies over its bound */
     long d;         /* offset of the square less that of this position */
     uint ns;        /* powers still to allocate, as exponents in order */
     uint ns0;       /* ns at the root */
@@ -1291,6 +1291,9 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
                 f = 1;
             } else {
                 qm = mpz_fdiv_ui(*q, pi);
+                /* as reject_square() */
+                if (TYPE_MULT(kp->vi) != 1)
+                    qm = mulmod_u64(qm, TYPE_MULT(kp->vi) % pi, pi);
                 ulong dm = (kp->d < 0) ? pi - (ulong)(-kp->d) % pi
                         : (ulong)kp->d % pi;
                 m = gq_resroots(dm, qm, g, pi);
@@ -1548,7 +1551,7 @@ static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
     ke_setup = gq_wsetup(lv);
     double z = zmax_given;
     uint ts = kern_tau(sq0);
-    double zs = z / mpz_get_d(*kern_q(sq0));
+    double zs = dtov_d(z, sq0) / mpz_get_d(*kern_q(sq0));
     ke_endr = (divisors[ts].gcddm == 2) ? sqrt(zs) : 0;
     ke_root = (divisors[ts].alldiv == 2) ? 0.7e-6 : 1.5e-6;
     for (ke_pmin = 3; mpz_fdiv_ui(lv->aq, (ulong)ke_pmin) == 0
@@ -1569,7 +1572,7 @@ static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
         t_kepos *kp = &root->pos[root->np++];
         kp->vi = vi;
         kp->kern = (kat >> vi) & 1;
-        kp->Z = z / mpz_get_d(*kern_q(vi)) / (kp->kern ? b : 1);
+        kp->Z = dtov_d(z, vi) / mpz_get_d(*kern_q(vi)) / (kp->kern ? b : 1);
         kp->d = TYPE_RES(vi, sq0);
         kp->sq = 0;
         kp->sqd = sqd_is_partner(lv, vi);
@@ -1745,7 +1748,7 @@ static double ke_plain(void) {
     ke_setup = gq_wsetup(lv);
     ke_root = (divisors[ts].alldiv == 2) ? 0.7e-6 : 1.5e-6;
     return ke_setup + ke_price(&whole)
-            * pow(zmax_given / q, 1.0 / divisors[ts].gcddm) * q
+            * pow(dtov_d(zmax_given, sq0) / q, 1.0 / divisors[ts].gcddm) * q
             * res_array(lv->level)->count
             / (TYPE_MULT(sq0) * mpz_get_d(lv->aq));
 }
