@@ -455,6 +455,25 @@ sub test_sqdiff {
         expect_recurse_count(q{sqdiff for pcrul, 48 3}, 66,
             [qw{ -x1e20 48 3 }]);
     }
+    # pctul, alpha = 7: v_1 = 14Y^2 makes v_6 = (7Y - 20)(7Y + 20), so
+    # with 3.17^2 at v_6 the walk finds Y = 121 and v_6 = 3.17^2.827
+    {
+        local $type = 't';
+        expect_diag(q{sqdiff walk for pctul with alpha > 1, 160 8}, 1,
+            [ q{-I"3^2 2.7 . 2^2.3 5^2 2 3.17^2"}, qw{ -x1e12 160 8 } ],
+            'b0: 3^2 2.7 . 2^2.3 5^2 2 3.17^2 Q(827,6,6,0.0)');
+    }
+    # pctul, P/Q = 5/11: v_9 = 2Y^2 makes 5.v_10 = 11(Y - 3)(Y + 3), so
+    # with 11^2.7 at v_10 (5 not there, so its own bit in the split) the
+    # walk finds Y = 382 and v_10 = 11^2.7.379
+    {
+        local $type = 't';
+        expect_diag(q{sqdiff walk for pctul with P > 1, 198 12}, 1,
+            [ q{-I"5^0 2^5 3 2.7^2 . 2^2.3 . 2 3^5 2^3 11^2.7"},
+                qw{ -x1e30 198 12 } ],
+            'b0: 5^0 2^5 3 2.7^2 . 2^2.3 . 2 3^5 2^3 11^2.7'
+                . ' Q(379,10,14,0.0)');
+    }
 }
 
 sub test_recover_sqdiff {
