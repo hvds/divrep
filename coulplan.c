@@ -964,16 +964,14 @@ bool kern_sq_open(t_node *np) {
  * rest in bins. Costs are as for gq_recurse(), with a fixed cost per
  * root, and all is taken from zmax as given, so that a recovered run
  * chooses the same.
- * The positions are those -k applies to and the square: allocations at
- * the square, while its tau is composite (see dis_pos()), make its walk
- * shorter, or of a higher power once its tau is prime. Where
- * STRATEGY_SQDIFF can take the batch, so that -k is compared with it,
- * they include too, while there is room, those of the rest with the
- * highest tau, which the strategy may take and -W sweeps (see
- * ke_more()). At a partner of the square (see t_sqdpair) each loop is
- * bounded as limit_p() bounds it (see sqd_limit()). The same search,
- * with the choices of best_sqdiff(), estimates the batch under
- * STRATEGY_SQDIFF (see ke_sqdiff()).
+ * The positions are those -k applies to, the square, and while there is
+ * room those of the rest with the highest tau, which the strategy may
+ * take and -W sweeps (see ke_more()): allocations at the square, while
+ * its tau is composite (see dis_pos()), make its walk shorter, or of a
+ * higher power once its tau is prime. At a partner of the square (see
+ * t_sqdpair) each loop is bounded as limit_p() bounds it (see
+ * sqd_limit()). The same search, with the choices of best_sqdiff(),
+ * estimates the batch under STRATEGY_SQDIFF (see ke_sqdiff()).
  */
 #define KE_MAXPOS 8
 #define KE_MAXSLOT 8
@@ -1515,19 +1513,23 @@ static double ke_cost(t_kenode *node, double budget) {
 }
 
 /* Positions to add to those of at for the estimate of the current
- * batch: of the rest bar the square, those with even tau above 2, by
- * descending tau, while there is room (see ke_root_node()); a position
- * with odd tau is a second square, which no batch estimated has. Needs
+ * batch: of the rest bar the square and those of excl, those with even
+ * tau above 2 that the search may allocate at, by descending tau, while
+ * there is room (see ke_root_node()). A position with odd tau is a
+ * second square, which no batch estimated has; where the batch is under
+ * -k, if kern is set, highpow does not apply (see dis_pos()). Needs
  * MAXK_KERN <= 64.
  */
-static ulong ke_more(ulong at) {
+static ulong ke_more(ulong at, ulong excl, bool kern) {
+    uint hmin = (highpow && !kern) ? 1 : 2;
     uint npos = popcount_u64(at)
             + ((divisors[kern_tau(sq0)].alldiv > 2) ? 1 : 0);
     while (npos < KE_MAXPOS) {
         uint bj = k, bt = 2;
         for (uint vj = 0; vj < k; ++vj) {
             uint t = kern_tau(vj);
-            if (vj == sq0 || ((at >> vj) & 1) || (t & 1) || t <= bt)
+            if (vj == sq0 || (((at | excl) >> vj) & 1) || (t & 1) || t <= bt
+                    || divisors[t].high <= hmin)
                 continue;
             bj = vj;
             bt = t;
@@ -1658,11 +1660,10 @@ static double ke_npass(t_kepos *kp, double b) {
  */
 static double ke_batch(ulong at, double budget) {
     t_kenode root;
-    /* Where STRATEGY_SQDIFF can take the batch, -k is compared with it,
-     * so the search over the rest is estimated too (see ke_sqdiff()).
-     */
-    bool more = kern_sqdiff(&nodes[cur_batch_level]);
-    ke_root_node(&root, more ? ke_more(at) : at, at, ke_b);
+    /* positions -k passes over are neither allocated at nor swept */
+    ulong all, passed;
+    kern_sets(0, &all, &passed);
+    ke_root_node(&root, ke_more(at, (all | passed) & ~at, 1), at, ke_b);
     ke_swept = 0;
     double cost = 0;
     /* Each prime of a sweep is tried by reject_single(), as for a loop,
@@ -1806,7 +1807,7 @@ static double ke_sqdiff(t_node *np) {
     ke_parts = NULL;
     ke_sqd = 1;
     t_kenode root;
-    ke_root_node(&root, ke_more(at), 0, 1);
+    ke_root_node(&root, ke_more(at, 0, 0), 0, 1);
     double whole = ke_walk(&root);
     ke_wt = 1;
     double cost = ke_cost(&root, whole);
