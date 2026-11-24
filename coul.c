@@ -5674,8 +5674,14 @@ bool process_batch(t_node *cur_node, bool recover) {
         slong batch_id = batch_alloc++;
         cur_batch_level = cur_node->level;
         seen_valid = 1;
-        /* under -ka, -Wa or -Wf, choose for this batch before it is shown */
-        if (kern_auto || sweep_chosen())
+        /* Under -ka, -Wa or -Wf, choose for this batch before it is
+         * shown; but not for one that -b skips, which is neither shown
+         * nor processed.
+         */
+        bool skipped = opt_alloc && (opt_alloc & 4) == 0
+                && opt_batch_min >= 0
+                && (batch_id < opt_batch_min || batch_id > opt_batch_max);
+        if ((kern_auto || sweep_chosen()) && !skipped)
             kern_state(cur_node);
         if (debugB)
             disp_batch();
