@@ -797,8 +797,8 @@ static ulong gq_resroots(ulong dm, ulong qm, uint g, ulong q) {
     return (powmod_u64(a, (q - 1) / h, q) == 1) ? h : 0;
 }
 
-/* A loop below one fixed value v_j = q_j.z^g, at a position v_i that -k
- * applies to or at the square itself (see gq_costable()), over p^{x-1}
+/* A loop below one fixed value v_j = q_j.z^g, at a position v_i or at
+ * the square itself (see gq_costable()), over p^{x-1}
  * for p in [p, cap] below the node at prev_node: its own cost, and the
  * children it walks.
  * Primes giving a least v_0 within zmax (all up
@@ -2929,19 +2929,23 @@ void ja_unwind(t_act *lp) {
 }
 
 /* True if a loop of allocations at v_i can be costed below one fixed
- * square: only at a position that -k applies to. There the loop leaves
- * no second square, when each child would be a Pell equation, and its
- * children cannot flip; and in such a batch nothing is allocated at the
- * square while its tau is an odd prime, so that every child can walk it.
- * Elsewhere a child may go on to walk_1_set() over every prime at the
- * square, which the gate never sees: D(6,4) -X -x1e13 ran for over 20s
- * that way, not 0.1s. A child may still allocate at a square with
- * composite tau, which the gate also does not see, but there each power
- * leaves the square a smaller root to walk, and p^{t-1} has a small range.
- * Also at the square itself, where it is open (see kern_sq_open()).
+ * square: at any position but the square, and at the square itself
+ * under -k, where it is open (see kern_sq_open()).
+ * This was first only at a position -k applies to, since elsewhere a
+ * child could go on to walk_1_set() over every prime at the square once
+ * its tau was an odd prime, which the gate never sees: D(6,4) -X -x1e13
+ * ran for over 20s that way, not 0.1s. Under -ja nothing is allocated at
+ * such a square now (see dis_pos()), and that run takes 0.05s. A child
+ * may still allocate at a square with composite tau, which the gate also
+ * does not see, but there each power leaves the square a smaller root to
+ * walk, and p^{t-1} has a small range. A child left with a second square
+ * (a Pell equation), or that flips, is costed as a plain walk, which
+ * overestimates it, so there the gate errs towards walking, as the gain
+ * did. With the gain, D(36,5) b36 to 1e20 walked whole in 54s, where one
+ * loop of q^2 at its position of tau 36, each child walked, takes 6.7s.
  */
 static inline bool gq_costable(uint vi) {
-    return kern_at(vi) || (vi == sq0 && kern_batch());
+    return vi != sq0 || kern_batch();
 }
 
 /* -ja2: the corrected estimate c of recursing over every prime in
@@ -3475,8 +3479,8 @@ bool ja_gate(
     uint x = divisors[ti].div[cur_act->di];
     uint vi = cur_act->vi;
 
-    /* -ja1, except with a square fixed any but those at a position that
-     * -k applies to, which keep the gain.
+    /* -ja1, except with a square fixed at the square itself, which keeps
+     * the gain outside -k (see gq_costable()).
      */
     if (!prev_node->have_square) {
         uint L = prev_node->level;
