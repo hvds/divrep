@@ -53,7 +53,7 @@ uint gr_n[GR_MAXL];
 #define GQ_SETUP 1.7e-6
 #define GQ_PRIME 2.2e-6
 #define GQ_APPLY 0.5e-6
-#define GQ_RES 0.25e-6      /* per test mod p by reject_square() */
+#define GQ_RES 0.022e-6     /* per test mod p by reject_square() */
 #define GQ_ROOT 0.6e-6      /* per root taken by reject_square() */
 #define GQ_RSCALE 1.0
 #define GQ_DEFIT 1e-6       /* per root, until a level has samples */
