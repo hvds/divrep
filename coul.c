@@ -4628,6 +4628,8 @@ static inline void push_midpp(
     this->kern = kern;
 }
 
+static void sqd_limit(mpz_t lim, uint vj, uint x);
+
 /* Populate midpp[] with the capped min and max p for each allocation of
  * p^{x-1} at each v_i that the sweep at prev_node tries: for -W, each
  * that w_sweeps() gives, above the threshold; for -k, each odd power at
@@ -4662,6 +4664,9 @@ void prep_midp(t_node *prev_node) {
             mpz_fdiv_q(Z(temp), Z(temp), Z(wv_cand));
             mpz_fdiv_q(Z(temp), Z(temp), ap->q);
             mpz_root(Z(temp), Z(temp), x - 1);
+            /* at a partner of the square, as for limit_p() */
+            if (sqd_partner(prev_node, vi))
+                sqd_limit(Z(temp), vi, x);
             ulong top = cap_at(upper, vi, x);
             if (mpz_fits_ulong_p(Z(temp))) {
                 ulong limit = mpz_get_ui(Z(temp));
