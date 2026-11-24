@@ -27,3 +27,9 @@ TODO (lower priority):
   About 14% of D(224,6) fixed-power batches are impossible this way,
   though most are cheap.
 - for unforced primes, do constant apply_alloc() work in advance
+- sqdiff: where a partner v_j is left with tau a power of 2 above 2,
+  the cap gains little (eg f(198,12) b1, tau 4 at v_10); but a
+  candidate's v_j could be tested through its two factors
+  f1.f2 = (P/Q).v_j (see t_sqdpair) rather than whole: each is about
+  the root of v_j, so the factorizations are smaller, and in some cases
+  they come down to is_prime() checks
