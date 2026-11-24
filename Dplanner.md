@@ -97,7 +97,7 @@ its own estimator:
 | batch sweep (-Wf) | `wf_plan()` | formula fitted to D(4p,k), D(8p,k) |
 | node sweep (-Whp) | `ja_wsweep()` | closed form saving against the gate |
 | one-square batch (-ka) | `ke_batch()` | abstract tree (`t_kenode`), its own position rule, from `zmax_given` |
-| 6X or -k | `ke_6x()` | closed form plus `ke_cost()` |
+| sqdiff or -k | `ke_sqdiff()` | closed form per partner left with tau 6, plus `ke_cost()` |
 
 Five ways of pricing a subtree, which do not agree with each other,
 and no way to price a whole run under given options. That last gap is
@@ -144,7 +144,7 @@ P3. **Recovery replays; it never re-decides.** Any decision that
     log before that decision kind is enabled. Today: 315 lines for
     positions chosen against the strategy, 203-line tags for -ka,
     316 lines for what was learnt, the progress-line suffix for
-    A_MIDP, A_6X and A_FLIP.
+    A_MIDP, A_SQDIFF and A_FLIP.
 
 P4. **One price per tactic kind.** The cost of a kind of work is
     computed in one function, used by every decision that involves it
@@ -213,7 +213,7 @@ that may be a solution, as on a 202 line.)
 | LOOP(vi) | for each x of t_i in order: a loop of p^{x-1} at v_i, or `walk_1_set()`, or a flip; a walk of N ends it | `CH_UNFORCED` with the gate per x |
 | SWEEP(w[]) then C' | `walk_midp()` above bounds w[], then tactic C' at N under those caps | -W, -Wl, -Wh, -Wa, -Wf |
 | PASS(b, keep) then C' | -k's odd-power pass to b at positions `at`, then C' | -k, -K, -ka |
-| SIX | `walk_6x()` | `CH_6X`, `ke_prefer_6x()` |
+| SQDIFF | `walk_sqdiff()` at a partner of the square | `CH_SQDIFF`, `ke_prefer_sqdiff()` |
 | FORCED | the batches of the next forced prime | `CH_FORCED` (no choice today) |
 
 Notes.
@@ -262,7 +262,7 @@ typedef enum {
     TC_LOOP,
     TC_SWEEP,
     TC_PASS,
-    TC_SIX,
+    TC_SQDIFF,
     TC_FORCED,
 
     TC_NONE         /* none of the above; also the number of kinds */
@@ -502,7 +502,7 @@ with the gain's answer, as -ap already prices a user's -k and -W).
 ### 5.2 Position (-j)
 
 Now: `best_v()` by strategy; `ja_choose()` under -ja2 for nodes with
-no square, or one square in a -k batch, not under STRATEGY_6X or
+no square, or one square in a -k batch, not under STRATEGY_SQDIFF or
 -js. Becomes: `plan_cost()` over the TC_LOOP tactics. New: depth 1
 where budget allows (4.6), which the -dJe data says orders positions
 right 85% of the time against 66%.
@@ -574,14 +574,14 @@ Retires: -Wl, -Wh, -Wha, -Whp, -Whv, -Wa, -Wf, once the tactic
 matches or beats each on the scoreboard. -W<w> and -Wx remain as
 knobs: given, they pin the batch sweep and the planner adds none.
 
-### 5.4 One-square batches (-k, -K, 6X)
+### 5.4 One-square batches (-k, -K, sqdiff)
 
 Now: `kern_plan()` runs a triple loop over keep, a -W grid and a -k
 grid, pricing each by `ke_batch()`, an abstract walk of the tree in
 doubles with its own position rule (`ke_best()`), against `ke_plain()`
-and `ke_6x()`.
+and `ke_sqdiff()`.
 
-Becomes: TC_PASS(b, keep) and TC_SIX are tactics at the batch
+Becomes: TC_PASS(b, keep) and TC_SQDIFF are tactics at the batch
 node; PASS's price is the pass's own cost (`ke_npass()` primes at
 `KE_PELL`) plus `plan_cost()` of the batch node with the pass's
 disallowed set and x-bounds (`kern_sets()`, `kern_xbounds()`). The
@@ -604,8 +604,12 @@ opening and closing, `ke_sqopen()`). So:
 -K's count becomes part of the PASS tactic's enumeration and
 stops being an option when the planner is on. The known -ap gaps on
 D(126,3) (the fixed "whole" guess where the table has no rows; the
-`2^6 . 2.3^2` batches given neither a -k nor a 6X estimate) are bugs
-to fix in this stage.
+`2^6 . 2.3^2` batches given neither a -k nor a sqdiff estimate) are
+bugs to fix in this stage. The second is wider now that sqdiff covers
+every type and pair: `ke_sqdiff()` prices only partners left with tau
+6, so a partner left with tau 2 (walked at once), a power of 2 above 2,
+or any other tau gets no estimate, and the batch stays with sqdiff
+without -k being weighed. TC_SQDIFF's price should cover them.
 
 ### 5.5 Forced layer (-f)
 
@@ -827,7 +831,7 @@ their stated noise, and hv has seen the tables.
 - Each existing estimator becomes a price hook or a closure, moved
   but not changed: `wa_walk()` to TC_WALK; `ja_cost()` to TC_LOOP at
   depth 0; `sweep_estimate()` to TC_SWEEP at the batch;
-  `ke_batch()` to TC_PASS; `ke_6x()` to TC_SIX.
+  `ke_batch()` to TC_PASS; `ke_sqdiff()` to TC_SQDIFF.
 - `ja_choose()`, `ja_gate()`, `kern_plan()`, `wa_plan()` call
   `plan_cost()` or the hooks.
 - The scratch discipline of 4.5 in one helper pair.
@@ -878,7 +882,7 @@ particular). Then remove -Wl, -Wh*, -Wa, -Wf.
 
 - A one-square LOOP price for every position (removes the
   `gq_costable()` exception of 5.2).
-- TC_PASS and TC_SIX priced through `plan_cost()` for the subtree,
+- TC_PASS and TC_SQDIFF priced through `plan_cost()` for the subtree,
   compared with `ke_batch()` as in 5.4; keep whichever closure is
   better at equal cost.
 - Fix the two -ap gaps on D(126,3).
@@ -962,3 +966,6 @@ Still open:
    candidates.
 5. Whether planning progress should also be logged recoverably
    (4.10): wanted if possible, not required at this stage.
+6. Whether -F still has any value, or should be retired (hv). Note
+   that sqdiff counts a prime -F may leave to the walks as not fixed
+   (`fixed_at()`), so with -F and n == 0 (mod 4) it can lose pairs.

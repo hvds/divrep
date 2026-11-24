@@ -912,8 +912,9 @@ Sites that need more than a substitution:
 Not affected, as far as I can see, and so to be exercised and not
 rewritten (stage 8): `walk_midp()` beyond the call above, `-k` and
 the `kern_` code (TYPE_o only where it tests n), the flip, the
-strategies (`best_v0()` to `best_v4()`; STRATEGY_6X is TYPE_o only),
-`mintau()`, the caps, `-a` and `-b`, `-o`.
+strategies (`best_v0()` to `best_v4()`; STRATEGY_SQDIFF, which replaced
+STRATEGY_6X, now covers every type, pctul included), `mintau()`, the
+caps, `-a` and `-b`, `-o`.
 
 
 ## 6. Options, lines, recovery
