@@ -11,6 +11,7 @@
 
 #include "coulint.h"
 #include "coulfact.h"
+#include "coulmint.h"
 #include "rootmod.h"
 #include "coultau.h"
 #include "coulcost.h"
@@ -965,7 +966,14 @@ bool kern_sq_open(t_node *np) {
  * chooses the same.
  * The positions are those -k applies to and the square: allocations at
  * the square, while its tau is composite (see dis_pos()), make its walk
- * shorter, or of a higher power once its tau is prime.
+ * shorter, or of a higher power once its tau is prime. Where
+ * STRATEGY_SQDIFF can take the batch, so that -k is compared with it,
+ * they include too, while there is room, those of the rest with the
+ * highest tau, which the strategy may take and -W sweeps (see
+ * ke_more()). At a partner of the square (see t_sqdpair) each loop is
+ * bounded as limit_p() bounds it (see sqd_limit()). The same search,
+ * with the choices of best_sqdiff(), estimates the batch under
+ * STRATEGY_SQDIFF (see ke_sqdiff()).
  */
 #define KE_MAXPOS 8
 #define KE_MAXSLOT 8
@@ -973,14 +981,21 @@ bool kern_sq_open(t_node *np) {
 #define KE_BIN 1.5
 #define KE_PELL 3e-6        /* the pass, per prime at each position */
 #define KE_SWEEP 3e-6       /* a sweep, per prime reaching apply_single() */
-#define KE_SQDIFF 10.7e-6   /* a STRATEGY_SQDIFF loop, per prime applied */
+#define KE_SQWALK 0.9e-6    /* walk_sqdiff(), per call */
+#define KE_SQSPLIT 0.1e-6   /* walk_sqdiff(), per split of M tried */
+#define KE_SQPELL 1e-4      /* the Pell walk at a partner with odd tau, a
+                             * guess: not measured */
 #define KE_PLAN_MIN 0.01    /* -ka leaves alone a batch cheaper to walk */
 typedef struct {
     uint vi;        /* the position */
-    bool sq;        /* the square, else a position -k applies to */
-    double Z;       /* zmax over what is allocated, and the bound of -k */
+    bool sq;        /* the square */
+    bool kern;      /* a position -k applies to */
+    bool sqd;       /* a partner of the square (see t_sqdpair) */
+    double Z;       /* zmax over what is allocated, and where -k applies
+                     * over its bound */
     long d;         /* offset of the square less that of this position */
     uint ns;        /* powers still to allocate, as exponents in order */
+    uint ns0;       /* ns at the root */
     uint e[KE_MAXSLOT];
     uint laste;     /* the last allocated, 0 if none */
     double lastp;
@@ -1016,6 +1031,12 @@ static uint ke_t0[MAXK_KERN];
  */
 static ulong ke_b, *ke_cap;
 static bool ke_sweep;
+/* Set while estimating under STRATEGY_SQDIFF (see ke_sqdiff()), with the
+ * splits walk_sqdiff() would try at each partner as the batch leaves it
+ * (see sqd_splits_d()).
+ */
+static bool ke_sqd = 0;
+static double ke_sqsplits[MAXK_KERN];
 static bool ke_swept;   /* set by ke_batch() if the sweep had anything to do */
 /* What an estimate is made of, collected by ke_batch() if ke_parts is
  * set (see kern_show()): the costs of the pass and of the sweep, and
@@ -1053,27 +1074,38 @@ static ulong cost_start(t_node *lp, ulong p) {
     }
 }
 
+static double ke_slimit(t_kepos *kp);
+
 /* The range (lo, hi] and exponent of the next allocation at a position.
+ * At the square, and where -k applies, the powers left are those listed,
+ * each power repeated taken in ascending order of the primes; elsewhere
+ * an odd power may yet take the place of some of them, so the limit is
+ * as for the search (see ke_slimit()).
  * Under -k the square is not swept, so has no caps (see w_sweeps()).
  */
 static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
-    uint e = kp->e[0], same = 1;
-    double other = 1;
-    for (uint i = 1; i < kp->ns; ++i)
-        if (kp->e[i] == e)
-            ++same;
-        else
-            other *= pow(ke_pmin, kp->e[i]);
-    double L = pow(kp->Z / other, 1.0 / (e * same));
-    ulong cap = kp->sq ? 0 : ke_cap[xi(e + 1)];
-    if (cap && L > cap)
-        L = cap;
+    uint e = kp->e[0];
+    double L;
+    if (kp->sq || kp->kern) {
+        uint same = 1;
+        double other = 1;
+        for (uint i = 1; i < kp->ns; ++i)
+            if (kp->e[i] == e)
+                ++same;
+            else
+                other *= pow(ke_pmin, kp->e[i]);
+        L = pow(kp->Z / other, 1.0 / (e * same));
+        ulong cap = kp->sq ? 0 : ke_cap[xi(e + 1)];
+        if (cap && L > cap)
+            L = cap;
+    } else
+        L = ke_slimit(kp);
     *hi = L;
     *lo = (kp->laste == e) ? kp->lastp : ke_pmin - 1;
     return e;
 }
 
-/* tau left at a position: at one -k applies to, with the odd power */
+/* tau left at a position: at one not the square, with the odd power */
 static inline uint ke_tau(t_kepos *kp) {
     uint t = kp->sq ? 1 : 2;
     for (uint i = 0; i < kp->ns; ++i)
@@ -1084,6 +1116,65 @@ static inline uint ke_tau(t_kepos *kp) {
 /* the power walked at the square at a node, by the tau left there */
 static inline uint ke_sqg(t_kepos *kp) {
     return divisors[ke_tau(kp)].gcddm;
+}
+
+/* The least that can supply tau u at v_i below the current batch, as
+ * mintau_at() finds it there for limit_p() and prep_midp(); cached for
+ * the batch, reset by ke_root_node().
+ */
+#define KE_NMINT 64
+static struct {
+    uint vi, u;
+    double v;
+} ke_mints[KE_NMINT];
+static uint ke_nmint;
+static double ke_mint(uint vi, uint u) {
+    static bool init = 0;
+    static mpz_t m;
+    if (u <= 1)
+        return 1;
+    for (uint i = 0; i < ke_nmint; ++i)
+        if (ke_mints[i].vi == vi && ke_mints[i].u == u)
+            return ke_mints[i].v;
+    if (!init) {
+        mpz_init(m);
+        init = 1;
+    }
+    mintau_at(&nodes[cur_batch_level], m, u, vi);
+    double v = mpz_get_d(m);
+    if (ke_nmint < KE_NMINT) {
+        ke_mints[ke_nmint].vi = vi;
+        ke_mints[ke_nmint].u = u;
+        ke_mints[ke_nmint++].v = v;
+    }
+    return v;
+}
+
+/* The limit of the next loop at a position as loop_limit() takes it: the
+ * root of what is left there once the least that can supply the rest of
+ * its tau is taken out (see limit_p()), within the caps and, at a partner
+ * of the square, the bound of its factors (see sqd_limit()). What has
+ * been allocated there below the batch is not allowed for.
+ */
+static double ke_slimit(t_kepos *kp) {
+    uint e = kp->e[0];
+    double L = pow(kp->Z / ke_mint(kp->vi, ke_tau(kp) / (e + 1)), 1.0 / e);
+    ulong cap = kp->sq ? 0 : ke_cap[xi(e + 1)];
+    if (cap && L > cap)
+        L = cap;
+    if (kp->sqd) {
+        double S = sqd_limit_d(kp->vi, e + 1, zmax_given);
+        if (L > S)
+            L = S;
+    }
+    return L;
+}
+
+/* The cost of walk_sqdiff() at a partner left with tau 2: each prime
+ * allocated there since the batch doubles the splits of M it tries.
+ */
+static inline double ke_sqleaf(t_kepos *kp) {
+    return KE_SQWALK + KE_SQSPLIT * ldexp(ke_sqsplits[kp->vi], kp->ns0);
 }
 
 static double ke_cost(t_kenode *node, double budget);
@@ -1268,7 +1359,9 @@ static double ke_loop(t_kenode *node, uint j, bool deep, double budget) {
         if (c == 1 && p < KE_SMALL)
             ch.used[ch.nused++] = (uint)p;
         double cc;
-        if (deep) {
+        if (ke_sqd && cp->sqd && cp->ns == 0)
+            cc = ke_sqleaf(cp);     /* walk_sqdiff() takes it */
+        else if (deep) {
             double wt = ke_wt;
             ke_wt *= c * s * f * r;
             cc = ke_cost(&ch, (budget - cost) / (c * s * f * r));
@@ -1319,6 +1412,34 @@ static uint ke_best(t_kenode *node, bool nosq) {
     return best;
 }
 
+/* The position to allocate at next: as the default strategy would (see
+ * ke_best()), or under STRATEGY_SQDIFF as best_sqdiff() would, at the
+ * partner with the lowest limit unless the default would take another
+ * position with a lower limit still.
+ */
+static uint ke_choose(t_kenode *node, bool nosq) {
+    uint best = ke_best(node, nosq);
+    if (!ke_sqd)
+        return best;
+    uint pj = KE_MAXPOS;
+    double pl = 0;
+    for (uint j = 0; j < node->np; ++j) {
+        t_kepos *kp = &node->pos[j];
+        if (!kp->sqd || kp->ns == 0)
+            continue;
+        double l = ke_slimit(kp);
+        if (pj == KE_MAXPOS || l < pl) {
+            pj = j;
+            pl = l;
+        }
+    }
+    if (pj == KE_MAXPOS)
+        return best;
+    if (best < KE_MAXPOS && best != pj && ke_slimit(&node->pos[best]) < pl)
+        return best;
+    return pj;
+}
+
 /* True if the square, the position of kp at a node, is open there: as
  * kern_sq_open() decides it in the search, by the gate's estimates with
  * the same fixed costs (see gq_loop() and gq_recurse()), so that the
@@ -1358,9 +1479,14 @@ static bool ke_sqopen(t_kenode *node, t_kepos *kp) {
 
 /* The cost of the subtree at a node; HUGE_VAL once past budget. As in
  * the search, the square is open to the strategy only where ke_sqopen()
- * says.
+ * says. Under STRATEGY_SQDIFF, a partner left with tau 2 is taken by
+ * walk_sqdiff().
  */
 static double ke_cost(t_kenode *node, double budget) {
+    if (ke_sqd)
+        for (uint j = 0; j < node->np; ++j)
+            if (node->pos[j].sqd && node->pos[j].ns == 0)
+                return ke_sqleaf(&node->pos[j]);
     double w = ke_walk(node);
     if (ke_parts)
         ke_parts->nodes += ke_wt;
@@ -1370,7 +1496,7 @@ static double ke_cost(t_kenode *node, double budget) {
             nosq = !ke_sqopen(node, &node->pos[j]);
             break;
         }
-    uint best = ke_best(node, nosq);
+    uint best = ke_choose(node, nosq);
     if (best == KE_MAXPOS)
         return ke_walked(node, w);
     double lo, hi;
@@ -1384,30 +1510,57 @@ static double ke_cost(t_kenode *node, double budget) {
     return ke_loop(node, best, 1, budget);
 }
 
-/* Set up the root of the estimate for the current batch: the node as
- * the batch leaves it, with the positions of at, each with the odd
- * power known to exceed b (1 if not known), and the square if anything
- * can be allocated there. Sets ke_endr, ke_root, ke_pmin and ke_high to
- * match.
+/* Positions to add to those of at for the estimate of the current
+ * batch: of the rest bar the square, those with even tau above 2, by
+ * descending tau, while there is room (see ke_root_node()); a position
+ * with odd tau is a second square, which no batch estimated has. Needs
+ * MAXK_KERN <= 64.
  */
-static void ke_root_node(t_kenode *root, ulong at, double b) {
+static ulong ke_more(ulong at) {
+    uint npos = popcount_u64(at)
+            + ((divisors[kern_tau(sq0)].alldiv > 2) ? 1 : 0);
+    while (npos < KE_MAXPOS) {
+        uint bj = k, bt = 2;
+        for (uint vj = 0; vj < k; ++vj) {
+            uint t = kern_tau(vj);
+            if (vj == sq0 || ((at >> vj) & 1) || (t & 1) || t <= bt)
+                continue;
+            bj = vj;
+            bt = t;
+        }
+        if (bj == k)
+            break;
+        at |= 1UL << bj;
+        ++npos;
+    }
+    return at;
+}
+
+/* Set up the root of the estimate for the current batch: the node as
+ * the batch leaves it, with the positions of at, those -k applies to
+ * (in kat) each with the odd power known to exceed b (1 if not known),
+ * and the square if anything can be allocated there. Sets ke_endr,
+ * ke_root, ke_pmin and ke_high to match.
+ */
+static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
     t_node *lv = &nodes[cur_batch_level];
     /* every walk of the batch expects its root residues */
     ke_setup = gq_wsetup(lv);
     double z = zmax_given;
     uint ts = kern_tau(sq0);
-    ke_endr = (divisors[ts].gcddm == 2) ? sqrt(z / mpz_get_d(*kern_q(sq0)))
-            : 0;
+    double zs = z / mpz_get_d(*kern_q(sq0));
+    ke_endr = (divisors[ts].gcddm == 2) ? sqrt(zs) : 0;
     ke_root = (divisors[ts].alldiv == 2) ? 0.7e-6 : 1.5e-6;
     for (ke_pmin = 3; mpz_fdiv_ui(lv->aq, (ulong)ke_pmin) == 0
             || !gr_isprime((ulong)ke_pmin); ++ke_pmin)
         ;
     ke_high = (nf.count > 2);
-    root->roots = pow(z / mpz_get_d(*kern_q(sq0)), 1.0 / divisors[ts].gcddm)
+    root->roots = pow(zs, 1.0 / divisors[ts].gcddm)
             * mpz_get_d(*kern_q(sq0)) * res_array(lv->level)->count
             / (TYPE_MULT(sq0) * mpz_get_d(lv->aq));
     root->zl = z / mpz_get_d(lv->aq);
     root->np = 0;
+    ke_nmint = 0;
     root->nused = 0;
     for (uint vi = 0; vi < k && root->np < KE_MAXPOS; ++vi) {
         /* needs MAXK_KERN <= 64 */
@@ -1415,9 +1568,11 @@ static void ke_root_node(t_kenode *root, ulong at, double b) {
             continue;
         t_kepos *kp = &root->pos[root->np++];
         kp->vi = vi;
-        kp->Z = z / mpz_get_d(*kern_q(vi)) / b;
+        kp->kern = (kat >> vi) & 1;
+        kp->Z = z / mpz_get_d(*kern_q(vi)) / (kp->kern ? b : 1);
         kp->d = TYPE_RES(vi, sq0);
         kp->sq = 0;
+        kp->sqd = sqd_is_partner(lv, vi);
         kp->laste = 0;
         kp->lastp = 0;
         kp->ns = 0;
@@ -1428,12 +1583,15 @@ static void ke_root_node(t_kenode *root, ulong at, double b) {
             kp->e[kp->ns++] = h - 1;
             u /= h;
         }
+        kp->ns0 = kp->ns;
     }
     if (divisors[ts].alldiv > 2 && root->np < KE_MAXPOS) {
         t_kepos *kp = &root->pos[root->np++];
         kp->vi = sq0;
         kp->sq = 1;
-        kp->Z = z / mpz_get_d(*kern_q(sq0));
+        kp->kern = 0;
+        kp->sqd = 0;
+        kp->Z = zs;
         kp->d = 0;
         kp->laste = 0;
         kp->lastp = 0;
@@ -1443,6 +1601,7 @@ static void ke_root_node(t_kenode *root, ulong at, double b) {
             kp->e[kp->ns++] = h - 1;
             u /= h;
         }
+        kp->ns0 = kp->ns;
     }
 }
 
@@ -1470,6 +1629,11 @@ static double ke_npass(t_kepos *kp, double b) {
         uint x = 2 * dp->div[di];
         double rest = ke_rest(t / x);
         double L = pow(zq / rest, 1.0 / (x - 1));
+        if (kp->sqd) {
+            double S = sqd_limit_d(kp->vi, x, zmax_given);
+            if (L > S)
+                L = S;
+        }
         double P = (x == 2) ? b : pow(need / rest, 1.0 / (x - 1));
         np += gr_li((L < P) ? L : P);
     }
@@ -1482,7 +1646,11 @@ static double ke_npass(t_kepos *kp, double b) {
  */
 static double ke_batch(ulong at, double budget) {
     t_kenode root;
-    ke_root_node(&root, at, ke_b);
+    /* Where STRATEGY_SQDIFF can take the batch, -k is compared with it,
+     * so the search over the rest is estimated too (see ke_sqdiff()).
+     */
+    bool more = kern_sqdiff(&nodes[cur_batch_level]);
+    ke_root_node(&root, more ? ke_more(at) : at, at, ke_b);
     ke_swept = 0;
     double cost = 0;
     /* Each prime of a sweep is tried by reject_single(), as for a loop,
@@ -1504,10 +1672,12 @@ static double ke_batch(ulong at, double budget) {
         if (kp->sq)
             continue;   /* neither passed nor swept */
         /* the pass, and the sweep of each power in turn */
-        double pass = KE_PELL * ke_npass(kp, ke_b);
-        cost += pass;
-        if (ke_parts)
-            ke_parts->pass += pass;
+        if (kp->kern) {
+            double pass = KE_PELL * ke_npass(kp, ke_b);
+            cost += pass;
+            if (ke_parts)
+                ke_parts->pass += pass;
+        }
         for (uint i = 0; ke_sweep && i < kp->ns; ++i) {
             uint e = kp->e[i];
             ulong cap = ke_cap[xi(e + 1)];
@@ -1517,7 +1687,16 @@ static double ke_batch(ulong at, double budget) {
             for (uint l = 0; l < kp->ns; ++l)
                 if (l != i)
                     other *= pow(ke_pmin, kp->e[l]);
-            double L = pow(kp->Z / other, 1.0 / e), W = cap;
+            /* as prep_midp() finds its top, away from -k */
+            double L = kp->kern ? pow(kp->Z / other, 1.0 / e)
+                    : pow(kp->Z / ke_mint(kp->vi, ke_tau(kp) / (e + 1)),
+                        1.0 / e);
+            double W = cap;
+            if (kp->sqd) {
+                double S = sqd_limit_d(kp->vi, e + 1, zmax_given);
+                if (L > S)
+                    L = S;
+            }
             if (L <= W)
                 continue;
             ke_swept = 1;
@@ -1571,73 +1750,60 @@ static double ke_plain(void) {
             / (TYPE_MULT(sq0) * mpz_get_d(lv->aq));
 }
 
-/* The estimated cost of the current batch under STRATEGY_SQDIFF at its
- * partner v_j, given tau 6 left there; else 0. at gives the positions -k
- * would apply to.
- * Its loop of q^2 at v_j runs to the limit of sqd_limit() (about
- * (zmax/8)^{1/4} for STRATEGY_6X's pair), and reject_square() lets
- * through half of it up to the root of the greatest root. But as
- * best_sqdiff() does, it gives way to the position the default strategy
- * would take if that has a lower limit: the search is then estimated as
- * for -k (see ke_batch()), over the positions -k would apply to bar v_j,
- * but with no bound on their odd power, no pass and no sweep, and at
- * most the cost of walking the batch whole. The loops of q^2 at v_j that
- * may follow deeper in that search are not allowed for. As for -k, all
- * is taken from zmax as given, not from the current state of the search.
+/* The estimated cost of the current batch, complete at np, under
+ * STRATEGY_SQDIFF (see best_sqdiff()); 0 if no position is a partner of
+ * its square. A partner with odd tau left is a Pell case, and one with
+ * tau 2 left goes straight to walk_sqdiff(). Else the search is
+ * estimated as for -k (see ke_batch()), with no bound on odd powers, no
+ * pass and no sweep, and at most the cost of walking the batch whole:
+ * over the partners, and the positions with the highest tau of the rest
+ * that the default strategy may take, while there is room; at each node
+ * allocating where best_sqdiff() would (see ke_choose()), until a
+ * partner is left with tau 2 (see ke_sqleaf()). As for -k, all is taken
+ * from zmax as given, not from the current state of the search.
  */
-static double ke_sqdiff_at(ulong at, uint vj) {
-    double L = sqd_limit_d(vj, 3, zmax_given);
-    if (L <= 0)
+static double ke_sqdiff(t_node *np) {
+    ulong at = 0;
+    uint npos = (divisors[kern_tau(sq0)].alldiv > 2) ? 1 : 0;
+    double leaf = 0;
+    for (uint vj = 0; vj < k; ++vj) {
+        if (!sqd_is_partner(np, vj))
+            continue;
+        uint t = kern_tau(vj);
+        if (t & 1)
+            return KE_SQPELL;
+        ke_sqsplits[vj] = sqd_splits_d(vj);
+        if (t == 2) {
+            if (leaf == 0)
+                leaf = KE_SQWALK + KE_SQSPLIT * ke_sqsplits[vj];
+            continue;
+        }
+        if (npos < KE_MAXPOS) {
+            at |= 1UL << vj;
+            ++npos;
+        }
+    }
+    if (leaf > 0)
+        return leaf;
+    if (!at)
         return 0;
-    double se = pow(zmax_given / mpz_get_d(*kern_q(sq0)), 0.25);
-    if (se > L)
-        se = L;
-    t_node *bn = &nodes[cur_batch_level];
-    double cost = gr_ploop(bn, 2, L, 5)
-            + gr_li(L) * (GQ_RES + GQ_ROOT / 2)
-            + gr_li(se) * KE_SQDIFF;
 
     ulong *cap = ke_cap;
     t_keparts *parts = ke_parts;
     ke_cap = maxp;
     ke_parts = NULL;
+    ke_sqd = 1;
     t_kenode root;
-    ke_root_node(&root, at & ~(1UL << vj), 1);
-    uint j = ke_best(&root, 1);
-    if (j < KE_MAXPOS) {
-        double lo, hi;
-        ke_limit(&root.pos[j], &lo, &hi);
-        if (hi < L) {
-            double whole = ke_walk(&root);
-            ke_wt = 1;
-            cost = ke_cost(&root, whole);
-            if (cost > whole)
-                cost = whole;
-        }
-    }
+    ke_root_node(&root, ke_more(at), 0, 1);
+    double whole = ke_walk(&root);
+    ke_wt = 1;
+    double cost = ke_cost(&root, whole);
+    if (cost > whole)
+        cost = whole;
+    ke_sqd = 0;
     ke_cap = cap;
     ke_parts = parts;
     return cost;
-}
-
-/* The estimated cost of the current batch, complete at np, under
- * STRATEGY_SQDIFF: the least over its partners with tau 6 left (see
- * ke_sqdiff_at()); 0 if there are none, or the square is a higher power.
- */
-static double ke_sqdiff(t_node *np) {
-    if (divisors[kern_tau(sq0)].gcddm != 2)
-        return 0;
-    ulong at, passed;
-    kern_sets(0, &at, &passed);
-    double best = 0;
-    for (uint vj = 0; vj < k; ++vj) {
-        if (!sqd_is_partner(np, vj) || kern_tau(vj) != 6)
-            continue;
-        double c = ke_sqdiff_at(at, vj);
-        if (c > 0 && (best == 0 || c < best))
-            best = c;
-    }
-    return best;
 }
 
 /* True if a batch, complete at np, that STRATEGY_SQDIFF can take should be

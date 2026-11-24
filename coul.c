@@ -6477,6 +6477,40 @@ double sqd_limit_d(uint vj, uint x, double z) {
     return pow((s + sqrt(s * s + v)) / m, 1.0 / (x - 1));
 }
 
+/* For estimates: the splits of M that walk_sqdiff() would try at v_j, a
+ * partner of the square, if v_j had tau 2 left as it now stands, both
+ * signs counted; each prime allocated at v_j before then doubles it.
+ * 0 if no value of v_j is possible.
+ */
+double sqd_splits_d(uint vj) {
+    t_sqdpair *sp = sqd_pair(sq0, vj);
+    if (sqd_mfac(sp, vj) == 0)
+        return 0;
+    t_value *vp = &value[vj];
+    ulong s2 = 2 * sp->sigma;
+    uint bits = 0;
+    for (uint i = 1; i < cur_vlevel[vj]; ++i) {
+        t_allocation *ap = &vp->alloc[i];
+        if (s2 % ap->p == 0)
+            continue;
+        if (ap->x - 1 + simple_valuation(sp->P, ap->p)
+                != simple_valuation(sp->Q, ap->p))
+            ++bits;
+    }
+    for (uint i = 0; i < sp->pfac.count; ++i) {
+        ulong p = sp->pfac.ppow[i].p;
+        if (s2 % p && !sqd_val(vj, p))
+            ++bits;
+    }
+    double n = ldexp(2, bits);
+    for (uint i = 0; i < sp->sfac.count; ++i) {
+        t_ppow *pp = &sp->sfac.ppow[i];
+        uint eb[2];
+        n *= sqd_split(eb, pp->p, sqd_mval(sp, vj, pp->p), pp->e);
+    }
+    return n;
+}
+
 /* Returns the greatest p for which p^{x-1} needs to be tried at v_i
  * leaving remaining tau nextt: 1 signifies no primes, 0 that the answer
  * is 2^64 or more.

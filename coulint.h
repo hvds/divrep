@@ -158,6 +158,7 @@ extern void walk_v_inner(t_node *cur_node, mpz_t start);
 extern double zmax_given;
 extern bool sqd_is_partner(t_node *np, uint vj);
 extern double sqd_limit_d(uint vj, uint x, double z);
+extern double sqd_splits_d(uint vj);
 extern mpz_t best;
 extern uint auto_level;
 extern ulong *minp, *maxp, *midp;
