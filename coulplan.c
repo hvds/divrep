@@ -996,6 +996,7 @@ typedef struct {
     long d;         /* offset of the square less that of this position */
     uint ns;        /* powers still to allocate, as exponents in order */
     uint ns0;       /* ns at the root */
+    double pmin;    /* the least prime the search can allocate there */
     uint e[KE_MAXSLOT];
     uint laste;     /* the last allocated, 0 if none */
     double lastp;
@@ -1007,7 +1008,7 @@ typedef struct {
     uint nused;
     uint used[KE_MAXPOS * KE_MAXSLOT];
 } t_kenode;
-static double ke_root, ke_endr, ke_pmin;
+static double ke_root, ke_endr;
 static double ke_setup;     /* of a walk in the batch, see ke_root_node() */
 static bool ke_high;
 /* The cost per root to estimate with is a fixed guess by the kind of root,
@@ -1093,7 +1094,7 @@ static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
             if (kp->e[i] == e)
                 ++same;
             else
-                other *= pow(ke_pmin, kp->e[i]);
+                other *= pow(kp->pmin, kp->e[i]);
         L = pow(kp->Z / other, 1.0 / (e * same));
         ulong cap = kp->sq ? 0 : ke_cap[xi(e + 1)];
         if (cap && L > cap)
@@ -1101,7 +1102,7 @@ static uint ke_limit(t_kepos *kp, double *lo, double *hi) {
     } else
         L = ke_slimit(kp);
     *hi = L;
-    *lo = (kp->laste == e) ? kp->lastp : ke_pmin - 1;
+    *lo = (kp->laste == e) ? kp->lastp : kp->pmin - 1;
     return e;
 }
 
@@ -1543,8 +1544,17 @@ static ulong ke_more(ulong at) {
  * the batch leaves it, with the positions of at, those -k applies to
  * (in kat) each with the odd power known to exceed b (1 if not known),
  * and the square if anything can be allocated there. Sets ke_endr,
- * ke_root, ke_pmin and ke_high to match.
+ * ke_root and ke_high to match.
+ * The least prime at a position is the least the loops there start from,
+ * above the primes forced there (see maxforce[]), and not known.
  */
+static double ke_pmin_at(t_node *lv, uint vi) {
+    ulong p = maxforce[vi] + 1;
+    while (!gr_isprime(p) || mpz_fdiv_ui(lv->aq, p) == 0)
+        ++p;
+    return p;
+}
+
 static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
     t_node *lv = &nodes[cur_batch_level];
     /* every walk of the batch expects its root residues */
@@ -1554,9 +1564,6 @@ static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
     double zs = dtov_d(z, sq0) / mpz_get_d(*kern_q(sq0));
     ke_endr = (divisors[ts].gcddm == 2) ? sqrt(zs) : 0;
     ke_root = (divisors[ts].alldiv == 2) ? 0.7e-6 : 1.5e-6;
-    for (ke_pmin = 3; mpz_fdiv_ui(lv->aq, (ulong)ke_pmin) == 0
-            || !gr_isprime((ulong)ke_pmin); ++ke_pmin)
-        ;
     ke_high = (nf.count > 2);
     root->roots = pow(zs, 1.0 / divisors[ts].gcddm)
             * mpz_get_d(*kern_q(sq0)) * res_array(lv->level)->count
@@ -1576,6 +1583,7 @@ static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
         kp->d = TYPE_RES(vi, sq0);
         kp->sq = 0;
         kp->sqd = sqd_is_partner(lv, vi);
+        kp->pmin = ke_pmin_at(lv, vi);
         kp->laste = 0;
         kp->lastp = 0;
         kp->ns = 0;
@@ -1594,6 +1602,7 @@ static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
         kp->sq = 1;
         kp->kern = 0;
         kp->sqd = 0;
+        kp->pmin = ke_pmin_at(lv, sq0);
         kp->Z = zs;
         kp->d = 0;
         kp->laste = 0;
@@ -1608,13 +1617,13 @@ static void ke_root_node(t_kenode *root, ulong at, ulong kat, double b) {
     }
 }
 
-/* The least that can supply tau u, taken at the least prime (as
+/* The least that can supply tau u, taken at the least prime pmin (as
  * ke_limit()).
  */
-static double ke_rest(uint u) {
+static double ke_rest(uint u, double pmin) {
     double rest = 1;
     for (; u > 1; u /= divisors[u].high)
-        rest *= pow(ke_pmin, divisors[u].high - 1);
+        rest *= pow(pmin, divisors[u].high - 1);
     return rest;
 }
 
@@ -1626,11 +1635,11 @@ static double ke_rest(uint u) {
 static double ke_npass(t_kepos *kp, double b) {
     uint t = kern_tau(kp->vi);
     double zq = kp->Z * b, np = 0;
-    double need = b * ke_rest(t / 2);
+    double need = b * ke_rest(t / 2, kp->pmin);
     t_divisors *dp = &divisors[t >> 1];
     for (uint di = 0; di < dp->alldiv; ++di) {
         uint x = 2 * dp->div[di];
-        double rest = ke_rest(t / x);
+        double rest = ke_rest(t / x, kp->pmin);
         double L = pow(zq / rest, 1.0 / (x - 1));
         if (kp->sqd) {
             double S = sqd_limit_d(kp->vi, x, zmax_given);
@@ -1689,7 +1698,7 @@ static double ke_batch(ulong at, double budget) {
             double other = 1;
             for (uint l = 0; l < kp->ns; ++l)
                 if (l != i)
-                    other *= pow(ke_pmin, kp->e[l]);
+                    other *= pow(kp->pmin, kp->e[l]);
             /* as prep_midp() finds its top, away from -k */
             double L = kp->kern ? pow(kp->Z / other, 1.0 / e)
                     : pow(kp->Z / ke_mint(kp->vi, ke_tau(kp) / (e + 1)),
