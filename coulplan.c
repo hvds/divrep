@@ -1956,12 +1956,12 @@ static double wa_try(t_node *np, ulong *wx, ulong *cap, t_wasample sm) {
  * wx[i] to the bound chosen, and returns the estimate with it.
  * The bounds tried are 1 and 3 times a power of 10, from the greatest
  * below top (at or above which it sweeps nothing) down to WA_WMIN, so
- * that they scale with zmax; the estimates fall towards the best and
- * rise steeply below it, so the search stops once two in a row are no
- * better (or, while none beats no sweep of this power, two in a row are
- * worse than that by more than WA_TIE). If the best and a bound either
- * side are within WA_TIE, the two are estimated again with fine
- * sampling.
+ * that they scale with zmax. All of them are tried: the estimates need
+ * not have a single minimum (on D(12,11) one at 3.10^8 lies above the
+ * best at 10^6, with 3.10^7 between them worse than both), so a search
+ * that stops once the estimates rise can settle for a bound several
+ * times worse than the best. If the best and a bound either side are
+ * within WA_TIE, the two are estimated again with fine sampling.
  */
 static double wa_power(
     t_node *np, uint i, ulong top, double e, ulong *wx, ulong *cap
@@ -1975,24 +1975,15 @@ static double wa_power(
     /* the bounds tried in order, after none, and their estimates */
     ulong ws[WA_MAXTRY + 1];
     double es[WA_MAXTRY + 1];
-    uint n = 0, bi = 0, worse = 0;
+    uint n = 0, bi = 0;
     ws[n] = 0;
     es[n++] = e;
     while (w >= WA_WMIN && n <= WA_MAXTRY) {
         wx[i] = w;
         ws[n] = w;
         es[n] = wa_try(np, wx, cap, wa_coarse);
-        /* While nothing beats no sweep, bounds that sweep too little to
-         * matter estimate much as it does; only those clearly worse
-         * count.
-         */
-        if (es[n] < es[bi]) {
+        if (es[n] < es[bi])
             bi = n;
-            worse = 0;
-        } else if ((bi || es[n] > e * (1 + WA_TIE)) && ++worse >= 2) {
-            ++n;
-            break;
-        }
         ++n;
         /* 3.10^a, then 10^a */
         w = (w % 3 == 0) ? w / 3 : w * 3 / 10;
